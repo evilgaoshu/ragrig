@@ -106,3 +106,68 @@ docker compose up --build -d
 curl http://localhost:8000/health
 docker compose exec db psql -U ragrig -d ragrig -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
 ```
+
+## Shared Environment 192.168.3.100 Successful Validation
+
+Date: 2026-05-03
+Validated as: `root@192.168.3.100`
+Validated checkout: `/home/yue/tmp/ragrig-phase1a-check`
+Validated PR head: `5276ec7915da9b5ff7aeaae4d46f0f86f96c83f4`
+
+Because `127.0.0.1:5432` was already occupied on the host by an existing container, the Phase 1a Compose stack was validated with `DB_HOST_PORT=15433`. This is now supported by the committed Compose override change.
+
+Commands run:
+
+```bash
+cd /home/yue/tmp/ragrig-phase1a-check
+cp .env.example .env
+# override the host DB port for this shared machine
+sed -i 's/^DB_HOST_PORT=5432/DB_HOST_PORT=15433/' .env
+docker compose down --remove-orphans
+docker compose up --build -d
+curl -i http://localhost:8000/health
+docker compose exec -T db psql -U ragrig -d ragrig -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
+docker compose ps
+```
+
+Observed `/health` response:
+
+```http
+HTTP/1.1 200 OK
+content-type: application/json
+
+{"status":"healthy","app":"ok","db":"connected","version":"0.1.0"}
+```
+
+Observed pgvector query result:
+
+```text
+ extname 
+---------
+ vector
+(1 row)
+```
+
+Observed Compose status:
+
+```text
+NAME                         IMAGE                      STATUS                    PORTS
+ragrig-phase1a-check-app-1   ragrig-phase1a-check-app   Up 15 seconds             0.0.0.0:8000->8000/tcp
+ragrig-phase1a-check-db-1    pgvector/pgvector:pg16     Up 21 seconds (healthy)   0.0.0.0:15433->5432/tcp
+```
+
+Remote log locations:
+
+- `/tmp/ragrig-compose-down-4.log`
+- `/tmp/ragrig-compose-up-4.log`
+- `/tmp/ragrig-health-4.log`
+- `/tmp/ragrig-pgvector-4.log`
+- `/tmp/ragrig-compose-ps-4.log`
+- `/tmp/ragrig-compose-services-4.log`
+
+Conclusion:
+
+- `192.168.3.100` runtime validation is now complete
+- `docker compose up` succeeds on the shared machine when using a non-conflicting host DB port
+- `GET /health` returns healthy with database connected
+- pgvector extension initialization is present and queryable
