@@ -50,14 +50,88 @@ RAGRig treats RAG as an operational system:
 
 ## Project Status
 
-RAGRig is in early project design and scaffolding. The initial implementation will focus on a small but complete vertical slice:
+RAGRig is in early project design and scaffolding.
 
-1. file and folder ingestion
-2. LLM-assisted document cleaning
-3. chunking, embedding, and indexing
-4. Qdrant and pgvector backends
-5. retrieval API with source citations
-6. basic pipeline run history and evaluation hooks
+Current implementation status:
+
+1. Phase 0 docs and project framing are committed.
+2. Phase 1a scaffold provides a FastAPI service, local Docker Compose stack, pgvector-enabled PostgreSQL, and verification commands.
+3. Ingestion, parsing, chunking, embedding, indexing, and retrieval remain intentionally unimplemented in this repository state.
+
+Authoritative specs:
+
+- [MVP spec](./docs/specs/ragrig-mvp-spec.md)
+- [Phase 1a scaffold spec](./docs/specs/ragrig-phase-1a-scaffold-spec.md)
+
+## Phase 1a Scaffold
+
+Phase 1a currently ships only the engineering scaffold required for follow-on ingestion and retrieval work:
+
+- Python 3.11+ service with FastAPI
+- typed settings via `pydantic-settings`
+- `GET /health` with explicit app and database status
+- `uv`-managed dependencies in `pyproject.toml`
+- `ruff` format/lint commands and `pytest` tests
+- Docker Compose for the app and PostgreSQL with pgvector
+
+Reserved but intentionally empty package boundaries:
+
+- `src/ragrig/parsers`
+- `src/ragrig/cleaners`
+- `src/ragrig/chunkers`
+- `src/ragrig/embeddings`
+- `src/ragrig/vectorstore`
+
+These directories are placeholders only. They do not imply that parsing, cleaning, chunking, embedding, or vector indexing are implemented yet.
+
+## Quick Start
+
+1. Install `uv` if it is not already available.
+2. Sync dependencies:
+
+   ```bash
+   make sync
+   ```
+
+3. Create a local env file:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+4. Run code quality checks:
+
+   ```bash
+   make format
+   make lint
+   make test
+   ```
+
+5. Start the local development stack:
+
+   ```bash
+   docker compose up --build
+   ```
+
+6. Verify the service and pgvector bootstrap:
+
+   ```bash
+   curl http://localhost:8000/health
+   docker compose exec db psql -U ragrig -d ragrig -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
+   ```
+
+Expected healthy response:
+
+```json
+{
+  "status": "healthy",
+  "app": "ok",
+  "db": "connected",
+  "version": "0.1.0"
+}
+```
+
+If PostgreSQL is unavailable, `/health` returns `503` with a clear error payload.
 
 ## Planned Integrations
 
@@ -98,7 +172,28 @@ Model providers:
 │   ├── ragrig-icon.png
 │   └── ragrig-icon.svg
 ├── docs/
-│   └── roadmap.md
+│   ├── roadmap.md
+│   └── specs/
+│       ├── ragrig-mvp-spec.md
+│       └── ragrig-phase-1a-scaffold-spec.md
+├── scripts/
+│   └── init-db.sql
+├── src/
+│   └── ragrig/
+│       ├── main.py
+│       ├── config.py
+│       ├── chunkers/
+│       ├── cleaners/
+│       ├── embeddings/
+│       ├── parsers/
+│       └── vectorstore/
+├── tests/
+│   └── test_health.py
+├── .env.example
+├── docker-compose.yml
+├── Dockerfile
+├── Makefile
+├── pyproject.toml
 ├── CONTRIBUTING.md
 ├── LICENSE
 ├── README.md
