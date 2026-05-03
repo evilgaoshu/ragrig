@@ -90,6 +90,8 @@ The Compose stack must boot these services:
 - `app`: FastAPI service container
 - `db`: PostgreSQL 16 with pgvector extension available
 
+Default host port bindings are `8000` for the app and `5432` for PostgreSQL, but the Compose file must allow host-level overrides for shared environments where those ports are already occupied.
+
 Initialization requirement:
 
 - `scripts/init-db.sql` runs `CREATE EXTENSION IF NOT EXISTS vector;`

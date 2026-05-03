@@ -99,6 +99,8 @@ These directories are placeholders only. They do not imply that parsing, cleanin
    cp .env.example .env
    ```
 
+   If `8000` or `5432` are already in use on the host, set alternate values in `.env`, for example `APP_HOST_PORT=18000` or `DB_HOST_PORT=15433`.
+
 4. Run code quality checks:
 
    ```bash
@@ -119,6 +121,8 @@ These directories are placeholders only. They do not imply that parsing, cleanin
    curl http://localhost:8000/health
    docker compose exec db psql -U ragrig -d ragrig -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
    ```
+
+   If you changed `APP_HOST_PORT`, use that port in the `curl` command.
 
 Expected healthy response:
 
