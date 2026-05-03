@@ -48,8 +48,12 @@ class Source(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     config_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="sources")
-    documents: Mapped[list["Document"]] = relationship(back_populates="source")
-    pipeline_runs: Mapped[list["PipelineRun"]] = relationship(back_populates="source")
+    documents: Mapped[list["Document"]] = relationship(
+        back_populates="source", overlaps="documents,knowledge_base"
+    )
+    pipeline_runs: Mapped[list["PipelineRun"]] = relationship(
+        back_populates="source", overlaps="knowledge_base,pipeline_runs"
+    )
 
 
 class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -77,8 +81,12 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     mime_type: Mapped[str | None] = mapped_column(String(255))
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
-    knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")
-    source: Mapped[Source] = relationship(back_populates="documents")
+    knowledge_base: Mapped[KnowledgeBase] = relationship(
+        back_populates="documents", overlaps="documents"
+    )
+    source: Mapped[Source] = relationship(
+        back_populates="documents", overlaps="documents,knowledge_base"
+    )
     versions: Mapped[list["DocumentVersion"]] = relationship(back_populates="document")
     pipeline_run_items: Mapped[list["PipelineRunItem"]] = relationship(back_populates="document")
 
@@ -177,8 +185,12 @@ class PipelineRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="pipeline_runs")
-    source: Mapped[Source | None] = relationship(back_populates="pipeline_runs")
+    knowledge_base: Mapped[KnowledgeBase] = relationship(
+        back_populates="pipeline_runs", overlaps="pipeline_runs"
+    )
+    source: Mapped[Source | None] = relationship(
+        back_populates="pipeline_runs", overlaps="knowledge_base,pipeline_runs"
+    )
     items: Mapped[list["PipelineRunItem"]] = relationship(back_populates="pipeline_run")
 
 
