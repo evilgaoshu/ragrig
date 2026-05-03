@@ -213,6 +213,8 @@ DB_HOST_PORT=15433
 
 This override path must remain available for `192.168.3.100` and other shared hosts where default ports are already in use.
 
+Host-side migration and smoke commands (`make migrate`, `make db-check`) connect through `localhost:${DB_HOST_PORT}` so they work from the machine that launched Docker Compose, even though the application container still uses `DATABASE_URL=postgresql://ragrig:ragrig_dev@db:5432/ragrig` internally.
+
 ## Planned Integrations
 
 Input sources:

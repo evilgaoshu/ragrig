@@ -53,7 +53,7 @@ def evaluate_database_state(
 
 def main() -> int:
     settings = get_settings()
-    with psycopg.connect(settings.database_url) as connection:
+    with psycopg.connect(settings.runtime_database_url) as connection:
         with connection.cursor() as cursor:
             state = evaluate_database_state(cursor)
 

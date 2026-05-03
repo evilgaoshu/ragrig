@@ -64,35 +64,68 @@ docker compose exec db psql -U ragrig -d ragrig -c "SELECT extname FROM pg_exten
 
 ## Shared Environment 192.168.3.100
 
-Status at handoff time: not yet validated for EVI-29 in this run.
+Shared environment validation is complete in this run using `root@192.168.3.100`.
 
-Current blocker:
+Validated checkout:
 
-- this run has not yet produced `192.168.3.100` migration evidence for the EVI-29 schema changes
-- prior EVI-28 evidence proves the host and port-override path can work, but it is not sufficient as EVI-29 acceptance evidence
+- Host: `192.168.3.100`
+- User: `root`
+- Path: `/root/ragrig-phase1a-evi29`
+- Tested source commit synced from local branch head during validation: `ee7753f953693a846a250adca23f022d042c2f8f`
+- Effective host DB port: `35433`
 
-Required follow-up validation on `192.168.3.100`:
+Commands run:
 
 ```bash
+export PATH="/root/.local/bin:$PATH"
+/root/.local/bin/uv sync --dev
 cp .env.example .env
-# if 5432 is occupied on the host, override DB_HOST_PORT in .env
+# auto-selected an unused host port and wrote DB_HOST_PORT=35433 into .env
 docker compose up --build -d db
-make migrate
-make db-check
+make UV=/root/.local/bin/uv migrate
+make UV=/root/.local/bin/uv db-check
 docker compose exec db psql -U ragrig -d ragrig -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
 docker compose exec db psql -U ragrig -d ragrig -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;"
+docker compose exec db psql -U ragrig -d ragrig -c "SELECT version_num FROM alembic_version;"
+docker compose ps
 ```
 
-Expected evidence to record:
+Observed result:
 
-- active checkout path and tested commit SHA
-- `make migrate` success output
-- `make db-check` JSON showing `current_revision: 20260503_0001`, `revision_matches_head: true`, and empty `missing_tables`
-- `pg_extension` query returning `vector`
-- note whether `DB_HOST_PORT` override was required on the host
+- `make migrate` completed successfully and applied revision `20260503_0001`
+- `make db-check` returned:
+
+```json
+{
+  "current_revision": "20260503_0001",
+  "extension": "vector",
+  "missing_tables": [],
+  "present_tables": [
+    "chunks",
+    "document_versions",
+    "documents",
+    "embeddings",
+    "knowledge_bases",
+    "pipeline_run_items",
+    "pipeline_runs",
+    "sources"
+  ],
+  "revision_matches_head": true
+}
+```
+
+- `pg_extension` query returned `vector`
+- `pg_tables` query returned `alembic_version` plus all eight required Phase 1a tables
+- `alembic_version` query returned `20260503_0001`
+- `docker compose ps` showed `db` healthy on `0.0.0.0:35433->5432/tcp`
+
+Notes:
+
+- `15433` and `25433` were already occupied on the host, so this run used `DB_HOST_PORT=35433`
+- This run exposed and fixed a real host-side verification bug: `make migrate` and `make db-check` originally used `DATABASE_URL` with host `db`, which only resolves inside Compose networking. The implementation now derives host-side verification URLs from `localhost:${DB_HOST_PORT}` while keeping the app container path unchanged.
 
 ## Downgrade Check
 
-The first Alembic revision includes `downgrade()` and is intended to support `make migrate-down` after an `upgrade head` run.
+The first Alembic revision includes `downgrade()` and local SQL rendering verification for `uv run alembic downgrade 20260503_0001:base --sql` succeeded during this run.
 
-This downgrade path is implemented but not yet replay-verified in a live DB during this run because the same Docker availability blocker prevented local and shared-host migration execution.
+Live downgrade replay against the shared DB was not executed because the acceptance path for this issue only required proving `upgrade head`, table presence, `pgvector` availability, and current revision at the validated commit. The downgrade implementation remains present and SQL-renderable.
