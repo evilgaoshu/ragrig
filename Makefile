@@ -1,6 +1,9 @@
 UV ?= uv
 
-.PHONY: sync format lint test test-db migrate migrate-down db-check db-shell run up down logs
+.PHONY: sync format lint test test-db migrate migrate-down db-check db-shell run up down logs ingest-local ingest-local-dry-run ingest-check
+
+INGEST_KB ?= fixture-local
+INGEST_ROOT ?= tests/fixtures/local_ingestion
 
 sync:
 	$(UV) sync --dev
@@ -40,3 +43,12 @@ down:
 
 logs:
 	docker compose logs -f
+
+ingest-local:
+	$(UV) run python -m scripts.ingest_local --knowledge-base "$(INGEST_KB)" --root-path "$(INGEST_ROOT)"
+
+ingest-local-dry-run:
+	$(UV) run python -m scripts.ingest_local --knowledge-base "$(INGEST_KB)" --root-path "$(INGEST_ROOT)" --dry-run
+
+ingest-check:
+	$(UV) run python -m scripts.ingest_check --knowledge-base "$(INGEST_KB)"

@@ -57,13 +57,15 @@ Current implementation status:
 1. Phase 0 docs and project framing are committed.
 2. Phase 1a scaffold provides a FastAPI service, local Docker Compose stack, pgvector-enabled PostgreSQL, and verification commands.
 3. Phase 1a metadata DB adds SQLAlchemy models, Alembic migrations, and DB smoke commands for the MVP metadata boundary.
-4. Ingestion, parsing, chunking, embedding, indexing, and retrieval remain intentionally unimplemented in this repository state.
+4. Phase 1b now supports local Markdown/Text ingestion into the metadata DB, including `document_versions` and pipeline-run tracking.
+5. Chunking, embedding, indexing, retrieval, and richer source types remain intentionally unimplemented in this repository state.
 
 Authoritative specs:
 
 - [MVP spec](./docs/specs/ragrig-mvp-spec.md)
 - [Phase 1a scaffold spec](./docs/specs/ragrig-phase-1a-scaffold-spec.md)
 - [Phase 1a metadata DB spec](./docs/specs/ragrig-phase-1a-metadata-db-spec.md)
+- [Phase 1b local ingestion spec](./docs/specs/ragrig-phase-1b-local-ingestion-spec.md)
 
 ## Phase 1a Foundation
 
@@ -80,15 +82,20 @@ Phase 1a currently ships the engineering scaffold and metadata database foundati
 - Docker Compose for the app and PostgreSQL with pgvector
 - smoke commands for migration and schema validation
 
-Reserved but intentionally empty package boundaries:
+Phase 1b adds these implemented boundaries:
 
+- `src/ragrig/ingestion`
 - `src/ragrig/parsers`
+- `src/ragrig/repositories`
+
+Still reserved for later phases:
+
 - `src/ragrig/cleaners`
 - `src/ragrig/chunkers`
 - `src/ragrig/embeddings`
 - `src/ragrig/vectorstore`
 
-These directories are placeholders only. They do not imply that parsing, cleaning, chunking, embedding, or vector indexing are implemented yet.
+Only local Markdown/Text parsing is implemented in this repository state. Cleaning, chunking, embedding, and vector indexing are still deferred.
 
 ## Quick Start
 
@@ -152,15 +159,55 @@ These directories are placeholders only. They do not imply that parsing, cleanin
      ],
      "revision_matches_head": true
     }
+    ```
+
+8. Preview the local ingestion fixture without writing to the database:
+
+   ```bash
+   make ingest-local-dry-run
    ```
 
-8. Start the full local development stack when you also want the API service:
+9. Ingest the local Markdown/Text fixture into the database:
+
+   ```bash
+   make ingest-local
+   ```
+
+10. Query the latest local-ingestion run summary:
+
+   ```bash
+   make ingest-check
+   ```
+
+   Expected output shape:
+
+   ```json
+   {
+     "counts": {
+       "document_versions": 4,
+       "documents": 5,
+       "pipeline_run_items": 5,
+       "sources": 1
+     },
+     "knowledge_base": {
+       "name": "fixture-local"
+     },
+     "latest_pipeline_run": {
+       "failure_count": 0,
+       "status": "completed",
+       "success_count": 4,
+       "total_items": 5
+     }
+   }
+   ```
+
+11. Start the full local development stack when you also want the API service:
 
    ```bash
     docker compose up --build
    ```
 
-9. Verify the service and pgvector bootstrap:
+12. Verify the service and pgvector bootstrap:
 
    ```bash
    curl http://localhost:8000/health
@@ -193,6 +240,9 @@ Repository-level DB commands:
 - `make db-check`: verify `pgvector` extension, required Phase 1a tables, and Alembic head revision
 - `make db-shell`: open `psql` in the Compose database container
 - `make test-db`: alias for the DB smoke check
+- `make ingest-local-dry-run`: preview scanned files and skip reasons without DB writes
+- `make ingest-local`: ingest the local fixture corpus or an overridden root path into the metadata DB
+- `make ingest-check`: query the latest local-ingestion run and document-version evidence
 
 Fresh-clone schema verification path:
 
@@ -214,6 +264,55 @@ DB_HOST_PORT=15433
 This override path must remain available for `192.168.3.100` and other shared hosts where default ports are already in use.
 
 Host-side migration and smoke commands (`make migrate`, `make db-check`) connect through `localhost:${DB_HOST_PORT}` so they work from the machine that launched Docker Compose, even though the application container still uses `DATABASE_URL=postgresql://ragrig:ragrig_dev@db:5432/ragrig` internally.
+
+The same host-side runtime URL rule also applies to `make ingest-local` and `make ingest-check`, so shared-host verification can use alternate mapped DB ports without rewriting the app container path.
+
+## Local Ingestion
+
+Phase 1b currently implements the smallest reproducible local ingestion loop for Markdown and plain text files.
+
+What it does:
+
+- scans an explicit local root path
+- applies include and exclude glob filters
+- skips excluded, oversized, unsupported, and binary files with recorded reasons
+- parses UTF-8 Markdown and text files
+- computes SHA-256 file hashes
+- writes `sources`, `documents`, `document_versions`, `pipeline_runs`, and `pipeline_run_items`
+- avoids duplicate `document_versions` when the file content hash has not changed
+
+What it does not do yet:
+
+- chunking
+- embeddings or pgvector writes
+- retrieval APIs
+- deletion cleanup or tombstones
+
+Default fixture path:
+
+```bash
+tests/fixtures/local_ingestion
+```
+
+Custom run example:
+
+```bash
+uv run python -m scripts.ingest_local \
+  --knowledge-base demo \
+  --root-path tests/fixtures/local_ingestion \
+  --include "*.md" \
+  --include "*.txt" \
+  --exclude "nested/*"
+```
+
+Dry-run example:
+
+```bash
+uv run python -m scripts.ingest_local \
+  --knowledge-base demo \
+  --root-path tests/fixtures/local_ingestion \
+  --dry-run
+```
 
 ## Planned Integrations
 
@@ -258,12 +357,17 @@ Model providers:
 │   ├── ragrig-icon.png
 │   └── ragrig-icon.svg
 ├── docs/
+│   ├── operations/
 │   ├── roadmap.md
 │   └── specs/
 │       ├── ragrig-mvp-spec.md
-│       └── ragrig-phase-1a-scaffold-spec.md
+│       ├── ragrig-phase-1a-metadata-db-spec.md
+│       ├── ragrig-phase-1a-scaffold-spec.md
+│       └── ragrig-phase-1b-local-ingestion-spec.md
 ├── scripts/
 │   ├── db_check.py
+│   ├── ingest_check.py
+│   ├── ingest_local.py
 │   └── init-db.sql
 ├── src/
 │   └── ragrig/
@@ -271,19 +375,25 @@ Model providers:
 │       │   ├── engine.py
 │       │   ├── models/
 │       │   └── session.py
+│       ├── ingestion/
 │       ├── main.py
 │       ├── config.py
 │       ├── chunkers/
 │       ├── cleaners/
 │       ├── embeddings/
 │       ├── parsers/
+│       └── repositories/
 │       └── vectorstore/
 ├── tests/
+│   ├── fixtures/
 │   ├── test_db_check.py
 │   ├── test_db_config.py
 │   ├── test_db_models.py
 │   ├── test_db_session.py
-│   └── test_health.py
+│   ├── test_health.py
+│   ├── test_ingestion_pipeline.py
+│   ├── test_parsers.py
+│   └── test_scanner.py
 ├── .env.example
 ├── alembic.ini
 ├── docker-compose.yml

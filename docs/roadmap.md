@@ -19,13 +19,25 @@ Phase 1 starts with a scaffold-only checkpoint before the first end-to-end inges
 - Add typed configuration, env example, lint/format/test commands, and minimal health-check tests.
 - Keep ingestion, parsing, chunking, embedding, and retrieval as later follow-up issues.
 
-- Ingest local files and folders.
-- Parse Markdown, plain text, PDF, DOCX, PPTX, and XLSX.
-- Run configurable cleaning and normalization steps.
-- Create chunks with metadata and stable source references.
+### Phase 1b: Local Ingestion Foundation
+
+- Ingest explicit local fixture directories into a named knowledge base.
+- Parse Markdown and plain text into real `document_versions`.
+- Record pipeline runs, file-level skip reasons, and file-level failures.
+- Keep host-side Compose DB port override support for shared-machine verification.
+- Defer chunking, embedding, retrieval, PDF, and richer connectors to later issues.
+
+### Phase 1c: Retrieval Loop Completion
+
+- Add deterministic cleaning and chunking.
 - Generate embeddings.
-- Index into Qdrant and pgvector.
+- Index into pgvector.
 - Provide a retrieval API with citations.
+
+### Phase 1d: Source And Format Expansion
+
+- Add PDF, DOCX, PPTX, and XLSX parsing.
+- Expand source connectors beyond local directories.
 
 ## Phase 2: Governance Core
 

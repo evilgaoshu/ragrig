@@ -1,0 +1,1 @@
+Local ingestion fixture for plain text parsing.
