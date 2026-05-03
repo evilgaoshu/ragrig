@@ -1,0 +1,824 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>RAGRig Web Console Prototype</title>
+    <style>
+      :root {
+        --ink: #18202f;
+        --muted: #6a7281;
+        --line: #d9dee7;
+        --paper: #f7f5ef;
+        --panel: #fffdf7;
+        --panel-2: #f2efe6;
+        --teal: #0f9488;
+        --teal-soft: #d8f3ee;
+        --blue: #246bfe;
+        --blue-soft: #e6edff;
+        --amber: #c97805;
+        --amber-soft: #fff0c8;
+        --red: #bd3d35;
+        --green: #217b4f;
+        --shadow: 0 18px 42px rgba(28, 35, 49, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        background:
+          linear-gradient(90deg, rgba(24, 32, 47, 0.04) 1px, transparent 1px),
+          linear-gradient(180deg, rgba(24, 32, 47, 0.04) 1px, transparent 1px),
+          var(--paper);
+        background-size: 28px 28px;
+        font-family: "Aptos", "Avenir Next", "Helvetica Neue", sans-serif;
+        letter-spacing: 0;
+      }
+
+      .shell {
+        display: grid;
+        grid-template-columns: 252px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+
+      .sidebar {
+        padding: 28px 20px;
+        background: #172033;
+        color: #f9fafb;
+        border-right: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 30px;
+      }
+
+      .brand img {
+        width: 44px;
+        height: 44px;
+      }
+
+      .brand-title {
+        font-size: 20px;
+        font-weight: 850;
+        line-height: 1;
+      }
+
+      .brand-subtitle {
+        margin-top: 4px;
+        color: #aeb8c8;
+        font-size: 12px;
+      }
+
+      .nav-label {
+        margin: 26px 10px 10px;
+        color: #7f8ba1;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 38px;
+        padding: 0 10px;
+        margin: 2px 0;
+        color: #d4dbea;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+
+      .nav-icon {
+        display: grid;
+        place-items: center;
+        width: 22px;
+        height: 22px;
+        color: #9fb0c9;
+        font-size: 14px;
+      }
+
+      .nav-item.active {
+        color: #10202c;
+        background: #bff4e8;
+        font-weight: 800;
+      }
+
+      .sidebar-footer {
+        margin-top: 34px;
+        padding: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+        color: #c8d2e3;
+        background: rgba(255, 255, 255, 0.04);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .main {
+        padding: 28px 34px 38px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 24px;
+      }
+
+      .title-block h1 {
+        margin: 0;
+        font-size: 32px;
+        line-height: 1.1;
+      }
+
+      .title-block p {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        height: 38px;
+        padding: 0 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--ink);
+        background: var(--panel);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .button.primary {
+        border-color: #101827;
+        color: #fff;
+        background: #101827;
+      }
+
+      .status-strip {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+
+      .status {
+        min-height: 90px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: 0 8px 18px rgba(24, 32, 47, 0.05);
+      }
+
+      .status-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--green);
+      }
+
+      .dot.warn {
+        background: var(--amber);
+      }
+
+      .status strong {
+        display: block;
+        font-size: 22px;
+        line-height: 1;
+      }
+
+      .status span {
+        display: block;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1.18fr 0.82fr;
+        gap: 18px;
+        align-items: start;
+      }
+
+      .column {
+        display: grid;
+        gap: 18px;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 253, 247, 0.96);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 54px;
+        padding: 0 18px;
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(180deg, #fffdf7, #f7f1e3);
+      }
+
+      .panel-title {
+        font-size: 15px;
+        font-weight: 850;
+      }
+
+      .panel-meta {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th {
+        height: 38px;
+        padding: 0 16px;
+        color: var(--muted);
+        background: #fbf8ef;
+        border-bottom: 1px solid var(--line);
+        font-size: 11px;
+        text-align: left;
+        text-transform: uppercase;
+      }
+
+      td {
+        height: 56px;
+        padding: 0 16px;
+        border-bottom: 1px solid #ece8df;
+        font-size: 13px;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .name {
+        font-weight: 820;
+      }
+
+      .sub {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        height: 24px;
+        padding: 0 8px;
+        border-radius: 999px;
+        background: var(--blue-soft);
+        color: #1842a1;
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .pill.teal {
+        color: #086257;
+        background: var(--teal-soft);
+      }
+
+      .pill.amber {
+        color: #7a4800;
+        background: var(--amber-soft);
+      }
+
+      .timeline {
+        padding: 8px 18px 18px;
+      }
+
+      .run {
+        display: grid;
+        grid-template-columns: 86px minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: center;
+        min-height: 66px;
+        border-bottom: 1px solid #ece8df;
+      }
+
+      .run:last-child {
+        border-bottom: 0;
+      }
+
+      .time {
+        color: var(--muted);
+        font-family: "SFMono-Regular", "Cascadia Code", monospace;
+        font-size: 12px;
+      }
+
+      .bar {
+        width: 132px;
+        height: 8px;
+        border-radius: 999px;
+        background: #e6e1d7;
+        overflow: hidden;
+      }
+
+      .bar span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--teal), var(--amber));
+      }
+
+      .source-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        padding: 16px 18px 18px;
+      }
+
+      .source {
+        min-height: 76px;
+        padding: 12px;
+        border: 1px solid #e1ded4;
+        border-radius: 8px;
+        background: #fffefa;
+      }
+
+      .source-type {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .source-name {
+        margin-top: 8px;
+        font-weight: 850;
+        font-size: 13px;
+      }
+
+      .review-list {
+        padding: 10px 18px 18px;
+      }
+
+      .review-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        padding: 12px 0;
+        border-bottom: 1px solid #ece8df;
+      }
+
+      .review-item:last-child {
+        border-bottom: 0;
+      }
+
+      .preview {
+        padding: 16px 18px 18px;
+      }
+
+      .query {
+        padding: 14px;
+        border: 1px solid #ded9cd;
+        border-radius: 8px;
+        background: #fffefa;
+      }
+
+      .query-text {
+        color: #263247;
+        font-size: 14px;
+        font-weight: 760;
+      }
+
+      .result {
+        margin-top: 12px;
+        padding: 12px;
+        border-left: 4px solid var(--teal);
+        background: #f4fbf8;
+        font-size: 13px;
+        line-height: 1.48;
+      }
+
+      .scoreline {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 10px;
+        color: var(--muted);
+        font-family: "SFMono-Regular", "Cascadia Code", monospace;
+        font-size: 11px;
+      }
+
+      .model-stack {
+        padding: 14px 18px 18px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .model-row {
+        display: grid;
+        grid-template-columns: 92px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        min-height: 38px;
+        font-size: 13px;
+      }
+
+      .metric {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        padding: 18px;
+      }
+
+      .metric strong {
+        font-size: 42px;
+        line-height: 1;
+      }
+
+      .spark {
+        position: relative;
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        align-items: end;
+        gap: 6px;
+        width: 168px;
+        height: 58px;
+      }
+
+      .spark span {
+        display: block;
+        border-radius: 999px 999px 4px 4px;
+        background: linear-gradient(180deg, var(--teal), var(--amber));
+      }
+
+      @media (max-width: 1100px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar {
+          display: none;
+        }
+
+        .status-strip,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .source-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="sidebar">
+        <div class="brand">
+          <img src="../../../assets/ragrig-icon.svg" alt="RAGRig logo">
+          <div>
+            <div class="brand-title">RAGRig</div>
+            <div class="brand-subtitle">source-governed RAG</div>
+          </div>
+        </div>
+
+        <div class="nav-label">Operate</div>
+        <div class="nav-item active"><span class="nav-icon">*</span>Overview</div>
+        <div class="nav-item"><span class="nav-icon">#</span>Knowledge Bases</div>
+        <div class="nav-item"><span class="nav-icon">@</span>Sources</div>
+        <div class="nav-item"><span class="nav-icon">R</span>Pipelines</div>
+        <div class="nav-item"><span class="nav-icon">D</span>Documents</div>
+
+        <div class="nav-label">Improve</div>
+        <div class="nav-item"><span class="nav-icon">?</span>Retrieval Lab</div>
+        <div class="nav-item"><span class="nav-icon">M</span>Models</div>
+        <div class="nav-item"><span class="nav-icon">V</span>Evaluation</div>
+
+        <div class="nav-label">Control</div>
+        <div class="nav-item"><span class="nav-icon">S</span>Settings</div>
+        <div class="nav-item"><span class="nav-icon">A</span>Audit</div>
+
+        <div class="sidebar-footer">
+          pgvector primary<br>
+          Qdrant adapter planned<br>
+          API healthy on :8000
+        </div>
+      </div>
+
+      <div class="main">
+        <div class="topbar">
+          <div class="title-block">
+            <h1>Knowledge Operations</h1>
+            <p>Workspace overview for governed ingestion, review, retrieval, and evaluation.</p>
+          </div>
+          <div class="actions">
+            <div class="button">Open Retrieval Lab</div>
+            <div class="button primary">Run Ingestion</div>
+          </div>
+        </div>
+
+        <div class="status-strip" aria-label="System status">
+          <div class="status">
+            <div class="status-head">API <span class="dot"></span></div>
+            <strong>Healthy</strong>
+            <span>FastAPI 0.1.0</span>
+          </div>
+          <div class="status">
+            <div class="status-head">Database <span class="dot"></span></div>
+            <strong>pgvector</strong>
+            <span>7 core tables</span>
+          </div>
+          <div class="status">
+            <div class="status-head">Pipeline <span class="dot warn"></span></div>
+            <strong>1 warn</strong>
+            <span>2 files skipped</span>
+          </div>
+          <div class="status">
+            <div class="status-head">Models <span class="dot"></span></div>
+            <strong>3 online</strong>
+            <span>BGE + reranker</span>
+          </div>
+          <div class="status">
+            <div class="status-head">Quality <span class="dot"></span></div>
+            <strong>82%</strong>
+            <span>citation coverage</span>
+          </div>
+        </div>
+
+        <div class="grid">
+          <div class="column">
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Knowledge Bases</div>
+                <div class="panel-meta">3 active</div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Backend</th>
+                    <th>Documents</th>
+                    <th>Chunks</th>
+                    <th>Quality</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>
+                      <div class="name">Ops Handbook</div>
+                      <div class="sub">owner: platform</div>
+                    </td>
+                    <td><span class="pill teal">pgvector</span></td>
+                    <td>248</td>
+                    <td>4,920</td>
+                    <td><span class="pill teal">stable</span></td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="name">Sales Enablement</div>
+                      <div class="sub">owner: revenue</div>
+                    </td>
+                    <td><span class="pill">qdrant-ready</span></td>
+                    <td>91</td>
+                    <td>1,788</td>
+                    <td><span class="pill amber">review</span></td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div class="name">Security Policies</div>
+                      <div class="sub">owner: security</div>
+                    </td>
+                    <td><span class="pill teal">pgvector</span></td>
+                    <td>37</td>
+                    <td>842</td>
+                    <td><span class="pill teal">stable</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Latest Pipeline Runs</div>
+                <div class="panel-meta">local ingestion</div>
+              </div>
+              <div class="timeline">
+                <div class="run">
+                  <div class="time">15:42</div>
+                  <div>
+                    <div class="name">/docs/ops refreshed</div>
+                    <div class="sub">126 success · 2 skipped · 0 failed</div>
+                  </div>
+                  <div class="bar"><span style="width: 93%"></span></div>
+                </div>
+                <div class="run">
+                  <div class="time">14:18</div>
+                  <div>
+                    <div class="name">sales-wiki markdown sync</div>
+                    <div class="sub">42 success · 8 unchanged · 1 failed</div>
+                  </div>
+                  <div class="bar"><span style="width: 78%"></span></div>
+                </div>
+                <div class="run">
+                  <div class="time">11:05</div>
+                  <div>
+                    <div class="name">security policy dry run</div>
+                    <div class="sub">37 discovered · no writes</div>
+                  </div>
+                  <div class="bar"><span style="width: 64%"></span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Data Source Configuration</div>
+                <div class="panel-meta">local directory</div>
+              </div>
+              <div class="source-grid">
+                <div class="source">
+                  <div class="source-type">knowledge base</div>
+                  <div class="source-name">Ops Handbook</div>
+                  <div class="sub">owner: platform</div>
+                </div>
+                <div class="source">
+                  <div class="source-type">root path</div>
+                  <div class="source-name">/workspace/docs</div>
+                  <div class="sub">manual schedule</div>
+                </div>
+                <div class="source">
+                  <div class="source-type">patterns</div>
+                  <div class="source-name">*.md, *.txt</div>
+                  <div class="sub">exclude node_modules</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Local File / Markdown Ingestion</div>
+                <div class="panel-meta">task builder</div>
+              </div>
+              <div class="timeline">
+                <div class="run">
+                  <div class="time">mode</div>
+                  <div>
+                    <div class="name">Dry run before write</div>
+                    <div class="sub">discover supported Markdown and text files</div>
+                  </div>
+                  <span class="pill amber">enabled</span>
+                </div>
+                <div class="run">
+                  <div class="time">limit</div>
+                  <div>
+                    <div class="name">10 MiB max file size</div>
+                    <div class="sub">write documents, versions, run items on commit</div>
+                  </div>
+                  <span class="pill teal">ready</span>
+                </div>
+                <div class="run">
+                  <div class="time">scan</div>
+                  <div>
+                    <div class="name">126 discovered · 2 skipped</div>
+                    <div class="sub">binary and unsupported extension skipped</div>
+                  </div>
+                  <div class="bar"><span style="width: 91%"></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="column">
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Document / Chunk Preview</div>
+                <div class="panel-meta">version v3</div>
+              </div>
+              <div class="review-list">
+                <div class="review-item">
+                  <div>
+                    <div class="name">security-reporting.md</div>
+                    <div class="sub">parser: markdown · sha256: 91af...c20e</div>
+                  </div>
+                  <span class="pill teal">parsed</span>
+                </div>
+                <div class="review-item">
+                  <div>
+                    <div class="name">Extracted preview</div>
+                    <div class="sub">Report security issues through the private disclosure channel...</div>
+                  </div>
+                  <span class="pill">md</span>
+                </div>
+                <div class="review-item">
+                  <div>
+                    <div class="name">Chunk 12</div>
+                    <div class="sub">chars 482-716 · heading: Security Reporting</div>
+                  </div>
+                  <span class="pill amber">preview</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Retrieval Debugging Playground</div>
+                <div class="panel-meta">evidence-only</div>
+              </div>
+              <div class="preview">
+                <div class="query">
+                  <div class="query-text">How do we report security issues?</div>
+                  <div class="result">
+                    Security reports should be sent through the private disclosure channel and include affected component, reproduction steps, and impact summary.
+                    <div class="scoreline">
+                      <span>chunk 12 · v3 · score 0.87</span>
+                      <span>security-reporting.md</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Model Configuration</div>
+                <div class="panel-meta">routing profile</div>
+              </div>
+              <div class="model-stack">
+                <div class="model-row">
+                  <span class="pill teal">embed</span>
+                  <div class="name">BAAI/bge-m3</div>
+                  <div class="sub">1024d</div>
+                </div>
+                <div class="model-row">
+                  <span class="pill">rerank</span>
+                  <div class="name">bge-reranker-v2-m3</div>
+                  <div class="sub">top 10</div>
+                </div>
+                <div class="model-row">
+                  <span class="pill amber">llm</span>
+                  <div class="name">local 4B Q4</div>
+                  <div class="sub">offline</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div class="panel-title">Evaluation</div>
+                <div class="panel-meta">last 7 runs</div>
+              </div>
+              <div class="metric">
+                <div>
+                  <strong>82%</strong>
+                  <div class="sub">citation coverage</div>
+                </div>
+                <div class="spark" aria-hidden="true">
+                  <span style="height: 18px"></span>
+                  <span style="height: 26px"></span>
+                  <span style="height: 24px"></span>
+                  <span style="height: 34px"></span>
+                  <span style="height: 31px"></span>
+                  <span style="height: 38px"></span>
+                  <span style="height: 43px"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

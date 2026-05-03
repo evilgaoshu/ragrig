@@ -66,6 +66,8 @@ Authoritative specs:
 - [Phase 1a scaffold spec](./docs/specs/ragrig-phase-1a-scaffold-spec.md)
 - [Phase 1a metadata DB spec](./docs/specs/ragrig-phase-1a-metadata-db-spec.md)
 - [Phase 1b local ingestion spec](./docs/specs/ragrig-phase-1b-local-ingestion-spec.md)
+- [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
+- [Web Console prototype](./docs/prototypes/web-console/index.html)
 
 ## Phase 1a Foundation
 
