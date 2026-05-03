@@ -10,6 +10,15 @@ This roadmap captures the first product shape for RAGRig. It is intentionally sm
 
 ## Phase 1: Minimal RAG Pipeline
 
+Phase 1 starts with a scaffold-only checkpoint before the first end-to-end ingestion loop lands.
+
+### Phase 1a: Scaffold and Developer Workflow
+
+- Commit the Python/FastAPI project skeleton.
+- Ship Docker Compose for app + PostgreSQL/pgvector.
+- Add typed configuration, env example, lint/format/test commands, and minimal health-check tests.
+- Keep ingestion, parsing, chunking, embedding, and retrieval as later follow-up issues.
+
 - Ingest local files and folders.
 - Parse Markdown, plain text, PDF, DOCX, PPTX, and XLSX.
 - Run configurable cleaning and normalization steps.
