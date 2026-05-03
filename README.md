@@ -58,7 +58,8 @@ Current implementation status:
 2. Phase 1a scaffold provides a FastAPI service, local Docker Compose stack, pgvector-enabled PostgreSQL, and verification commands.
 3. Phase 1a metadata DB adds SQLAlchemy models, Alembic migrations, and DB smoke commands for the MVP metadata boundary.
 4. Phase 1b now supports local Markdown/Text ingestion into the metadata DB, including `document_versions` and pipeline-run tracking.
-5. Chunking, embedding, indexing, retrieval, and richer source types remain intentionally unimplemented in this repository state.
+5. Phase 1c now supports deterministic local chunking and embedding into `chunks` and `embeddings` for the latest ingested document versions.
+6. Retrieval APIs, semantic embeddings, and richer source types remain intentionally unimplemented in this repository state.
 
 Authoritative specs:
 
@@ -66,6 +67,7 @@ Authoritative specs:
 - [Phase 1a scaffold spec](./docs/specs/ragrig-phase-1a-scaffold-spec.md)
 - [Phase 1a metadata DB spec](./docs/specs/ragrig-phase-1a-metadata-db-spec.md)
 - [Phase 1b local ingestion spec](./docs/specs/ragrig-phase-1b-local-ingestion-spec.md)
+- [Phase 1c chunking and embedding spec](./docs/specs/ragrig-phase-1c-chunking-embedding-spec.md)
 
 ## Phase 1a Foundation
 
@@ -82,20 +84,21 @@ Phase 1a currently ships the engineering scaffold and metadata database foundati
 - Docker Compose for the app and PostgreSQL with pgvector
 - smoke commands for migration and schema validation
 
-Phase 1b adds these implemented boundaries:
+Phase 1b and Phase 1c add these implemented boundaries:
 
 - `src/ragrig/ingestion`
 - `src/ragrig/parsers`
 - `src/ragrig/repositories`
+- `src/ragrig/chunkers`
+- `src/ragrig/embeddings`
+- `src/ragrig/indexing`
 
 Still reserved for later phases:
 
 - `src/ragrig/cleaners`
-- `src/ragrig/chunkers`
-- `src/ragrig/embeddings`
 - `src/ragrig/vectorstore`
 
-Only local Markdown/Text parsing is implemented in this repository state. Cleaning, chunking, embedding, and vector indexing are still deferred.
+The current repository state supports local Markdown/Text parsing, character-window chunking, and deterministic local embeddings for pgvector-backed smoke validation. Retrieval and production embedding providers are still deferred.
 
 ## Quick Start
 
@@ -198,10 +201,47 @@ Only local Markdown/Text parsing is implemented in this repository state. Cleani
        "success_count": 4,
        "total_items": 5
      }
-   }
-   ```
+    }
+    ```
 
-11. Start the full local development stack when you also want the API service:
+11. Chunk and embed the latest ingested document versions:
+
+    ```bash
+    make index-local
+    ```
+
+12. Query the latest chunking and embedding run summary:
+
+    ```bash
+    make index-check
+    ```
+
+    Expected output shape:
+
+    ```json
+    {
+      "counts": {
+        "chunks": 4,
+        "embeddings": 4
+      },
+      "embedding_dimensions": [
+        {
+          "count": 4,
+          "dimensions": 8,
+          "model": "hash-8d",
+          "provider": "deterministic-local"
+        }
+      ],
+      "latest_pipeline_run": {
+        "failure_count": 0,
+        "status": "completed",
+        "success_count": 3,
+        "total_items": 4
+      }
+    }
+    ```
+
+13. Start the full local development stack when you also want the API service:
 
    ```bash
     docker compose up --build
@@ -243,6 +283,8 @@ Repository-level DB commands:
 - `make ingest-local-dry-run`: preview scanned files and skip reasons without DB writes
 - `make ingest-local`: ingest the local fixture corpus or an overridden root path into the metadata DB
 - `make ingest-check`: query the latest local-ingestion run and document-version evidence
+- `make index-local`: chunk and embed the latest ingested document versions for the chosen knowledge base
+- `make index-check`: query the latest chunk and embedding run, counts, spans, and embedding dimensions
 
 Fresh-clone schema verification path:
 
