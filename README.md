@@ -56,23 +56,29 @@ Current implementation status:
 
 1. Phase 0 docs and project framing are committed.
 2. Phase 1a scaffold provides a FastAPI service, local Docker Compose stack, pgvector-enabled PostgreSQL, and verification commands.
-3. Ingestion, parsing, chunking, embedding, indexing, and retrieval remain intentionally unimplemented in this repository state.
+3. Phase 1a metadata DB adds SQLAlchemy models, Alembic migrations, and DB smoke commands for the MVP metadata boundary.
+4. Ingestion, parsing, chunking, embedding, indexing, and retrieval remain intentionally unimplemented in this repository state.
 
 Authoritative specs:
 
 - [MVP spec](./docs/specs/ragrig-mvp-spec.md)
 - [Phase 1a scaffold spec](./docs/specs/ragrig-phase-1a-scaffold-spec.md)
+- [Phase 1a metadata DB spec](./docs/specs/ragrig-phase-1a-metadata-db-spec.md)
 
-## Phase 1a Scaffold
+## Phase 1a Foundation
 
-Phase 1a currently ships only the engineering scaffold required for follow-on ingestion and retrieval work:
+Phase 1a currently ships the engineering scaffold and metadata database foundation required for follow-on ingestion and retrieval work:
 
 - Python 3.11+ service with FastAPI
 - typed settings via `pydantic-settings`
 - `GET /health` with explicit app and database status
+- SQLAlchemy 2.x models for the metadata boundary from MVP Section 12
+- Alembic migrations rooted at `alembic/`
+- pgvector-backed `embeddings` table with dynamic dimensions metadata
 - `uv`-managed dependencies in `pyproject.toml`
 - `ruff` format/lint commands and `pytest` tests
 - Docker Compose for the app and PostgreSQL with pgvector
+- smoke commands for migration and schema validation
 
 Reserved but intentionally empty package boundaries:
 
@@ -109,20 +115,61 @@ These directories are placeholders only. They do not imply that parsing, cleanin
    make test
    ```
 
-5. Start the local development stack:
+5. Start the database service:
 
    ```bash
-   docker compose up --build
+   docker compose up --build -d db
    ```
 
-6. Verify the service and pgvector bootstrap:
+6. Run the initial migration:
+
+   ```bash
+   make migrate
+   ```
+
+7. Verify the extension and schema:
+
+   ```bash
+   make db-check
+   ```
+
+   Expected output shape:
+
+   ```json
+   {
+     "current_revision": "20260503_0001",
+     "extension": "vector",
+     "missing_tables": [],
+      "present_tables": [
+        "chunks",
+        "document_versions",
+       "documents",
+       "embeddings",
+       "knowledge_bases",
+        "pipeline_run_items",
+        "pipeline_runs",
+        "sources"
+     ],
+     "revision_matches_head": true
+    }
+   ```
+
+8. Start the full local development stack when you also want the API service:
+
+   ```bash
+    docker compose up --build
+   ```
+
+9. Verify the service and pgvector bootstrap:
 
    ```bash
    curl http://localhost:8000/health
    docker compose exec db psql -U ragrig -d ragrig -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
+   docker compose exec db psql -U ragrig -d ragrig -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;"
    ```
 
-   If you changed `APP_HOST_PORT`, use that port in the `curl` command.
+    If you changed `APP_HOST_PORT`, use that port in the `curl` command.
+    If you changed `DB_HOST_PORT`, keep using `docker compose exec db ...`; no command change is required.
 
 Expected healthy response:
 
@@ -136,6 +183,35 @@ Expected healthy response:
 ```
 
 If PostgreSQL is unavailable, `/health` returns `503` with a clear error payload.
+
+## Database Commands
+
+Repository-level DB commands:
+
+- `make migrate`: apply Alembic migrations to head
+- `make migrate-down`: roll back one migration step
+- `make db-check`: verify `pgvector` extension, required Phase 1a tables, and Alembic head revision
+- `make db-shell`: open `psql` in the Compose database container
+- `make test-db`: alias for the DB smoke check
+
+Fresh-clone schema verification path:
+
+```bash
+make sync
+cp .env.example .env
+docker compose up --build -d db
+make migrate
+make db-check
+```
+
+The Compose file still supports shared-machine port overrides through `.env`, for example:
+
+```bash
+APP_HOST_PORT=18000
+DB_HOST_PORT=15433
+```
+
+This override path must remain available for `192.168.3.100` and other shared hosts where default ports are already in use.
 
 ## Planned Integrations
 
@@ -172,6 +248,10 @@ Model providers:
 
 ```text
 .
+├── alembic/
+│   ├── env.py
+│   └── versions/
+│       └── 20260503_0001_phase_1a_metadata_schema.py
 ├── assets/
 │   ├── ragrig-icon.png
 │   └── ragrig-icon.svg
@@ -181,9 +261,14 @@ Model providers:
 │       ├── ragrig-mvp-spec.md
 │       └── ragrig-phase-1a-scaffold-spec.md
 ├── scripts/
+│   ├── db_check.py
 │   └── init-db.sql
 ├── src/
 │   └── ragrig/
+│       ├── db/
+│       │   ├── engine.py
+│       │   ├── models/
+│       │   └── session.py
 │       ├── main.py
 │       ├── config.py
 │       ├── chunkers/
@@ -192,8 +277,13 @@ Model providers:
 │       ├── parsers/
 │       └── vectorstore/
 ├── tests/
+│   ├── test_db_check.py
+│   ├── test_db_config.py
+│   ├── test_db_models.py
+│   ├── test_db_session.py
 │   └── test_health.py
 ├── .env.example
+├── alembic.ini
 ├── docker-compose.yml
 ├── Dockerfile
 ├── Makefile

@@ -14,6 +14,14 @@ class Settings(BaseSettings):
         description="PostgreSQL connection string for RAGRig.",
     )
 
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        if self.database_url.startswith("postgresql+psycopg://"):
+            return self.database_url
+        if self.database_url.startswith("postgresql://"):
+            return self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        return self.database_url
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

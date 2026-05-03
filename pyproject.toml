@@ -5,9 +5,12 @@ description = "RAGRig Phase 1a scaffold"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "alembic>=1.13.0,<2.0.0",
   "fastapi>=0.115.0,<1.0.0",
+  "pgvector>=0.3.6,<1.0.0",
   "pydantic-settings>=2.3.0,<3.0.0",
   "psycopg[binary]>=3.2.0,<4.0.0",
+  "sqlalchemy>=2.0.0,<3.0.0",
   "uvicorn[standard]>=0.30.0,<1.0.0",
 ]
 
@@ -26,7 +29,7 @@ build-backend = "hatchling.build"
 packages = ["src/ragrig"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 
 [tool.ruff]
