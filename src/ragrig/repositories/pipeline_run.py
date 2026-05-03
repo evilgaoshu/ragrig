@@ -12,12 +12,13 @@ def create_pipeline_run(
     *,
     knowledge_base_id,
     source_id,
+    run_type: str = "local_ingestion",
     config_snapshot_json: dict[str, object],
 ) -> PipelineRun:
     run = PipelineRun(
         knowledge_base_id=knowledge_base_id,
         source_id=source_id,
-        run_type="local_ingestion",
+        run_type=run_type,
         status="running",
         config_snapshot_json=config_snapshot_json,
         total_items=0,
