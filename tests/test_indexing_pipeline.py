@@ -1,0 +1,211 @@
+from __future__ import annotations
+
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import JSON, create_engine, select
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import Session
+
+from ragrig.chunkers import ChunkingConfig, chunk_text
+from ragrig.db.models import Base, Chunk, DocumentVersion, Embedding, PipelineRun, PipelineRunItem
+from ragrig.embeddings import DeterministicEmbeddingProvider
+from ragrig.indexing.pipeline import index_knowledge_base
+from ragrig.ingestion.pipeline import ingest_local_directory
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
+    return compiler.process(JSON(), **kwargs)
+
+
+@compiles(Vector, "sqlite")
+def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
+    return compiler.process(JSON(), **kwargs)
+
+
+def _create_session() -> Session:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    return Session(engine, expire_on_commit=False)
+
+
+def test_chunk_text_splits_text_with_overlap_and_metadata() -> None:
+    chunks = chunk_text(
+        "abcdefghij",
+        ChunkingConfig(chunk_size=4, chunk_overlap=1),
+    )
+
+    assert [chunk.text for chunk in chunks] == ["abcd", "defg", "ghij"]
+    assert [(chunk.char_start, chunk.char_end) for chunk in chunks] == [
+        (0, 4),
+        (3, 7),
+        (6, 10),
+    ]
+    assert all(chunk.metadata["chunker"] == "char_window_v1" for chunk in chunks)
+    assert all(chunk.metadata["chunk_hash"] for chunk in chunks)
+
+
+def test_deterministic_embedding_provider_returns_stable_dimensions() -> None:
+    provider = DeterministicEmbeddingProvider(dimensions=8)
+
+    first = provider.embed_text("alpha beta gamma")
+    second = provider.embed_text("alpha beta gamma")
+
+    assert first.provider == "deterministic-local"
+    assert first.model == "hash-8d"
+    assert first.dimensions == 8
+    assert len(first.vector) == 8
+    assert first.vector == second.vector
+
+
+def test_index_knowledge_base_creates_chunks_embeddings_and_pipeline_items(tmp_path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text(
+        "# Guide\n\nAlpha beta gamma delta epsilon zeta eta theta\n",
+        encoding="utf-8",
+    )
+    (docs / "notes.txt").write_text(
+        "One two three four five six seven eight nine ten\n",
+        encoding="utf-8",
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        report = index_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            chunk_size=18,
+            chunk_overlap=4,
+        )
+
+        chunks = session.scalars(
+            select(Chunk).order_by(Chunk.document_version_id, Chunk.chunk_index)
+        ).all()
+        embeddings = session.scalars(select(Embedding).order_by(Embedding.chunk_id)).all()
+        run = session.scalars(
+            select(PipelineRun).where(PipelineRun.run_type == "chunk_embedding")
+        ).one()
+        items = session.scalars(
+            select(PipelineRunItem)
+            .where(PipelineRunItem.pipeline_run_id == run.id)
+            .order_by(PipelineRunItem.document_id)
+        ).all()
+        versions = session.scalars(
+            select(DocumentVersion).order_by(DocumentVersion.version_number)
+        ).all()
+
+    assert report.chunk_count == len(chunks)
+    assert report.embedding_count == len(embeddings)
+    assert report.indexed_count == len(versions)
+    assert len(chunks) >= 4
+    assert len(embeddings) == len(chunks)
+    assert run.status == "completed"
+    assert run.success_count == len(versions)
+    assert run.failure_count == 0
+    assert run.total_items == len(versions)
+    assert all(item.status == "success" for item in items)
+    assert all(chunk.metadata_json["config_hash"] for chunk in chunks)
+    assert all(embedding.provider == "deterministic-local" for embedding in embeddings)
+    assert all(embedding.dimensions == 8 for embedding in embeddings)
+
+
+def test_index_knowledge_base_is_idempotent_for_unchanged_document_versions(tmp_path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text(
+        "# Guide\n\nAlpha beta gamma delta epsilon zeta eta theta\n",
+        encoding="utf-8",
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        first = index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+        second = index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        chunks = session.scalars(select(Chunk)).all()
+        embeddings = session.scalars(select(Embedding)).all()
+        runs = session.scalars(
+            select(PipelineRun)
+            .where(PipelineRun.run_type == "chunk_embedding")
+            .order_by(PipelineRun.started_at)
+        ).all()
+        run_items = session.scalars(
+            select(PipelineRunItem)
+            .where(PipelineRunItem.pipeline_run_id == runs[-1].id)
+            .order_by(PipelineRunItem.started_at)
+        ).all()
+
+    assert first.indexed_count == 1
+    assert first.skipped_count == 0
+    assert second.indexed_count == 0
+    assert second.skipped_count == 1
+    assert len(chunks) == first.chunk_count
+    assert len(embeddings) == first.embedding_count
+    assert runs[-1].status == "completed"
+    assert runs[-1].success_count == 0
+    assert all(item.status == "skipped" for item in run_items)
+
+
+def test_index_knowledge_base_reindexes_new_document_version_after_ingestion_change(
+    tmp_path,
+) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    guide_path = docs / "guide.md"
+    guide_path.write_text("# Guide\n\nAlpha beta gamma delta\n", encoding="utf-8")
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=14)
+
+        guide_path.write_text(
+            "# Guide\n\nAlpha beta gamma delta epsilon zeta eta theta\n",
+            encoding="utf-8",
+        )
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        report = index_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            chunk_size=14,
+        )
+
+        versions = session.scalars(
+            select(DocumentVersion).order_by(DocumentVersion.version_number)
+        ).all()
+        latest_version = versions[-1]
+        latest_chunks = session.scalars(
+            select(Chunk)
+            .where(Chunk.document_version_id == latest_version.id)
+            .order_by(Chunk.chunk_index)
+        ).all()
+        latest_embeddings = session.scalars(
+            select(Embedding)
+            .join(Chunk, Embedding.chunk_id == Chunk.id)
+            .where(Chunk.document_version_id == latest_version.id)
+        ).all()
+
+    assert [version.version_number for version in versions] == [1, 2]
+    assert report.indexed_count == 1
+    assert len(latest_chunks) == report.chunk_count
+    assert len(latest_embeddings) == report.embedding_count
+    assert latest_chunks[0].metadata_json["version_number"] == 2
