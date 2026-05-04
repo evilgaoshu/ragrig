@@ -3,7 +3,7 @@
 - Date: 2026-05-04
 - Feature: Qdrant vector backend and unified vector contract
 - PR URL: https://github.com/evilgaoshu/ragrig/pull/14
-- Head commit: 8cc85835f3992a3940ea493ef4bdab6d8eee6698
+- Head commit: 529123aed5866b86f9febb41ddb815f2e0d86a70
 
 ## Local Verification
 
