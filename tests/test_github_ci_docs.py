@@ -54,3 +54,9 @@ def test_readme_documents_github_ci_scope_and_validation_boundary() -> None:
     assert "make web-check" in readme
     assert "192.168.3.100" in readme
     assert "branch protection" in readme
+
+
+def test_docker_compose_uses_existing_qdrant_image_tag() -> None:
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "image: qdrant/qdrant:v1.14.1" in compose

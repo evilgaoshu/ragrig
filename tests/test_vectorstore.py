@@ -411,6 +411,109 @@ def test_qdrant_backend_upsert_and_search_use_fake_client() -> None:
     assert health.healthy is True
 
 
+def test_qdrant_backend_search_uses_query_points_when_search_api_is_unavailable() -> None:
+    class FakeCollectionsResponse:
+        def __init__(self, names: list[str]) -> None:
+            self.collections = [types.SimpleNamespace(name=name) for name in names]
+
+    class FakeCollectionInfo:
+        def __init__(self, size: int, distance: str, count: int) -> None:
+            self.config = types.SimpleNamespace(
+                params=types.SimpleNamespace(
+                    vectors=types.SimpleNamespace(size=size, distance=distance)
+                )
+            )
+            self.points_count = count
+
+    class FakeHit:
+        def __init__(self, point_id: str, score: float, payload: dict[str, object]) -> None:
+            self.id = point_id
+            self.score = score
+            self.payload = payload
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.collections: dict[str, dict[str, object]] = {}
+            self.points: dict[str, dict[str, object]] = {}
+
+        def get_collections(self):
+            return FakeCollectionsResponse(list(self.collections))
+
+        def create_collection(self, collection_name: str, vectors_config) -> None:
+            self.collections[collection_name] = {
+                "size": vectors_config.size,
+                "distance": vectors_config.distance,
+            }
+
+        def get_collection(self, collection_name: str):
+            metadata = self.collections[collection_name]
+            count = len(
+                [point for point in self.points.values() if point["collection"] == collection_name]
+            )
+            return FakeCollectionInfo(metadata["size"], metadata["distance"], count)
+
+        def upsert(self, collection_name: str, points) -> None:
+            for point in points:
+                self.points[str(point.id)] = {
+                    "collection": collection_name,
+                    "vector": list(point.vector),
+                    "payload": dict(point.payload),
+                }
+
+        def query_points(
+            self,
+            *,
+            collection_name: str,
+            query,
+            limit: int,
+            query_filter=None,
+            with_payload: bool,
+            with_vectors: bool,
+        ):
+            del query_filter, with_payload, with_vectors
+            hits: list[FakeHit] = []
+            for point_id, point in self.points.items():
+                if point["collection"] != collection_name:
+                    continue
+                score = 1.0 if point["vector"] == list(query) else 0.5
+                hits.append(FakeHit(point_id, score, point["payload"]))
+            hits.sort(key=lambda item: item.score, reverse=True)
+            return types.SimpleNamespace(points=hits[:limit])
+
+    backend = QdrantBackend(
+        url="http://localhost:6333",
+        api_key=None,
+        client=FakeClient(),
+    )
+    collection = VectorCollection(
+        name="ragrig_fixture_local_deterministic_local_hash_8d_8d_abcd1234",
+        knowledge_base="fixture-local",
+        provider="deterministic-local",
+        model="hash-8d",
+        dimensions=8,
+    )
+    embedding_id = uuid4()
+    record = VectorEmbeddingRecord(
+        embedding_id=embedding_id,
+        chunk_id=uuid4(),
+        document_id=uuid4(),
+        document_version_id=uuid4(),
+        chunk_index=0,
+        vector=[0.1] * 8,
+        text="fixture text",
+        metadata={"document_uri": "/tmp/guide.txt"},
+    )
+
+    with _create_session() as session:
+        backend.ensure_collection(session, collection)
+        backend.upsert_embeddings(session, collection, [record])
+        hits = backend.search(session, collection, query_vector=[0.1] * 8, top_k=1)
+
+    assert hits[0].embedding_id == embedding_id
+    assert hits[0].score == 1.0
+    assert hits[0].distance == 0.0
+
+
 def test_qdrant_backend_rejects_dimension_mismatch() -> None:
     class FakeCollectionsResponse:
         collections = [types.SimpleNamespace(name="existing")]

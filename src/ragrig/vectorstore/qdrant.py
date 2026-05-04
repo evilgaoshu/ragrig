@@ -166,12 +166,23 @@ class QdrantBackend:
         filters: dict[str, Any] | None = None,
     ) -> list[VectorSearchResult]:
         del session
-        hits = self.client.search(
-            collection_name=collection.name,
-            query_vector=query_vector,
-            limit=top_k,
-            query_filter=filters,
-        )
+        if hasattr(self.client, "search"):
+            hits = self.client.search(
+                collection_name=collection.name,
+                query_vector=query_vector,
+                limit=top_k,
+                query_filter=filters,
+            )
+        else:
+            response = self.client.query_points(
+                collection_name=collection.name,
+                query=query_vector,
+                limit=top_k,
+                query_filter=filters,
+                with_payload=True,
+                with_vectors=False,
+            )
+            hits = response.points
         return [
             VectorSearchResult(
                 embedding_id=uuid.UUID(str(hit.id)),

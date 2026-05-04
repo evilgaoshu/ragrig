@@ -27,7 +27,7 @@ services:
       retries: 12
 
   qdrant:
-    image: qdrant/qdrant:v1.14.2
+    image: qdrant/qdrant:v1.14.1
     profiles:
       - qdrant
     ports:
