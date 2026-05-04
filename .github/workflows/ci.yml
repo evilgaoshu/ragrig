@@ -7,32 +7,34 @@ on:
     branches: [main]
 
 jobs:
-  baseline:
-    name: baseline
+  checks:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.11'
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
-        with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
 
       - name: Sync dependencies
         run: uv sync --dev --frozen
 
+      - name: Check formatting
+        run: uv run ruff format --check .
+
       - name: Lint
-        run: uv run ruff check .
+        run: make lint
 
       - name: Test
         run: make test
+
+      - name: Coverage
+        run: make coverage
 
       - name: Web check
         run: make web-check

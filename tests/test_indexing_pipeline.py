@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
+import pytest
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, create_engine, select
 from sqlalchemy.dialects.postgresql import JSONB
@@ -8,8 +12,12 @@ from sqlalchemy.orm import Session
 
 from ragrig.chunkers import ChunkingConfig, chunk_text
 from ragrig.db.models import Base, Chunk, DocumentVersion, Embedding, PipelineRun, PipelineRunItem
-from ragrig.embeddings import DeterministicEmbeddingProvider
-from ragrig.indexing.pipeline import index_knowledge_base
+from ragrig.embeddings import DeterministicEmbeddingProvider, EmbeddingResult
+from ragrig.indexing.pipeline import (
+    _replace_version_index,
+    _version_already_indexed,
+    index_knowledge_base,
+)
 from ragrig.ingestion.pipeline import ingest_local_directory
 
 
@@ -23,10 +31,13 @@ def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
     return compiler.process(JSON(), **kwargs)
 
 
-def _create_session() -> Session:
+@contextmanager
+def _create_session() -> Iterator[Session]:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
-    return Session(engine, expire_on_commit=False)
+    with Session(engine, expire_on_commit=False) as session:
+        yield session
+    engine.dispose()
 
 
 def test_chunk_text_splits_text_with_overlap_and_metadata() -> None:
@@ -209,3 +220,133 @@ def test_index_knowledge_base_reindexes_new_document_version_after_ingestion_cha
     assert len(latest_chunks) == report.chunk_count
     assert len(latest_embeddings) == report.embedding_count
     assert latest_chunks[0].metadata_json["version_number"] == 2
+
+
+def test_replace_version_index_replaces_existing_chunks_and_embeddings(tmp_path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("alpha beta gamma delta", encoding="utf-8")
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=8)
+
+        version = session.scalars(select(DocumentVersion)).one()
+        document = version.document
+        original_chunk_ids = set(session.scalars(select(Chunk.id)).all())
+
+        created_chunks, created_embeddings = _replace_version_index(
+            session,
+            document_version=version,
+            document=document,
+            chunking_config=ChunkingConfig(chunk_size=6, chunk_overlap=1),
+            embedding_provider=DeterministicEmbeddingProvider(dimensions=4),
+        )
+
+        replacement_chunks = session.scalars(
+            select(Chunk).where(Chunk.document_version_id == version.id)
+        ).all()
+        replacement_chunk_ids = {chunk.id for chunk in replacement_chunks}
+
+    assert created_chunks == len(replacement_chunks)
+    assert created_embeddings == len(replacement_chunks)
+    assert replacement_chunk_ids
+    assert replacement_chunk_ids.isdisjoint(original_chunk_ids)
+
+
+def test_version_already_indexed_rejects_chunks_with_different_config_hash(tmp_path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("alpha beta gamma delta", encoding="utf-8")
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=8)
+
+        version = session.scalars(select(DocumentVersion)).one()
+
+        assert (
+            _version_already_indexed(
+                session,
+                document_version=version,
+                config_hash="different-config-hash",
+                provider_name="deterministic-local",
+                model_name="hash-8d",
+            )
+            is False
+        )
+
+
+def test_index_knowledge_base_skips_empty_document_versions(tmp_path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "empty.txt").write_text("", encoding="utf-8")
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        report = index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+        run = session.scalars(
+            select(PipelineRun).where(PipelineRun.run_type == "chunk_embedding")
+        ).one()
+        item = session.scalars(
+            select(PipelineRunItem).where(PipelineRunItem.pipeline_run_id == run.id)
+        ).one()
+
+    assert report.indexed_count == 0
+    assert report.skipped_count == 1
+    assert report.chunk_count == 0
+    assert report.embedding_count == 0
+    assert run.status == "completed"
+    assert item.status == "skipped"
+    assert item.metadata_json["skip_reason"] == "empty_extracted_text"
+
+
+def test_index_knowledge_base_raises_for_missing_knowledge_base(sqlite_session) -> None:
+    with pytest.raises(ValueError, match="Knowledge base 'missing' was not found"):
+        index_knowledge_base(session=sqlite_session, knowledge_base_name="missing")
+
+
+def test_index_knowledge_base_records_failures_without_aborting_run(tmp_path, monkeypatch) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("alpha beta gamma", encoding="utf-8")
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        def failing_embed(self, text: str) -> EmbeddingResult:
+            raise RuntimeError("embedding failed")
+
+        monkeypatch.setattr(DeterministicEmbeddingProvider, "embed_text", failing_embed)
+
+        report = index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+        run = session.scalars(
+            select(PipelineRun).where(PipelineRun.run_type == "chunk_embedding")
+        ).one()
+        item = session.scalars(
+            select(PipelineRunItem).where(PipelineRunItem.pipeline_run_id == run.id)
+        ).one()
+
+    assert report.failed_count == 1
+    assert report.indexed_count == 0
+    assert report.chunk_count == 0
+    assert report.embedding_count == 0
+    assert run.status == "completed_with_failures"
+    assert item.status == "failed"
+    assert item.error_message == "embedding failed"

@@ -16,7 +16,12 @@ from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
 from ragrig.retrieval import (
     EmbeddingProfileMismatchError,
+    EmptyQueryError,
     InvalidTopKError,
+    KnowledgeBaseNotFoundError,
+    _cosine_distance,
+    _normalize_vector,
+    _search_with_sql_distance,
     search_knowledge_base,
 )
 
@@ -205,6 +210,167 @@ def test_search_knowledge_base_rejects_non_positive_top_k(tmp_path) -> None:
             )
 
     assert exc_info.value.details == {"top_k": 0}
+
+
+def test_search_knowledge_base_rejects_empty_query_before_lookup(sqlite_session) -> None:
+    with pytest.raises(EmptyQueryError, match="Query must not be empty"):
+        search_knowledge_base(
+            session=sqlite_session,
+            knowledge_base_name="fixture-local",
+            query="   ",
+        )
+
+
+def test_search_knowledge_base_raises_for_missing_knowledge_base(sqlite_session) -> None:
+    with pytest.raises(KnowledgeBaseNotFoundError, match="Knowledge base 'missing' was not found"):
+        search_knowledge_base(
+            session=sqlite_session,
+            knowledge_base_name="missing",
+            query="fixture",
+        )
+
+
+def test_search_knowledge_base_accepts_explicit_matching_profile(tmp_path) -> None:
+    docs = _seed_documents(tmp_path, {"guide.txt": "matching profile"})
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            embedding_dimensions=16,
+        )
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="matching profile",
+            provider="deterministic-local",
+            model="hash-16d",
+            dimensions=16,
+        )
+
+    assert report.total_results == 1
+    assert report.dimensions == 16
+    assert report.model == "hash-16d"
+
+
+def test_retrieval_vector_helpers_cover_edge_cases() -> None:
+    assert _normalize_vector((1, "2.5", 3)) == [1.0, 2.5, 3.0]
+    assert _cosine_distance([], [1.0]) == 1.0
+    assert _cosine_distance([0.0, 0.0], [1.0, 0.0]) == 1.0
+    assert _cosine_distance([1.0, 0.0], [1.0, 0.0]) == 0.0
+
+
+def test_search_knowledge_base_uses_sql_distance_for_postgresql_bind(tmp_path, monkeypatch) -> None:
+    docs = _seed_documents(tmp_path, {"guide.txt": "postgres branch target"})
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        original_name = session.bind.dialect.name
+        monkeypatch.setattr(session.bind.dialect, "name", "postgresql")
+        calls: list[tuple[str, int]] = []
+
+        def fake_sql_distance(_session, **kwargs):
+            calls.append((kwargs["provider"], kwargs["top_k"]))
+            return []
+
+        def fail_python_distance(_session, **kwargs):
+            raise AssertionError("python distance fallback should not be used")
+
+        monkeypatch.setattr("ragrig.retrieval._search_with_sql_distance", fake_sql_distance)
+        monkeypatch.setattr("ragrig.retrieval._search_with_python_distance", fail_python_distance)
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="postgres branch target",
+            top_k=3,
+        )
+
+        monkeypatch.setattr(session.bind.dialect, "name", original_name)
+
+    assert report.total_results == 0
+    assert calls == [("deterministic-local", 3)]
+
+
+def test_search_with_sql_distance_returns_ranked_results(tmp_path, monkeypatch) -> None:
+    del tmp_path
+
+    class FakeDistanceExpr:
+        def label(self, _name: str) -> "FakeDistanceExpr":
+            return self
+
+        def asc(self) -> "FakeDistanceExpr":
+            return self
+
+    class FakeStatement:
+        def add_columns(self, _column) -> "FakeStatement":
+            return self
+
+        def order_by(self, *_args) -> "FakeStatement":
+            return self
+
+        def limit(self, _value: int) -> "FakeStatement":
+            return self
+
+    class FakeEmbeddingColumn:
+        def cosine_distance(self, vector: list[float]) -> FakeDistanceExpr:
+            assert vector == [0.0] * 8
+            return FakeDistanceExpr()
+
+    row = type(
+        "Row",
+        (),
+        {
+            "document_id": "doc-id",
+            "document_version_id": "doc-version-id",
+            "chunk_id": "chunk-id",
+            "chunk_index": 0,
+            "document_uri": "/tmp/guide.txt",
+            "source_uri": "/tmp",
+            "text": "sql retrieval branch target",
+            "chunk_metadata": {"chunker": "char_window_v1"},
+            "distance": 0.125,
+        },
+    )()
+
+    class FakeResult:
+        def all(self) -> list[object]:
+            return [row]
+
+    class FakeSession:
+        def execute(self, statement):
+            return FakeResult()
+
+    monkeypatch.setattr("ragrig.retrieval.Embedding.embedding", FakeEmbeddingColumn())
+    monkeypatch.setattr("ragrig.retrieval.Chunk.chunk_index", FakeDistanceExpr())
+    monkeypatch.setattr("ragrig.retrieval._build_base_statement", lambda **kwargs: FakeStatement())
+
+    report = _search_with_sql_distance(
+        FakeSession(),
+        knowledge_base_id="kb-id",
+        provider="deterministic-local",
+        model="hash-8d",
+        dimensions=8,
+        query_vector=[0.0] * 8,
+        top_k=1,
+    )
+
+    assert len(report) == 1
+    assert report[0].text == "sql retrieval branch target"
+    assert report[0].distance == 0.125
+    assert report[0].score == 0.875
 
 
 @pytest.mark.anyio

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, create_engine, select
 from sqlalchemy.dialects.postgresql import JSONB
@@ -9,7 +12,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
 from ragrig.db.models import Base, Document, DocumentVersion, PipelineRun, PipelineRunItem
-from ragrig.ingestion.pipeline import ingest_local_directory
+from ragrig.ingestion.pipeline import _select_parser, ingest_local_directory
 
 
 @compiles(JSONB, "sqlite")
@@ -22,10 +25,13 @@ def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
     return compiler.process(JSON(), **kwargs)
 
 
-def _create_session() -> Session:
+@contextmanager
+def _create_session() -> Iterator[Session]:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
-    return Session(engine, expire_on_commit=False)
+    with Session(engine, expire_on_commit=False) as session:
+        yield session
+    engine.dispose()
 
 
 def test_ingest_local_directory_creates_documents_versions_and_run_items(tmp_path) -> None:
@@ -187,3 +193,41 @@ def test_ingest_skip_does_not_overwrite_existing_document_hash_or_metadata(tmp_p
     assert document.content_hash == version.content_hash
     assert document.mime_type == "text/markdown"
     assert document.metadata_json["extension"] == ".md"
+
+
+def test_select_parser_uses_markdown_parser_for_markdown_extensions() -> None:
+    assert _select_parser(Path("guide.md")).parser_name == "markdown"
+    assert _select_parser(Path("guide.markdown")).parser_name == "markdown"
+    assert _select_parser(Path("notes.txt")).parser_name == "plaintext"
+
+
+def test_ingest_local_directory_returns_dry_run_report(tmp_path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("# Guide\n", encoding="utf-8")
+    (docs / "ignored.bin").write_bytes(b"\x00bad")
+
+    with _create_session() as session:
+        report = ingest_local_directory(
+            session=session,
+            knowledge_base_name="default",
+            root_path=docs,
+            dry_run=True,
+        )
+
+        assert session.scalars(select(PipelineRun)).all() == []
+
+    assert report.pipeline_run_id == "dry-run"
+    assert report.created_documents == 0
+    assert report.created_versions == 0
+    assert report.skipped_count == 2
+    assert report.failed_count == 0
+
+
+def test_ingest_local_directory_propagates_missing_root_path(sqlite_session, tmp_path) -> None:
+    with pytest.raises(FileNotFoundError, match="scan root does not exist"):
+        ingest_local_directory(
+            session=sqlite_session,
+            knowledge_base_name="default",
+            root_path=tmp_path / "missing",
+        )
