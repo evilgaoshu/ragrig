@@ -85,8 +85,9 @@ Current implementation status:
 4. Phase 1b now supports local Markdown/Text ingestion into the metadata DB, including `document_versions` and pipeline-run tracking.
 5. Phase 1c now supports deterministic local chunking and embedding into `chunks` and `embeddings` for the latest ingested document versions.
 6. Phase 1d now supports a minimal retrieval API and smoke CLI over the real indexed chunks and embeddings.
-7. Phase 1e PR-1 now adds a core provider registry contract and registers `deterministic-local` through it, while real local and cloud adapters remain deferred.
-8. Semantic production embeddings, reranking, and richer source types remain intentionally unimplemented in this repository state.
+7. Phase 1e PR-1 now adds a core provider registry contract and registers `deterministic-local` through it.
+8. Phase 1e PR-2 now adds local provider adapters for Ollama, LM Studio, OpenAI-compatible local runtimes, and optional BGE boundaries without changing the default secret-free test path.
+9. Semantic production embeddings, live local runtime smoke checks, and richer source types remain intentionally limited or deferred in this repository state.
 
 Authoritative specs:
 
@@ -127,8 +128,8 @@ What the current MVP covers:
 Current limitations:
 
 - browser-triggered create/update actions are intentionally not implemented yet
-- model registry is still a read-only shell except for real indexed embedding profiles
-- provider registry metadata is now exposed read-only, but real LLM/reranker adapters are still deferred to later Phase 1e PRs
+- model registry remains read-only, but now exposes local LLM and reranker registry shells for PR-2 providers
+- provider registry metadata is exposed read-only, including Ollama, LM Studio, OpenAI-compatible local runtimes, and optional BGE boundaries
 - the console only shows capabilities backed by existing DB/API boundaries and uses empty, disabled, or degraded states for the rest
 
 <p align="center">
@@ -179,15 +180,50 @@ What exists now:
 - deterministic-local registered as the built-in embedding provider for CI and smoke flows
 - read-only provider inventory in `GET /models`
 
-What this PR does not claim yet:
+PR-2 additions:
 
-- no Ollama adapter
-- no LM Studio adapter
-- no BGE adapter
-- no cloud provider stubs
+- `model.ollama` local adapter metadata and fake-client contract tests
+- `model.lm_studio` local OpenAI-compatible adapter metadata and fake-client contract tests
+- shared local adapter declarations for `model.llama_cpp`, `model.vllm`, `model.xinference`, and `model.localai`
+- `embedding.bge` and `reranker.bge` provider boundaries with lazy optional dependency loading
+- read-only `/models` and `/plugins` visibility for the above providers
+
+What is still deferred:
+
+- no cloud provider stubs in this PR slice
 - no DB-backed model profile management
+- no default live local runtime smoke in `make test`
 
 `deterministic-local` remains a secret-free, network-free test and smoke provider. It is not a production semantic embedding model.
+
+## Local Provider Extras
+
+PR-2 keeps local runtime SDKs and heavy ML packages out of the default install.
+
+Install optional local runtime support with:
+
+```bash
+uv sync --extra local-ml --dev
+```
+
+The `local-ml` extra currently groups:
+
+- `ollama`
+- `openai`
+- `FlagEmbedding`
+- `sentence-transformers`
+- `torch`
+
+Default tests still use fake clients and optional-dependency-safe loaders. A fresh clone does not need Ollama, LM Studio, GPUs, or local model downloads.
+
+Default local endpoints documented by PR-2:
+
+- `model.ollama`: `http://localhost:11434`
+- `model.lm_studio`: `http://localhost:1234/v1`
+- `model.llama_cpp`: `http://localhost:8080/v1`
+- `model.vllm`: `http://localhost:8000/v1`
+- `model.xinference`: `http://localhost:9997/v1`
+- `model.localai`: `http://localhost:8080/v1`
 
 ## Quick Start
 

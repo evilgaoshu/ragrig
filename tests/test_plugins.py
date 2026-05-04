@@ -50,19 +50,27 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     manifests = registry.list()
     manifest_ids = {manifest.plugin_id for manifest in manifests}
 
-    assert len(manifests) == 25
+    assert len(manifests) == 30
     assert {
         "source.local",
         "parser.markdown",
         "parser.text",
         "chunker.character_window",
         "embedding.deterministic_local",
+        "model.ollama",
+        "model.lm_studio",
+        "embedding.bge",
+        "reranker.bge",
         "vector.pgvector",
         "sink.jsonl",
         "preview.markdown",
     } <= manifest_ids
     assert registry.get("source.local").tier is PluginTier.BUILTIN
     assert registry.get("vector.pgvector").status is PluginStatus.READY
+    assert registry.get("model.ollama").tier is PluginTier.OFFICIAL
+    assert registry.get("model.ollama").status is PluginStatus.READY
+    assert registry.get("embedding.bge").tier is PluginTier.OFFICIAL
+    assert registry.get("embedding.bge").status is PluginStatus.READY
     assert registry.get("source.s3").tier is PluginTier.OFFICIAL
     assert registry.get("source.s3").status is PluginStatus.UNAVAILABLE
 
@@ -231,7 +239,7 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
     registry = get_plugin_registry()
 
     def _fake_dependency_check(import_name: str) -> bool:
-        return import_name not in {"boto3", "googleapiclient"}
+        return import_name not in {"FlagEmbedding", "boto3", "googleapiclient"}
 
     monkeypatch.setattr("ragrig.plugins.guards.is_dependency_available", _fake_dependency_check)
 
@@ -240,6 +248,12 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
     assert discovery["source.local"]["status"] == "ready"
     assert discovery["source.local"]["configurable"] is True
     assert discovery["source.local"]["missing_dependencies"] == []
+    assert discovery["model.ollama"]["status"] == "ready"
+    assert discovery["model.ollama"]["missing_dependencies"] == []
+    assert discovery["model.lm_studio"]["status"] == "ready"
+    assert discovery["model.lm_studio"]["configurable"] is True
+    assert discovery["embedding.bge"]["status"] == "unavailable"
+    assert discovery["embedding.bge"]["missing_dependencies"] == ["FlagEmbedding"]
     assert discovery["source.s3"]["status"] == "unavailable"
     assert discovery["source.s3"]["missing_dependencies"] == ["boto3"]
     assert discovery["source.s3"]["secret_requirements"] == [

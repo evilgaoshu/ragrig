@@ -2,7 +2,7 @@
 
 Issue: EVI-34
 Date: 2026-05-04
-Status: DEV implementation spec for PR-1
+Status: DEV implementation spec for PR-2
 
 ## Scope
 
@@ -15,20 +15,20 @@ PR split:
 2. PR-2: Local runtime adapters and optional heavy local ML providers.
 3. PR-3: Cloud provider manifests/stubs and cloud-second docs alignment.
 
-This PR-1 includes:
+This PR-2 includes:
 
-- `src/ragrig/providers/` core registry contract and deterministic-local registration
-- provider metadata, capability declarations, structured provider error contract, and health contract
-- retrieval/indexing resolve path updated to use the registry while preserving default local behavior
-- read-only provider inventory exposure through the existing `/models` service boundary
-- tests covering registry registration, discovery, error shape, health checks, and indexing/retrieval compatibility
-- README and policy updates that state the registry exists now while real Ollama/LM Studio/BGE adapters remain follow-on work
+- `model.ollama` local adapter with configurable host, model inventory, chat/generate, embedding capability detection, and structured local-disabled errors
+- `model.lm_studio` local adapter over an OpenAI-compatible base URL with docs default `http://localhost:1234/v1`
+- shared OpenAI-compatible local adapter coverage for `llama.cpp`, `vLLM`, `Xinference`, and `LocalAI`
+- `embedding.bge` and `reranker.bge` provider boundaries with optional dependency-safe lazy runtime loading
+- plugin discovery updates so the official local-runtime manifests are exposed as ready or dependency-gated instead of PR-1 stubs
+- `/models` read-boundary updates that show registered local model and reranker providers as available registry surfaces
+- tests covering fake-client local runtime contracts, optional dependency failure paths, plugin discovery, and Web Console model visibility
+- README and policy updates that document optional local ML installation and current limits
 
-Explicitly out of scope for PR-1:
+Explicitly out of scope for PR-2:
 
-- Ollama, LM Studio, llama.cpp server, vLLM, Xinference, or LocalAI runtime adapters
-- BGE embedding or reranker implementations
-- cloud provider stubs or SDK integrations
+- cloud provider stubs or SDK integrations beyond the already documented PR-3 boundary
 - DB-backed model profile persistence, migrations, or model write APIs
 - mandatory `192.168.3.100` runtime validation for this issue
 
@@ -43,23 +43,25 @@ This spec is subordinate to:
 
 If this file conflicts with those documents, the authority documents win.
 
-## PR-1 Technical Shape
+## PR-2 Technical Shape
 
 Files and boundaries:
 
-- `src/ragrig/providers/__init__.py`: provider capability enum, provider metadata, retry policy, health result, structured provider error, base provider interface, registry implementation, default registry factory, deterministic-local registration
-- `src/ragrig/indexing/pipeline.py`: resolve deterministic-local via registry instead of direct class construction
-- `src/ragrig/retrieval.py`: resolve query embedding provider via registry instead of direct class construction
-- `src/ragrig/web_console.py`: expose read-only registered provider metadata via the existing `/models` service boundary
-- `tests/test_providers.py`: registry contract coverage
-- `tests/test_indexing_pipeline.py`, `tests/test_retrieval.py`, `tests/test_web_console.py`, `tests/test_import_guard.py`: compatibility and read-boundary coverage
+- `src/ragrig/providers/local.py`: Ollama and OpenAI-compatible local model provider adapters with optional SDK-safe loaders
+- `src/ragrig/providers/bge.py`: optional local BGE embedding and reranker adapters with lazy runtime loading
+- `src/ragrig/providers/__init__.py`: registry wiring for the new local providers while preserving deterministic-local defaults
+- `src/ragrig/plugins/official.py`: promote local provider manifests from unavailable stubs to PR-2-ready discovery entries
+- `src/ragrig/web_console.py`: report local model and reranker registry shells as ready read-only boundaries
+- `tests/test_local_providers.py`: fake-client local runtime contract coverage
+- `tests/test_plugins.py`, `tests/test_web_console.py`, `tests/test_plugins_check.py`, `tests/test_import_guard.py`: plugin discovery, read-boundary, and optional import guard coverage
+- `pyproject.toml`: optional `local-ml` extra only
 
-PR-1 must preserve the existing default path:
+PR-2 must preserve the existing default path:
 
 - no secrets
 - no network
 - no GPU
-- no optional SDK imports
+- no optional SDK imports at top-level core import time
 - deterministic-local remains the default indexing and retrieval embedding profile
 
 ## Provider Contract Fields
@@ -82,23 +84,25 @@ The registry contract must support these fields even if some providers will only
 - `metric_fields`
 - `intended_uses`
 
-Provider runtime contracts in PR-1:
+Provider runtime contracts in PR-2:
 
 - `BaseProvider.embed_text()` is implemented for embedding providers
 - `BaseProvider.generate()`, `BaseProvider.chat()`, and `BaseProvider.rerank()` fail with structured `unsupported_capability`
 - `health_check()` returns a structured status/detail payload
 - missing providers fail with structured `provider_not_registered`
+- optional local runtime loaders fail with structured `optional_dependency_missing`
+- Ollama embedding attempts against a non-embedding-capable model fail with structured `embedding_not_supported`
 
 ## Deterministic-local Boundary
 
 `deterministic-local` remains a built-in embedding provider for CI and smoke use only.
 
-PR-1 requirements for this provider:
+PR-2 requirements for this provider:
 
-- it must register through the core registry instead of being treated as a special hardcoded path
-- it must remain the default profile for indexing and retrieval when no other profile is requested
-- its metadata must state that it is intended for `ci` and `smoke`
-- docs must not describe it as a production semantic embedding model
+- it remains registered through the core registry without any behavior changes
+- it remains the default profile for indexing and retrieval when no other profile is requested
+- its metadata continues to state that it is intended for `ci` and `smoke`
+- PR-2 docs still must not describe it as a production semantic embedding model
 
 ## Retrieval and Indexing Compatibility
 
@@ -112,52 +116,48 @@ PR-1 must keep the Phase 1c and Phase 1d behavior compatible:
 
 ## Read-only Service Boundary
 
-PR-1 should expose registry metadata through a read-only boundary that later Web Console model pages can reuse.
+PR-2 extends the existing read-only boundary so later Web Console model pages can discover which local providers are registered now.
 
 For this PR the existing `GET /models` response is sufficient if it includes:
 
 - indexed embedding profiles already present in the database
 - registered provider metadata derived from the provider registry
-- explicit disabled/deferred states for LLM and reranker adapters that are not implemented until PR-2
+- explicit ready states for local LLM and reranker registry shells, while still remaining read-only
 
-No write API or DB persistence is required in PR-1.
+No write API, live runtime mutation API, or DB persistence is required in PR-2.
 
 ## Optional Dependency Strategy
 
-PR-1 must not add heavy or cloud provider packages to the default dependency set.
+PR-2 may add local runtime packages only behind an optional extra.
 
 Rules:
 
-- no `torch`
-- no `FlagEmbedding`
-- no `sentence-transformers`
-- no `ollama`
-- no `openai`
-- no cloud SDKs
+- default dependency set still must not include `torch`, `FlagEmbedding`, `sentence-transformers`, `ollama`, `openai`, or cloud SDKs
+- optional `local-ml` extra may include `torch`, `FlagEmbedding`, `sentence-transformers`, `ollama`, and `openai`
 - provider registry core imports must stay optional-dependency-safe
-- follow-on provider SDKs belong in optional extras or dependency groups in PR-2/PR-3
+- follow-on cloud provider SDKs still belong in optional extras or dependency groups in PR-3
 
 ## Test Strategy
 
 Default verification remains local and CI friendly.
 
-Required automated coverage in PR-1:
+Required automated coverage in PR-2:
 
-- registry register/get/list/read
-- registry health-check aggregation
-- structured errors for unknown providers and unsupported capabilities
-- deterministic-local registration in the default registry
-- indexing path resolves the provider through the registry
-- retrieval path resolves the provider through the registry
-- existing profile mismatch coverage remains in place
-- `/models` includes both indexed profile data and registered provider metadata
-- import guard confirms the provider registry stays in the core module set and avoids optional SDK imports
+- fake-client Ollama generation, chat, model listing, health, and embedding behavior
+- fake-client OpenAI-compatible local runtime coverage for LM Studio, llama.cpp, vLLM, Xinference, and LocalAI
+- BGE embedding and reranker runtime coverage with fake local runtimes
+- optional dependency error coverage for missing BGE runtime imports
+- plugin discovery status changes for local runtime manifests and dependency-gated BGE manifests
+- `/models` includes the expanded registered provider metadata and ready read-only LLM/reranker registry shells
+- import guard confirms the provider registry and new provider modules avoid top-level optional SDK imports
+- existing indexing and retrieval default-path coverage remains intact
 
 Required repository commands:
 
 - `make format`
 - `make lint`
 - `make test`
+- `make coverage`
 
 ## Verification Strategy
 
@@ -167,13 +167,13 @@ Hard gate for this issue:
 
 `192.168.3.100` policy for this PR:
 
-- not a hard requirement for EVI-34 PR-1
+- not a hard requirement for EVI-34 PR-2
 - if a developer voluntarily runs shared-host validation, record it explicitly
 - if no shared-host run is performed, the delivery note must say that 3.100 verification is not required for this PR slice
 
-## PR-2 Boundary
+## PR-2 Delivery Boundary
 
-PR-2 will add real local adapters behind the contract introduced here:
+PR-2 delivers these local adapters behind the contract introduced in PR-1:
 
 - Ollama adapter
 - LM Studio adapter
