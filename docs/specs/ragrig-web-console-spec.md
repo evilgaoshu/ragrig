@@ -2,7 +2,26 @@
 
 Date: 2026-05-03
 Branch: `design/web-console-spec-prototype`
-Status: design draft
+Status: implemented for Phase 1 lightweight Web Console MVP
+
+## Implementation Status
+
+This spec now has a shipped Phase 1 implementation in the repository.
+
+Implemented in this PR/revision:
+
+- FastAPI-served Web Console at `GET /console`
+- read-only operations endpoints for health, knowledge bases, sources, pipeline runs, documents, chunks, and model shell state
+- real Retrieval Lab wiring to `POST /retrieval/search`
+- explicit empty, disabled, or degraded states where write-path or richer registry features do not exist yet
+- README and operations-record updates covering local and `192.168.3.100` runtime verification
+
+Still intentionally deferred:
+
+- browser-triggered create/update flows for knowledge bases, sources, or ingestion
+- richer source categories beyond the local-directory shell
+- full model registry CRUD
+- evaluation workflows beyond the placeholder shell
 
 ## Purpose
 

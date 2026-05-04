@@ -99,9 +99,32 @@ Authoritative specs:
 - [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
 - [Web Console prototype](./docs/prototypes/web-console/index.html)
 
-## Web Console Preview
+## Web Console
 
-The Web Console is planned as an operator workbench for knowledge bases, sources, ingestion tasks, pipeline runs, document/chunk review, model configuration, retrieval debugging, and health status.
+RAGRig now ships a first lightweight Web Console inside the same FastAPI service. It is an operator workbench for knowledge bases, sources, ingestion tasks, pipeline runs, document and chunk review, retrieval debugging, model shells, and health status.
+
+The console lives at:
+
+```text
+GET /console
+```
+
+What the current MVP covers:
+
+- knowledge base inventory from the real DB
+- local-directory source configuration from the real DB
+- CLI-connected ingestion entry with disabled browser-write state
+- pipeline run history and per-item detail from the real DB
+- document latest-version preview and real chunk preview or empty state
+- retrieval Playground backed by the real `POST /retrieval/search` contract
+- embedding profile inventory from indexed chunks
+- health, DB dialect, Alembic revision, extension state, and visible tables
+
+Current limitations:
+
+- browser-triggered create/update actions are intentionally not implemented yet
+- model registry is still a read-only shell except for real indexed embedding profiles
+- the console only shows capabilities backed by existing DB/API boundaries and uses empty, disabled, or degraded states for the rest
 
 <p align="center">
   <img src="./docs/prototypes/web-console/ragrig-web-console-prototype.png" alt="RAGRig Web Console prototype" width="860">
@@ -314,13 +337,29 @@ The current repository state supports local Markdown/Text parsing, character-win
     }
     ```
 
-14. Start the full local development stack when you also want the API service:
+14. Start the local API service, including the Web Console:
+
+    ```bash
+    make run-web
+    ```
+
+    Then open `http://localhost:8000/console`.
+
+    If you changed `APP_HOST_PORT`, open that port instead.
+
+15. Run the Web Console smoke contract:
+
+    ```bash
+    make web-check
+    ```
+
+16. Start the full local development stack when you also want Docker-managed app + DB:
 
     ```bash
     docker compose up --build
     ```
 
-15. Verify the service and pgvector bootstrap:
+17. Verify the service and pgvector bootstrap:
 
     ```bash
     curl http://localhost:8000/health
@@ -344,7 +383,7 @@ Expected healthy response:
 
 If PostgreSQL is unavailable, `/health` returns `503` with a clear error payload.
 
-16. Exercise the retrieval API directly:
+18. Exercise the retrieval API directly:
 
     ```bash
     curl -X POST http://localhost:8000/retrieval/search \
@@ -363,6 +402,7 @@ Repository-level DB commands:
 - `make db-check`: verify `pgvector` extension, required Phase 1a tables, and Alembic head revision
 - `make db-shell`: open `psql` in the Compose database container
 - `make test-db`: alias for the DB smoke check
+- `make web-check`: verify `/console` and the Web Console data routes
 - `make ingest-local-dry-run`: preview scanned files and skip reasons without DB writes
 - `make ingest-local`: ingest the local fixture corpus or an overridden root path into the metadata DB
 - `make ingest-check`: query the latest local-ingestion run and document-version evidence
@@ -456,6 +496,44 @@ What it does not do yet:
 - reranking or lexical fallback
 - ACL filtering
 - external embedding providers as the default path
+
+## Web Console Usage
+
+The Web Console is served by the same FastAPI process as `/health`, `/docs`, and `/retrieval/search`.
+
+Local startup sequence from a fresh clone:
+
+```bash
+make sync
+cp .env.example .env
+docker compose up --build -d db
+make migrate
+make ingest-local
+make index-local
+make run-web
+```
+
+Then open:
+
+```text
+http://localhost:8000/console
+```
+
+Suggested local verification sequence:
+
+```bash
+make test
+make web-check
+make retrieve-check QUERY="RAGRig Guide"
+```
+
+Relationship to other interfaces:
+
+- Web Console: operator-facing overview and debugging workbench
+- Swagger (`/docs`): raw API exploration
+- CLI / Make targets: write-path orchestration for ingest and indexing in this MVP
+
+The console does not invent data. If a knowledge base has no chunks, models, or retrieval results yet, the UI shows real empty or degraded states instead of placeholders.
 
 ## Plugin Architecture
 

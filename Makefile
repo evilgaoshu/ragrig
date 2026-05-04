@@ -1,6 +1,6 @@
 UV ?= uv
 
-.PHONY: sync format lint test test-db migrate migrate-down db-check db-shell run up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check
+.PHONY: sync format lint test web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -16,6 +16,9 @@ lint:
 
 test:
 	$(UV) run pytest
+
+web-check:
+	$(UV) run pytest tests/test_web_console.py
 
 test-db:
 	$(UV) run python -m scripts.db_check
@@ -34,6 +37,9 @@ db-shell:
 
 run:
 	$(UV) run uvicorn ragrig.main:app --host 0.0.0.0 --port 8000 --reload
+
+run-web:
+	$(UV) run python -m scripts.run_web
 
 up:
 	docker compose up --build
