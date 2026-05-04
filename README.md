@@ -53,6 +53,24 @@ RAGRig treats RAG as an operational system:
 - **Ops-friendly:** designed for Docker Compose first, with a path to Kubernetes later.
 - **Plugin-first:** keep the core small, then extend sources, sinks, models, vector stores, preview tools, and workflow nodes through explicit contracts.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    sources["Source plugins<br/>files, object storage, docs, wiki, DB"]
+    pipeline["Pipeline engine<br/>scan, parse, clean, chunk, embed, index"]
+    core["RAGRig core<br/>KB, versions, chunks, runs, audit"]
+    vectors["Vector backends<br/>pgvector, Qdrant, others"]
+    console["Web Console<br/>operate, review, debug"]
+    api["Retrieval API / MCP / exports"]
+
+    sources --> pipeline --> core
+    core --> vectors
+    core --> console
+    vectors --> api
+    core --> api
+```
+
 ## Project Status
 
 RAGRig is in early project design and scaffolding.
@@ -75,6 +93,14 @@ Authoritative specs:
 - [Phase 1c chunking and embedding spec](./docs/specs/ragrig-phase-1c-chunking-embedding-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
 - [Web Console prototype](./docs/prototypes/web-console/index.html)
+
+## Web Console Preview
+
+The Web Console is planned as an operator workbench for knowledge bases, sources, ingestion tasks, pipeline runs, document/chunk review, model configuration, retrieval debugging, and health status.
+
+<p align="center">
+  <img src="./docs/prototypes/web-console/ragrig-web-console-prototype.png" alt="RAGRig Web Console prototype" width="860">
+</p>
 
 ## Phase 1a Foundation
 
@@ -369,18 +395,20 @@ RAGRig is designed as a small core with plugin-first extension points. The core 
 
 The goal is not to build a plugin marketplace first. The goal is to make every integration explicit, testable, observable, and replaceable.
 
+The README uses official platform links instead of embedding third-party logos. A visual integration gallery can be added later under `docs/` when each logo's trademark and usage rules are checked.
+
 Plugin families:
 
 | Family | Purpose | Examples |
 | --- | --- | --- |
-| Source connectors | Read enterprise knowledge from external systems | local files, SMB/NFS, S3-compatible storage, Google Drive, SharePoint, Confluence, databases |
-| Parsers and OCR | Convert raw files into extracted text and structure | Markdown, plain text, PDF, DOCX, XLSX, Docling, MinerU, Tesseract, PaddleOCR |
+| Source connectors | Read enterprise knowledge from external systems | local files, SMB/NFS, S3-compatible storage, [Google Drive](https://www.google.com/drive/), [SharePoint](https://www.microsoft.com/en-us/microsoft-365/sharepoint/collaboration), [Confluence](https://www.atlassian.com/software/confluence), databases |
+| Parsers and OCR | Convert raw files into extracted text and structure | Markdown, plain text, PDF, DOCX, XLSX, [Docling](https://github.com/docling-project/docling), [MinerU](https://github.com/opendatalab/MinerU), [Tesseract](https://github.com/tesseract-ocr/tesseract), [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) |
 | Cleaning nodes | Normalize, redact, classify, dedupe, and enrich content | deterministic cleaners, LLM-assisted cleaners, PII redaction, metadata extraction |
 | Chunkers | Split document versions into traceable chunks | character windows, Markdown heading chunks, recursive text chunks, table-aware chunks |
-| Model providers | Supply LLMs, embedding models, rerankers, OCR, and parsing models | OpenAI-compatible APIs, Ollama, vLLM, llama.cpp, BGE, Jina, Cohere, Voyage |
-| Vector backends | Store and search vectors with backend-specific capability reporting | pgvector, Qdrant, Milvus/Zilliz, Weaviate, OpenSearch/Elasticsearch, Redis/Valkey |
-| Output sinks | Write governed knowledge or retrieval artifacts elsewhere | S3/R2/MinIO, NFS, relational databases, JSONL, Parquet, Markdown, webhooks, MCP |
-| Preview/edit integrations | Let operators inspect or edit source and cleaned knowledge | Markdown editor, WPS, OnlyOffice, Collabora, source-system deep links |
+| Model providers | Supply LLMs, embedding models, rerankers, OCR, and parsing models | [OpenAI](https://platform.openai.com/docs/overview)-compatible APIs, [Ollama](https://ollama.com/), [vLLM](https://www.vllm.ai/), [llama.cpp](https://github.com/ggml-org/llama.cpp), [BAAI BGE](https://huggingface.co/BAAI), [Jina AI](https://jina.ai/embeddings/), [Cohere](https://cohere.com/), [Voyage AI](https://www.voyageai.com/) |
+| Vector backends | Store and search vectors with backend-specific capability reporting | [pgvector](https://github.com/pgvector/pgvector), [Qdrant](https://qdrant.tech/), [Milvus](https://milvus.io/)/[Zilliz](https://zilliz.com/), [Weaviate](https://weaviate.io/), [OpenSearch](https://opensearch.org/)/[Elasticsearch](https://www.elastic.co/), [Redis](https://redis.io/)/[Valkey](https://valkey.io/) |
+| Output sinks | Write governed knowledge or retrieval artifacts elsewhere | [Amazon S3](https://aws.amazon.com/s3/)/[Cloudflare R2](https://www.cloudflare.com/developer-platform/products/r2/)/[MinIO](https://www.min.io/), NFS, relational databases, JSONL, [Parquet](https://parquet.apache.org/), Markdown, webhooks, [MCP](https://modelcontextprotocol.io/) |
+| Preview/edit integrations | Let operators inspect or edit source and cleaned knowledge | Markdown editor, [WPS](https://www.wps.com/), [OnlyOffice](https://www.onlyoffice.com/), [Collabora Online](https://www.collaboraonline.com/), source-system deep links |
 | Evaluation plugins | Measure retrieval and answer quality | golden questions, citation coverage, latency/cost, regression checks |
 | Workflow nodes | Compose ingestion, indexing, export, and evaluation pipelines | scan, parse, clean, chunk, embed, index, retrieve, evaluate, export, notify |
 
@@ -411,23 +439,23 @@ Priority official plugins:
 
 | Priority | Plugin area | Platforms and protocols to cover first |
 | --- | --- | --- |
-| P0 | `vector.qdrant` | Qdrant Cloud and self-hosted Qdrant |
-| P0 | `model.openai_compatible` | OpenAI, Azure OpenAI-compatible endpoints, vLLM, Ollama, LM Studio, Xinference, llama.cpp servers |
-| P0 | `embedding.bge` and `reranker.bge` | BAAI BGE embedding and reranker models, local or OpenAI-compatible serving |
-| P1 | `source.s3` | AWS S3, Cloudflare R2, MinIO, Ceph RGW, Wasabi, Backblaze B2 S3 API, Tencent COS S3 API, Alibaba OSS S3-compatible mode when available |
-| P1 | `sink.object_storage` | AWS S3, Cloudflare R2, MinIO, Ceph RGW, Wasabi, Backblaze B2, Google Cloud Storage, Azure Blob Storage |
-| P1 | `source.fileshare` | SMB/CIFS, NFS, WebDAV, SFTP |
-| P1 | `source.google_workspace` | Google Drive, Google Docs, Google Sheets, Google Slides |
-| P1 | `source.microsoft_365` | SharePoint, OneDrive, Word, Excel, PowerPoint |
-| P1 | `source.wiki` | Confluence, MediaWiki, GitBook, Docusaurus sites, MkDocs sites |
-| P1 | `source.database` | PostgreSQL, MySQL/MariaDB, SQL Server, Oracle, SQLite, MongoDB, Elasticsearch/OpenSearch |
-| P1 | `preview.office` | WPS document middle platform, OnlyOffice, Collabora Online |
-| P2 | `source.collaboration` | Notion, Feishu/Lark Docs, DingTalk Docs, WeCom documents, Slack files, Teams files |
-| P2 | `parser.advanced_documents` | PDF layout extraction, DOCX/PPTX/XLSX, Docling, MinerU, Unstructured |
-| P2 | `ocr` | PaddleOCR, Tesseract, cloud OCR adapters |
-| P2 | `vector.enterprise` | Milvus/Zilliz, Weaviate, OpenSearch/Elasticsearch vector, Redis/Valkey vector, Vespa |
-| P2 | `sink.analytics` | Parquet, DuckDB, ClickHouse, BigQuery, Snowflake |
-| P2 | `sink.agent_access` | MCP server, webhooks, retrieval API export adapters |
+| P0 | `vector.qdrant` | [Qdrant Cloud](https://qdrant.tech/cloud/) and [self-hosted Qdrant](https://qdrant.tech/documentation/) |
+| P0 | `model.openai_compatible` | [OpenAI](https://platform.openai.com/docs/overview), [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service), [vLLM](https://www.vllm.ai/), [Ollama](https://ollama.com/), [LM Studio](https://lmstudio.ai/), [Xinference](https://inference.readthedocs.io/), [llama.cpp](https://github.com/ggml-org/llama.cpp) servers |
+| P0 | `embedding.bge` and `reranker.bge` | [BAAI BGE](https://huggingface.co/BAAI) embedding and reranker models, local or OpenAI-compatible serving |
+| P1 | `source.s3` | [AWS S3](https://aws.amazon.com/s3/), [Cloudflare R2](https://www.cloudflare.com/developer-platform/products/r2/), [MinIO](https://www.min.io/), [Ceph RGW](https://docs.ceph.com/en/latest/radosgw/), [Wasabi](https://wasabi.com/), [Backblaze B2 S3 API](https://www.backblaze.com/cloud-storage), [Tencent COS S3 API](https://www.tencentcloud.com/products/cos), [Alibaba OSS](https://www.alibabacloud.com/product/oss) S3-compatible mode when available |
+| P1 | `sink.object_storage` | [AWS S3](https://aws.amazon.com/s3/), [Cloudflare R2](https://www.cloudflare.com/developer-platform/products/r2/), [MinIO](https://www.min.io/), [Ceph RGW](https://docs.ceph.com/en/latest/radosgw/), [Wasabi](https://wasabi.com/), [Backblaze B2](https://www.backblaze.com/cloud-storage), [Google Cloud Storage](https://cloud.google.com/storage), [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs) |
+| P1 | `source.fileshare` | [SMB/CIFS](https://learn.microsoft.com/en-us/windows-server/storage/file-server/file-server-smb-overview), [NFS](https://docs.kernel.org/admin-guide/nfs/index.html), [WebDAV](https://www.rfc-editor.org/rfc/rfc4918), [SFTP/OpenSSH](https://www.openssh.com/) |
+| P1 | `source.google_workspace` | [Google Drive](https://www.google.com/drive/), [Google Docs](https://www.google.com/docs/about/), [Google Sheets](https://www.google.com/sheets/about/), [Google Slides](https://www.google.com/slides/about/) |
+| P1 | `source.microsoft_365` | [SharePoint](https://www.microsoft.com/en-us/microsoft-365/sharepoint/collaboration), [OneDrive](https://www.microsoft.com/en-us/microsoft-365/onedrive/online-cloud-storage), [Word](https://www.microsoft.com/en-us/microsoft-365/word), [Excel](https://www.microsoft.com/en-us/microsoft-365/excel), [PowerPoint](https://www.microsoft.com/en-us/microsoft-365/powerpoint) |
+| P1 | `source.wiki` | [Confluence](https://www.atlassian.com/software/confluence), [MediaWiki](https://www.mediawiki.org/wiki/MediaWiki), [GitBook](https://www.gitbook.com/), [Docusaurus](https://docusaurus.io/), [MkDocs](https://www.mkdocs.org/) |
+| P1 | `source.database` | [PostgreSQL](https://www.postgresql.org/), [MySQL](https://www.mysql.com/)/[MariaDB](https://mariadb.org/), [SQL Server](https://www.microsoft.com/en-us/sql-server), [Oracle Database](https://www.oracle.com/database/), [SQLite](https://www.sqlite.org/), [MongoDB](https://www.mongodb.com/), [Elasticsearch](https://www.elastic.co/elasticsearch)/[OpenSearch](https://opensearch.org/) |
+| P1 | `preview.office` | [WPS](https://www.wps.com/), [OnlyOffice](https://www.onlyoffice.com/), [Collabora Online](https://www.collaboraonline.com/) |
+| P2 | `source.collaboration` | [Notion](https://www.notion.com/), [Lark](https://www.larksuite.com/)/[Feishu](https://www.feishu.cn/), [DingTalk](https://www.dingtalk.com/), [WeCom](https://work.weixin.qq.com/), [Slack files](https://slack.com/), [Microsoft Teams files](https://www.microsoft.com/en-us/microsoft-teams/group-chat-software) |
+| P2 | `parser.advanced_documents` | PDF layout extraction, DOCX/PPTX/XLSX, [Docling](https://github.com/docling-project/docling), [MinerU](https://github.com/opendatalab/MinerU), [Unstructured](https://unstructured.io/) |
+| P2 | `ocr` | [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR), [Tesseract](https://github.com/tesseract-ocr/tesseract), [AWS Textract](https://aws.amazon.com/textract/), [Azure Document Intelligence](https://azure.microsoft.com/en-us/products/ai-services/ai-document-intelligence), [Google Document AI](https://cloud.google.com/document-ai) |
+| P2 | `vector.enterprise` | [Milvus](https://milvus.io/)/[Zilliz](https://zilliz.com/), [Weaviate](https://weaviate.io/), [OpenSearch](https://opensearch.org/)/[Elasticsearch](https://www.elastic.co/elasticsearch) vector, [Redis](https://redis.io/)/[Valkey](https://valkey.io/) vector, [Vespa](https://vespa.ai/) |
+| P2 | `sink.analytics` | [Parquet](https://parquet.apache.org/), [DuckDB](https://duckdb.org/), [ClickHouse](https://clickhouse.com/), [BigQuery](https://cloud.google.com/bigquery), [Snowflake](https://www.snowflake.com/) |
+| P2 | `sink.agent_access` | [MCP](https://modelcontextprotocol.io/) server, webhooks, retrieval API export adapters |
 
 Every plugin should declare:
 
