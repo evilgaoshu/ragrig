@@ -12,6 +12,10 @@
   <em>源栈: from scattered enterprise sources to traceable, permission-aware, model-ready knowledge.</em>
 </p>
 
+<p align="center">
+  <a href="./README.zh-CN.md">中文</a>
+</p>
+
 ---
 
 ## About
@@ -47,6 +51,7 @@ RAGRig treats RAG as an operational system:
 - **Model-flexible:** bring local or hosted LLMs, embedding models, rerankers, OCR, and parsers.
 - **Vector-store portable:** start with pgvector, scale to Qdrant, and keep migration paths explicit.
 - **Ops-friendly:** designed for Docker Compose first, with a path to Kubernetes later.
+- **Plugin-first:** keep the core small, then extend sources, sinks, models, vector stores, preview tools, and workflow nodes through explicit contracts.
 
 ## Project Status
 
@@ -152,19 +157,19 @@ The current repository state supports local Markdown/Text parsing, character-win
      "current_revision": "20260503_0001",
      "extension": "vector",
      "missing_tables": [],
-      "present_tables": [
-        "chunks",
-        "document_versions",
+     "present_tables": [
+       "chunks",
+       "document_versions",
        "documents",
        "embeddings",
        "knowledge_bases",
-        "pipeline_run_items",
-        "pipeline_runs",
-        "sources"
+       "pipeline_run_items",
+       "pipeline_runs",
+       "sources"
      ],
      "revision_matches_head": true
-    }
-    ```
+   }
+   ```
 
 8. Preview the local ingestion fixture without writing to the database:
 
@@ -203,8 +208,8 @@ The current repository state supports local Markdown/Text parsing, character-win
        "success_count": 4,
        "total_items": 5
      }
-    }
-    ```
+   }
+   ```
 
 11. Chunk and embed the latest ingested document versions:
 
@@ -245,17 +250,17 @@ The current repository state supports local Markdown/Text parsing, character-win
 
 13. Start the full local development stack when you also want the API service:
 
-   ```bash
+    ```bash
     docker compose up --build
-   ```
+    ```
 
-12. Verify the service and pgvector bootstrap:
+14. Verify the service and pgvector bootstrap:
 
-   ```bash
-   curl http://localhost:8000/health
-   docker compose exec db psql -U ragrig -d ragrig -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
-   docker compose exec db psql -U ragrig -d ragrig -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;"
-   ```
+    ```bash
+    curl http://localhost:8000/health
+    docker compose exec db psql -U ragrig -d ragrig -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
+    docker compose exec db psql -U ragrig -d ragrig -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;"
+    ```
 
     If you changed `APP_HOST_PORT`, use that port in the `curl` command.
     If you changed `DB_HOST_PORT`, keep using `docker compose exec db ...`; no command change is required.
@@ -358,36 +363,104 @@ uv run python -m scripts.ingest_local \
   --dry-run
 ```
 
-## Planned Integrations
+## Plugin Architecture
 
-Input sources:
+RAGRig is designed as a small core with plugin-first extension points. The core owns workspace state, knowledge bases, documents, versions, chunks, embeddings, pipeline runs, metadata, access boundaries, audit events, and plugin contracts. Integrations live behind typed plugin interfaces.
 
-- local files and folders
-- SMB/NFS
-- S3-compatible storage, including Cloudflare R2
-- Cloudflare D1, KV, and other platform data sources
-- Google Docs / Google Drive
-- wiki systems such as Confluence or MediaWiki
-- databases
-- WPS document middle platform
-- OnlyOffice-compatible document services
+The goal is not to build a plugin marketplace first. The goal is to make every integration explicit, testable, observable, and replaceable.
 
-Output targets:
+Plugin families:
 
-- Qdrant
-- Postgres/pgvector
-- S3-compatible storage
-- NFS
-- relational databases
-- Markdown, JSONL, and Parquet exports
+| Family | Purpose | Examples |
+| --- | --- | --- |
+| Source connectors | Read enterprise knowledge from external systems | local files, SMB/NFS, S3-compatible storage, Google Drive, SharePoint, Confluence, databases |
+| Parsers and OCR | Convert raw files into extracted text and structure | Markdown, plain text, PDF, DOCX, XLSX, Docling, MinerU, Tesseract, PaddleOCR |
+| Cleaning nodes | Normalize, redact, classify, dedupe, and enrich content | deterministic cleaners, LLM-assisted cleaners, PII redaction, metadata extraction |
+| Chunkers | Split document versions into traceable chunks | character windows, Markdown heading chunks, recursive text chunks, table-aware chunks |
+| Model providers | Supply LLMs, embedding models, rerankers, OCR, and parsing models | OpenAI-compatible APIs, Ollama, vLLM, llama.cpp, BGE, Jina, Cohere, Voyage |
+| Vector backends | Store and search vectors with backend-specific capability reporting | pgvector, Qdrant, Milvus/Zilliz, Weaviate, OpenSearch/Elasticsearch, Redis/Valkey |
+| Output sinks | Write governed knowledge or retrieval artifacts elsewhere | S3/R2/MinIO, NFS, relational databases, JSONL, Parquet, Markdown, webhooks, MCP |
+| Preview/edit integrations | Let operators inspect or edit source and cleaned knowledge | Markdown editor, WPS, OnlyOffice, Collabora, source-system deep links |
+| Evaluation plugins | Measure retrieval and answer quality | golden questions, citation coverage, latency/cost, regression checks |
+| Workflow nodes | Compose ingestion, indexing, export, and evaluation pipelines | scan, parse, clean, chunk, embed, index, retrieve, evaluate, export, notify |
 
-Model providers:
+### Plugin Tiers
 
-- OpenAI-compatible APIs
-- Ollama
-- llama.cpp
-- vLLM
-- local embedding and reranker models such as BAAI BGE
+RAGRig separates plugins by stability, priority, and maintenance ownership.
+
+| Tier | Meaning | Ships with core | Extension policy |
+| --- | --- | --- | --- |
+| Built-in core plugins | Minimal local-first path required for a reproducible RAG pipeline | Yes | Maintained in this repository, no optional external service dependency |
+| Official plugins | High-demand integrations maintained by the RAGRig project | Usually optional | May live in this repository first, then move to separate packages as APIs stabilize |
+| Community plugins | Third-party integrations built against public contracts | No | Installed through Python packages or plugin manifests once the contract is stable |
+
+Initial built-in core plugins:
+
+| Plugin | Family | Read/write | Why it is core |
+| --- | --- | --- | --- |
+| `source.local` | Source connector | Read | Fresh-clone demo, fixture validation, shared-host smoke testing |
+| `parser.markdown` | Parser | Read | Common documentation format, deterministic tests |
+| `parser.text` | Parser | Read | Smallest plain-text ingestion path |
+| `chunker.character_window` | Chunker | Write chunks | Reproducible chunking before semantic chunkers exist |
+| `embedding.deterministic_local` | Model provider | Write embeddings | Secret-free development and CI validation |
+| `vector.pgvector` | Vector backend | Read/write | Default lightweight backend on Postgres |
+| `sink.jsonl` | Output sink | Write | Portable debug/export format |
+| `preview.markdown` | Preview/edit | Read/write draft | Operator review without needing an office suite |
+
+Priority official plugins:
+
+| Priority | Plugin area | Platforms and protocols to cover first |
+| --- | --- | --- |
+| P0 | `vector.qdrant` | Qdrant Cloud and self-hosted Qdrant |
+| P0 | `model.openai_compatible` | OpenAI, Azure OpenAI-compatible endpoints, vLLM, Ollama, LM Studio, Xinference, llama.cpp servers |
+| P0 | `embedding.bge` and `reranker.bge` | BAAI BGE embedding and reranker models, local or OpenAI-compatible serving |
+| P1 | `source.s3` | AWS S3, Cloudflare R2, MinIO, Ceph RGW, Wasabi, Backblaze B2 S3 API, Tencent COS S3 API, Alibaba OSS S3-compatible mode when available |
+| P1 | `sink.object_storage` | AWS S3, Cloudflare R2, MinIO, Ceph RGW, Wasabi, Backblaze B2, Google Cloud Storage, Azure Blob Storage |
+| P1 | `source.fileshare` | SMB/CIFS, NFS, WebDAV, SFTP |
+| P1 | `source.google_workspace` | Google Drive, Google Docs, Google Sheets, Google Slides |
+| P1 | `source.microsoft_365` | SharePoint, OneDrive, Word, Excel, PowerPoint |
+| P1 | `source.wiki` | Confluence, MediaWiki, GitBook, Docusaurus sites, MkDocs sites |
+| P1 | `source.database` | PostgreSQL, MySQL/MariaDB, SQL Server, Oracle, SQLite, MongoDB, Elasticsearch/OpenSearch |
+| P1 | `preview.office` | WPS document middle platform, OnlyOffice, Collabora Online |
+| P2 | `source.collaboration` | Notion, Feishu/Lark Docs, DingTalk Docs, WeCom documents, Slack files, Teams files |
+| P2 | `parser.advanced_documents` | PDF layout extraction, DOCX/PPTX/XLSX, Docling, MinerU, Unstructured |
+| P2 | `ocr` | PaddleOCR, Tesseract, cloud OCR adapters |
+| P2 | `vector.enterprise` | Milvus/Zilliz, Weaviate, OpenSearch/Elasticsearch vector, Redis/Valkey vector, Vespa |
+| P2 | `sink.analytics` | Parquet, DuckDB, ClickHouse, BigQuery, Snowflake |
+| P2 | `sink.agent_access` | MCP server, webhooks, retrieval API export adapters |
+
+Every plugin should declare:
+
+- plugin id, type, version, and owner
+- supported read/write operations
+- configuration schema
+- secret requirements
+- capability matrix
+- cursor or incremental-sync support
+- delete detection support
+- permission mapping support
+- failure and retry behavior
+- emitted metrics and audit events
+
+Example manifest shape:
+
+```yaml
+id: ragrig.source.s3
+type: source
+version: 0.1.0
+capabilities:
+  read: true
+  write: false
+  incremental_sync: true
+  delete_detection: true
+  permission_mapping: false
+config_schema: schemas/s3-source.json
+secrets:
+  - access_key_id
+  - secret_access_key
+```
+
+Plugin development will start with internal Python interfaces. Public third-party plugin packaging should wait until the core contracts, test kit, and capability matrix are stable.
 
 ## Repository Layout
 
@@ -402,14 +475,19 @@ Model providers:
 │   └── ragrig-icon.svg
 ├── docs/
 │   ├── operations/
+│   ├── prototypes/
 │   ├── roadmap.md
 │   └── specs/
 │       ├── ragrig-mvp-spec.md
 │       ├── ragrig-phase-1a-metadata-db-spec.md
 │       ├── ragrig-phase-1a-scaffold-spec.md
-│       └── ragrig-phase-1b-local-ingestion-spec.md
+│       ├── ragrig-phase-1b-local-ingestion-spec.md
+│       ├── ragrig-phase-1c-chunking-embedding-spec.md
+│       └── ragrig-web-console-spec.md
 ├── scripts/
 │   ├── db_check.py
+│   ├── index_check.py
+│   ├── index_local.py
 │   ├── ingest_check.py
 │   ├── ingest_local.py
 │   └── init-db.sql
@@ -419,22 +497,26 @@ Model providers:
 │       │   ├── engine.py
 │       │   ├── models/
 │       │   └── session.py
-│       ├── ingestion/
-│       ├── main.py
-│       ├── config.py
 │       ├── chunkers/
 │       ├── cleaners/
 │       ├── embeddings/
+│       ├── indexing/
+│       ├── ingestion/
 │       ├── parsers/
-│       └── repositories/
-│       └── vectorstore/
+│       ├── repositories/
+│       ├── vectorstore/
+│       ├── config.py
+│       └── main.py
 ├── tests/
 │   ├── fixtures/
+│   ├── test_alembic_sql.py
 │   ├── test_db_check.py
 │   ├── test_db_config.py
 │   ├── test_db_models.py
+│   ├── test_db_runtime_url.py
 │   ├── test_db_session.py
 │   ├── test_health.py
+│   ├── test_indexing_pipeline.py
 │   ├── test_ingestion_pipeline.py
 │   ├── test_parsers.py
 │   └── test_scanner.py
@@ -447,6 +529,7 @@ Model providers:
 ├── CONTRIBUTING.md
 ├── LICENSE
 ├── README.md
+├── README.zh-CN.md
 └── SECURITY.md
 ```
 
