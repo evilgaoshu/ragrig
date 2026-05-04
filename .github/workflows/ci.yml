@@ -1,8 +1,10 @@
-name: CI
+name: RAGRig CI
 
 on:
-  push:
   pull_request:
+    branches: [main]
+  push:
+    branches: [main]
 
 jobs:
   checks:
@@ -17,9 +19,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: true
 
       - name: Sync dependencies
-        run: make sync
+        run: uv sync --dev --frozen
 
       - name: Check formatting
         run: uv run ruff format --check .
@@ -32,3 +35,6 @@ jobs:
 
       - name: Coverage
         run: make coverage
+
+      - name: Web check
+        run: make web-check
