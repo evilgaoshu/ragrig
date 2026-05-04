@@ -20,6 +20,7 @@ from ragrig.db.models import (
     Source,
 )
 from ragrig.plugins import get_plugin_registry
+from ragrig.providers import get_provider_registry
 
 CONSOLE_HTML_PATH = Path(__file__).with_name("web_console.html")
 
@@ -371,16 +372,49 @@ def list_models(session: Session) -> dict[str, Any]:
             }
         )
 
+    registered_providers = []
+    for metadata in get_provider_registry().list():
+        registered_providers.append(
+            {
+                "name": metadata.name,
+                "kind": metadata.kind.value,
+                "description": metadata.description,
+                "capabilities": sorted(capability.value for capability in metadata.capabilities),
+                "default_dimensions": metadata.default_dimensions,
+                "max_dimensions": metadata.max_dimensions,
+                "default_context_window": metadata.default_context_window,
+                "max_context_window": metadata.max_context_window,
+                "required_secrets": metadata.required_secrets,
+                "config_schema": metadata.config_schema,
+                "sdk_protocol": metadata.sdk_protocol,
+                "healthcheck": metadata.healthcheck,
+                "failure_modes": metadata.failure_modes,
+                "retry_policy": {
+                    "max_attempts": metadata.retry_policy.max_attempts,
+                    "backoff_seconds": metadata.retry_policy.backoff_seconds,
+                },
+                "audit_fields": metadata.audit_fields,
+                "metric_fields": metadata.metric_fields,
+                "intended_uses": metadata.intended_uses,
+            }
+        )
+
     return {
         "embedding_profiles": profiles,
+        "registered_providers": registered_providers,
         "registry_shell": {
             "llm": {
                 "status": "disabled",
-                "reason": "No LLM registry API exists in this MVP.",
+                "reason": (
+                    "Provider registry contract exists, but LLM adapters arrive in Phase 1e PR-2."
+                ),
             },
             "reranker": {
                 "status": "disabled",
-                "reason": "No reranker registry API exists in this MVP.",
+                "reason": (
+                    "Provider registry contract exists, but reranker adapters "
+                    "arrive in Phase 1e PR-2."
+                ),
             },
             "parser": {
                 "status": "derived",

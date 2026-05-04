@@ -85,7 +85,8 @@ Current implementation status:
 4. Phase 1b now supports local Markdown/Text ingestion into the metadata DB, including `document_versions` and pipeline-run tracking.
 5. Phase 1c now supports deterministic local chunking and embedding into `chunks` and `embeddings` for the latest ingested document versions.
 6. Phase 1d now supports a minimal retrieval API and smoke CLI over the real indexed chunks and embeddings.
-7. Semantic production embeddings, reranking, and richer source types remain intentionally unimplemented in this repository state.
+7. Phase 1e PR-1 now adds a core provider registry contract and registers `deterministic-local` through it, while real local and cloud adapters remain deferred.
+8. Semantic production embeddings, reranking, and richer source types remain intentionally unimplemented in this repository state.
 
 Authoritative specs:
 
@@ -95,6 +96,7 @@ Authoritative specs:
 - [Phase 1b local ingestion spec](./docs/specs/ragrig-phase-1b-local-ingestion-spec.md)
 - [Phase 1c chunking and embedding spec](./docs/specs/ragrig-phase-1c-chunking-embedding-spec.md)
 - [Phase 1d retrieval API spec](./docs/specs/ragrig-phase-1d-retrieval-api-spec.md)
+- [Phase 1e local model provider plugin spec](./docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md)
 - [GitHub CI checks spec](./docs/specs/ragrig-github-ci-checks-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
 - [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
@@ -126,6 +128,7 @@ Current limitations:
 
 - browser-triggered create/update actions are intentionally not implemented yet
 - model registry is still a read-only shell except for real indexed embedding profiles
+- provider registry metadata is now exposed read-only, but real LLM/reranker adapters are still deferred to later Phase 1e PRs
 - the console only shows capabilities backed by existing DB/API boundaries and uses empty, disabled, or degraded states for the rest
 
 <p align="center">
@@ -162,7 +165,29 @@ Still reserved for later phases:
 - `src/ragrig/cleaners`
 - `src/ragrig/vectorstore`
 
-The current repository state supports local Markdown/Text parsing, character-window chunking, deterministic local embeddings, and a minimal pgvector-backed retrieval API for smoke validation. Production embedding providers, reranking, and answer generation are still deferred.
+The current repository state supports local Markdown/Text parsing, character-window chunking, deterministic local embeddings, a provider registry core contract, and a minimal pgvector-backed retrieval API for smoke validation. Production embedding providers, reranking, and answer generation are still deferred.
+
+## Provider Registry
+
+Phase 1e PR-1 establishes the core provider registry contract in `src/ragrig/providers/`.
+
+What exists now:
+
+- provider metadata and capability declarations
+- register/get/read/list/health-check registry operations
+- structured provider errors for missing providers and unsupported capabilities
+- deterministic-local registered as the built-in embedding provider for CI and smoke flows
+- read-only provider inventory in `GET /models`
+
+What this PR does not claim yet:
+
+- no Ollama adapter
+- no LM Studio adapter
+- no BGE adapter
+- no cloud provider stubs
+- no DB-backed model profile management
+
+`deterministic-local` remains a secret-free, network-free test and smoke provider. It is not a production semantic embedding model.
 
 ## Quick Start
 
@@ -627,8 +652,12 @@ Every plugin should declare:
 - plugin id, type, version, and owner
 - supported read/write operations
 - configuration schema
+- required secrets
 - secret requirements
 - capability matrix
+- local/cloud classification
+- dimensions and context-window metadata when applicable
+- SDK or protocol surface
 - cursor or incremental-sync support
 - delete detection support
 - permission mapping support
