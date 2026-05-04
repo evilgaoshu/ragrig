@@ -14,6 +14,7 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
 
     assert "name: RAGRig CI" in workflow
     assert "baseline:" in workflow
+    assert "name: RAGRig CI / baseline" in workflow
     assert "pull_request:" in workflow
     assert "push:" in workflow
     assert "branches: [main]" in workflow
@@ -24,7 +25,6 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "make test" in workflow
     assert "make coverage" in workflow
     assert "make web-check" in workflow
-    assert "RAGRig CI / baseline" not in workflow
 
 
 def test_github_ci_spec_exists_and_documents_required_scope() -> None:
