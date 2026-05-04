@@ -74,6 +74,7 @@ def ingest_local_directory(
     source = get_or_create_source(
         session,
         knowledge_base_id=knowledge_base.id,
+        kind="local_directory",
         uri=str(root_path),
         config_json={
             "root_path": str(root_path),

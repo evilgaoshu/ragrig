@@ -1,10 +1,13 @@
 UV ?= uv
 ARTIFACTS_DIR ?= docs/operations/artifacts
 
-.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check
+.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
+S3_CHECK_KB ?= fixture-s3
+S3_CHECK_BUCKET ?= ragrig-fixtures
+S3_CHECK_PREFIX ?= fixtures/local_ingestion
 
 sync:
 	$(UV) sync --dev
@@ -101,3 +104,6 @@ vector-check:
 
 plugins-check:
 	$(UV) run python -m scripts.plugins_check --format json
+
+s3-check:
+	$(UV) run python -m scripts.s3_check --knowledge-base "$(S3_CHECK_KB)" --bucket "$(S3_CHECK_BUCKET)" --prefix "$(S3_CHECK_PREFIX)"

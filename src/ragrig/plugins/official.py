@@ -2,15 +2,10 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from ragrig.plugins.guards import is_dependency_available
 from ragrig.plugins.manifest import PluginConfigModel, PluginManifest, SecretRequirement
+from ragrig.plugins.sources.s3.config import S3SourceConfig
 from ragrig.plugins.types import Capability, PluginStatus, PluginTier, PluginType
-
-
-class S3SourceConfig(PluginConfigModel):
-    bucket: str
-    access_key: str
-    secret_key: str
-    endpoint_url: str | None = None
 
 
 class FileshareSourceConfig(PluginConfigModel):
@@ -83,7 +78,11 @@ def _official_manifest(
     example_config: dict[str, str] | None = None,
     secret_requirements: tuple[SecretRequirement, ...] = (),
     unavailable_reason: str,
+    docs_reference: str = "docs/specs/ragrig-plugin-system-spec.md",
 ) -> PluginManifest:
+    is_ready = not optional_dependencies or all(
+        is_dependency_available(import_name) for import_name in optional_dependencies
+    )
     return PluginManifest(
         plugin_id=plugin_id,
         display_name=display_name,
@@ -93,14 +92,14 @@ def _official_manifest(
         version="0.1.0",
         owner="ragrig-official",
         tier=PluginTier.OFFICIAL,
-        status=PluginStatus.UNAVAILABLE,
+        status=PluginStatus.READY if is_ready else PluginStatus.UNAVAILABLE,
         capabilities=capabilities,
-        docs_reference="docs/specs/ragrig-plugin-system-spec.md",
+        docs_reference=docs_reference,
         config_model=config_model,
         example_config=example_config,
         secret_requirements=secret_requirements,
         optional_dependencies=optional_dependencies,
-        unavailable_reason=unavailable_reason,
+        unavailable_reason=None if is_ready else unavailable_reason,
     )
 
 
@@ -171,28 +170,44 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="source.s3",
             display_name="S3-Compatible Source",
-            description="Stub manifest for S3-compatible source ingestion.",
+            description="Reads S3-compatible objects with incremental skip and parser handoff.",
             plugin_type=PluginType.SOURCE,
             family="s3",
             capabilities=(
                 Capability.READ,
                 Capability.INCREMENTAL_SYNC,
-                Capability.DELETE_DETECTION,
             ),
             optional_dependencies=("boto3",),
             config_model=S3SourceConfig,
             example_config={
                 "bucket": "docs",
+                "prefix": "team/handbook",
+                "endpoint_url": "http://127.0.0.1:9000",
+                "region": "us-east-1",
+                "use_path_style": True,
+                "verify_tls": False,
                 "access_key": "env:AWS_ACCESS_KEY_ID",
                 "secret_key": "env:AWS_SECRET_ACCESS_KEY",
+                "session_token": "env:AWS_SESSION_TOKEN",
+                "include_patterns": ["*.md", "*.txt"],
+                "exclude_patterns": ["archive/*"],
+                "max_object_size_mb": 50,
+                "page_size": 1000,
+                "max_retries": 3,
+                "connect_timeout_seconds": 10,
+                "read_timeout_seconds": 30,
             },
             secret_requirements=(
                 SecretRequirement(name="AWS_ACCESS_KEY_ID", description="S3 access key id"),
                 SecretRequirement(name="AWS_SECRET_ACCESS_KEY", description="S3 secret access key"),
+                SecretRequirement(
+                    name="AWS_SESSION_TOKEN",
+                    description="Optional S3 session token",
+                    required=False,
+                ),
             ),
-            unavailable_reason=(
-                "Network connector and remote sync behavior are intentionally out of scope."
-            ),
+            unavailable_reason=("Install the optional S3 SDK dependencies to enable source.s3."),
+            docs_reference="docs/specs/ragrig-s3-source-plugin-spec.md",
         ),
         _official_manifest(
             plugin_id="sink.object_storage",

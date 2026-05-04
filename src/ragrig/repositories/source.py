@@ -12,18 +12,20 @@ def get_or_create_source(
     knowledge_base_id,
     uri: str,
     config_json: dict[str, object],
+    kind: str = "local_directory",
 ) -> Source:
     source = session.scalar(
         select(Source).where(Source.knowledge_base_id == knowledge_base_id, Source.uri == uri)
     )
     if source is not None:
+        source.kind = kind
         source.config_json = config_json
         session.flush()
         return source
 
     source = Source(
         knowledge_base_id=knowledge_base_id,
-        kind="local_directory",
+        kind=kind,
         uri=uri,
         config_json=config_json,
     )

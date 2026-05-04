@@ -245,6 +245,7 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
     assert discovery["source.s3"]["secret_requirements"] == [
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
     ]
     assert discovery["source.google_workspace"]["missing_dependencies"] == ["googleapiclient"]
 

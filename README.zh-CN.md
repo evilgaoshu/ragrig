@@ -376,11 +376,11 @@ version: 0.1.0
 capabilities:
   - read
   - incremental_sync
-  - delete_detection
 config_model: S3SourceConfig
 secret_requirements:
   - AWS_ACCESS_KEY_ID
   - AWS_SECRET_ACCESS_KEY
+  - AWS_SESSION_TOKEN
 ```
 
 当前 contract-first 实现已经补上：
@@ -388,6 +388,48 @@ secret_requirements:
 - `src/ragrig/plugins/`：registry、manifest schema、dependency guard、内置插件和官方 stub。
 - `GET /plugins`：默认离线可用的插件发现 API，可返回 readiness、缺失依赖、是否可配置、secret requirements。
 - `make plugins-check`：离线 JSON 输出当前 registry 状态。
+
+`source.s3` 现在已经升级为真实的 S3-compatible source connector，但仍通过可选依赖组 `ragrig[s3]` 启用。当前能力包含 bucket/prefix 扫描、fnmatch include/exclude、下载到 tempfile 后复用 Markdown/Text parser，以及基于 `etag + last_modified + size` 的增量跳过。本期不实现 delete detection。
+
+最小配置示例：
+
+```json
+{
+  "bucket": "docs",
+  "prefix": "team/handbook",
+  "endpoint_url": "http://127.0.0.1:9000",
+  "region": "us-east-1",
+  "use_path_style": true,
+  "verify_tls": false,
+  "access_key": "env:AWS_ACCESS_KEY_ID",
+  "secret_key": "env:AWS_SECRET_ACCESS_KEY",
+  "session_token": "env:AWS_SESSION_TOKEN",
+  "include_patterns": ["*.md", "*.txt"],
+  "exclude_patterns": ["archive/*"],
+  "max_object_size_mb": 50,
+  "page_size": 1000,
+  "max_retries": 3,
+  "connect_timeout_seconds": 10,
+  "read_timeout_seconds": 30
+}
+```
+
+说明：
+
+- Secret 必须保持为已声明的 `env:` 引用；解析后的 secret value 不会写入 DB metadata、插件发现接口或 pipeline error message。
+- 在未安装 `boto3` 前，`GET /plugins` 和 `make plugins-check` 会把 `source.s3` 标记为 unavailable，并显示 missing dependency。
+- 本期 parser handoff 只复用现有 Markdown 与 UTF-8 plain text parser。
+- 不支持的扩展名、超大对象和二进制对象会被 skip 并记录原因，不会拖垮整个 run。
+
+本地 MinIO smoke 路径：
+
+1. 安装可选依赖：`uv sync --extra s3 --dev`
+2. 启动 MinIO：`docker compose --profile minio up -d minio`
+3. 导出凭据，例如 `AWS_ACCESS_KEY_ID=minioadmin`、`AWS_SECRET_ACCESS_KEY=minioadmin`，如有需要再设置 `AWS_SESSION_TOKEN`
+4. 把 `tests/fixtures/local_ingestion/` 下的 fixture 上传到测试 bucket/prefix
+5. 运行 `make s3-check S3_CHECK_BUCKET=<bucket> S3_CHECK_PREFIX=<prefix>`
+
+MinIO smoke 路径是 best-effort、显式启用；默认仓库测试仍保持离线，仅使用 fake client。
 
 ## 质量与供应链
 

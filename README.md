@@ -699,11 +699,11 @@ version: 0.1.0
 capabilities:
   - read
   - incremental_sync
-  - delete_detection
 config_model: S3SourceConfig
 secret_requirements:
   - AWS_ACCESS_KEY_ID
   - AWS_SECRET_ACCESS_KEY
+  - AWS_SESSION_TOKEN
 ```
 
 Current contract-first implementation adds:
@@ -711,6 +711,48 @@ Current contract-first implementation adds:
 - `src/ragrig/plugins/` for the registry, manifest schema, dependency guards, and built-in plus official stub manifests.
 - `GET /plugins` for offline plugin discovery with readiness, missing dependency, configurability, and secret requirement reporting.
 - `make plugins-check` for offline JSON inspection of the registry.
+
+`source.s3` now ships as a real S3-compatible source connector behind the optional `ragrig[s3]` dependency group. It supports bucket and prefix scans, fnmatch include and exclude patterns, tempfile-based Markdown/Text parser handoff, and incremental skip based on `etag + last_modified + size`. It does not implement delete detection in this phase.
+
+Minimal config example:
+
+```json
+{
+  "bucket": "docs",
+  "prefix": "team/handbook",
+  "endpoint_url": "http://127.0.0.1:9000",
+  "region": "us-east-1",
+  "use_path_style": true,
+  "verify_tls": false,
+  "access_key": "env:AWS_ACCESS_KEY_ID",
+  "secret_key": "env:AWS_SECRET_ACCESS_KEY",
+  "session_token": "env:AWS_SESSION_TOKEN",
+  "include_patterns": ["*.md", "*.txt"],
+  "exclude_patterns": ["archive/*"],
+  "max_object_size_mb": 50,
+  "page_size": 1000,
+  "max_retries": 3,
+  "connect_timeout_seconds": 10,
+  "read_timeout_seconds": 30
+}
+```
+
+Notes:
+
+- Secrets must stay as declared `env:` refs. Resolved secret values are not stored in DB metadata, plugin discovery payloads, or pipeline error messages.
+- `GET /plugins` and `make plugins-check` show `source.s3` as unavailable with a missing dependency reason until `boto3` is installed.
+- Supported parser handoff in this slice is limited to the existing Markdown and UTF-8 plain-text parsers.
+- Unsupported extensions, oversize objects, and binary payloads are skipped and recorded per object.
+
+Local MinIO smoke path:
+
+1. Install the optional dependency: `uv sync --extra s3 --dev`
+2. Start MinIO: `docker compose --profile minio up -d minio`
+3. Export credentials such as `AWS_ACCESS_KEY_ID=minioadmin`, `AWS_SECRET_ACCESS_KEY=minioadmin`, and optionally `AWS_SESSION_TOKEN`
+4. Upload the fixture corpus from `tests/fixtures/local_ingestion/` into a test bucket and prefix
+5. Run `make s3-check S3_CHECK_BUCKET=<bucket> S3_CHECK_PREFIX=<prefix>`
+
+The MinIO smoke path is best-effort and opt-in. Default repository tests remain offline and use fake clients only.
 
 Plugin development will start with internal Python interfaces. Public third-party plugin packaging should wait until the core contracts, test kit, and capability matrix are stable.
 
