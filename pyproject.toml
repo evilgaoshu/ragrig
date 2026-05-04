@@ -20,6 +20,9 @@ cloud-llm = []
 cloud-embeddings = []
 doc-parsers = []
 local-ml = []
+s3 = [
+  "boto3>=1.35.0,<2.0.0",
+]
 vectorstores = [
   "qdrant-client>=1.9.0,<2.0.0",
 ]
