@@ -86,7 +86,8 @@ Current implementation status:
 5. Phase 1c now supports deterministic local chunking and embedding into `chunks` and `embeddings` for the latest ingested document versions.
 6. Phase 1d now supports a minimal retrieval API and smoke CLI over the real indexed chunks and embeddings.
 7. Phase 1e PR-1 now adds a core provider registry contract and registers `deterministic-local` through it, while real local and cloud adapters remain deferred.
-8. Semantic production embeddings, reranking, and richer source types remain intentionally unimplemented in this repository state.
+8. `source.s3` now supports real S3-compatible Markdown/Text ingestion with fake-client-first tests and opt-in runtime dependencies.
+9. Semantic production embeddings, reranking, and richer source types remain intentionally unimplemented in this repository state.
 
 Authoritative specs:
 
@@ -398,10 +399,55 @@ What this PR does not claim yet:
      VECTOR_BACKEND=qdrant make retrieve-check QUERY="RAGRig Guide"
      ```
 
-     `qdrant-client` is intentionally optional. Fresh clone `make test` and `make coverage`
-     continue to pass without the package or a running Qdrant container.
+      `qdrant-client` is intentionally optional. Fresh clone `make test` and `make coverage`
+      continue to pass without the package or a running Qdrant container.
 
- 16. Start the local API service, including the Web Console:
+ 16. Inspect plugin readiness offline:
+
+     ```bash
+     make plugins-check
+     ```
+
+     `source.s3` reports `unavailable` until you install the optional S3 SDK:
+
+     ```bash
+     uv sync --extra s3
+     ```
+
+ 17. Run the opt-in S3-compatible smoke path against MinIO or another S3-compatible endpoint:
+
+     ```bash
+     docker compose --profile minio up -d minio
+     uv sync --extra s3
+     make s3-check
+     ```
+
+     The default `.env.example` values target the local MinIO profile. `make s3-check` seeds
+     `tests/fixtures/local_ingestion/` into the configured bucket before ingesting it.
+
+     Minimal runtime config uses declared secret refs only:
+
+     ```json
+     {
+       "bucket": "ragrig-smoke",
+       "prefix": "ragrig-smoke",
+       "endpoint_url": "http://127.0.0.1:9000",
+       "region": "us-east-1",
+       "use_path_style": true,
+       "verify_tls": false,
+       "access_key": "env:AWS_ACCESS_KEY_ID",
+       "secret_key": "env:AWS_SECRET_ACCESS_KEY",
+       "session_token": "env:AWS_SESSION_TOKEN"
+     }
+     ```
+
+     Current `source.s3` limits:
+
+     - only Markdown and plain-text objects are parsed
+     - unsupported extensions, binary objects, and oversized objects are skipped with recorded reasons
+     - delete detection, tombstones, and standalone cursor state are not implemented yet
+
+ 18. Start the local API service, including the Web Console:
 
     ```bash
     make run-web
@@ -411,19 +457,19 @@ What this PR does not claim yet:
 
     If you changed `APP_HOST_PORT`, open that port instead.
 
- 17. Run the Web Console smoke contract:
+ 19. Run the Web Console smoke contract:
 
     ```bash
     make web-check
     ```
 
- 18. Start the full local development stack when you also want Docker-managed app + DB:
+ 20. Start the full local development stack when you also want Docker-managed app + DB:
 
     ```bash
     docker compose up --build
     ```
 
- 19. Verify the service and pgvector bootstrap:
+ 21. Verify the service and pgvector bootstrap:
 
     ```bash
     curl http://localhost:8000/health
