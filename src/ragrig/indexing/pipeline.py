@@ -15,6 +15,8 @@ from ragrig.repositories import (
     get_knowledge_base_by_name,
     list_latest_document_versions,
 )
+from ragrig.vectorstore import build_vector_collection
+from ragrig.vectorstore.base import VectorBackend, VectorEmbeddingRecord
 
 
 @dataclass(frozen=True)
@@ -119,6 +121,64 @@ def _replace_version_index(
     return len(created_chunks), len(created_chunks)
 
 
+def _mirror_version_index(
+    session: Session,
+    *,
+    knowledge_base_name: str,
+    knowledge_base_id,
+    document_version: DocumentVersion,
+    embedding_provider: DeterministicEmbeddingProvider,
+    vector_backend: VectorBackend,
+) -> int:
+    chunk_records = session.execute(
+        select(Embedding, Chunk, DocumentVersion, Document)
+        .join(Chunk, Chunk.id == Embedding.chunk_id)
+        .join(DocumentVersion, DocumentVersion.id == Chunk.document_version_id)
+        .join(Document, Document.id == DocumentVersion.document_id)
+        .where(DocumentVersion.id == document_version.id)
+        .order_by(Chunk.chunk_index.asc())
+    ).all()
+    if not chunk_records:
+        return 0
+    collection = build_vector_collection(
+        knowledge_base_name=knowledge_base_name,
+        provider=embedding_provider.provider_name,
+        model=embedding_provider.model_name,
+        dimensions=embedding_provider.dimensions,
+    )
+    collection = type(collection)(
+        name=collection.name,
+        knowledge_base=collection.knowledge_base,
+        provider=collection.provider,
+        model=collection.model,
+        dimensions=collection.dimensions,
+        knowledge_base_id=knowledge_base_id,
+    )
+    vector_backend.ensure_collection(session, collection)
+    records = [
+        VectorEmbeddingRecord(
+            embedding_id=embedding.id,
+            chunk_id=chunk.id,
+            document_id=document.id,
+            document_version_id=version.id,
+            chunk_index=chunk.chunk_index,
+            vector=list(embedding.embedding),
+            text=chunk.text,
+            metadata={
+                "document_uri": document.uri,
+                "source_uri": document.source.uri if document.source is not None else None,
+                "chunk_metadata": chunk.metadata_json,
+                "provider": embedding.provider,
+                "model": embedding.model,
+                "dimensions": embedding.dimensions,
+            },
+        )
+        for embedding, chunk, version, document in chunk_records
+    ]
+    vector_backend.upsert_embeddings(session, collection, records)
+    return len(records)
+
+
 def index_knowledge_base(
     session: Session,
     *,
@@ -126,6 +186,7 @@ def index_knowledge_base(
     chunk_size: int = 500,
     chunk_overlap: int = 50,
     embedding_dimensions: int = 8,
+    vector_backend: VectorBackend | None = None,
 ) -> IndexingReport:
     knowledge_base = get_knowledge_base_by_name(session, knowledge_base_name)
     if knowledge_base is None:
@@ -203,6 +264,15 @@ def index_knowledge_base(
                 )
                 chunk_count += created_chunks
                 embedding_count += created_embeddings
+                if vector_backend is not None:
+                    _mirror_version_index(
+                        session,
+                        knowledge_base_name=knowledge_base_name,
+                        knowledge_base_id=knowledge_base.id,
+                        document_version=version,
+                        embedding_provider=embedding_provider,
+                        vector_backend=vector_backend,
+                    )
                 indexed_count += 1
 
                 create_pipeline_run_item(

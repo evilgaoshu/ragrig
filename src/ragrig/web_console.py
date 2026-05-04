@@ -9,6 +9,7 @@ from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
 
 from ragrig import __version__
+from ragrig.config import Settings
 from ragrig.db.models import (
     Chunk,
     Document,
@@ -19,6 +20,7 @@ from ragrig.db.models import (
     PipelineRunItem,
     Source,
 )
+from ragrig.vectorstore.base import VectorBackendHealth
 
 CONSOLE_HTML_PATH = Path(__file__).with_name("web_console.html")
 
@@ -59,6 +61,8 @@ def _latest_versions_subquery() -> Any:
 def build_system_status(
     session: Session,
     *,
+    settings: Settings,
+    vector_health: VectorBackendHealth,
     database_ok: bool,
     database_detail: str | None = None,
 ) -> dict[str, Any]:
@@ -104,6 +108,15 @@ def build_system_status(
                 "state": extension_state,
             },
             "tables": table_names,
+        },
+        "vector": {
+            "status": vector_health.status,
+            "backend": settings.vector_backend,
+            "health": {
+                "healthy": vector_health.healthy,
+                "distance_metric": vector_health.distance_metric,
+                "details": vector_health.details,
+            },
         },
     }
 

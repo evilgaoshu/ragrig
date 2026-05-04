@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ragrig.config import get_settings
 from ragrig.retrieval import RetrievalError, search_knowledge_base
+from ragrig.vectorstore import get_vector_backend
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +31,9 @@ def main() -> int:
     args = build_parser().parse_args()
     settings = get_settings()
     engine = create_engine(settings.sqlalchemy_runtime_database_url, pool_pre_ping=True)
+    vector_backend = None
+    if settings.vector_backend != "pgvector":
+        vector_backend = get_vector_backend(settings)
 
     try:
         with Session(engine, expire_on_commit=False) as session:
@@ -39,6 +43,7 @@ def main() -> int:
                 query=args.query,
                 top_k=args.top_k,
                 dimensions=args.dimensions,
+                vector_backend=vector_backend,
             )
     except RetrievalError as exc:
         print(

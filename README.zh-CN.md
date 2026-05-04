@@ -87,10 +87,7 @@ flowchart LR
 
 还未完成：
 
-- Retrieval API。
 - 生产级 embedding provider。
-- Qdrant backend。
-- 真正可运行的 Web Console。
 - ACL enforcement。
 - 企业连接器。
 
@@ -196,6 +193,17 @@ make index-local
 ```bash
 make index-check
 ```
+
+默认向量后端仍然是 `pgvector`。如果要显式启用 Qdrant，可选路径如下：
+
+```bash
+docker compose --profile qdrant up -d qdrant
+uv sync --extra vectorstores
+VECTOR_BACKEND=qdrant make index-local
+VECTOR_BACKEND=qdrant make retrieve-check QUERY="RAGRig Guide"
+```
+
+`qdrant-client` 是 optional extra。fresh clone 下不安装该依赖、也不启动 Qdrant，`make test` 和 `make coverage` 仍然必须通过。
 
 启动完整本地 API 栈：
 

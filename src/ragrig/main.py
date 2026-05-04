@@ -18,6 +18,7 @@ from ragrig.retrieval import (
     RetrievalError,
     search_knowledge_base,
 )
+from ragrig.vectorstore import get_vector_backend, get_vector_backend_health
 from ragrig.web_console import (
     build_system_status,
     get_pipeline_run_detail,
@@ -76,6 +77,11 @@ def create_app(
 
     app = FastAPI(title="RAGRig", version=__version__)
 
+    def resolve_vector_backend():
+        if active_settings.vector_backend == "pgvector":
+            return None
+        return get_vector_backend(active_settings)
+
     def get_session() -> Session:
         if session_factory is None:
             assert default_session_factory is not None
@@ -127,6 +133,8 @@ def create_app(
             database_ok = False
         return build_system_status(
             session,
+            settings=active_settings,
+            vector_health=get_vector_backend_health(session, active_settings),
             database_ok=database_ok,
             database_detail=detail,
         )
@@ -191,6 +199,7 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, Any] | JSONResponse:
         try:
+            vector_backend = resolve_vector_backend()
             report = search_knowledge_base(
                 session=session,
                 knowledge_base_name=request.knowledge_base,
@@ -199,6 +208,7 @@ def create_app(
                 provider=request.provider,
                 model=request.model,
                 dimensions=request.dimensions,
+                vector_backend=vector_backend,
             )
         except KnowledgeBaseNotFoundError as exc:
             return JSONResponse(status_code=404, content=_serialize_error(exc))
@@ -213,6 +223,8 @@ def create_app(
             "model": report.model,
             "dimensions": report.dimensions,
             "distance_metric": report.distance_metric,
+            "backend": report.backend,
+            "backend_metadata": report.backend_metadata,
             "total_results": report.total_results,
             "results": [
                 {

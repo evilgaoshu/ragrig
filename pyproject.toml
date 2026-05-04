@@ -20,7 +20,9 @@ cloud-llm = []
 cloud-embeddings = []
 doc-parsers = []
 local-ml = []
-vectorstores = []
+vectorstores = [
+  "qdrant-client>=1.9.0,<2.0.0",
+]
 
 [dependency-groups]
 dev = [
@@ -49,7 +51,6 @@ source = ["ragrig"]
 omit = [
   "src/ragrig/cleaners/*",
   "src/ragrig/main.py",
-  "src/ragrig/vectorstore/*",
   "src/ragrig/web_console.py",
 ]
 

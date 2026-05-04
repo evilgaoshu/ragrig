@@ -348,10 +348,35 @@ The current repository state supports local Markdown/Text parsing, character-win
       ],
       "top_k": 3,
       "total_results": 1
-    }
-    ```
+     }
+     ```
 
-15. Start the local API service, including the Web Console:
+     The default path uses `VECTOR_BACKEND=pgvector`. If you explicitly enable Qdrant, the
+     response shape stays the same and adds backend metadata:
+
+     ```json
+     {
+       "backend": "qdrant",
+       "backend_metadata": {
+         "distance_metric": "cosine",
+         "status": "ready"
+       }
+     }
+     ```
+
+ 15. Start optional local Qdrant only when you want the alternate backend smoke path:
+
+     ```bash
+     docker compose --profile qdrant up -d qdrant
+     uv sync --extra vectorstores
+     VECTOR_BACKEND=qdrant make index-local
+     VECTOR_BACKEND=qdrant make retrieve-check QUERY="RAGRig Guide"
+     ```
+
+     `qdrant-client` is intentionally optional. Fresh clone `make test` and `make coverage`
+     continue to pass without the package or a running Qdrant container.
+
+ 16. Start the local API service, including the Web Console:
 
     ```bash
     make run-web
@@ -361,19 +386,19 @@ The current repository state supports local Markdown/Text parsing, character-win
 
     If you changed `APP_HOST_PORT`, open that port instead.
 
-16. Run the Web Console smoke contract:
+ 17. Run the Web Console smoke contract:
 
     ```bash
     make web-check
     ```
 
-17. Start the full local development stack when you also want Docker-managed app + DB:
+ 18. Start the full local development stack when you also want Docker-managed app + DB:
 
     ```bash
     docker compose up --build
     ```
 
-18. Verify the service and pgvector bootstrap:
+ 19. Verify the service and pgvector bootstrap:
 
     ```bash
     curl http://localhost:8000/health

@@ -24,6 +24,7 @@ from ragrig.retrieval import (
     _search_with_sql_distance,
     search_knowledge_base,
 )
+from ragrig.vectorstore.base import VectorCollection, VectorSearchResult
 
 
 @compiles(JSONB, "sqlite")
@@ -94,6 +95,8 @@ def test_search_knowledge_base_returns_ranked_results_with_citation_fields(tmp_p
     assert report.model == "hash-8d"
     assert report.dimensions == 8
     assert report.distance_metric == "cosine_distance"
+    assert report.backend == "pgvector"
+    assert report.backend_metadata["distance_metric"] == "cosine"
     assert len(report.results) == 2
     assert report.results[0].document_uri.endswith("guide.txt")
     assert report.results[0].text == "retrieval ranking target text"
@@ -373,6 +376,134 @@ def test_search_with_sql_distance_returns_ranked_results(tmp_path, monkeypatch) 
     assert report[0].score == 0.875
 
 
+def test_search_knowledge_base_can_use_explicit_vector_backend(tmp_path) -> None:
+    docs = _seed_documents(tmp_path, {"guide.txt": "explicit backend query target"})
+
+    class FakeBackend:
+        backend_name = "qdrant"
+        distance_metric = "cosine"
+
+        def __init__(self) -> None:
+            self.collection: VectorCollection | None = None
+
+        def ensure_collection(self, session, collection: VectorCollection):
+            del session
+            self.collection = collection
+            return None
+
+        def search(
+            self, session, collection: VectorCollection, *, query_vector, top_k, filters=None
+        ):
+            del session, collection, query_vector, top_k, filters
+            return [
+                VectorSearchResult(
+                    embedding_id=response_embedding_id,
+                    document_id=response_document_id,
+                    document_version_id=response_document_version_id,
+                    chunk_id=response_chunk_id,
+                    chunk_index=0,
+                    text="explicit backend query target",
+                    score=0.91,
+                    distance=0.09,
+                    metadata={
+                        "document_uri": str(docs / "guide.txt"),
+                        "source_uri": str(docs),
+                        "chunk_metadata": {"chunker": "char_window_v1"},
+                    },
+                )
+            ]
+
+        def upsert_embeddings(self, session, collection, records):
+            del session, collection, records
+            return []
+
+        def delete_embeddings(self, session, collection, *, embedding_ids):
+            del session, collection, embedding_ids
+            return 0
+
+        def health(self, session):
+            del session
+            raise AssertionError("health should not be called in retrieval")
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        latest_version = session.scalars(
+            select(DocumentVersion).order_by(DocumentVersion.version_number.desc())
+        ).first()
+        assert latest_version is not None
+        document = latest_version.document
+        chunk = latest_version.chunks[0]
+        response_document_id = document.id
+        response_document_version_id = latest_version.id
+        response_chunk_id = chunk.id
+        response_embedding_id = chunk.embeddings[0].id
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="explicit backend query target",
+            vector_backend=FakeBackend(),
+        )
+
+    assert report.backend == "qdrant"
+    assert report.distance_metric == "cosine_similarity"
+    assert report.results[0].text == "explicit backend query target"
+    assert report.results[0].document_uri.endswith("guide.txt")
+
+
+def test_search_knowledge_base_explicit_backend_empty_results(tmp_path) -> None:
+    docs = _seed_documents(tmp_path, {"guide.txt": "explicit backend empty result"})
+
+    class FakeBackend:
+        backend_name = "qdrant"
+        distance_metric = "cosine"
+
+        def ensure_collection(self, session, collection):
+            del session, collection
+            return None
+
+        def search(self, session, collection, *, query_vector, top_k, filters=None):
+            del session, collection, query_vector, top_k, filters
+            return []
+
+        def upsert_embeddings(self, session, collection, records):
+            del session, collection, records
+            return []
+
+        def delete_embeddings(self, session, collection, *, embedding_ids):
+            del session, collection, embedding_ids
+            return 0
+
+        def health(self, session):
+            del session
+            return None
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="explicit backend empty result",
+            vector_backend=FakeBackend(),
+        )
+
+    assert report.backend == "qdrant"
+    assert report.total_results == 0
+    assert report.results == []
+
+
 @pytest.mark.anyio
 async def test_retrieval_search_api_returns_contract_payload(tmp_path) -> None:
     database_path = tmp_path / "retrieval-api.db"
@@ -409,6 +540,11 @@ async def test_retrieval_search_api_returns_contract_payload(tmp_path) -> None:
         "model": "hash-8d",
         "dimensions": 8,
         "distance_metric": "cosine_distance",
+        "backend": "pgvector",
+        "backend_metadata": {
+            "distance_metric": "cosine",
+            "status": "ready",
+        },
         "total_results": 1,
         "results": [
             {

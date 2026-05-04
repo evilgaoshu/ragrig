@@ -1,16 +1,29 @@
 from __future__ import annotations
 
-import math
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding, KnowledgeBase, Source
+from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding, KnowledgeBase
 from ragrig.embeddings import DeterministicEmbeddingProvider
 from ragrig.repositories import get_knowledge_base_by_name
+from ragrig.vectorstore import build_vector_collection
+from ragrig.vectorstore.base import VectorBackend
+from ragrig.vectorstore.pgvector import (
+    build_embedding_base_statement as _build_base_statement,
+)
+from ragrig.vectorstore.pgvector import (
+    cosine_distance as _cosine_distance,
+)
+from ragrig.vectorstore.pgvector import (
+    latest_version_subquery as _build_latest_version_subquery,
+)
+from ragrig.vectorstore.pgvector import (
+    normalize_vector as _normalize_vector,
+)
 
 
 class RetrievalError(ValueError):
@@ -61,35 +74,10 @@ class RetrievalReport:
     model: str
     dimensions: int
     distance_metric: str
+    backend: str
+    backend_metadata: dict[str, Any]
     total_results: int
     results: list[RetrievalResult]
-
-
-def _build_latest_version_subquery(knowledge_base_id) -> Any:
-    latest_version_numbers = (
-        select(
-            DocumentVersion.document_id.label("document_id"),
-            func.max(DocumentVersion.version_number).label("version_number"),
-        )
-        .join(Document, Document.id == DocumentVersion.document_id)
-        .where(Document.knowledge_base_id == knowledge_base_id)
-        .group_by(DocumentVersion.document_id)
-        .subquery()
-    )
-    return (
-        select(
-            DocumentVersion.document_id.label("document_id"),
-            DocumentVersion.id.label("document_version_id"),
-            DocumentVersion.version_number.label("version_number"),
-        )
-        .join(Document, Document.id == DocumentVersion.document_id)
-        .join(
-            latest_version_numbers,
-            (DocumentVersion.document_id == latest_version_numbers.c.document_id)
-            & (DocumentVersion.version_number == latest_version_numbers.c.version_number),
-        )
-        .subquery()
-    )
 
 
 def _available_profiles(session: Session, *, knowledge_base_id) -> list[dict[str, Any]]:
@@ -148,57 +136,6 @@ def _resolve_profile(
             },
             "available_profiles": available_profiles,
         },
-    )
-
-
-def _normalize_vector(raw: Any) -> list[float]:
-    return [float(value) for value in raw]
-
-
-def _cosine_distance(left: list[float], right: list[float]) -> float:
-    if not left or not right:
-        return 1.0
-    numerator = sum(a * b for a, b in zip(left, right, strict=False))
-    left_norm = math.sqrt(sum(value * value for value in left))
-    right_norm = math.sqrt(sum(value * value for value in right))
-    if left_norm == 0.0 or right_norm == 0.0:
-        return 1.0
-    similarity = numerator / (left_norm * right_norm)
-    similarity = max(min(similarity, 1.0), -1.0)
-    return round(1.0 - similarity, 6)
-
-
-def _build_base_statement(
-    *,
-    knowledge_base_id,
-    provider: str,
-    model: str,
-    dimensions: int,
-) -> Select[Any]:
-    latest_versions = _build_latest_version_subquery(knowledge_base_id)
-    return (
-        select(
-            Document.id.label("document_id"),
-            DocumentVersion.id.label("document_version_id"),
-            Chunk.id.label("chunk_id"),
-            Chunk.chunk_index.label("chunk_index"),
-            Document.uri.label("document_uri"),
-            Source.uri.label("source_uri"),
-            Chunk.text.label("text"),
-            Chunk.metadata_json.label("chunk_metadata"),
-            Embedding.embedding.label("embedding"),
-        )
-        .join(DocumentVersion, DocumentVersion.id == Chunk.document_version_id)
-        .join(Document, Document.id == DocumentVersion.document_id)
-        .join(Embedding, Embedding.chunk_id == Chunk.id)
-        .join(Source, Source.id == Document.source_id)
-        .join(latest_versions, latest_versions.c.document_version_id == DocumentVersion.id)
-        .where(
-            Document.knowledge_base_id == knowledge_base_id,
-            Embedding.provider == provider,
-            Embedding.model == model,
-            Embedding.dimensions == dimensions,
-        )
     )
 
 
@@ -297,6 +234,7 @@ def search_knowledge_base(
     provider: str | None = None,
     model: str | None = None,
     dimensions: int | None = None,
+    vector_backend: VectorBackend | None = None,
 ) -> RetrievalReport:
     if top_k <= 0:
         raise InvalidTopKError(
@@ -327,6 +265,52 @@ def search_knowledge_base(
     )
     embedding_provider = DeterministicEmbeddingProvider(dimensions=resolved_dimensions)
     query_embedding = embedding_provider.embed_text(normalized_query)
+    collection = build_vector_collection(
+        knowledge_base_name=knowledge_base_name,
+        provider=resolved_provider,
+        model=resolved_model,
+        dimensions=resolved_dimensions,
+    )
+    if vector_backend is not None:
+        vector_backend.ensure_collection(session, collection)
+        vector_results = vector_backend.search(
+            session,
+            collection,
+            query_vector=query_embedding.vector,
+            top_k=top_k,
+        )
+        results = [
+            RetrievalResult(
+                document_id=result.document_id,
+                document_version_id=result.document_version_id,
+                chunk_id=result.chunk_id,
+                chunk_index=result.chunk_index,
+                document_uri=str(result.metadata["document_uri"]),
+                source_uri=result.metadata.get("source_uri"),
+                text=result.text,
+                text_preview=result.text[:160],
+                distance=result.distance,
+                score=result.score,
+                chunk_metadata=result.metadata.get("chunk_metadata", {}),
+            )
+            for result in vector_results
+        ]
+        return RetrievalReport(
+            knowledge_base=knowledge_base_name,
+            query=normalized_query,
+            top_k=top_k,
+            provider=resolved_provider,
+            model=resolved_model,
+            dimensions=resolved_dimensions,
+            distance_metric="cosine_similarity",
+            backend=vector_backend.backend_name,
+            backend_metadata={
+                "distance_metric": vector_backend.distance_metric,
+                "status": "ready",
+            },
+            total_results=len(results),
+            results=results,
+        )
 
     if session.bind is not None and session.bind.dialect.name == "postgresql":
         results = _search_with_sql_distance(
@@ -357,6 +341,11 @@ def search_knowledge_base(
         model=resolved_model,
         dimensions=resolved_dimensions,
         distance_metric="cosine_distance",
+        backend="pgvector",
+        backend_metadata={
+            "distance_metric": "cosine",
+            "status": "ready",
+        },
         total_results=len(results),
         results=results,
     )
@@ -370,5 +359,9 @@ __all__ = [
     "RetrievalError",
     "RetrievalReport",
     "RetrievalResult",
+    "_build_base_statement",
+    "_build_latest_version_subquery",
+    "_cosine_distance",
+    "_normalize_vector",
     "search_knowledge_base",
 ]
