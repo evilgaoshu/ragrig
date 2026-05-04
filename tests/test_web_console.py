@@ -97,6 +97,7 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
         documents = await client.get("/documents")
         chunks = await client.get(f"/document-versions/{latest_version.id}/chunks")
         models = await client.get("/models")
+        plugins = await client.get("/plugins")
 
     assert system_status.status_code == 200
     assert system_status.json()["db"]["dialect"] == "sqlite"
@@ -124,6 +125,10 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     assert models.status_code == 200
     assert models.json()["embedding_profiles"][0]["provider"] == "deterministic-local"
     assert models.json()["registry_shell"]["llm"]["status"] == "disabled"
+    assert plugins.status_code == 200
+    plugin_ids = {item["plugin_id"] for item in plugins.json()["items"]}
+    assert "source.local" in plugin_ids
+    assert "source.s3" in plugin_ids
 
 
 @pytest.mark.anyio
@@ -137,6 +142,7 @@ async def test_console_api_returns_empty_states_without_seed_data(tmp_path) -> N
         knowledge_bases = await client.get("/knowledge-bases")
         documents = await client.get("/documents")
         models = await client.get("/models")
+        plugins = await client.get("/plugins")
 
     assert knowledge_bases.status_code == 200
     assert knowledge_bases.json() == {"items": []}
@@ -144,6 +150,8 @@ async def test_console_api_returns_empty_states_without_seed_data(tmp_path) -> N
     assert documents.json() == {"items": []}
     assert models.status_code == 200
     assert models.json()["embedding_profiles"] == []
+    assert plugins.status_code == 200
+    assert any(item["plugin_id"] == "vector.pgvector" for item in plugins.json()["items"])
 
 
 @pytest.mark.anyio

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ragrig.db.models import DocumentVersion
 from ragrig.ingestion.scanner import scan_paths
 from ragrig.parsers import MarkdownParser, PlainTextParser
+from ragrig.plugins import get_plugin_registry
 from ragrig.repositories import (
     create_pipeline_run,
     create_pipeline_run_item,
@@ -30,9 +31,16 @@ class IngestionReport:
 
 
 def _select_parser(path: Path):
+    get_plugin_registry()
     if path.suffix.lower() in {".md", ".markdown"}:
         return MarkdownParser()
     return PlainTextParser()
+
+
+def _parser_plugin_id(parser_name: str) -> str:
+    if parser_name == "plaintext":
+        return "parser.text"
+    return f"parser.{parser_name}"
 
 
 def ingest_local_directory(
@@ -158,7 +166,7 @@ def ingest_local_directory(
                     version_number=get_next_version_number(session, document_id=document.id),
                     content_hash=parse_result.content_hash,
                     parser_name=parse_result.parser_name,
-                    parser_config_json={},
+                    parser_config_json={"plugin_id": _parser_plugin_id(parse_result.parser_name)},
                     extracted_text=parse_result.extracted_text,
                     metadata_json=parse_result.metadata,
                 )
