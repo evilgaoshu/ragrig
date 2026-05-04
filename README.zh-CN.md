@@ -101,6 +101,7 @@ flowchart LR
 - [Phase 1a metadata DB spec](./docs/specs/ragrig-phase-1a-metadata-db-spec.md)
 - [Phase 1b local ingestion spec](./docs/specs/ragrig-phase-1b-local-ingestion-spec.md)
 - [Phase 1c chunking and embedding spec](./docs/specs/ragrig-phase-1c-chunking-embedding-spec.md)
+- [GitHub CI checks spec](./docs/specs/ragrig-github-ci-checks-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
 - [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
 - [Web Console prototype](./docs/prototypes/web-console/index.html)
@@ -342,6 +343,32 @@ RAGRig 需要把质量门槛和依赖治理写进项目规则：
 - `uv.lock` 必须提交；发布前需要做漏洞检查、许可证检查和 SBOM 生成。
 
 SDK 清单、供应链策略和覆盖率要求见 [local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)。
+
+## GitHub CI
+
+RAGRig 现在包含一个最小 GitHub Actions workflow，名称固定为 `RAGRig CI`。
+
+它在 `pull_request` 到 `main` 和 `push` 到 `main` 时运行，当前覆盖：
+
+- 基于 `uv.lock` 的冻结依赖安装：`uv sync --dev --frozen`
+- lint：`uv run ruff check .`
+- 仓库测试基线：`make test`
+- Web Console smoke contract：`make web-check`
+
+当前不覆盖：
+
+- `192.168.3.100` 共享环境运行态验证
+- Docker Compose 部署检查
+- 需要等 EVI-35 落地后的 coverage、supply-chain、SBOM、license、vulnerability gates
+- 任何依赖 secret、云账号、GPU、Ollama、LM Studio 或模型下载的流程
+
+验证边界：
+
+- GitHub CI 负责证明 fresh clone 下的 lint 和测试基线可以在 GitHub Actions 中执行。
+- 本地 DEV 验证仍然负责定向复现、调试迭代和提 PR 前确认。
+- 如果某个 issue 明确要求 `192.168.3.100` 证据，仍然需要单独做共享环境验证，不能由 GitHub CI 替代。
+
+首次 workflow 在 GitHub 上成功运行后，owner 仍可能需要在 GitHub Settings 里手动配置 branch protection required checks。
 
 ## Web Console
 

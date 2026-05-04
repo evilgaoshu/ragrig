@@ -95,6 +95,7 @@ Authoritative specs:
 - [Phase 1b local ingestion spec](./docs/specs/ragrig-phase-1b-local-ingestion-spec.md)
 - [Phase 1c chunking and embedding spec](./docs/specs/ragrig-phase-1c-chunking-embedding-spec.md)
 - [Phase 1d retrieval API spec](./docs/specs/ragrig-phase-1d-retrieval-api-spec.md)
+- [GitHub CI checks spec](./docs/specs/ragrig-github-ci-checks-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
 - [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
 - [Web Console prototype](./docs/prototypes/web-console/index.html)
@@ -654,6 +655,32 @@ RAGRig uses a strict quality and dependency policy:
 
 See the [local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md) for the SDK inventory and supply chain rules.
 
+## GitHub CI
+
+RAGRig now includes a GitHub Actions baseline workflow named `RAGRig CI`.
+
+What it covers on `pull_request` and `push` to `main`:
+
+- frozen dependency install from `uv.lock` with `uv sync --dev --frozen`
+- lint with `uv run ruff check .`
+- repository test suite with `make test`
+- Web Console smoke contract with `make web-check`
+
+What it does not cover yet:
+
+- shared-environment runtime validation on `192.168.3.100`
+- Docker Compose deployment checks
+- coverage, supply-chain, SBOM, license, or vulnerability gates planned after EVI-35 lands on `main`
+- any workflow that depends on secrets, cloud accounts, GPUs, Ollama, LM Studio, or model downloads
+
+Validation boundary:
+
+- GitHub CI proves the fresh-clone lint and test baseline inside GitHub Actions.
+- Local developer validation still covers targeted repro, iterative debugging, and pre-PR confirmation.
+- Shared-environment validation remains a separate requirement for issues that explicitly require `192.168.3.100` evidence.
+
+After the first successful GitHub Actions run exists, the repository owner may still need to configure branch protection required checks in GitHub settings.
+
 ## Repository Layout
 
 ```text
@@ -665,11 +692,15 @@ See the [local-first, quality, and supply chain policy](./docs/specs/ragrig-loca
 ├── assets/
 │   ├── ragrig-icon.png
 │   └── ragrig-icon.svg
+├── .github/
+│   └── workflows/
+│       └── ci.yml
 ├── docs/
 │   ├── operations/
 │   ├── prototypes/
 │   ├── roadmap.md
 │   └── specs/
+│       ├── ragrig-github-ci-checks-spec.md
 │       ├── ragrig-mvp-spec.md
 │       ├── ragrig-phase-1a-metadata-db-spec.md
 │       ├── ragrig-phase-1a-scaffold-spec.md
