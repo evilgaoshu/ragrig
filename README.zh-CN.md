@@ -376,20 +376,22 @@ SDK 清单、供应链策略和覆盖率要求见 [local-first, quality, and sup
 
 ## GitHub CI
 
-RAGRig 现在包含一个最小 GitHub Actions workflow，名称固定为 `RAGRig CI`。
+RAGRig 现在包含一个最小 GitHub Actions workflow，名称固定为 `RAGRig CI`，并在 Python `3.11` 和 `3.12` 上运行。
 
 它在 `pull_request` 到 `main` 和 `push` 到 `main` 时运行，当前覆盖：
 
 - 基于 `uv.lock` 的冻结依赖安装：`uv sync --dev --frozen`
+- 格式检查：`uv run ruff format --check .`
 - lint：`uv run ruff check .`
 - 仓库测试基线：`make test`
+- 核心硬范围 coverage gate：`make coverage`
 - Web Console smoke contract：`make web-check`
 
 当前不覆盖：
 
 - `192.168.3.100` 共享环境运行态验证
 - Docker Compose 部署检查
-- 需要等 EVI-35 落地后的 coverage、supply-chain、SBOM、license、vulnerability gates
+- 默认 GitHub CI 里仍未纳入的 supply-chain、SBOM、license、vulnerability gates
 - 任何依赖 secret、云账号、GPU、Ollama、LM Studio 或模型下载的流程
 
 验证边界：
