@@ -69,6 +69,35 @@ def test_deterministic_embedding_provider_returns_stable_dimensions() -> None:
     assert first.vector == second.vector
 
 
+def test_index_knowledge_base_resolves_embedding_provider_from_registry(
+    tmp_path, monkeypatch
+) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("alpha beta gamma delta", encoding="utf-8")
+
+    calls: list[tuple[str, dict[str, int]]] = []
+
+    class FakeRegistry:
+        def get(self, name: str, **config):
+            calls.append((name, config))
+            return DeterministicEmbeddingProvider(dimensions=config["dimensions"])
+
+    monkeypatch.setattr("ragrig.indexing.pipeline.get_provider_registry", lambda: FakeRegistry())
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        report = index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+    assert report.indexed_count == 1
+    assert calls == [("deterministic-local", {"dimensions": 8})]
+
+
 def test_index_knowledge_base_creates_chunks_embeddings_and_pipeline_items(tmp_path) -> None:
     docs = tmp_path / "docs"
     docs.mkdir()

@@ -9,7 +9,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding, KnowledgeBase, Source
-from ragrig.embeddings import DeterministicEmbeddingProvider
+from ragrig.providers import get_provider_registry
 from ragrig.repositories import get_knowledge_base_by_name
 
 
@@ -121,7 +121,7 @@ def _resolve_profile(
     if not available_profiles:
         resolved_dimensions = dimensions or 8
         return (
-            provider or DeterministicEmbeddingProvider.provider_name,
+            provider or "deterministic-local",
             model or f"hash-{resolved_dimensions}d",
             resolved_dimensions,
         )
@@ -325,7 +325,9 @@ def search_knowledge_base(
         model=model,
         dimensions=dimensions,
     )
-    embedding_provider = DeterministicEmbeddingProvider(dimensions=resolved_dimensions)
+    embedding_provider = get_provider_registry().get(
+        resolved_provider, dimensions=resolved_dimensions
+    )
     query_embedding = embedding_provider.embed_text(normalized_query)
 
     if session.bind is not None and session.bind.dialect.name == "postgresql":

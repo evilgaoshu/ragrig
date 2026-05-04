@@ -123,7 +123,36 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     assert chunks.json()["items"][0]["chunk_index"] == 0
     assert models.status_code == 200
     assert models.json()["embedding_profiles"][0]["provider"] == "deterministic-local"
+    assert models.json()["registered_providers"] == [
+        {
+            "name": "deterministic-local",
+            "kind": "local",
+            "description": "Deterministic local embedding provider for CI and smoke validation.",
+            "capabilities": ["batch", "embedding"],
+            "default_dimensions": 8,
+            "max_dimensions": None,
+            "default_context_window": None,
+            "max_context_window": None,
+            "required_secrets": [],
+            "config_schema": {
+                "dimensions": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 8,
+                    "description": "Output dimensions for the deterministic hash embedding.",
+                }
+            },
+            "sdk_protocol": "in-process",
+            "healthcheck": "Instantiate the provider and embed a deterministic probe string.",
+            "failure_modes": ["invalid_dimensions"],
+            "retry_policy": {"max_attempts": 1, "backoff_seconds": 0.0},
+            "audit_fields": ["provider", "model", "dimensions", "text_hash"],
+            "metric_fields": ["dimensions", "requests_total"],
+            "intended_uses": ["ci", "smoke"],
+        }
+    ]
     assert models.json()["registry_shell"]["llm"]["status"] == "disabled"
+    assert "PR-2" in models.json()["registry_shell"]["llm"]["reason"]
 
 
 @pytest.mark.anyio
@@ -144,6 +173,13 @@ async def test_console_api_returns_empty_states_without_seed_data(tmp_path) -> N
     assert documents.json() == {"items": []}
     assert models.status_code == 200
     assert models.json()["embedding_profiles"] == []
+    assert models.json()["registered_providers"][0]["name"] == "deterministic-local"
+
+
+def test_import_guard_includes_provider_registry_as_core_module() -> None:
+    from tests.test_import_guard import CORE_PATHS, REPO_ROOT
+
+    assert REPO_ROOT / "src/ragrig/providers" in CORE_PATHS
 
 
 @pytest.mark.anyio
