@@ -19,8 +19,7 @@ def test_settings_preserve_psycopg_and_non_postgres_urls() -> None:
 
     assert postgres_settings.sqlalchemy_database_url == postgres_settings.database_url
     assert (
-        postgres_settings.sqlalchemy_runtime_database_url
-        == postgres_settings.runtime_database_url
+        postgres_settings.sqlalchemy_runtime_database_url == postgres_settings.runtime_database_url
     )
     assert sqlite_settings.sqlalchemy_database_url == sqlite_settings.database_url
     assert sqlite_settings.sqlalchemy_runtime_database_url == sqlite_settings.database_url

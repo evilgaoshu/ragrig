@@ -105,8 +105,7 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     assert knowledge_bases.json()["items"][0]["document_count"] == 2
     assert knowledge_bases.json()["items"][0]["chunk_count"] >= 2
     assert (
-        knowledge_bases.json()["items"][0]["latest_pipeline_run"]["run_type"]
-        == "chunk_embedding"
+        knowledge_bases.json()["items"][0]["latest_pipeline_run"]["run_type"] == "chunk_embedding"
     )
     assert sources.status_code == 200
     assert sources.json()["items"][0]["kind"] == "local_directory"

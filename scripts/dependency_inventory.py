@@ -25,8 +25,7 @@ OPTIONAL_GROUP_DETAILS = {
         "sdk_examples": ["voyageai", "cohere", "openai", "google-genai"],
         "category": "cloud embedding SDKs",
         "rule": (
-            "Use only behind explicit plugin extras and document network, auth, "
-            "and cost metadata."
+            "Use only behind explicit plugin extras and document network, auth, and cost metadata."
         ),
     },
     "vectorstores": {

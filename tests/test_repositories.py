@@ -59,11 +59,14 @@ def test_repository_helpers_create_and_update_entities(sqlite_session) -> None:
     assert updated_document.mime_type == "text/plain"
     assert updated_document.metadata_json == {"version": 2}
     assert get_knowledge_base_by_name(sqlite_session, "default") == knowledge_base
-    assert get_document_by_uri(
-        sqlite_session,
-        knowledge_base_id=knowledge_base.id,
-        uri=document.uri,
-    ) == document
+    assert (
+        get_document_by_uri(
+            sqlite_session,
+            knowledge_base_id=knowledge_base.id,
+            uri=document.uri,
+        )
+        == document
+    )
 
 
 def test_document_version_helpers_and_pipeline_run_helpers(sqlite_session) -> None:
@@ -149,8 +152,7 @@ def test_document_version_helpers_and_pipeline_run_helpers(sqlite_session) -> No
     assert [version.extracted_text for version in latest_versions] == ["alpha v2", "beta v1"]
     assert sqlite_session.scalar(select(PipelineRun).where(PipelineRun.id == run.id)) == run
     assert (
-        sqlite_session.scalar(select(PipelineRunItem).where(PipelineRunItem.id == item.id))
-        == item
+        sqlite_session.scalar(select(PipelineRunItem).where(PipelineRunItem.id == item.id)) == item
     )
     assert item.error_message is None
     assert item.finished_at is not None

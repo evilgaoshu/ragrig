@@ -273,13 +273,16 @@ def test_version_already_indexed_rejects_chunks_with_different_config_hash(tmp_p
 
         version = session.scalars(select(DocumentVersion)).one()
 
-        assert _version_already_indexed(
-            session,
-            document_version=version,
-            config_hash="different-config-hash",
-            provider_name="deterministic-local",
-            model_name="hash-8d",
-        ) is False
+        assert (
+            _version_already_indexed(
+                session,
+                document_version=version,
+                config_hash="different-config-hash",
+                provider_name="deterministic-local",
+                model_name="hash-8d",
+            )
+            is False
+        )
 
 
 def test_index_knowledge_base_skips_empty_document_versions(tmp_path) -> None:
