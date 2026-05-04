@@ -1,0 +1,11 @@
+from __future__ import annotations
+
+from scripts.plugins_check import build_payload
+
+
+def test_plugins_check_payload_exposes_registry_items() -> None:
+    payload = build_payload()
+
+    assert "items" in payload
+    assert any(item["plugin_id"] == "source.local" for item in payload["items"])
+    assert any(item["plugin_id"] == "source.s3" for item in payload["items"])

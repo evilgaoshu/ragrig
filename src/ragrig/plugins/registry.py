@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import ValidationError
+
+from ragrig.plugins import guards
+from ragrig.plugins.manifest import PluginManifest
+from ragrig.plugins.types import PluginStatus
+
+
+class PluginConfigValidationError(ValueError):
+    pass
+
+
+class PluginRegistry:
+    def __init__(self, manifests: list[PluginManifest] | None = None) -> None:
+        self._manifests: dict[str, PluginManifest] = {}
+        for manifest in manifests or []:
+            self.register(manifest)
+
+    def register(self, manifest: PluginManifest) -> None:
+        if manifest.plugin_id in self._manifests:
+            raise ValueError(f"plugin '{manifest.plugin_id}' is already registered")
+        self._manifests[manifest.plugin_id] = manifest
+
+    def get(self, plugin_id: str) -> PluginManifest:
+        return self._manifests[plugin_id]
+
+    def list(self) -> list[PluginManifest]:
+        return [self._manifests[plugin_id] for plugin_id in sorted(self._manifests)]
+
+    def validate_config(self, plugin_id: str, config: dict[str, Any] | None) -> dict[str, Any]:
+        manifest = self.get(plugin_id)
+        payload = config or {}
+        if manifest.config_model is None:
+            if payload:
+                raise PluginConfigValidationError(f"plugin '{plugin_id}' is not configurable")
+            return {}
+        try:
+            validated = manifest.config_model.model_validate(payload).model_dump()
+        except ValidationError as exc:
+            raise PluginConfigValidationError(str(exc)) from exc
+        self._validate_secret_references(manifest, validated)
+        return validated
+
+    def list_discovery(self) -> list[dict[str, Any]]:
+        return [self._build_discovery_item(manifest) for manifest in self.list()]
+
+    def _build_discovery_item(self, manifest: PluginManifest) -> dict[str, Any]:
+        missing_dependencies = guards.list_missing_dependencies(manifest.optional_dependencies)
+        status = manifest.status
+        reason = manifest.unavailable_reason
+        if missing_dependencies:
+            status = PluginStatus.UNAVAILABLE
+            reason = f"Missing optional dependencies: {', '.join(missing_dependencies)}"
+        return {
+            "plugin_id": manifest.plugin_id,
+            "manifest_version": manifest.manifest_version,
+            "display_name": manifest.display_name,
+            "description": manifest.description,
+            "plugin_type": manifest.plugin_type,
+            "family": manifest.family,
+            "version": manifest.version,
+            "owner": manifest.owner,
+            "tier": manifest.tier,
+            "status": status,
+            "reason": reason,
+            "capabilities": list(manifest.capabilities),
+            "configurable": manifest.config_model is not None,
+            "missing_dependencies": missing_dependencies,
+            "secret_requirements": [secret.name for secret in manifest.secret_requirements],
+            "docs_reference": manifest.docs_reference,
+        }
+
+    def _validate_secret_references(self, manifest: PluginManifest, value: Any) -> None:
+        declared = {secret.name for secret in manifest.secret_requirements}
+        found = sorted(set(self._collect_secret_references(value)))
+        undeclared = [name for name in found if name not in declared]
+        if undeclared:
+            raise PluginConfigValidationError(
+                f"undeclared secret reference(s): {', '.join(undeclared)}"
+            )
+
+    def _collect_secret_references(self, value: Any) -> list[str]:
+        if isinstance(value, dict):
+            references: list[str] = []
+            for nested in value.values():
+                references.extend(self._collect_secret_references(nested))
+            return references
+        if isinstance(value, list):
+            references: list[str] = []
+            for nested in value:
+                references.extend(self._collect_secret_references(nested))
+            return references
+        if isinstance(value, str) and value.startswith("env:"):
+            return [value.removeprefix("env:")]
+        return []

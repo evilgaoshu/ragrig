@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ragrig.chunkers import ChunkingConfig, chunk_text
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding
 from ragrig.embeddings import EmbeddingResult
+from ragrig.plugins import get_plugin_registry
 from ragrig.providers import BaseProvider, get_provider_registry
 from ragrig.repositories import (
     create_pipeline_run,
@@ -143,6 +144,7 @@ def index_knowledge_base(
     chunk_overlap: int = 50,
     embedding_dimensions: int = 8,
 ) -> IndexingReport:
+    get_plugin_registry()
     knowledge_base = get_knowledge_base_by_name(session, knowledge_base_name)
     if knowledge_base is None:
         raise ValueError(f"Knowledge base '{knowledge_base_name}' was not found")

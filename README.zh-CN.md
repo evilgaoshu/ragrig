@@ -358,20 +358,25 @@ Phase 1e PR-1 已经建立 `src/ragrig/providers/` 的 core contract。
 示例：
 
 ```yaml
-id: ragrig.source.s3
+manifest_version: 1
+id: source.s3
 type: source
 version: 0.1.0
 capabilities:
-  read: true
-  write: false
-  incremental_sync: true
-  delete_detection: true
-  permission_mapping: false
-config_schema: schemas/s3-source.json
-secrets:
-  - access_key_id
-  - secret_access_key
+  - read
+  - incremental_sync
+  - delete_detection
+config_model: S3SourceConfig
+secret_requirements:
+  - AWS_ACCESS_KEY_ID
+  - AWS_SECRET_ACCESS_KEY
 ```
+
+当前 contract-first 实现已经补上：
+
+- `src/ragrig/plugins/`：registry、manifest schema、dependency guard、内置插件和官方 stub。
+- `GET /plugins`：默认离线可用的插件发现 API，可返回 readiness、缺失依赖、是否可配置、secret requirements。
+- `make plugins-check`：离线 JSON 输出当前 registry 状态。
 
 ## 质量与供应链
 
@@ -385,7 +390,8 @@ RAGRig 需要把质量门槛和依赖治理写进项目规则：
 
 当前仓库里的可执行质量门命令：
 
-- `make coverage`：对硬范围 core 模块执行 100% line coverage gate，范围包括 `db`、`repositories`、`ingestion`、`parsers`、`chunkers`、`embeddings`、`indexing`、`retrieval.py`、`config.py`、`health.py`。
+- `make coverage`：对硬范围 core 模块执行 100% line coverage gate，范围包括 `db`、`repositories`、`ingestion`、`parsers`、`chunkers`、`embeddings`、`indexing`、`plugins`、`retrieval.py`、`config.py`、`health.py`。
+- `make plugins-check`：输出插件 registry 的离线 JSON 状态。
 - `make licenses`：对已安装的第三方依赖执行许可证检查，阻止 GPL、AGPL、SSPL 和 source-available 依赖进入默认路径。
 - `make sbom`：输出 CycloneDX JSON SBOM 到 `docs/operations/artifacts/sbom.cyclonedx.json`。
 - `make audit`：对当前本地环境做漏洞审计，并输出 `docs/operations/artifacts/pip-audit.json`。
