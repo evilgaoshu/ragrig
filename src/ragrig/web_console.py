@@ -19,6 +19,7 @@ from ragrig.db.models import (
     PipelineRunItem,
     Source,
 )
+from ragrig.plugins import get_plugin_registry
 
 CONSOLE_HTML_PATH = Path(__file__).with_name("web_console.html")
 
@@ -387,3 +388,7 @@ def list_models(session: Session) -> dict[str, Any]:
             },
         },
     }
+
+
+def list_plugins() -> list[dict[str, Any]]:
+    return get_plugin_registry().list_discovery()

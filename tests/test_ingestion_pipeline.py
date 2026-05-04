@@ -201,6 +201,29 @@ def test_select_parser_uses_markdown_parser_for_markdown_extensions() -> None:
     assert _select_parser(Path("notes.txt")).parser_name == "plaintext"
 
 
+def test_ingest_local_directory_persists_parser_plugin_id_in_version_config(tmp_path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("# Guide\n", encoding="utf-8")
+    (docs / "notes.txt").write_text("hello\n", encoding="utf-8")
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="default",
+            root_path=docs,
+        )
+
+        versions = session.scalars(
+            select(DocumentVersion).order_by(DocumentVersion.parser_name.asc())
+        ).all()
+
+    assert [version.parser_config_json["plugin_id"] for version in versions] == [
+        "parser.markdown",
+        "parser.text",
+    ]
+
+
 def test_ingest_local_directory_returns_dry_run_report(tmp_path) -> None:
     docs = tmp_path / "docs"
     docs.mkdir()

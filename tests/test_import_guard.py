@@ -11,6 +11,7 @@ from ragrig.health import create_database_check
 from ragrig.indexing import IndexingReport, index_knowledge_base
 from ragrig.ingestion import IngestionReport, ingest_local_directory
 from ragrig.parsers import MarkdownParser, ParseResult, PlainTextParser
+from ragrig.plugins import Capability, PluginManifest, PluginRegistry, get_plugin_registry
 from ragrig.repositories import (
     create_pipeline_run,
     create_pipeline_run_item,
@@ -33,6 +34,7 @@ CORE_PATHS = [
     REPO_ROOT / "src/ragrig/chunkers",
     REPO_ROOT / "src/ragrig/embeddings",
     REPO_ROOT / "src/ragrig/indexing",
+    REPO_ROOT / "src/ragrig/plugins",
     REPO_ROOT / "src/ragrig/retrieval.py",
     REPO_ROOT / "src/ragrig/config.py",
     REPO_ROOT / "src/ragrig/health.py",
@@ -115,6 +117,10 @@ def test_core_package_exports_are_available_without_optional_dependencies() -> N
     assert PlainTextParser is not None
     assert ParseResult is not None
     assert DeterministicEmbeddingProvider is not None
+    assert Capability is not None
+    assert PluginManifest is not None
+    assert PluginRegistry is not None
+    assert get_plugin_registry is not None
     assert index_knowledge_base is not None
     assert IndexingReport is not None
     assert search_knowledge_base is not None

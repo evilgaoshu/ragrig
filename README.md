@@ -638,20 +638,25 @@ Every plugin should declare:
 Example manifest shape:
 
 ```yaml
-id: ragrig.source.s3
+manifest_version: 1
+id: source.s3
 type: source
 version: 0.1.0
 capabilities:
-  read: true
-  write: false
-  incremental_sync: true
-  delete_detection: true
-  permission_mapping: false
-config_schema: schemas/s3-source.json
-secrets:
-  - access_key_id
-  - secret_access_key
+  - read
+  - incremental_sync
+  - delete_detection
+config_model: S3SourceConfig
+secret_requirements:
+  - AWS_ACCESS_KEY_ID
+  - AWS_SECRET_ACCESS_KEY
 ```
+
+Current contract-first implementation adds:
+
+- `src/ragrig/plugins/` for the registry, manifest schema, dependency guards, and built-in plus official stub manifests.
+- `GET /plugins` for offline plugin discovery with readiness, missing dependency, configurability, and secret requirement reporting.
+- `make plugins-check` for offline JSON inspection of the registry.
 
 Plugin development will start with internal Python interfaces. Public third-party plugin packaging should wait until the core contracts, test kit, and capability matrix are stable.
 
@@ -668,7 +673,8 @@ RAGRig uses a strict quality and dependency policy:
 
 Executable commands in this repository:
 
-- `make coverage`: enforces 100% line coverage for the hard core scope: `db`, `repositories`, `ingestion`, `parsers`, `chunkers`, `embeddings`, `indexing`, `retrieval.py`, `config.py`, and `health.py`.
+- `make coverage`: enforces 100% line coverage for the hard core scope: `db`, `repositories`, `ingestion`, `parsers`, `chunkers`, `embeddings`, `indexing`, `plugins`, `retrieval.py`, `config.py`, and `health.py`.
+- `make plugins-check`: prints the plugin registry discovery payload as offline JSON.
 - `make licenses`: fails on GPL, AGPL, SSPL, or source-available third-party packages.
 - `make sbom`: writes a CycloneDX JSON SBOM to `docs/operations/artifacts/sbom.cyclonedx.json`.
 - `make audit`: runs a vulnerability audit of the local environment and writes `docs/operations/artifacts/pip-audit.json`.

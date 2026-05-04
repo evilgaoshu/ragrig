@@ -13,6 +13,8 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     workflow = workflow_path.read_text(encoding="utf-8")
 
     assert "name: RAGRig CI" in workflow
+    assert "baseline:" in workflow
+    assert "name: RAGRig CI / baseline" in workflow
     assert "pull_request:" in workflow
     assert "push:" in workflow
     assert "branches: [main]" in workflow
