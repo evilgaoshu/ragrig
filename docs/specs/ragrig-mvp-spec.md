@@ -52,7 +52,9 @@ Phase 1a must prove the smallest complete loop:
 4. Parse Markdown, plain text, and PDF files.
 5. Normalize and clean extracted text with deterministic defaults.
 6. Chunk text into stable chunks with source references.
-7. Generate embeddings with one OpenAI-compatible embedding provider.
+7. Generate embeddings with a local-first provider path, such as deterministic local
+   embeddings for smoke tests, Ollama, LM Studio, BAAI BGE, or another local
+   OpenAI-compatible endpoint.
 8. Store metadata and vectors in PostgreSQL with pgvector.
 9. Query a retrieval API.
 10. Return top-k retrieval results with source citations and pipeline-run traceability.
@@ -104,7 +106,7 @@ The following are explicitly outside Phase 1a:
 
 Best-effort for Phase 1a:
 
-- Ollama-compatible local embedding example if it can use the same provider abstraction cleanly.
+- Ollama-compatible or BAAI BGE local embedding example if it can use the same provider abstraction cleanly.
 - Simple CLI wrapper for ingestion and retrieval if the API is already stable.
 - Basic retrieval-event logging for later evaluation.
 - Sample documents and a smoke script.
@@ -188,7 +190,7 @@ Core components:
 | Parser registry | Convert supported files to extracted text and metadata | Markdown, text, PDF |
 | Cleaner | Normalize extracted text | Deterministic defaults; LLM cleaning deferred |
 | Chunker | Split text into stable chunks | Fixed token or character strategy with overlap |
-| Embedding provider | Generate vectors | One OpenAI-compatible provider required |
+| Embedding provider | Generate vectors | Local-first provider path required; cloud OpenAI-compatible providers are optional |
 | Index repository | Persist vectors and metadata | pgvector required |
 | Retrieval service | Query top-k chunks and return citations | No answer generation |
 | Run recorder | Track pipeline runs and per-document outcomes | Required for traceability |
@@ -370,7 +372,7 @@ Recommended implementation order after this SPEC is accepted:
    - stable chunk ids or stable chunk references
 
 5. Embedding and indexing
-   - OpenAI-compatible embedding provider
+   - local-first embedding provider path, with cloud providers optional
    - pgvector writes
    - idempotent update behavior for unchanged content
 

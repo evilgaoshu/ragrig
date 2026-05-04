@@ -49,9 +49,11 @@ RAGRig treats RAG as an operational system:
 - **Source-first:** every generated answer should point back to inspectable source material.
 - **Governed by default:** access control, metadata, versions, and audit events are part of the core model.
 - **Model-flexible:** bring local or hosted LLMs, embedding models, rerankers, OCR, and parsers.
+- **Local-first:** prefer local files, pgvector, Ollama, LM Studio, BGE, and self-hosted runtimes before cloud services.
 - **Vector-store portable:** start with pgvector, scale to Qdrant, and keep migration paths explicit.
 - **Ops-friendly:** designed for Docker Compose first, with a path to Kubernetes later.
 - **Plugin-first:** keep the core small, then extend sources, sinks, models, vector stores, preview tools, and workflow nodes through explicit contracts.
+- **Quality-gated:** core modules must reach and maintain 100% test coverage, with cloud and enterprise plugins covered through contract tests.
 
 ## Architecture
 
@@ -92,6 +94,7 @@ Authoritative specs:
 - [Phase 1b local ingestion spec](./docs/specs/ragrig-phase-1b-local-ingestion-spec.md)
 - [Phase 1c chunking and embedding spec](./docs/specs/ragrig-phase-1c-chunking-embedding-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
+- [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
 - [Web Console prototype](./docs/prototypes/web-console/index.html)
 
 ## Web Console Preview
@@ -397,6 +400,10 @@ The goal is not to build a plugin marketplace first. The goal is to make every i
 
 The README uses official platform links instead of embedding third-party logos. A visual integration gallery can be added later under `docs/` when each logo's trademark and usage rules are checked.
 
+Provider priority is local-first, cloud-second. Local model runtimes, local embeddings,
+local rerankers, and self-hosted vector stores must be usable before a user configures a
+cloud account.
+
 Plugin families:
 
 | Family | Purpose | Examples |
@@ -405,7 +412,7 @@ Plugin families:
 | Parsers and OCR | Convert raw files into extracted text and structure | Markdown, plain text, PDF, DOCX, XLSX, [Docling](https://github.com/docling-project/docling), [MinerU](https://github.com/opendatalab/MinerU), [Tesseract](https://github.com/tesseract-ocr/tesseract), [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) |
 | Cleaning nodes | Normalize, redact, classify, dedupe, and enrich content | deterministic cleaners, LLM-assisted cleaners, PII redaction, metadata extraction |
 | Chunkers | Split document versions into traceable chunks | character windows, Markdown heading chunks, recursive text chunks, table-aware chunks |
-| Model providers | Supply LLMs, embedding models, rerankers, OCR, and parsing models | [OpenAI](https://platform.openai.com/docs/overview)-compatible APIs, [Ollama](https://ollama.com/), [vLLM](https://www.vllm.ai/), [llama.cpp](https://github.com/ggml-org/llama.cpp), [BAAI BGE](https://huggingface.co/BAAI), [Jina AI](https://jina.ai/embeddings/), [Cohere](https://cohere.com/), [Voyage AI](https://www.voyageai.com/) |
+| Model providers | Supply LLMs, embedding models, rerankers, OCR, and parsing models | local [Ollama](https://ollama.com/), [LM Studio](https://lmstudio.ai/), [vLLM](https://www.vllm.ai/), [llama.cpp](https://github.com/ggml-org/llama.cpp), [Xinference](https://inference.readthedocs.io/), [BAAI BGE](https://huggingface.co/BAAI), plus cloud [Google Vertex AI](https://cloud.google.com/vertex-ai), [Amazon Bedrock](https://aws.amazon.com/bedrock/), [OpenRouter](https://openrouter.ai/), [OpenAI](https://platform.openai.com/docs/overview), [Cohere](https://cohere.com/), [Voyage AI](https://www.voyageai.com/) |
 | Vector backends | Store and search vectors with backend-specific capability reporting | [pgvector](https://github.com/pgvector/pgvector), [Qdrant](https://qdrant.tech/), [Milvus](https://milvus.io/)/[Zilliz](https://zilliz.com/), [Weaviate](https://weaviate.io/), [OpenSearch](https://opensearch.org/)/[Elasticsearch](https://www.elastic.co/), [Redis](https://redis.io/)/[Valkey](https://valkey.io/) |
 | Output sinks | Write governed knowledge or retrieval artifacts elsewhere | [Amazon S3](https://aws.amazon.com/s3/)/[Cloudflare R2](https://www.cloudflare.com/developer-platform/products/r2/)/[MinIO](https://www.min.io/), NFS, relational databases, JSONL, [Parquet](https://parquet.apache.org/), Markdown, webhooks, [MCP](https://modelcontextprotocol.io/) |
 | Preview/edit integrations | Let operators inspect or edit source and cleaned knowledge | Markdown editor, [WPS](https://www.wps.com/), [OnlyOffice](https://www.onlyoffice.com/), [Collabora Online](https://www.collaboraonline.com/), source-system deep links |
@@ -439,9 +446,10 @@ Priority official plugins:
 
 | Priority | Plugin area | Platforms and protocols to cover first |
 | --- | --- | --- |
-| P0 | `vector.qdrant` | [Qdrant Cloud](https://qdrant.tech/cloud/) and [self-hosted Qdrant](https://qdrant.tech/documentation/) |
-| P0 | `model.openai_compatible` | [OpenAI](https://platform.openai.com/docs/overview), [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service), [vLLM](https://www.vllm.ai/), [Ollama](https://ollama.com/), [LM Studio](https://lmstudio.ai/), [Xinference](https://inference.readthedocs.io/), [llama.cpp](https://github.com/ggml-org/llama.cpp) servers |
-| P0 | `embedding.bge` and `reranker.bge` | [BAAI BGE](https://huggingface.co/BAAI) embedding and reranker models, local or OpenAI-compatible serving |
+| P0 | `vector.qdrant` | [Self-hosted Qdrant](https://qdrant.tech/documentation/) first, [Qdrant Cloud](https://qdrant.tech/cloud/) second |
+| P0 | `model.local_runtime` | [Ollama](https://ollama.com/), [LM Studio](https://lmstudio.ai/), [llama.cpp](https://github.com/ggml-org/llama.cpp) server, [vLLM](https://www.vllm.ai/), [Xinference](https://inference.readthedocs.io/), [LocalAI](https://localai.io/) through official SDKs or OpenAI-compatible local APIs |
+| P0 | `embedding.bge` and `reranker.bge` | [BAAI BGE](https://huggingface.co/BAAI) embedding and reranker models through local `FlagEmbedding`, `sentence-transformers`, or OpenAI-compatible serving |
+| P1 | `model.cloud_provider` | [Google Vertex AI](https://cloud.google.com/vertex-ai), [Amazon Bedrock](https://aws.amazon.com/bedrock/), [OpenRouter](https://openrouter.ai/), [OpenAI](https://platform.openai.com/docs/overview), [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service), [Cohere](https://cohere.com/), [Voyage AI](https://www.voyageai.com/), [Jina AI](https://jina.ai/) |
 | P1 | `source.s3` | [AWS S3](https://aws.amazon.com/s3/), [Cloudflare R2](https://www.cloudflare.com/developer-platform/products/r2/), [MinIO](https://www.min.io/), [Ceph RGW](https://docs.ceph.com/en/latest/radosgw/), [Wasabi](https://wasabi.com/), [Backblaze B2 S3 API](https://www.backblaze.com/cloud-storage), [Tencent COS S3 API](https://www.tencentcloud.com/products/cos), [Alibaba OSS](https://www.alibabacloud.com/product/oss) S3-compatible mode when available |
 | P1 | `sink.object_storage` | [AWS S3](https://aws.amazon.com/s3/), [Cloudflare R2](https://www.cloudflare.com/developer-platform/products/r2/), [MinIO](https://www.min.io/), [Ceph RGW](https://docs.ceph.com/en/latest/radosgw/), [Wasabi](https://wasabi.com/), [Backblaze B2](https://www.backblaze.com/cloud-storage), [Google Cloud Storage](https://cloud.google.com/storage), [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs) |
 | P1 | `source.fileshare` | [SMB/CIFS](https://learn.microsoft.com/en-us/windows-server/storage/file-server/file-server-smb-overview), [NFS](https://docs.kernel.org/admin-guide/nfs/index.html), [WebDAV](https://www.rfc-editor.org/rfc/rfc4918), [SFTP/OpenSSH](https://www.openssh.com/) |
@@ -490,6 +498,19 @@ secrets:
 
 Plugin development will start with internal Python interfaces. Public third-party plugin packaging should wait until the core contracts, test kit, and capability matrix are stable.
 
+## Quality and Supply Chain
+
+RAGRig uses a strict quality and dependency policy:
+
+- Core modules must reach and maintain 100% test coverage.
+- Default tests must not require network access, cloud accounts, or secrets.
+- Provider SDKs must be official or actively maintained open-source packages whenever possible.
+- Heavy or cloud-specific SDKs must live behind optional plugin extras, not the core runtime.
+- `uv.lock` stays committed, and release candidates should include vulnerability checks,
+  license review, and SBOM generation.
+
+See the [local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md) for the SDK inventory and supply chain rules.
+
 ## Repository Layout
 
 ```text
@@ -511,6 +532,7 @@ Plugin development will start with internal Python interfaces. Public third-part
 │       ├── ragrig-phase-1a-scaffold-spec.md
 │       ├── ragrig-phase-1b-local-ingestion-spec.md
 │       ├── ragrig-phase-1c-chunking-embedding-spec.md
+│       ├── ragrig-local-first-quality-supply-chain-policy.md
 │       └── ragrig-web-console-spec.md
 ├── scripts/
 │   ├── db_check.py
