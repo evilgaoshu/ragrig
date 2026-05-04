@@ -101,8 +101,10 @@ flowchart LR
 - [Phase 1a metadata DB spec](./docs/specs/ragrig-phase-1a-metadata-db-spec.md)
 - [Phase 1b local ingestion spec](./docs/specs/ragrig-phase-1b-local-ingestion-spec.md)
 - [Phase 1c chunking and embedding spec](./docs/specs/ragrig-phase-1c-chunking-embedding-spec.md)
+- [Phase 1d retrieval API spec](./docs/specs/ragrig-phase-1d-retrieval-api-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
 - [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
+- [Core coverage and supply chain gates](./docs/specs/ragrig-core-coverage-supply-chain-gates.md)
 - [Web Console prototype](./docs/prototypes/web-console/index.html)
 
 ## 快速开始
@@ -132,7 +134,19 @@ DB_HOST_PORT=15433
 make format
 make lint
 make test
+make coverage
+make dependency-inventory
 ```
+
+运行供应链检查：
+
+```bash
+make licenses
+make sbom
+make audit
+```
+
+`make audit` 需要网络访问漏洞服务。离线环境请改跑 `make audit-dry-run`，并把漏洞审计记录为 blocker，而不是默认跳过。
 
 启动数据库：
 
@@ -341,7 +355,23 @@ RAGRig 需要把质量门槛和依赖治理写进项目规则：
 - 重型 ML SDK、云端 SDK 和企业系统 SDK 必须通过可选插件依赖引入，不能进入 core runtime。
 - `uv.lock` 必须提交；发布前需要做漏洞检查、许可证检查和 SBOM 生成。
 
+当前仓库里的可执行质量门命令：
+
+- `make coverage`：对硬范围 core 模块执行 100% line coverage gate，范围包括 `db`、`repositories`、`ingestion`、`parsers`、`chunkers`、`embeddings`、`indexing`、`retrieval.py`、`config.py`、`health.py`。
+- `make licenses`：对已安装的第三方依赖执行许可证检查，阻止 GPL、AGPL、SSPL 和 source-available 依赖进入默认路径。
+- `make sbom`：输出 CycloneDX JSON SBOM 到 `docs/operations/artifacts/sbom.cyclonedx.json`。
+- `make audit`：对当前本地环境做漏洞审计，并输出 `docs/operations/artifacts/pip-audit.json`。
+- `make dependency-inventory`：刷新 `docs/operations/dependency-inventory.md`。
+- `make supply-chain-check`：串行执行许可证检查、SBOM 导出和漏洞审计。
+
+本轮显式不纳入 coverage hard gate 的路径：
+
+- `src/ragrig/main.py`：FastAPI app wiring，不属于本轮 core 逻辑
+- `src/ragrig/web_console.py`：Web Console 适配层，不属于本轮 hard scope
+- `src/ragrig/cleaners/*`、`src/ragrig/vectorstore/*`：当前仍是占位包，没有实际行为
+
 SDK 清单、供应链策略和覆盖率要求见 [local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)。
+可执行命令说明见 [core coverage and supply chain gates](./docs/specs/ragrig-core-coverage-supply-chain-gates.md)、[supply chain operations](./docs/operations/supply-chain.md)、[dependency inventory](./docs/operations/dependency-inventory.md)。
 
 ## Web Console
 

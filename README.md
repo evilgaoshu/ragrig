@@ -97,6 +97,7 @@ Authoritative specs:
 - [Phase 1d retrieval API spec](./docs/specs/ragrig-phase-1d-retrieval-api-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
 - [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
+- [Core coverage and supply chain gates](./docs/specs/ragrig-core-coverage-supply-chain-gates.md)
 - [Web Console prototype](./docs/prototypes/web-console/index.html)
 
 ## Web Console
@@ -185,21 +186,33 @@ The current repository state supports local Markdown/Text parsing, character-win
    make format
    make lint
    make test
+   make coverage
+   make dependency-inventory
    ```
 
-5. Start the database service:
+5. Run supply-chain checks:
+
+   ```bash
+   make licenses
+   make sbom
+   make audit
+   ```
+
+   `make audit` requires network access. If the environment is offline, use `make audit-dry-run` and treat the vulnerability audit as blocked rather than silently skipped.
+
+6. Start the database service:
 
    ```bash
    docker compose up --build -d db
    ```
 
-6. Run the initial migration:
+7. Run the initial migration:
 
    ```bash
    make migrate
    ```
 
-7. Verify the extension and schema:
+8. Verify the extension and schema:
 
    ```bash
    make db-check
@@ -226,19 +239,19 @@ The current repository state supports local Markdown/Text parsing, character-win
    }
    ```
 
-8. Preview the local ingestion fixture without writing to the database:
+9. Preview the local ingestion fixture without writing to the database:
 
    ```bash
    make ingest-local-dry-run
    ```
 
-9. Ingest the local Markdown/Text fixture into the database:
+10. Ingest the local Markdown/Text fixture into the database:
 
    ```bash
    make ingest-local
    ```
 
-10. Query the latest local-ingestion run summary:
+11. Query the latest local-ingestion run summary:
 
    ```bash
    make ingest-check
@@ -266,13 +279,13 @@ The current repository state supports local Markdown/Text parsing, character-win
    }
    ```
 
-11. Chunk and embed the latest ingested document versions:
+12. Chunk and embed the latest ingested document versions:
 
     ```bash
     make index-local
     ```
 
-12. Query the latest chunking and embedding run summary:
+13. Query the latest chunking and embedding run summary:
 
     ```bash
     make index-check
@@ -303,7 +316,7 @@ The current repository state supports local Markdown/Text parsing, character-win
      }
      ```
 
-13. Run a retrieval smoke query against the indexed chunks:
+14. Run a retrieval smoke query against the indexed chunks:
 
     ```bash
     make retrieve-check QUERY="RAGRig Guide"
@@ -337,7 +350,7 @@ The current repository state supports local Markdown/Text parsing, character-win
     }
     ```
 
-14. Start the local API service, including the Web Console:
+15. Start the local API service, including the Web Console:
 
     ```bash
     make run-web
@@ -347,19 +360,19 @@ The current repository state supports local Markdown/Text parsing, character-win
 
     If you changed `APP_HOST_PORT`, open that port instead.
 
-15. Run the Web Console smoke contract:
+16. Run the Web Console smoke contract:
 
     ```bash
     make web-check
     ```
 
-16. Start the full local development stack when you also want Docker-managed app + DB:
+17. Start the full local development stack when you also want Docker-managed app + DB:
 
     ```bash
     docker compose up --build
     ```
 
-17. Verify the service and pgvector bootstrap:
+18. Verify the service and pgvector bootstrap:
 
     ```bash
     curl http://localhost:8000/health
@@ -383,7 +396,7 @@ Expected healthy response:
 
 If PostgreSQL is unavailable, `/health` returns `503` with a clear error payload.
 
-18. Exercise the retrieval API directly:
+19. Exercise the retrieval API directly:
 
     ```bash
     curl -X POST http://localhost:8000/retrieval/search \
@@ -652,7 +665,23 @@ RAGRig uses a strict quality and dependency policy:
 - `uv.lock` stays committed, and release candidates should include vulnerability checks,
   license review, and SBOM generation.
 
+Executable commands in this repository:
+
+- `make coverage`: enforces 100% line coverage for the hard core scope: `db`, `repositories`, `ingestion`, `parsers`, `chunkers`, `embeddings`, `indexing`, `retrieval.py`, `config.py`, and `health.py`.
+- `make licenses`: fails on GPL, AGPL, SSPL, or source-available third-party packages.
+- `make sbom`: writes a CycloneDX JSON SBOM to `docs/operations/artifacts/sbom.cyclonedx.json`.
+- `make audit`: runs a vulnerability audit of the local environment and writes `docs/operations/artifacts/pip-audit.json`.
+- `make dependency-inventory`: refreshes `docs/operations/dependency-inventory.md`.
+- `make supply-chain-check`: runs the license check, SBOM export, and vulnerability audit together.
+
+Hard-scope omissions are explicit rather than hidden by a broad exclude:
+
+- `src/ragrig/main.py`: app wiring only
+- `src/ragrig/web_console.py`: Web Console adapter layer, outside this issue's hard scope
+- `src/ragrig/cleaners/*` and `src/ragrig/vectorstore/*`: placeholder packages with no shipped behavior
+
 See the [local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md) for the SDK inventory and supply chain rules.
+See [core coverage and supply chain gates](./docs/specs/ragrig-core-coverage-supply-chain-gates.md), [supply chain operations](./docs/operations/supply-chain.md), and the [dependency inventory](./docs/operations/dependency-inventory.md) for the executable gate details.
 
 ## Repository Layout
 

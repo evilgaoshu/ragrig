@@ -18,6 +18,8 @@ class Settings(BaseSettings):
 
     @property
     def runtime_database_url(self) -> str:
+        if "://" not in self.database_url or not self.database_url.startswith("postgresql"):
+            return self.database_url
         parts = urlsplit(self.database_url)
         username = parts.username or ""
         password = parts.password or ""
