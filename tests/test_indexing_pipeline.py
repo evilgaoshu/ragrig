@@ -14,6 +14,7 @@ from ragrig.chunkers import ChunkingConfig, chunk_text
 from ragrig.db.models import Base, Chunk, DocumentVersion, Embedding, PipelineRun, PipelineRunItem
 from ragrig.embeddings import DeterministicEmbeddingProvider, EmbeddingResult
 from ragrig.indexing.pipeline import (
+    _embedding_provider_profile,
     _replace_version_index,
     _version_already_indexed,
     index_knowledge_base,
@@ -67,6 +68,14 @@ def test_deterministic_embedding_provider_returns_stable_dimensions() -> None:
     assert first.dimensions == 8
     assert len(first.vector) == 8
     assert first.vector == second.vector
+
+
+def test_embedding_provider_profile_requires_model_name() -> None:
+    class NoModelProvider:
+        provider_name = "missing-model"
+
+    with pytest.raises(ValueError, match="embedding provider must expose a model name"):
+        _embedding_provider_profile(NoModelProvider())
 
 
 def test_index_knowledge_base_resolves_embedding_provider_from_registry(

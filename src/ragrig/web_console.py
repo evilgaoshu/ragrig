@@ -405,8 +405,7 @@ def list_models(session: Session) -> dict[str, Any]:
             "llm": {
                 "status": "disabled",
                 "reason": (
-                    "Provider registry contract exists, but LLM adapters arrive "
-                    "in Phase 1e PR-2."
+                    "Provider registry contract exists, but LLM adapters arrive in Phase 1e PR-2."
                 ),
             },
             "reranker": {

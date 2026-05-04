@@ -123,3 +123,56 @@ def test_default_provider_registry_exposes_deterministic_local_contract() -> Non
     assert ProviderCapability.EMBEDDING in metadata.capabilities
     assert result.provider == "deterministic-local"
     assert result.dimensions == 6
+
+
+def test_base_provider_default_methods_raise_structured_errors() -> None:
+    provider = FakeEmbeddingProvider(metadata=_fake_metadata(), config={})
+    provider.metadata = ProviderMetadata(
+        **{
+            **provider.metadata.__dict__,
+            "capabilities": set(),
+        }
+    )
+
+    assert provider.health_check() == ProviderHealth(status="healthy", detail="fake provider ready")
+
+    with pytest.raises(ProviderError) as embed_exc:
+        BaseProvider.embed_text(provider, "fixture")
+    with pytest.raises(ProviderError) as generate_exc:
+        BaseProvider.generate(provider, "fixture")
+    with pytest.raises(ProviderError) as chat_exc:
+        BaseProvider.chat(provider, [{"role": "user", "content": "fixture"}])
+    with pytest.raises(ProviderError) as rerank_exc:
+        BaseProvider.rerank(provider, "fixture", ["doc"])
+
+    assert embed_exc.value.details == {"provider": "fake-embedding", "capability": "embedding"}
+    assert generate_exc.value.details == {"provider": "fake-embedding", "capability": "generate"}
+    assert chat_exc.value.details == {"provider": "fake-embedding", "capability": "chat"}
+    assert rerank_exc.value.details == {"provider": "fake-embedding", "capability": "rerank"}
+
+
+def test_base_provider_default_health_check_returns_unknown() -> None:
+    provider = FakeEmbeddingProvider(metadata=_fake_metadata(), config={})
+
+    health = BaseProvider.health_check(provider)
+
+    assert health == ProviderHealth(status="unknown", detail="Health check not implemented")
+
+
+def test_provider_registry_read_missing_and_empty_health_checks() -> None:
+    registry = ProviderRegistry()
+
+    with pytest.raises(ProviderError) as missing_exc:
+        registry.read("missing-provider")
+
+    assert missing_exc.value.code == "provider_not_registered"
+    assert registry.health_check_all() == {}
+
+
+def test_deterministic_local_provider_health_check_reports_dimensions() -> None:
+    provider = get_provider_registry().get("deterministic-local", dimensions=7)
+
+    health = provider.health_check()
+
+    assert health.status == "healthy"
+    assert health.metrics == {"dimensions": 7}
