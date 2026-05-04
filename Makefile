@@ -1,6 +1,6 @@
 UV ?= uv
 
-.PHONY: sync format lint test test-db migrate migrate-down db-check db-shell run up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check
+.PHONY: sync format lint test test-db migrate migrate-down db-check db-shell run up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -58,3 +58,6 @@ index-local:
 
 index-check:
 	$(UV) run python -m scripts.index_check --knowledge-base "$(INGEST_KB)"
+
+retrieve-check:
+	$(UV) run python -m scripts.retrieve_check --knowledge-base "$(INGEST_KB)" --query "$(QUERY)"
