@@ -12,6 +12,10 @@
   <em>源栈: from scattered enterprise sources to traceable, permission-aware, model-ready knowledge.</em>
 </p>
 
+<p align="center">
+  <a href="./README.zh-CN.md">中文</a>
+</p>
+
 ---
 
 ## About
@@ -45,8 +49,29 @@ RAGRig treats RAG as an operational system:
 - **Source-first:** every generated answer should point back to inspectable source material.
 - **Governed by default:** access control, metadata, versions, and audit events are part of the core model.
 - **Model-flexible:** bring local or hosted LLMs, embedding models, rerankers, OCR, and parsers.
+- **Local-first:** prefer local files, pgvector, Ollama, LM Studio, BGE, and self-hosted runtimes before cloud services.
 - **Vector-store portable:** start with pgvector, scale to Qdrant, and keep migration paths explicit.
 - **Ops-friendly:** designed for Docker Compose first, with a path to Kubernetes later.
+- **Plugin-first:** keep the core small, then extend sources, sinks, models, vector stores, preview tools, and workflow nodes through explicit contracts.
+- **Quality-gated:** core modules must reach and maintain 100% test coverage, with cloud and enterprise plugins covered through contract tests.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    sources["Source plugins<br/>files, object storage, docs, wiki, DB"]
+    pipeline["Pipeline engine<br/>scan, parse, clean, chunk, embed, index"]
+    core["RAGRig core<br/>KB, versions, chunks, runs, audit"]
+    vectors["Vector backends<br/>pgvector, Qdrant, others"]
+    console["Web Console<br/>operate, review, debug"]
+    api["Retrieval API / MCP / exports"]
+
+    sources --> pipeline --> core
+    core --> vectors
+    core --> console
+    vectors --> api
+    core --> api
+```
 
 ## Project Status
 
@@ -70,6 +95,17 @@ Authoritative specs:
 - [Phase 1b local ingestion spec](./docs/specs/ragrig-phase-1b-local-ingestion-spec.md)
 - [Phase 1c chunking and embedding spec](./docs/specs/ragrig-phase-1c-chunking-embedding-spec.md)
 - [Phase 1d retrieval API spec](./docs/specs/ragrig-phase-1d-retrieval-api-spec.md)
+- [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
+- [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
+- [Web Console prototype](./docs/prototypes/web-console/index.html)
+
+## Web Console Preview
+
+The Web Console is planned as an operator workbench for knowledge bases, sources, ingestion tasks, pipeline runs, document/chunk review, model configuration, retrieval debugging, and health status.
+
+<p align="center">
+  <img src="./docs/prototypes/web-console/ragrig-web-console-prototype.png" alt="RAGRig Web Console prototype" width="860">
+</p>
 
 ## Phase 1a Foundation
 
@@ -153,19 +189,19 @@ The current repository state supports local Markdown/Text parsing, character-win
      "current_revision": "20260503_0001",
      "extension": "vector",
      "missing_tables": [],
-      "present_tables": [
-        "chunks",
-        "document_versions",
+     "present_tables": [
+       "chunks",
+       "document_versions",
        "documents",
        "embeddings",
        "knowledge_bases",
-        "pipeline_run_items",
-        "pipeline_runs",
-        "sources"
+       "pipeline_run_items",
+       "pipeline_runs",
+       "sources"
      ],
      "revision_matches_head": true
-    }
-    ```
+   }
+   ```
 
 8. Preview the local ingestion fixture without writing to the database:
 
@@ -204,8 +240,8 @@ The current repository state supports local Markdown/Text parsing, character-win
        "success_count": 4,
        "total_items": 5
      }
-    }
-    ```
+   }
+   ```
 
 11. Chunk and embed the latest ingested document versions:
 
@@ -280,17 +316,17 @@ The current repository state supports local Markdown/Text parsing, character-win
 
 14. Start the full local development stack when you also want the API service:
 
-   ```bash
+    ```bash
     docker compose up --build
-   ```
+    ```
 
 15. Verify the service and pgvector bootstrap:
 
-   ```bash
-   curl http://localhost:8000/health
-   docker compose exec db psql -U ragrig -d ragrig -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
-   docker compose exec db psql -U ragrig -d ragrig -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;"
-   ```
+    ```bash
+    curl http://localhost:8000/health
+    docker compose exec db psql -U ragrig -d ragrig -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
+    docker compose exec db psql -U ragrig -d ragrig -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;"
+    ```
 
     If you changed `APP_HOST_PORT`, use that port in the `curl` command.
     If you changed `DB_HOST_PORT`, keep using `docker compose exec db ...`; no command change is required.
@@ -421,36 +457,124 @@ What it does not do yet:
 - ACL filtering
 - external embedding providers as the default path
 
-## Planned Integrations
+## Plugin Architecture
 
-Input sources:
+RAGRig is designed as a small core with plugin-first extension points. The core owns workspace state, knowledge bases, documents, versions, chunks, embeddings, pipeline runs, metadata, access boundaries, audit events, and plugin contracts. Integrations live behind typed plugin interfaces.
 
-- local files and folders
-- SMB/NFS
-- S3-compatible storage, including Cloudflare R2
-- Cloudflare D1, KV, and other platform data sources
-- Google Docs / Google Drive
-- wiki systems such as Confluence or MediaWiki
-- databases
-- WPS document middle platform
-- OnlyOffice-compatible document services
+The goal is not to build a plugin marketplace first. The goal is to make every integration explicit, testable, observable, and replaceable.
 
-Output targets:
+The README uses official platform links instead of embedding third-party logos. A visual integration gallery can be added later under `docs/` when each logo's trademark and usage rules are checked.
 
-- Qdrant
-- Postgres/pgvector
-- S3-compatible storage
-- NFS
-- relational databases
-- Markdown, JSONL, and Parquet exports
+Provider priority is local-first, cloud-second. Local model runtimes, local embeddings,
+local rerankers, and self-hosted vector stores must be usable before a user configures a
+cloud account.
 
-Model providers:
+Plugin families:
 
-- OpenAI-compatible APIs
-- Ollama
-- llama.cpp
-- vLLM
-- local embedding and reranker models such as BAAI BGE
+| Family | Purpose | Examples |
+| --- | --- | --- |
+| Source connectors | Read enterprise knowledge from external systems | local files, SMB/NFS, S3-compatible storage, [Google Drive](https://www.google.com/drive/), [SharePoint](https://www.microsoft.com/en-us/microsoft-365/sharepoint/collaboration), [Confluence](https://www.atlassian.com/software/confluence), databases |
+| Parsers and OCR | Convert raw files into extracted text and structure | Markdown, plain text, PDF, DOCX, XLSX, [Docling](https://github.com/docling-project/docling), [MinerU](https://github.com/opendatalab/MinerU), [Tesseract](https://github.com/tesseract-ocr/tesseract), [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) |
+| Cleaning nodes | Normalize, redact, classify, dedupe, and enrich content | deterministic cleaners, LLM-assisted cleaners, PII redaction, metadata extraction |
+| Chunkers | Split document versions into traceable chunks | character windows, Markdown heading chunks, recursive text chunks, table-aware chunks |
+| Model providers | Supply LLMs, embedding models, rerankers, OCR, and parsing models | local [Ollama](https://ollama.com/), [LM Studio](https://lmstudio.ai/), [vLLM](https://www.vllm.ai/), [llama.cpp](https://github.com/ggml-org/llama.cpp), [Xinference](https://inference.readthedocs.io/), [BAAI BGE](https://huggingface.co/BAAI), plus cloud [Google Vertex AI](https://cloud.google.com/vertex-ai), [Amazon Bedrock](https://aws.amazon.com/bedrock/), [OpenRouter](https://openrouter.ai/), [OpenAI](https://platform.openai.com/docs/overview), [Cohere](https://cohere.com/), [Voyage AI](https://www.voyageai.com/) |
+| Vector backends | Store and search vectors with backend-specific capability reporting | [pgvector](https://github.com/pgvector/pgvector), [Qdrant](https://qdrant.tech/), [Milvus](https://milvus.io/)/[Zilliz](https://zilliz.com/), [Weaviate](https://weaviate.io/), [OpenSearch](https://opensearch.org/)/[Elasticsearch](https://www.elastic.co/), [Redis](https://redis.io/)/[Valkey](https://valkey.io/) |
+| Output sinks | Write governed knowledge or retrieval artifacts elsewhere | [Amazon S3](https://aws.amazon.com/s3/)/[Cloudflare R2](https://www.cloudflare.com/developer-platform/products/r2/)/[MinIO](https://www.min.io/), NFS, relational databases, JSONL, [Parquet](https://parquet.apache.org/), Markdown, webhooks, [MCP](https://modelcontextprotocol.io/) |
+| Preview/edit integrations | Let operators inspect or edit source and cleaned knowledge | Markdown editor, [WPS](https://www.wps.com/), [OnlyOffice](https://www.onlyoffice.com/), [Collabora Online](https://www.collaboraonline.com/), source-system deep links |
+| Evaluation plugins | Measure retrieval and answer quality | golden questions, citation coverage, latency/cost, regression checks |
+| Workflow nodes | Compose ingestion, indexing, export, and evaluation pipelines | scan, parse, clean, chunk, embed, index, retrieve, evaluate, export, notify |
+
+### Plugin Tiers
+
+RAGRig separates plugins by stability, priority, and maintenance ownership.
+
+| Tier | Meaning | Ships with core | Extension policy |
+| --- | --- | --- | --- |
+| Built-in core plugins | Minimal local-first path required for a reproducible RAG pipeline | Yes | Maintained in this repository, no optional external service dependency |
+| Official plugins | High-demand integrations maintained by the RAGRig project | Usually optional | May live in this repository first, then move to separate packages as APIs stabilize |
+| Community plugins | Third-party integrations built against public contracts | No | Installed through Python packages or plugin manifests once the contract is stable |
+
+Initial built-in core plugins:
+
+| Plugin | Family | Read/write | Why it is core |
+| --- | --- | --- | --- |
+| `source.local` | Source connector | Read | Fresh-clone demo, fixture validation, shared-host smoke testing |
+| `parser.markdown` | Parser | Read | Common documentation format, deterministic tests |
+| `parser.text` | Parser | Read | Smallest plain-text ingestion path |
+| `chunker.character_window` | Chunker | Write chunks | Reproducible chunking before semantic chunkers exist |
+| `embedding.deterministic_local` | Model provider | Write embeddings | Secret-free development and CI validation |
+| `vector.pgvector` | Vector backend | Read/write | Default lightweight backend on Postgres |
+| `sink.jsonl` | Output sink | Write | Portable debug/export format |
+| `preview.markdown` | Preview/edit | Read/write draft | Operator review without needing an office suite |
+
+Priority official plugins:
+
+| Priority | Plugin area | Platforms and protocols to cover first |
+| --- | --- | --- |
+| P0 | `vector.qdrant` | [Self-hosted Qdrant](https://qdrant.tech/documentation/) first, [Qdrant Cloud](https://qdrant.tech/cloud/) second |
+| P0 | `model.local_runtime` | [Ollama](https://ollama.com/), [LM Studio](https://lmstudio.ai/), [llama.cpp](https://github.com/ggml-org/llama.cpp) server, [vLLM](https://www.vllm.ai/), [Xinference](https://inference.readthedocs.io/), [LocalAI](https://localai.io/) through official SDKs or OpenAI-compatible local APIs |
+| P0 | `embedding.bge` and `reranker.bge` | [BAAI BGE](https://huggingface.co/BAAI) embedding and reranker models through local `FlagEmbedding`, `sentence-transformers`, or OpenAI-compatible serving |
+| P1 | `model.cloud_provider` | [Google Vertex AI](https://cloud.google.com/vertex-ai), [Amazon Bedrock](https://aws.amazon.com/bedrock/), [OpenRouter](https://openrouter.ai/), [OpenAI](https://platform.openai.com/docs/overview), [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service), [Cohere](https://cohere.com/), [Voyage AI](https://www.voyageai.com/), [Jina AI](https://jina.ai/) |
+| P1 | `source.s3` | [AWS S3](https://aws.amazon.com/s3/), [Cloudflare R2](https://www.cloudflare.com/developer-platform/products/r2/), [MinIO](https://www.min.io/), [Ceph RGW](https://docs.ceph.com/en/latest/radosgw/), [Wasabi](https://wasabi.com/), [Backblaze B2 S3 API](https://www.backblaze.com/cloud-storage), [Tencent COS S3 API](https://www.tencentcloud.com/products/cos), [Alibaba OSS](https://www.alibabacloud.com/product/oss) S3-compatible mode when available |
+| P1 | `sink.object_storage` | [AWS S3](https://aws.amazon.com/s3/), [Cloudflare R2](https://www.cloudflare.com/developer-platform/products/r2/), [MinIO](https://www.min.io/), [Ceph RGW](https://docs.ceph.com/en/latest/radosgw/), [Wasabi](https://wasabi.com/), [Backblaze B2](https://www.backblaze.com/cloud-storage), [Google Cloud Storage](https://cloud.google.com/storage), [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs) |
+| P1 | `source.fileshare` | [SMB/CIFS](https://learn.microsoft.com/en-us/windows-server/storage/file-server/file-server-smb-overview), [NFS](https://docs.kernel.org/admin-guide/nfs/index.html), [WebDAV](https://www.rfc-editor.org/rfc/rfc4918), [SFTP/OpenSSH](https://www.openssh.com/) |
+| P1 | `source.google_workspace` | [Google Drive](https://www.google.com/drive/), [Google Docs](https://www.google.com/docs/about/), [Google Sheets](https://www.google.com/sheets/about/), [Google Slides](https://www.google.com/slides/about/) |
+| P1 | `source.microsoft_365` | [SharePoint](https://www.microsoft.com/en-us/microsoft-365/sharepoint/collaboration), [OneDrive](https://www.microsoft.com/en-us/microsoft-365/onedrive/online-cloud-storage), [Word](https://www.microsoft.com/en-us/microsoft-365/word), [Excel](https://www.microsoft.com/en-us/microsoft-365/excel), [PowerPoint](https://www.microsoft.com/en-us/microsoft-365/powerpoint) |
+| P1 | `source.wiki` | [Confluence](https://www.atlassian.com/software/confluence), [MediaWiki](https://www.mediawiki.org/wiki/MediaWiki), [GitBook](https://www.gitbook.com/), [Docusaurus](https://docusaurus.io/), [MkDocs](https://www.mkdocs.org/) |
+| P1 | `source.database` | [PostgreSQL](https://www.postgresql.org/), [MySQL](https://www.mysql.com/)/[MariaDB](https://mariadb.org/), [SQL Server](https://www.microsoft.com/en-us/sql-server), [Oracle Database](https://www.oracle.com/database/), [SQLite](https://www.sqlite.org/), [MongoDB](https://www.mongodb.com/), [Elasticsearch](https://www.elastic.co/elasticsearch)/[OpenSearch](https://opensearch.org/) |
+| P1 | `preview.office` | [WPS](https://www.wps.com/), [OnlyOffice](https://www.onlyoffice.com/), [Collabora Online](https://www.collaboraonline.com/) |
+| P2 | `source.collaboration` | [Notion](https://www.notion.com/), [Lark](https://www.larksuite.com/)/[Feishu](https://www.feishu.cn/), [DingTalk](https://www.dingtalk.com/), [WeCom](https://work.weixin.qq.com/), [Slack files](https://slack.com/), [Microsoft Teams files](https://www.microsoft.com/en-us/microsoft-teams/group-chat-software) |
+| P2 | `parser.advanced_documents` | PDF layout extraction, DOCX/PPTX/XLSX, [Docling](https://github.com/docling-project/docling), [MinerU](https://github.com/opendatalab/MinerU), [Unstructured](https://unstructured.io/) |
+| P2 | `ocr` | [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR), [Tesseract](https://github.com/tesseract-ocr/tesseract), [AWS Textract](https://aws.amazon.com/textract/), [Azure Document Intelligence](https://azure.microsoft.com/en-us/products/ai-services/ai-document-intelligence), [Google Document AI](https://cloud.google.com/document-ai) |
+| P2 | `vector.enterprise` | [Milvus](https://milvus.io/)/[Zilliz](https://zilliz.com/), [Weaviate](https://weaviate.io/), [OpenSearch](https://opensearch.org/)/[Elasticsearch](https://www.elastic.co/elasticsearch) vector, [Redis](https://redis.io/)/[Valkey](https://valkey.io/) vector, [Vespa](https://vespa.ai/) |
+| P2 | `sink.analytics` | [Parquet](https://parquet.apache.org/), [DuckDB](https://duckdb.org/), [ClickHouse](https://clickhouse.com/), [BigQuery](https://cloud.google.com/bigquery), [Snowflake](https://www.snowflake.com/) |
+| P2 | `sink.agent_access` | [MCP](https://modelcontextprotocol.io/) server, webhooks, retrieval API export adapters |
+
+Every plugin should declare:
+
+- plugin id, type, version, and owner
+- supported read/write operations
+- configuration schema
+- secret requirements
+- capability matrix
+- cursor or incremental-sync support
+- delete detection support
+- permission mapping support
+- failure and retry behavior
+- emitted metrics and audit events
+
+Example manifest shape:
+
+```yaml
+id: ragrig.source.s3
+type: source
+version: 0.1.0
+capabilities:
+  read: true
+  write: false
+  incremental_sync: true
+  delete_detection: true
+  permission_mapping: false
+config_schema: schemas/s3-source.json
+secrets:
+  - access_key_id
+  - secret_access_key
+```
+
+Plugin development will start with internal Python interfaces. Public third-party plugin packaging should wait until the core contracts, test kit, and capability matrix are stable.
+
+## Quality and Supply Chain
+
+RAGRig uses a strict quality and dependency policy:
+
+- Core modules must reach and maintain 100% test coverage.
+- Default tests must not require network access, cloud accounts, or secrets.
+- Provider SDKs must be official or actively maintained open-source packages whenever possible.
+- Heavy or cloud-specific SDKs must live behind optional plugin extras, not the core runtime.
+- `uv.lock` stays committed, and release candidates should include vulnerability checks,
+  license review, and SBOM generation.
+
+See the [local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md) for the SDK inventory and supply chain rules.
 
 ## Repository Layout
 
@@ -465,6 +589,7 @@ Model providers:
 │   └── ragrig-icon.svg
 ├── docs/
 │   ├── operations/
+│   ├── prototypes/
 │   ├── roadmap.md
 │   └── specs/
 │       ├── ragrig-mvp-spec.md
@@ -472,9 +597,13 @@ Model providers:
 │       ├── ragrig-phase-1a-scaffold-spec.md
 │       ├── ragrig-phase-1b-local-ingestion-spec.md
 │       ├── ragrig-phase-1c-chunking-embedding-spec.md
-│       └── ragrig-phase-1d-retrieval-api-spec.md
+│       ├── ragrig-phase-1d-retrieval-api-spec.md
+│       ├── ragrig-local-first-quality-supply-chain-policy.md
+│       └── ragrig-web-console-spec.md
 ├── scripts/
 │   ├── db_check.py
+│   ├── index_check.py
+│   ├── index_local.py
 │   ├── ingest_check.py
 │   ├── ingest_local.py
 │   ├── retrieve_check.py
@@ -485,23 +614,29 @@ Model providers:
 │       │   ├── engine.py
 │       │   ├── models/
 │       │   └── session.py
-│       ├── ingestion/
-│       ├── main.py
-│       ├── config.py
 │       ├── chunkers/
 │       ├── cleaners/
 │       ├── embeddings/
 │       ├── retrieval.py
+│       ├── indexing/
+│       ├── ingestion/
+│       ├── indexing/
+│       ├── ingestion/
 │       ├── parsers/
-│       └── repositories/
-│       └── vectorstore/
+│       ├── repositories/
+│       ├── vectorstore/
+│       ├── config.py
+│       └── main.py
 ├── tests/
 │   ├── fixtures/
+│   ├── test_alembic_sql.py
 │   ├── test_db_check.py
 │   ├── test_db_config.py
 │   ├── test_db_models.py
+│   ├── test_db_runtime_url.py
 │   ├── test_db_session.py
 │   ├── test_health.py
+│   ├── test_indexing_pipeline.py
 │   ├── test_ingestion_pipeline.py
 │   ├── test_parsers.py
 │   ├── test_retrieval.py
@@ -515,6 +650,7 @@ Model providers:
 ├── CONTRIBUTING.md
 ├── LICENSE
 ├── README.md
+├── README.zh-CN.md
 └── SECURITY.md
 ```
 
