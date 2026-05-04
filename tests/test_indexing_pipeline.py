@@ -15,11 +15,13 @@ from ragrig.db.models import Base, Chunk, DocumentVersion, Embedding, PipelineRu
 from ragrig.embeddings import DeterministicEmbeddingProvider, EmbeddingResult
 from ragrig.indexing.pipeline import (
     _embedding_provider_profile,
+    _mirror_version_index,
     _replace_version_index,
     _version_already_indexed,
     index_knowledge_base,
 )
 from ragrig.ingestion.pipeline import ingest_local_directory
+from ragrig.vectorstore.base import VectorCollection, VectorCollectionStatus, VectorEmbeddingRecord
 
 
 @compiles(JSONB, "sqlite")
@@ -388,3 +390,103 @@ def test_index_knowledge_base_records_failures_without_aborting_run(tmp_path, mo
     assert run.status == "completed_with_failures"
     assert item.status == "failed"
     assert item.error_message == "embedding failed"
+
+
+def test_index_knowledge_base_mirrors_embeddings_to_explicit_vector_backend(tmp_path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("alpha beta gamma", encoding="utf-8")
+
+    class FakeBackend:
+        backend_name = "qdrant"
+        distance_metric = "cosine"
+
+        def __init__(self) -> None:
+            self.collection: VectorCollection | None = None
+            self.records: list[VectorEmbeddingRecord] = []
+
+        def ensure_collection(
+            self, session, collection: VectorCollection
+        ) -> VectorCollectionStatus:
+            del session
+            self.collection = collection
+            return VectorCollectionStatus(
+                name=collection.name,
+                exists=True,
+                dimensions=collection.dimensions,
+                distance_metric="cosine",
+                vector_count=0,
+                backend="qdrant",
+            )
+
+        def upsert_embeddings(
+            self, session, collection: VectorCollection, records: list[VectorEmbeddingRecord]
+        ):
+            del session, collection
+            self.records.extend(records)
+            return [record.embedding_id for record in records]
+
+        def delete_embeddings(self, session, collection: VectorCollection, *, embedding_ids):
+            del session, collection, embedding_ids
+            return 0
+
+        def search(
+            self, session, collection: VectorCollection, *, query_vector, top_k, filters=None
+        ):
+            del session, collection, query_vector, top_k, filters
+            return []
+
+        def health(self, session):
+            del session
+            raise AssertionError("health should not be called during indexing")
+
+    backend = FakeBackend()
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        report = index_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            vector_backend=backend,
+        )
+
+    assert report.embedding_count == len(backend.records)
+    assert backend.collection is not None
+    assert backend.collection.knowledge_base == "fixture-local"
+
+
+def test_mirror_version_index_returns_zero_when_no_embeddings(sqlite_session) -> None:
+    class FakeBackend:
+        def ensure_collection(self, session, collection):
+            del session, collection
+            raise AssertionError("ensure_collection should not be called")
+
+        def upsert_embeddings(self, session, collection, records):
+            del session, collection, records
+            raise AssertionError("upsert_embeddings should not be called")
+
+    version = DocumentVersion(
+        document_id="00000000-0000-0000-0000-000000000000",
+        version_number=1,
+        content_hash="hash",
+        parser_name="plaintext",
+        parser_config_json={},
+        extracted_text="text",
+        metadata_json={},
+    )
+
+    count = _mirror_version_index(
+        sqlite_session,
+        knowledge_base_name="fixture-local",
+        knowledge_base_id="00000000-0000-0000-0000-000000000000",
+        document_version=version,
+        embedding_provider=DeterministicEmbeddingProvider(dimensions=8),
+        vector_backend=FakeBackend(),
+    )
+
+    assert count == 0

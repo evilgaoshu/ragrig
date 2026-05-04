@@ -101,6 +101,8 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
 
     assert system_status.status_code == 200
     assert system_status.json()["db"]["dialect"] == "sqlite"
+    assert system_status.json()["vector"]["backend"] == "pgvector"
+    assert system_status.json()["vector"]["health"]["healthy"] is True
     assert knowledge_bases.status_code == 200
     assert knowledge_bases.json()["items"][0]["name"] == "fixture-local"
     assert knowledge_bases.json()["items"][0]["document_count"] == 2
@@ -207,3 +209,4 @@ async def test_system_status_reports_alembic_revision_when_revision_table_exists
 
     assert response.status_code == 200
     assert response.json()["db"]["alembic_revision"] == "20260503_0001"
+    assert response.json()["vector"]["status"] == "healthy"

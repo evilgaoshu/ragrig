@@ -26,5 +26,16 @@ services:
       timeout: 5s
       retries: 12
 
+  qdrant:
+    image: qdrant/qdrant:v1.14.1
+    profiles:
+      - qdrant
+    ports:
+      - "${QDRANT_HOST_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
 volumes:
   pgdata:
+  qdrant_data:

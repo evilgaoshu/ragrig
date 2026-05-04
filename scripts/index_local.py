@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ragrig.config import get_settings
 from ragrig.indexing import index_knowledge_base
+from ragrig.vectorstore import get_vector_backend
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,6 +41,9 @@ def main() -> int:
     args = build_parser().parse_args()
     settings = get_settings()
     engine = create_engine(settings.sqlalchemy_runtime_database_url, pool_pre_ping=True)
+    vector_backend = None
+    if settings.vector_backend != "pgvector":
+        vector_backend = get_vector_backend(settings)
 
     with Session(engine, expire_on_commit=False) as session:
         report = index_knowledge_base(
@@ -48,6 +52,7 @@ def main() -> int:
             chunk_size=args.chunk_size,
             chunk_overlap=args.chunk_overlap,
             embedding_dimensions=args.embedding_dimensions,
+            vector_backend=vector_backend,
         )
 
     print(

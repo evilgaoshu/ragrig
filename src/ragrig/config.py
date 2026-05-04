@@ -15,6 +15,12 @@ class Settings(BaseSettings):
         default="postgresql://ragrig:ragrig_dev@localhost:5432/ragrig",
         description="PostgreSQL connection string for RAGRig.",
     )
+    vector_backend: str = Field(default="pgvector", description="Vector backend name.")
+    qdrant_url: str = Field(
+        default="http://localhost:6333",
+        description="Qdrant base URL for the optional vector backend.",
+    )
+    qdrant_api_key: str | None = Field(default=None, description="Optional Qdrant API key.")
 
     @property
     def runtime_database_url(self) -> str:
