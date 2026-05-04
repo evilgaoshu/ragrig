@@ -17,6 +17,7 @@ Practical rules:
   embeddings, and later local model providers.
 - Local model adapters have higher priority than cloud model adapters.
 - Cloud SDKs belong in optional plugin extras, not the core dependency set.
+- The Phase 1e provider registry contract is core. Real local/cloud adapters remain optional follow-on work.
 - Every provider must expose capability metadata so operators can compare privacy,
   cost, latency, streaming, embedding, reranking, and batch support.
 - Official or open-source SDKs are preferred. If an official SDK does not exist or is too
@@ -73,6 +74,12 @@ the preferred supply chain for official plugins when those plugins are implement
 | Local model serving | `ollama`, `openai`, `httpx` | Prefer local official SDK or OpenAI-compatible protocol. |
 | Local embedding/rerank | `FlagEmbedding`, `sentence-transformers`, `torch` | Heavy ML packages must be optional extras, never core imports. |
 | Cloud model serving | `google-genai`, `boto3`, `openai`, `cohere`, `voyageai`, `httpx` | Official SDK first; direct official API second. |
+
+PR-1 note:
+
+- `src/ragrig/providers/` is now part of the core dependency-safe path.
+- PR-1 must not add any provider SDK from the tables above into the default runtime.
+- PR-2 and PR-3 may add extras or dependency groups, but core imports must remain optional-safe.
 | Qdrant | `qdrant-client` | Official client. |
 | Enterprise vector stores | `pymilvus`, `weaviate-client`, `opensearch-py`, `elasticsearch`, `redis` | Official or project-maintained clients only. |
 | Object storage | `boto3`, `google-cloud-storage`, `azure-storage-blob`, `minio` | Prefer cloud/vendor SDKs; S3-compatible adapters must be tested against at least AWS S3, MinIO, and one non-AWS S3-compatible service. |
@@ -117,6 +124,7 @@ Core modules include:
 - `src/ragrig/chunkers`
 - `src/ragrig/embeddings`
 - `src/ragrig/indexing`
+- `src/ragrig/providers`
 - future plugin registry, workflow engine, permission boundary, retrieval, audit, and
   evaluation core modules
 

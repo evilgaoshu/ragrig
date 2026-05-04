@@ -28,6 +28,7 @@ from ragrig.web_console import (
     list_models,
     list_pipeline_run_items,
     list_pipeline_runs,
+    list_plugins,
     list_sources,
     load_console_html,
 )
@@ -192,6 +193,10 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, Any]:
         return list_models(session)
+
+    @app.get("/plugins", response_model=None)
+    def plugins() -> dict[str, list[dict[str, Any]]]:
+        return {"items": list_plugins()}
 
     @app.post("/retrieval/search", response_model=None)
     def retrieval_search(

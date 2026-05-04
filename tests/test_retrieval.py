@@ -11,6 +11,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
 from ragrig.db.models import Base, DocumentVersion
+from ragrig.embeddings import DeterministicEmbeddingProvider
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
@@ -260,6 +261,44 @@ def test_search_knowledge_base_accepts_explicit_matching_profile(tmp_path) -> No
     assert report.total_results == 1
     assert report.dimensions == 16
     assert report.model == "hash-16d"
+
+
+def test_search_knowledge_base_resolves_query_embedding_provider_from_registry(
+    tmp_path, monkeypatch
+) -> None:
+    docs = _seed_documents(tmp_path, {"guide.txt": "matching profile"})
+    calls: list[tuple[str, dict[str, int]]] = []
+
+    class FakeRegistry:
+        def get(self, name: str, **config):
+            calls.append((name, config))
+            return DeterministicEmbeddingProvider(dimensions=config["dimensions"])
+
+    monkeypatch.setattr("ragrig.retrieval.get_provider_registry", lambda: FakeRegistry())
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            embedding_dimensions=16,
+        )
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="matching profile",
+            provider="deterministic-local",
+            model="hash-16d",
+            dimensions=16,
+        )
+
+    assert report.total_results == 1
+    assert calls == [("deterministic-local", {"dimensions": 16})]
 
 
 def test_retrieval_vector_helpers_cover_edge_cases() -> None:

@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from ragrig.chunkers import ChunkingConfig, chunk_text
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding
-from ragrig.embeddings import DeterministicEmbeddingProvider
+from ragrig.embeddings import EmbeddingResult
+from ragrig.plugins import get_plugin_registry
+from ragrig.providers import BaseProvider, get_provider_registry
 from ragrig.repositories import (
     create_pipeline_run,
     create_pipeline_run_item,
@@ -27,6 +29,21 @@ class IndexingReport:
     failed_count: int
     chunk_count: int
     embedding_count: int
+
+
+def _embedding_provider_profile(embedding_provider: BaseProvider) -> tuple[str, str]:
+    provider_name = getattr(getattr(embedding_provider, "metadata", None), "name", None)
+    if provider_name is None:
+        provider_name = embedding_provider.provider_name
+
+    model_name = getattr(embedding_provider, "model_name", None)
+    if model_name is None and hasattr(embedding_provider, "_provider"):
+        model_name = getattr(embedding_provider._provider, "model_name", None)
+
+    if model_name is None:
+        raise ValueError("embedding provider must expose a model name")
+
+    return provider_name, model_name
 
 
 def _version_already_indexed(
@@ -69,7 +86,7 @@ def _replace_version_index(
     document_version: DocumentVersion,
     document: Document,
     chunking_config: ChunkingConfig,
-    embedding_provider: DeterministicEmbeddingProvider,
+    embedding_provider: BaseProvider,
 ) -> tuple[int, int]:
     existing_chunk_ids = list(
         session.scalars(select(Chunk.id).where(Chunk.document_version_id == document_version.id))
@@ -101,7 +118,7 @@ def _replace_version_index(
         session.flush()
         created_chunks.append(chunk)
 
-        embedding = embedding_provider.embed_text(draft.text)
+        embedding: EmbeddingResult = embedding_provider.embed_text(draft.text)
         session.add(
             Embedding(
                 chunk_id=chunk.id,
@@ -127,7 +144,7 @@ def _mirror_version_index(
     knowledge_base_name: str,
     knowledge_base_id,
     document_version: DocumentVersion,
-    embedding_provider: DeterministicEmbeddingProvider,
+    embedding_provider: BaseProvider,
     vector_backend: VectorBackend,
 ) -> int:
     chunk_records = session.execute(
@@ -140,10 +157,11 @@ def _mirror_version_index(
     ).all()
     if not chunk_records:
         return 0
+    provider_name, model_name = _embedding_provider_profile(embedding_provider)
     collection = build_vector_collection(
         knowledge_base_name=knowledge_base_name,
-        provider=embedding_provider.provider_name,
-        model=embedding_provider.model_name,
+        provider=provider_name,
+        model=model_name,
         dimensions=embedding_provider.dimensions,
     )
     collection = type(collection)(
@@ -188,13 +206,17 @@ def index_knowledge_base(
     embedding_dimensions: int = 8,
     vector_backend: VectorBackend | None = None,
 ) -> IndexingReport:
+    get_plugin_registry()
     knowledge_base = get_knowledge_base_by_name(session, knowledge_base_name)
     if knowledge_base is None:
         raise ValueError(f"Knowledge base '{knowledge_base_name}' was not found")
 
     effective_overlap = min(chunk_overlap, max(chunk_size - 1, 0))
     chunking_config = ChunkingConfig(chunk_size=chunk_size, chunk_overlap=effective_overlap)
-    embedding_provider = DeterministicEmbeddingProvider(dimensions=embedding_dimensions)
+    embedding_provider = get_provider_registry().get(
+        "deterministic-local", dimensions=embedding_dimensions
+    )
+    provider_name, model_name = _embedding_provider_profile(embedding_provider)
     run = create_pipeline_run(
         session,
         knowledge_base_id=knowledge_base.id,
@@ -203,8 +225,8 @@ def index_knowledge_base(
         config_snapshot_json={
             **chunking_config.as_metadata(),
             "embedding_dimensions": embedding_dimensions,
-            "embedding_model": embedding_provider.model_name,
-            "embedding_provider": embedding_provider.provider_name,
+            "embedding_model": model_name,
+            "embedding_provider": provider_name,
         },
     )
 
@@ -238,8 +260,8 @@ def index_knowledge_base(
                     session,
                     document_version=version,
                     config_hash=chunking_config.config_hash,
-                    provider_name=embedding_provider.provider_name,
-                    model_name=embedding_provider.model_name,
+                    provider_name=provider_name,
+                    model_name=model_name,
                 ):
                     create_pipeline_run_item(
                         session,

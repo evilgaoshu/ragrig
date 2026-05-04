@@ -14,6 +14,7 @@ from ragrig.chunkers import ChunkingConfig, chunk_text
 from ragrig.db.models import Base, Chunk, DocumentVersion, Embedding, PipelineRun, PipelineRunItem
 from ragrig.embeddings import DeterministicEmbeddingProvider, EmbeddingResult
 from ragrig.indexing.pipeline import (
+    _embedding_provider_profile,
     _mirror_version_index,
     _replace_version_index,
     _version_already_indexed,
@@ -69,6 +70,43 @@ def test_deterministic_embedding_provider_returns_stable_dimensions() -> None:
     assert first.dimensions == 8
     assert len(first.vector) == 8
     assert first.vector == second.vector
+
+
+def test_embedding_provider_profile_requires_model_name() -> None:
+    class NoModelProvider:
+        provider_name = "missing-model"
+
+    with pytest.raises(ValueError, match="embedding provider must expose a model name"):
+        _embedding_provider_profile(NoModelProvider())
+
+
+def test_index_knowledge_base_resolves_embedding_provider_from_registry(
+    tmp_path, monkeypatch
+) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("alpha beta gamma delta", encoding="utf-8")
+
+    calls: list[tuple[str, dict[str, int]]] = []
+
+    class FakeRegistry:
+        def get(self, name: str, **config):
+            calls.append((name, config))
+            return DeterministicEmbeddingProvider(dimensions=config["dimensions"])
+
+    monkeypatch.setattr("ragrig.indexing.pipeline.get_provider_registry", lambda: FakeRegistry())
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        report = index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+    assert report.indexed_count == 1
+    assert calls == [("deterministic-local", {"dimensions": 8})]
 
 
 def test_index_knowledge_base_creates_chunks_embeddings_and_pipeline_items(tmp_path) -> None:
