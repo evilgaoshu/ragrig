@@ -68,6 +68,8 @@ Authoritative specs:
 - [Phase 1a metadata DB spec](./docs/specs/ragrig-phase-1a-metadata-db-spec.md)
 - [Phase 1b local ingestion spec](./docs/specs/ragrig-phase-1b-local-ingestion-spec.md)
 - [Phase 1c chunking and embedding spec](./docs/specs/ragrig-phase-1c-chunking-embedding-spec.md)
+- [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
+- [Web Console prototype](./docs/prototypes/web-console/index.html)
 
 ## Phase 1a Foundation
 
