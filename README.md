@@ -59,7 +59,8 @@ Current implementation status:
 3. Phase 1a metadata DB adds SQLAlchemy models, Alembic migrations, and DB smoke commands for the MVP metadata boundary.
 4. Phase 1b now supports local Markdown/Text ingestion into the metadata DB, including `document_versions` and pipeline-run tracking.
 5. Phase 1c now supports deterministic local chunking and embedding into `chunks` and `embeddings` for the latest ingested document versions.
-6. Retrieval APIs, semantic embeddings, and richer source types remain intentionally unimplemented in this repository state.
+6. Phase 1d now supports a minimal retrieval API and smoke CLI over the real indexed chunks and embeddings.
+7. Semantic production embeddings, reranking, and richer source types remain intentionally unimplemented in this repository state.
 
 Authoritative specs:
 
@@ -68,6 +69,7 @@ Authoritative specs:
 - [Phase 1a metadata DB spec](./docs/specs/ragrig-phase-1a-metadata-db-spec.md)
 - [Phase 1b local ingestion spec](./docs/specs/ragrig-phase-1b-local-ingestion-spec.md)
 - [Phase 1c chunking and embedding spec](./docs/specs/ragrig-phase-1c-chunking-embedding-spec.md)
+- [Phase 1d retrieval API spec](./docs/specs/ragrig-phase-1d-retrieval-api-spec.md)
 
 ## Phase 1a Foundation
 
@@ -84,7 +86,7 @@ Phase 1a currently ships the engineering scaffold and metadata database foundati
 - Docker Compose for the app and PostgreSQL with pgvector
 - smoke commands for migration and schema validation
 
-Phase 1b and Phase 1c add these implemented boundaries:
+Phase 1b, Phase 1c, and Phase 1d add these implemented boundaries:
 
 - `src/ragrig/ingestion`
 - `src/ragrig/parsers`
@@ -92,13 +94,14 @@ Phase 1b and Phase 1c add these implemented boundaries:
 - `src/ragrig/chunkers`
 - `src/ragrig/embeddings`
 - `src/ragrig/indexing`
+- `src/ragrig/retrieval.py`
 
 Still reserved for later phases:
 
 - `src/ragrig/cleaners`
 - `src/ragrig/vectorstore`
 
-The current repository state supports local Markdown/Text parsing, character-window chunking, and deterministic local embeddings for pgvector-backed smoke validation. Retrieval and production embedding providers are still deferred.
+The current repository state supports local Markdown/Text parsing, character-window chunking, deterministic local embeddings, and a minimal pgvector-backed retrieval API for smoke validation. Production embedding providers, reranking, and answer generation are still deferred.
 
 ## Quick Start
 
@@ -238,16 +241,50 @@ The current repository state supports local Markdown/Text parsing, character-win
         "success_count": 3,
         "total_items": 4
       }
+     }
+     ```
+
+13. Run a retrieval smoke query against the indexed chunks:
+
+    ```bash
+    make retrieve-check QUERY="RAGRig Guide"
+    ```
+
+    Expected output shape:
+
+    ```json
+    {
+      "dimensions": 8,
+      "distance_metric": "cosine_distance",
+      "knowledge_base": "fixture-local",
+      "model": "hash-8d",
+      "provider": "deterministic-local",
+      "query": "RAGRig Guide",
+      "results": [
+        {
+          "chunk_id": "...",
+          "chunk_index": 0,
+          "document_id": "...",
+          "document_uri": ".../guide.md",
+          "document_version_id": "...",
+          "distance": 0.0,
+          "score": 1.0,
+          "source_uri": ".../tests/fixtures/local_ingestion",
+          "text_preview": "# RAGRig Guide ..."
+        }
+      ],
+      "top_k": 3,
+      "total_results": 1
     }
     ```
 
-13. Start the full local development stack when you also want the API service:
+14. Start the full local development stack when you also want the API service:
 
    ```bash
     docker compose up --build
    ```
 
-12. Verify the service and pgvector bootstrap:
+15. Verify the service and pgvector bootstrap:
 
    ```bash
    curl http://localhost:8000/health
@@ -271,6 +308,16 @@ Expected healthy response:
 
 If PostgreSQL is unavailable, `/health` returns `503` with a clear error payload.
 
+16. Exercise the retrieval API directly:
+
+    ```bash
+    curl -X POST http://localhost:8000/retrieval/search \
+      -H "Content-Type: application/json" \
+      -d '{"knowledge_base":"fixture-local","query":"RAGRig Guide","top_k":1}'
+    ```
+
+    If you changed `APP_HOST_PORT`, use that port in the request URL.
+
 ## Database Commands
 
 Repository-level DB commands:
@@ -285,6 +332,7 @@ Repository-level DB commands:
 - `make ingest-check`: query the latest local-ingestion run and document-version evidence
 - `make index-local`: chunk and embed the latest ingested document versions for the chosen knowledge base
 - `make index-check`: query the latest chunk and embedding run, counts, spans, and embedding dimensions
+- `make retrieve-check QUERY="..."`: query the indexed chunks and print top-k citation fields
 
 Fresh-clone schema verification path:
 
@@ -327,7 +375,6 @@ What it does not do yet:
 
 - chunking
 - embeddings or pgvector writes
-- retrieval APIs
 - deletion cleanup or tombstones
 
 Default fixture path:
@@ -355,6 +402,24 @@ uv run python -m scripts.ingest_local \
   --root-path tests/fixtures/local_ingestion \
   --dry-run
 ```
+
+## Retrieval API
+
+Phase 1d implements the smallest retrieval boundary on top of Phase 1c indexed chunks.
+
+What it does:
+
+- embeds query text with the same deterministic-local provider used for default indexing smoke runs
+- searches only the latest `document_versions` rows per document
+- returns top-k chunk matches with `document_id`, `document_version_id`, `chunk_id`, `chunk_index`, `document_uri`, `source_uri`, `distance`, `score`, and `chunk_metadata`
+- exposes both `POST /retrieval/search` and `make retrieve-check`
+
+What it does not do yet:
+
+- answer generation
+- reranking or lexical fallback
+- ACL filtering
+- external embedding providers as the default path
 
 ## Planned Integrations
 
@@ -405,11 +470,14 @@ Model providers:
 │       ├── ragrig-mvp-spec.md
 │       ├── ragrig-phase-1a-metadata-db-spec.md
 │       ├── ragrig-phase-1a-scaffold-spec.md
-│       └── ragrig-phase-1b-local-ingestion-spec.md
+│       ├── ragrig-phase-1b-local-ingestion-spec.md
+│       ├── ragrig-phase-1c-chunking-embedding-spec.md
+│       └── ragrig-phase-1d-retrieval-api-spec.md
 ├── scripts/
 │   ├── db_check.py
 │   ├── ingest_check.py
 │   ├── ingest_local.py
+│   ├── retrieve_check.py
 │   └── init-db.sql
 ├── src/
 │   └── ragrig/
@@ -423,6 +491,7 @@ Model providers:
 │       ├── chunkers/
 │       ├── cleaners/
 │       ├── embeddings/
+│       ├── retrieval.py
 │       ├── parsers/
 │       └── repositories/
 │       └── vectorstore/
@@ -435,6 +504,7 @@ Model providers:
 │   ├── test_health.py
 │   ├── test_ingestion_pipeline.py
 │   ├── test_parsers.py
+│   ├── test_retrieval.py
 │   └── test_scanner.py
 ├── .env.example
 ├── alembic.ini
