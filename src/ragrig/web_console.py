@@ -412,22 +412,33 @@ def list_models(session: Session) -> dict[str, Any]:
             }
         )
 
+    llm_provider_names = [
+        metadata.name
+        for metadata in get_provider_registry().list()
+        if any(capability.value in {"chat", "generate"} for capability in metadata.capabilities)
+    ]
+    reranker_provider_names = [
+        metadata.name
+        for metadata in get_provider_registry().list()
+        if any(capability.value == "rerank" for capability in metadata.capabilities)
+    ]
+
     return {
         "embedding_profiles": profiles,
         "registered_providers": registered_providers,
         "registry_shell": {
             "llm": {
-                "status": "disabled",
+                "status": "ready",
                 "reason": (
-                    "Provider registry contract exists, but LLM adapters arrive in Phase 1e PR-2."
+                    "Local model providers are registered and exposed through the "
+                    "provider registry."
                 ),
+                "providers": llm_provider_names,
             },
             "reranker": {
-                "status": "disabled",
-                "reason": (
-                    "Provider registry contract exists, but reranker adapters "
-                    "arrive in Phase 1e PR-2."
-                ),
+                "status": "ready",
+                "reason": "Local reranker providers are registered behind optional dependencies.",
+                "providers": reranker_provider_names,
             },
             "parser": {
                 "status": "derived",

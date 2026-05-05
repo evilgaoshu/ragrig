@@ -200,11 +200,51 @@ _provider_registry: ProviderRegistry | None = None
 
 
 def create_provider_registry() -> ProviderRegistry:
+    from ragrig.providers.bge import (
+        BGE_EMBEDDING_METADATA,
+        BGE_RERANKER_METADATA,
+        create_bge_embedding_provider,
+        create_bge_reranker_provider,
+    )
+    from ragrig.providers.local import (
+        LLAMA_CPP_METADATA,
+        LM_STUDIO_METADATA,
+        LOCALAI_METADATA,
+        OLLAMA_METADATA,
+        VLLM_METADATA,
+        XINFERENCE_METADATA,
+        create_ollama_provider,
+        create_openai_compatible_provider,
+    )
+
     registry = ProviderRegistry()
     registry.register(
         DETERMINISTIC_LOCAL_METADATA,
         lambda **config: DeterministicLocalProvider(dimensions=int(config.get("dimensions", 8))),
     )
+    registry.register(OLLAMA_METADATA, create_ollama_provider)
+    registry.register(
+        LM_STUDIO_METADATA,
+        lambda **config: create_openai_compatible_provider("model.lm_studio", **config),
+    )
+    registry.register(
+        LLAMA_CPP_METADATA,
+        lambda **config: create_openai_compatible_provider("model.llama_cpp", **config),
+    )
+    registry.register(
+        VLLM_METADATA,
+        lambda **config: create_openai_compatible_provider("model.vllm", **config),
+    )
+    registry.register(
+        XINFERENCE_METADATA,
+        lambda **config: create_openai_compatible_provider("model.xinference", **config),
+    )
+    registry.register(
+        LOCALAI_METADATA,
+        lambda **config: create_openai_compatible_provider("model.localai", **config),
+    )
+    registry.register(BGE_EMBEDDING_METADATA, create_bge_embedding_provider)
+    registry.register(BGE_RERANKER_METADATA, create_bge_reranker_provider)
     return registry
 
 
