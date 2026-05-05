@@ -52,6 +52,51 @@ class LocalRuntimeModelConfig(PluginConfigModel):
     endpoint_url: str
 
 
+class CloudModelConfig(PluginConfigModel):
+    api_base_url: str
+    model_name: str
+
+
+class CloudEmbeddingModelConfig(PluginConfigModel):
+    api_base_url: str
+    model_name: str
+    embedding_model_name: str
+
+
+class CloudRerankModelConfig(PluginConfigModel):
+    api_base_url: str
+    embedding_model_name: str
+    reranker_model_name: str
+
+
+class VertexAiCloudModelConfig(PluginConfigModel):
+    project: str
+    location: str = "us-central1"
+    model_name: str = "gemini-2.5-pro"
+    embedding_model_name: str = "text-embedding-005"
+
+
+class BedrockCloudModelConfig(PluginConfigModel):
+    region: str = "us-east-1"
+    model_name: str = "anthropic.claude-3-7-sonnet-20250219-v1:0"
+    embedding_model_name: str = "amazon.titan-embed-text-v2:0"
+    reranker_model_name: str = "cohere.rerank-v3-5:0"
+
+
+class AzureOpenAiCloudModelConfig(PluginConfigModel):
+    api_base_url: str = "https://example-resource.openai.azure.com/openai/deployments"
+    deployment_name: str = "gpt-4.1"
+    embedding_deployment_name: str = "text-embedding-3-large"
+    api_version: str = "2025-01-01-preview"
+
+
+class CloudGenerateEmbeddingRerankModelConfig(PluginConfigModel):
+    api_base_url: str
+    model_name: str
+    embedding_model_name: str
+    reranker_model_name: str
+
+
 class BgeEmbeddingConfig(PluginConfigModel):
     model_name: str = "BAAI/bge-small-en-v1.5"
 
@@ -200,6 +245,191 @@ def official_stub_manifests() -> list[PluginManifest]:
             example_config={"endpoint_url": "http://localhost:8080/v1"},
             status=PluginStatus.READY,
             unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.vertex_ai",
+            display_name="Google Vertex AI Cloud Provider",
+            description=(
+                "Contract-only cloud stub for Vertex AI chat, generate, and embedding workflows."
+            ),
+            plugin_type=PluginType.MODEL,
+            family="vertex_ai",
+            capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT),
+            docs_reference="docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md",
+            optional_dependencies=("google-cloud-aiplatform",),
+            config_model=VertexAiCloudModelConfig,
+            example_config={
+                "project": "demo-project",
+                "location": "us-central1",
+                "model_name": "gemini-2.5-pro",
+                "embedding_model_name": "text-embedding-005",
+            },
+            secret_requirements=(
+                SecretRequirement(name="VERTEX_AI_PROJECT", description="Google Cloud project id"),
+                SecretRequirement(name="VERTEX_AI_LOCATION", description="Vertex AI region"),
+                SecretRequirement(
+                    name="GOOGLE_APPLICATION_CREDENTIALS",
+                    description="Path to service account credentials",
+                ),
+            ),
+            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
+        ),
+        _official_manifest(
+            plugin_id="model.bedrock",
+            display_name="Amazon Bedrock Cloud Provider",
+            description=(
+                "Contract-only cloud stub for Bedrock generation, embedding, and rerank workflows."
+            ),
+            plugin_type=PluginType.MODEL,
+            family="bedrock",
+            capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT, Capability.RERANK),
+            docs_reference="docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md",
+            optional_dependencies=("boto3",),
+            config_model=BedrockCloudModelConfig,
+            example_config={
+                "region": "us-east-1",
+                "model_name": "anthropic.claude-3-7-sonnet-20250219-v1:0",
+                "embedding_model_name": "amazon.titan-embed-text-v2:0",
+                "reranker_model_name": "cohere.rerank-v3-5:0",
+            },
+            secret_requirements=(
+                SecretRequirement(name="AWS_ACCESS_KEY_ID", description="AWS access key id"),
+                SecretRequirement(
+                    name="AWS_SECRET_ACCESS_KEY", description="AWS secret access key"
+                ),
+                SecretRequirement(name="AWS_REGION", description="AWS region for Bedrock"),
+            ),
+            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
+        ),
+        _official_manifest(
+            plugin_id="model.azure_openai",
+            display_name="Azure OpenAI Cloud Provider",
+            description=(
+                "Contract-only cloud stub for Azure OpenAI generation and embedding workflows."
+            ),
+            plugin_type=PluginType.MODEL,
+            family="azure_openai",
+            capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT),
+            docs_reference="docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md",
+            optional_dependencies=("openai",),
+            config_model=AzureOpenAiCloudModelConfig,
+            example_config={
+                "api_base_url": "https://example-resource.openai.azure.com/openai/deployments",
+                "deployment_name": "gpt-4.1",
+                "embedding_deployment_name": "text-embedding-3-large",
+                "api_version": "2025-01-01-preview",
+            },
+            secret_requirements=(
+                SecretRequirement(name="AZURE_OPENAI_API_KEY", description="Azure OpenAI API key"),
+                SecretRequirement(
+                    name="AZURE_OPENAI_ENDPOINT", description="Azure OpenAI endpoint base URL"
+                ),
+            ),
+            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
+        ),
+        _official_manifest(
+            plugin_id="model.openrouter",
+            display_name="OpenRouter Cloud Provider",
+            description=(
+                "Contract-only cloud stub for OpenRouter text generation over an "
+                "OpenAI-compatible API."
+            ),
+            plugin_type=PluginType.MODEL,
+            family="openrouter",
+            capabilities=(Capability.GENERATE_TEXT,),
+            docs_reference="docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md",
+            optional_dependencies=("openai",),
+            config_model=CloudModelConfig,
+            example_config={
+                "api_base_url": "https://openrouter.ai/api/v1",
+                "model_name": "openai/gpt-4.1-mini",
+            },
+            secret_requirements=(
+                SecretRequirement(name="OPENROUTER_API_KEY", description="OpenRouter API key"),
+            ),
+            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
+        ),
+        _official_manifest(
+            plugin_id="model.openai",
+            display_name="OpenAI Cloud Provider",
+            description="Contract-only cloud stub for OpenAI generation and embedding workflows.",
+            plugin_type=PluginType.MODEL,
+            family="openai",
+            capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT),
+            docs_reference="docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md",
+            optional_dependencies=("openai",),
+            config_model=CloudEmbeddingModelConfig,
+            example_config={
+                "api_base_url": "https://api.openai.com/v1",
+                "model_name": "gpt-4.1-mini",
+                "embedding_model_name": "text-embedding-3-large",
+            },
+            secret_requirements=(
+                SecretRequirement(name="OPENAI_API_KEY", description="OpenAI API key"),
+            ),
+            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
+        ),
+        _official_manifest(
+            plugin_id="model.cohere",
+            display_name="Cohere Cloud Provider",
+            description=(
+                "Contract-only cloud stub for Cohere generation, embedding, and rerank workflows."
+            ),
+            plugin_type=PluginType.MODEL,
+            family="cohere",
+            capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT, Capability.RERANK),
+            docs_reference="docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md",
+            optional_dependencies=("cohere",),
+            config_model=CloudGenerateEmbeddingRerankModelConfig,
+            example_config={
+                "api_base_url": "https://api.cohere.com/v2",
+                "model_name": "command-r-plus",
+                "embedding_model_name": "embed-v4.0",
+                "reranker_model_name": "rerank-v3.5",
+            },
+            secret_requirements=(
+                SecretRequirement(name="COHERE_API_KEY", description="Cohere API key"),
+            ),
+            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
+        ),
+        _official_manifest(
+            plugin_id="model.voyage",
+            display_name="Voyage AI Cloud Provider",
+            description="Contract-only cloud stub for Voyage embedding and rerank workflows.",
+            plugin_type=PluginType.MODEL,
+            family="voyage",
+            capabilities=(Capability.EMBED_TEXT, Capability.RERANK),
+            docs_reference="docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md",
+            optional_dependencies=("voyageai",),
+            config_model=CloudRerankModelConfig,
+            example_config={
+                "api_base_url": "https://api.voyageai.com/v1",
+                "embedding_model_name": "voyage-3-large",
+                "reranker_model_name": "rerank-2.5",
+            },
+            secret_requirements=(
+                SecretRequirement(name="VOYAGE_API_KEY", description="Voyage AI API key"),
+            ),
+            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
+        ),
+        _official_manifest(
+            plugin_id="model.jina",
+            display_name="Jina AI Cloud Provider",
+            description="Contract-only cloud stub for Jina embedding and rerank workflows.",
+            plugin_type=PluginType.MODEL,
+            family="jina",
+            capabilities=(Capability.EMBED_TEXT, Capability.RERANK),
+            docs_reference="docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md",
+            config_model=CloudRerankModelConfig,
+            example_config={
+                "api_base_url": "https://api.jina.ai/v1",
+                "embedding_model_name": "jina-embeddings-v4",
+                "reranker_model_name": "jina-reranker-m0",
+            },
+            secret_requirements=(
+                SecretRequirement(name="JINA_API_KEY", description="Jina AI API key"),
+            ),
+            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
         ),
         _official_manifest(
             plugin_id="embedding.bge",

@@ -56,7 +56,11 @@ ALLOWED_CAPABILITIES: dict[PluginType, set[Capability]] = {
     PluginType.PARSER: {Capability.READ, Capability.PARSE_TEXT},
     PluginType.CHUNKER: {Capability.WRITE, Capability.CHUNK_TEXT},
     PluginType.EMBEDDING: {Capability.WRITE, Capability.EMBED_TEXT},
-    PluginType.MODEL: {Capability.GENERATE_TEXT},
+    PluginType.MODEL: {
+        Capability.GENERATE_TEXT,
+        Capability.EMBED_TEXT,
+        Capability.RERANK,
+    },
     PluginType.RERANKER: {Capability.RERANK},
     PluginType.VECTOR: {
         Capability.READ,

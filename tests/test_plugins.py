@@ -23,6 +23,7 @@ from ragrig.plugins import (
 )
 from ragrig.plugins.contract import _is_valid_docs_reference, assert_registry_contracts
 from ragrig.plugins.guards import is_dependency_available
+from ragrig.providers.cloud import CLOUD_MODEL_METADATA
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -51,7 +52,7 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     manifests = registry.list()
     manifest_ids = {manifest.plugin_id for manifest in manifests}
 
-    assert len(manifests) == 30
+    assert len(manifests) == 38
     assert {
         "source.local",
         "parser.markdown",
@@ -60,6 +61,14 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
         "embedding.deterministic_local",
         "model.ollama",
         "model.lm_studio",
+        "model.vertex_ai",
+        "model.bedrock",
+        "model.azure_openai",
+        "model.openrouter",
+        "model.openai",
+        "model.cohere",
+        "model.voyage",
+        "model.jina",
         "embedding.bge",
         "reranker.bge",
         "vector.pgvector",
@@ -70,6 +79,7 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     assert registry.get("vector.pgvector").status is PluginStatus.READY
     assert registry.get("model.ollama").tier is PluginTier.OFFICIAL
     assert registry.get("model.ollama").status is PluginStatus.READY
+    assert registry.get("model.openai").tier is PluginTier.OFFICIAL
     assert registry.get("embedding.bge").tier is PluginTier.OFFICIAL
     assert registry.get("embedding.bge").status is PluginStatus.READY
     assert registry.get("source.s3").tier is PluginTier.OFFICIAL
@@ -243,7 +253,15 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
     registry = get_plugin_registry()
 
     def _fake_dependency_check(import_name: str) -> bool:
-        return import_name not in {"FlagEmbedding", "boto3", "googleapiclient"}
+        return import_name not in {
+            "FlagEmbedding",
+            "boto3",
+            "cohere",
+            "google-cloud-aiplatform",
+            "googleapiclient",
+            "openai",
+            "voyageai",
+        }
 
     monkeypatch.setattr("ragrig.plugins.guards.is_dependency_available", _fake_dependency_check)
 
@@ -256,6 +274,14 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
     assert discovery["model.ollama"]["missing_dependencies"] == []
     assert discovery["model.lm_studio"]["status"] == "ready"
     assert discovery["model.lm_studio"]["configurable"] is True
+    assert discovery["model.openai"]["status"] == "unavailable"
+    assert discovery["model.openai"]["missing_dependencies"] == ["openai"]
+    assert discovery["model.openai"]["secret_requirements"] == ["OPENAI_API_KEY"]
+    assert discovery["model.vertex_ai"]["missing_dependencies"] == ["google-cloud-aiplatform"]
+    assert discovery["model.bedrock"]["missing_dependencies"] == ["boto3"]
+    assert discovery["model.azure_openai"]["missing_dependencies"] == ["openai"]
+    assert discovery["model.cohere"]["missing_dependencies"] == ["cohere"]
+    assert discovery["model.voyage"]["missing_dependencies"] == ["voyageai"]
     assert discovery["embedding.bge"]["status"] == "unavailable"
     assert discovery["embedding.bge"]["missing_dependencies"] == ["FlagEmbedding"]
     assert discovery["source.s3"]["status"] == "unavailable"
@@ -270,6 +296,26 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
 
 def test_registry_contract_checks_cover_manifests_docs_and_validation() -> None:
     assert_registry_contracts(get_plugin_registry(), repo_root=REPO_ROOT)
+
+
+def test_cloud_plugin_config_models_match_provider_metadata_contracts() -> None:
+    registry = get_plugin_registry()
+    cloud_plugin_ids = [
+        "model.vertex_ai",
+        "model.bedrock",
+        "model.azure_openai",
+        "model.openrouter",
+        "model.openai",
+        "model.cohere",
+        "model.voyage",
+        "model.jina",
+    ]
+
+    for plugin_id in cloud_plugin_ids:
+        manifest = registry.get(plugin_id)
+        metadata, _dependencies = CLOUD_MODEL_METADATA[plugin_id]
+        assert manifest.config_model is not None
+        assert set(manifest.config_model.model_fields) == set(metadata.config_schema)
 
 
 def test_docs_reference_check_accepts_https_and_rejects_missing_local_paths() -> None:

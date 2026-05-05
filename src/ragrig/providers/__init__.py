@@ -206,6 +206,17 @@ def create_provider_registry() -> ProviderRegistry:
         create_bge_embedding_provider,
         create_bge_reranker_provider,
     )
+    from ragrig.providers.cloud import (
+        AZURE_OPENAI_METADATA,
+        BEDROCK_METADATA,
+        COHERE_METADATA,
+        JINA_METADATA,
+        OPENAI_METADATA,
+        OPENROUTER_METADATA,
+        VERTEX_AI_METADATA,
+        VOYAGE_METADATA,
+        create_cloud_stub_provider,
+    )
     from ragrig.providers.local import (
         LLAMA_CPP_METADATA,
         LM_STUDIO_METADATA,
@@ -245,6 +256,38 @@ def create_provider_registry() -> ProviderRegistry:
     )
     registry.register(BGE_EMBEDDING_METADATA, create_bge_embedding_provider)
     registry.register(BGE_RERANKER_METADATA, create_bge_reranker_provider)
+    registry.register(
+        VERTEX_AI_METADATA,
+        lambda **config: create_cloud_stub_provider("model.vertex_ai", **config),
+    )
+    registry.register(
+        BEDROCK_METADATA,
+        lambda **config: create_cloud_stub_provider("model.bedrock", **config),
+    )
+    registry.register(
+        AZURE_OPENAI_METADATA,
+        lambda **config: create_cloud_stub_provider("model.azure_openai", **config),
+    )
+    registry.register(
+        OPENROUTER_METADATA,
+        lambda **config: create_cloud_stub_provider("model.openrouter", **config),
+    )
+    registry.register(
+        OPENAI_METADATA,
+        lambda **config: create_cloud_stub_provider("model.openai", **config),
+    )
+    registry.register(
+        COHERE_METADATA,
+        lambda **config: create_cloud_stub_provider("model.cohere", **config),
+    )
+    registry.register(
+        VOYAGE_METADATA,
+        lambda **config: create_cloud_stub_provider("model.voyage", **config),
+    )
+    registry.register(
+        JINA_METADATA,
+        lambda **config: create_cloud_stub_provider("model.jina", **config),
+    )
     return registry
 
 
