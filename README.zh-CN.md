@@ -496,6 +496,74 @@ secret_requirements:
 - `src/ragrig/plugins/`：registry、manifest schema、dependency guard、内置插件和官方 stub。
 - `GET /plugins`：默认离线可用的插件发现 API，可返回 readiness、缺失依赖、是否可配置、secret requirements。
 - `make plugins-check`：离线 JSON 输出当前 registry 状态。
+- `source.fileshare`：已升级为真实官方 source plugin，支持 mounted NFS/local path、SMB/WebDAV/SFTP fake-client contract tests，以及协议级 readiness 展示。
+- `make fileshare-check`：离线验证 mounted path 和 fake SMB/WebDAV/SFTP scanner 行为。
+
+### Fileshare Source
+
+`source.fileshare` 现在是企业共享盘接入的本地优先入口。
+
+当前支持：
+
+- `protocol = nfs_mounted`：先由操作系统挂载 NFS，再把挂载目录交给 RAGRig
+- `protocol = smb`：SMB/CIFS contract、readiness、fake-client tests，运行时可选依赖 `smbprotocol`
+- `protocol = webdav`：WebDAV contract、readiness、fake-client tests，运行时可选依赖 `httpx`
+- `protocol = sftp`：SFTP contract、readiness、fake-client tests，运行时可选依赖 `paramiko`
+
+当前边界：
+
+- 默认 `make test` / `make coverage` 仍然不依赖网络、secret 或真实共享盘
+- delete detection 目前只是占位审计信号，会记录 `deleted_upstream`，不会真的删除 DB 中的 document
+- permission mapping 目前只记录 metadata，不做真实权限过滤
+- 默认 parser 路径仍只处理 Markdown/Text
+
+安装可选运行时依赖：
+
+```bash
+uv sync --extra fileshare --dev
+```
+
+离线 smoke：
+
+```bash
+make fileshare-check
+```
+
+SMB 配置示例：
+
+```json
+{
+  "protocol": "smb",
+  "host": "files.example.internal",
+  "share": "knowledge",
+  "root_path": "/docs",
+  "username": "env:FILESHARE_USERNAME",
+  "password": "env:FILESHARE_PASSWORD",
+  "include_patterns": ["*.md", "*.txt"],
+  "exclude_patterns": [],
+  "max_file_size_mb": 50,
+  "page_size": 1000,
+  "max_retries": 3,
+  "connect_timeout_seconds": 10,
+  "read_timeout_seconds": 30
+}
+```
+
+mounted NFS/local path 配置示例：
+
+```json
+{
+  "protocol": "nfs_mounted",
+  "root_path": "/mnt/company-knowledge",
+  "include_patterns": ["*.md", "*.txt"],
+  "exclude_patterns": [],
+  "max_file_size_mb": 50,
+  "page_size": 1000,
+  "max_retries": 1,
+  "connect_timeout_seconds": 10,
+  "read_timeout_seconds": 30
+}
+```
 
 ## 质量与供应链
 

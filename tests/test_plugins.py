@@ -86,7 +86,16 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     expected_s3_status = (
         PluginStatus.READY if is_dependency_available("boto3") else PluginStatus.UNAVAILABLE
     )
+    fileshare_deps = {
+        "httpx": is_dependency_available("httpx"),
+        "paramiko": is_dependency_available("paramiko"),
+        "smbprotocol": is_dependency_available("smbprotocol"),
+    }
+    expected_fileshare_status = (
+        PluginStatus.READY if all(fileshare_deps.values()) else PluginStatus.DEGRADED
+    )
     assert registry.get("source.s3").status is expected_s3_status
+    assert registry.get("source.fileshare").status is expected_fileshare_status
 
 
 def test_manifest_rejects_unknown_capabilities_for_documented_plugin_types() -> None:
@@ -259,7 +268,10 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
             "cohere",
             "google-cloud-aiplatform",
             "googleapiclient",
+            "httpx",
             "openai",
+            "paramiko",
+            "smbprotocol",
             "voyageai",
         }
 
@@ -291,6 +303,29 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SESSION_TOKEN",
     ]
+    assert discovery["source.fileshare"]["status"] == "degraded"
+    assert discovery["source.fileshare"]["missing_dependencies"] == [
+        "httpx",
+        "paramiko",
+        "smbprotocol",
+    ]
+    assert discovery["source.fileshare"]["secret_requirements"] == [
+        "FILESHARE_USERNAME",
+        "FILESHARE_PASSWORD",
+        "FILESHARE_PRIVATE_KEY",
+    ]
+    assert discovery["source.fileshare"]["supported_protocols"] == [
+        "nfs_mounted",
+        "sftp",
+        "smb",
+        "webdav",
+    ]
+    assert discovery["source.fileshare"]["protocol_statuses"] == {
+        "nfs_mounted": "ready",
+        "sftp": "unavailable",
+        "smb": "unavailable",
+        "webdav": "unavailable",
+    }
     assert discovery["source.google_workspace"]["missing_dependencies"] == ["googleapiclient"]
 
 

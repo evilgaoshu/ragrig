@@ -89,7 +89,8 @@ Current implementation status:
 8. Phase 1e PR-2 now adds local provider adapters for Ollama, LM Studio, OpenAI-compatible local runtimes, and optional BGE boundaries without changing the default secret-free test path.
 9. Phase 1e PR-3 now adds cloud-second provider stubs for Vertex AI, Bedrock, Azure OpenAI, OpenRouter, OpenAI, Cohere, Voyage, and Jina through the same registry and discovery surfaces.
 10. `source.s3` now supports real S3-compatible Markdown/Text ingestion with fake-client-first tests and opt-in runtime dependencies.
-11. Semantic production embeddings, live local runtime smoke checks, production cloud adapters, reranking, and richer source types remain intentionally limited or deferred in this repository state.
+11. `source.fileshare` now supports offline-tested SMB, mounted NFS/local path, WebDAV, and SFTP ingestion contracts with truthful readiness, delete-detection placeholders, and an explicit `make fileshare-check` smoke path.
+12. Semantic production embeddings, live local runtime smoke checks, production cloud adapters, reranking, and richer source types remain intentionally limited or deferred in this repository state.
 
 Authoritative specs:
 
@@ -828,6 +829,74 @@ Current contract-first implementation adds:
 - `src/ragrig/plugins/` for the registry, manifest schema, dependency guards, and built-in plus official stub manifests.
 - `GET /plugins` for offline plugin discovery with readiness, missing dependency, configurability, and secret requirement reporting.
 - `make plugins-check` for offline JSON inspection of the registry.
+- `source.fileshare` as a real official source plugin with mounted-path NFS support, fake-client SMB/WebDAV/SFTP coverage, and protocol-level readiness reporting.
+- `make fileshare-check` for offline mounted-path and fake remote fileshare smoke validation.
+
+### Fileshare Source
+
+`source.fileshare` is the current local-first bridge for enterprise shared storage.
+
+What it supports now:
+
+- `protocol = nfs_mounted`: mount the share through the OS, then point RAGRig at the mounted directory
+- `protocol = smb`: SMB/CIFS contract, readiness reporting, fake-client tests, optional `smbprotocol` runtime dependency
+- `protocol = webdav`: WebDAV contract, readiness reporting, fake-client tests, optional `httpx` runtime dependency
+- `protocol = sftp`: SFTP contract, readiness reporting, fake-client tests, optional `paramiko` runtime dependency
+
+Current boundaries:
+
+- default `make test` and `make coverage` stay network-free and secret-free
+- delete detection is a placeholder audit signal only; it records `deleted_upstream` in pipeline items but does not delete stored documents
+- permission mapping is metadata-only for now; access enforcement is not implemented in this phase
+- only Markdown/Text parsing goes through the existing parser path by default
+
+Install optional runtime SDKs with:
+
+```bash
+uv sync --extra fileshare --dev
+```
+
+Offline smoke:
+
+```bash
+make fileshare-check
+```
+
+Example SMB config:
+
+```json
+{
+  "protocol": "smb",
+  "host": "files.example.internal",
+  "share": "knowledge",
+  "root_path": "/docs",
+  "username": "env:FILESHARE_USERNAME",
+  "password": "env:FILESHARE_PASSWORD",
+  "include_patterns": ["*.md", "*.txt"],
+  "exclude_patterns": [],
+  "max_file_size_mb": 50,
+  "page_size": 1000,
+  "max_retries": 3,
+  "connect_timeout_seconds": 10,
+  "read_timeout_seconds": 30
+}
+```
+
+Example mounted NFS/local-path config:
+
+```json
+{
+  "protocol": "nfs_mounted",
+  "root_path": "/mnt/company-knowledge",
+  "include_patterns": ["*.md", "*.txt"],
+  "exclude_patterns": [],
+  "max_file_size_mb": 50,
+  "page_size": 1000,
+  "max_retries": 1,
+  "connect_timeout_seconds": 10,
+  "read_timeout_seconds": 30
+}
+```
 
 Plugin development will start with internal Python interfaces. Public third-party plugin packaging should wait until the core contracts, test kit, and capability matrix are stable.
 
