@@ -2,8 +2,18 @@ from __future__ import annotations
 
 import pytest
 
-from ragrig.providers import ProviderCapability, ProviderError, ProviderKind, get_provider_registry
+from ragrig.providers import (
+    ProviderCapability,
+    ProviderError,
+    ProviderKind,
+    get_provider_registry,
+)
 from ragrig.providers.bge import load_bge_embedding_runtime, load_bge_reranker_runtime
+from ragrig.providers.cloud import (
+    CLOUD_MODEL_METADATA,
+    create_cloud_stub_provider,
+    load_cloud_client,
+)
 from ragrig.providers.local import load_ollama_client, load_openai_compatible_client
 
 
@@ -96,6 +106,14 @@ def test_default_provider_registry_exposes_pr2_local_provider_contracts() -> Non
         "model.localai",
         "embedding.bge",
         "reranker.bge",
+        "model.vertex_ai",
+        "model.bedrock",
+        "model.azure_openai",
+        "model.openrouter",
+        "model.openai",
+        "model.cohere",
+        "model.voyage",
+        "model.jina",
     } <= names
 
     ollama = registry.read("model.ollama")
@@ -112,6 +130,19 @@ def test_default_provider_registry_exposes_pr2_local_provider_contracts() -> Non
     assert bge_embedding.kind is ProviderKind.LOCAL
     assert bge_embedding.required_secrets == []
     assert bge_embedding.sdk_protocol == "optional-local-ml"
+
+    openai_cloud = registry.read("model.openai")
+    assert openai_cloud.kind is ProviderKind.CLOUD
+    assert {
+        ProviderCapability.CHAT,
+        ProviderCapability.GENERATE,
+        ProviderCapability.EMBEDDING,
+    } <= openai_cloud.capabilities
+    assert openai_cloud.required_secrets == ["OPENAI_API_KEY"]
+    assert openai_cloud.config_schema["api_base_url"]["default"] == "https://api.openai.com/v1"
+    assert openai_cloud.sdk_protocol == "optional-openai-sdk"
+
+    assert registry.get("model.openai").health_check().status == "stub"
 
 
 def test_ollama_provider_uses_fake_client_for_generation_chat_embedding_and_health() -> None:
@@ -266,3 +297,68 @@ def test_direct_optional_dependency_loaders_return_structured_errors() -> None:
         "provider": "reranker.bge",
         "dependencies": ["FlagEmbedding", "sentence-transformers", "torch"],
     }
+
+
+def test_direct_cloud_loader_returns_structured_optional_dependency_error() -> None:
+    with pytest.raises(ProviderError) as exc:
+        load_cloud_client(provider="model.openai", dependencies=["openai"])
+
+    assert exc.value.code == "optional_dependency_missing"
+    assert exc.value.details == {"provider": "model.openai", "dependencies": ["openai"]}
+
+
+def test_cloud_stub_provider_reports_stub_health_with_fake_client() -> None:
+    provider = create_cloud_stub_provider("model.openai", client=object())
+
+    health = provider.health_check()
+
+    assert health.status == "stub"
+    assert health.metrics == {
+        "provider": "model.openai",
+        "kind": "cloud",
+        "required_secrets": 1,
+    }
+
+
+def test_cloud_stub_provider_reports_stub_health_without_optional_sdk() -> None:
+    provider = create_cloud_stub_provider("model.openai")
+
+    assert provider.health_check().status == "stub"
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "method_name", "args"),
+    [
+        ("model.openai", "generate", ("hello",)),
+        ("model.openai", "chat", ([{"role": "user", "content": "hi"}],)),
+        ("model.openai", "embed_text", ("fixture",)),
+        ("model.cohere", "rerank", ("query", ["a", "b"])),
+    ],
+)
+def test_cloud_stub_provider_behavior_methods_raise_stub_only_error(
+    provider_name: str,
+    method_name: str,
+    args: tuple[object, ...],
+) -> None:
+    provider = create_cloud_stub_provider(provider_name, client=object())
+
+    with pytest.raises(ProviderError) as exc:
+        getattr(provider, method_name)(*args)
+
+    assert exc.value.code == "provider_stub_only"
+    assert exc.value.details == {"provider": provider_name, "status": "stub_only"}
+
+
+def test_cloud_stub_provider_factory_retains_metadata_dependencies_and_config() -> None:
+    metadata, dependencies = CLOUD_MODEL_METADATA["model.vertex_ai"]
+
+    provider = create_cloud_stub_provider(
+        "model.vertex_ai",
+        project="demo-project",
+        location="asia-northeast1",
+        client=object(),
+    )
+
+    assert provider.metadata is metadata
+    assert provider.optional_dependencies == dependencies
+    assert provider.config == {"project": "demo-project", "location": "asia-northeast1"}

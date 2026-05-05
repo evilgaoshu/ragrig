@@ -87,8 +87,9 @@ Current implementation status:
 6. Phase 1d now supports a minimal retrieval API and smoke CLI over the real indexed chunks and embeddings.
 7. Phase 1e PR-1 now adds a core provider registry contract and registers `deterministic-local` through it.
 8. Phase 1e PR-2 now adds local provider adapters for Ollama, LM Studio, OpenAI-compatible local runtimes, and optional BGE boundaries without changing the default secret-free test path.
-9. `source.s3` now supports real S3-compatible Markdown/Text ingestion with fake-client-first tests and opt-in runtime dependencies.
-10. Semantic production embeddings, live local runtime smoke checks, reranking, and richer source types remain intentionally limited or deferred in this repository state.
+9. Phase 1e PR-3 now adds cloud-second provider stubs for Vertex AI, Bedrock, Azure OpenAI, OpenRouter, OpenAI, Cohere, Voyage, and Jina through the same registry and discovery surfaces.
+10. `source.s3` now supports real S3-compatible Markdown/Text ingestion with fake-client-first tests and opt-in runtime dependencies.
+11. Semantic production embeddings, live local runtime smoke checks, production cloud adapters, reranking, and richer source types remain intentionally limited or deferred in this repository state.
 
 Authoritative specs:
 
@@ -189,11 +190,18 @@ PR-2 additions:
 - `embedding.bge` and `reranker.bge` provider boundaries with lazy optional dependency loading
 - read-only `/models` and `/plugins` visibility for the above providers
 
+PR-3 additions:
+
+- `model.vertex_ai`, `model.bedrock`, `model.azure_openai`, `model.openrouter`, `model.openai`, `model.cohere`, `model.voyage`, and `model.jina` registry metadata
+- cloud-second plugin discovery entries in `/plugins` and `make plugins-check`
+- optional cloud dependency groups in `pyproject.toml` without changing the default install path
+- read-only `/models` visibility for the cloud stubs, including required secret and config metadata
+
 What is still deferred:
 
-- no cloud provider stubs in this PR slice
+- no production cloud API calls in this PR slice
 - no DB-backed model profile management
-- no default live local runtime smoke in `make test`
+- no default live local or cloud runtime smoke in `make test`
 
 `deterministic-local` remains a secret-free, network-free test and smoke provider. It is not a production semantic embedding model.
 
@@ -216,6 +224,33 @@ The `local-ml` extra currently groups:
 - `torch`
 
 Default tests still use fake clients and optional-dependency-safe loaders. A fresh clone does not need Ollama, LM Studio, GPUs, or local model downloads.
+
+## Cloud Provider Extras
+
+PR-3 keeps cloud SDKs out of the default install and ships only contract-first cloud stubs.
+
+Optional cloud dependency groups:
+
+- `cloud-google`: `google-cloud-aiplatform`
+- `cloud-aws`: `boto3`
+- `cloud-openai`: `openai`
+- `cloud-cohere`: `cohere`
+- `cloud-voyage`: `voyageai`
+- `cloud-jina`: no SDK package yet; the stub documents an `httpx`-style API boundary only
+
+Example installs:
+
+```bash
+uv sync --extra cloud-openai --extra cloud-google --dev
+uv sync --extra cloud-aws --extra cloud-cohere --dev
+```
+
+PR-3 cloud stubs are intentionally contract-only:
+
+- no live cloud API calls in default tests
+- no real API keys required for fresh clone verification
+- `/models`, `/plugins`, and `make plugins-check` expose metadata, secret requirements, and current stub status only
+- production cloud adapters should land in follow-up PRs, not inside this stub/docs slice
 
 Default local endpoints documented by PR-2:
 

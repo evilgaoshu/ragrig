@@ -131,18 +131,23 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
         "deterministic-local",
         "model.ollama",
         "model.lm_studio",
+        "model.openai",
+        "model.vertex_ai",
+        "model.bedrock",
         "embedding.bge",
         "reranker.bge",
     } <= provider_names
     llm_shell = models.json()["registry_shell"]["llm"]
     assert llm_shell["status"] == "ready"
     assert {"model.lm_studio", "model.ollama"} <= set(llm_shell["providers"])
+    assert {"model.openai", "model.vertex_ai", "model.bedrock"} <= set(llm_shell["providers"])
     assert models.json()["registry_shell"]["reranker"]["status"] == "ready"
     assert plugins.status_code == 200
     plugin_ids = {item["plugin_id"] for item in plugins.json()["items"]}
     assert "source.local" in plugin_ids
     assert "source.s3" in plugin_ids
     assert "model.ollama" in plugin_ids
+    assert "model.openai" in plugin_ids
 
 
 @pytest.mark.anyio
@@ -165,6 +170,7 @@ async def test_console_api_returns_empty_states_without_seed_data(tmp_path) -> N
     assert models.status_code == 200
     assert models.json()["embedding_profiles"] == []
     assert "model.ollama" in {item["name"] for item in models.json()["registered_providers"]}
+    assert "model.openai" in {item["name"] for item in models.json()["registered_providers"]}
     assert plugins.status_code == 200
     assert any(item["plugin_id"] == "vector.pgvector" for item in plugins.json()["items"])
 
