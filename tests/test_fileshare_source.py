@@ -441,7 +441,9 @@ def test_ingest_fileshare_source_rejects_plaintext_secret_refs(sqlite_session) -
             knowledge_base_name="fixture-fileshare",
             config=_config(username="alice"),
             env={"FILESHARE_PASSWORD": "secret-pass"},
-            client=FakeFileshareClient(protocol="smb", host="files.example.internal", share="team-a"),
+            client=FakeFileshareClient(
+                protocol="smb", host="files.example.internal", share="team-a"
+            ),
         )
 
 
@@ -452,7 +454,9 @@ def test_ingest_fileshare_source_rejects_missing_secret_reference(sqlite_session
             knowledge_base_name="fixture-fileshare",
             config=_config(username=None),
             env={"FILESHARE_PASSWORD": "secret-pass"},
-            client=FakeFileshareClient(protocol="smb", host="files.example.internal", share="team-a"),
+            client=FakeFileshareClient(
+                protocol="smb", host="files.example.internal", share="team-a"
+            ),
         )
 
 
