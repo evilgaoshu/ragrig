@@ -527,7 +527,9 @@ def test_fileshare_config_accepts_valid_webdav_and_helpers_cover_remote_paths() 
     assert validated["base_url"] == "https://dav.example.internal"
     assert built_client.protocol == "smb"
     assert _source_uri(validated) == "webdav://dav.example.internal/engineering"
-    assert _document_uri(validated, "guide.md") == "webdav://dav.example.internal/engineering/guide.md"
+    assert (
+        _document_uri(validated, "guide.md") == "webdav://dav.example.internal/engineering/guide.md"
+    )
     assert _normalize_remote_path("/engineering", "engineering/guide.md") == "guide.md"
     assert _normalize_remote_path("/engineering", "guide.md") == "guide.md"
 
