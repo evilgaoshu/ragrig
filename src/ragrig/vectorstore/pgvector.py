@@ -14,6 +14,9 @@ from ragrig.vectorstore.base import (
     VectorCollectionStatus,
     VectorEmbeddingRecord,
     VectorSearchResult,
+    build_vector_collection,
+    list_embedding_profiles,
+    summarize_vector_profile_value,
 )
 
 
@@ -199,12 +202,54 @@ class PgVectorBackend:
 
     def health(self, session: Session) -> VectorBackendHealth:
         dialect = session.bind.dialect.name if session.bind is not None else "unknown"
+        profiles = list_embedding_profiles(session)
+        collections = []
+        for profile in profiles:
+            collection = build_vector_collection(
+                knowledge_base_name=profile["knowledge_base_name"],
+                provider=profile["provider"],
+                model=profile["model"],
+                dimensions=profile["dimensions"],
+            )
+            collections.append(
+                VectorCollectionStatus(
+                    name=collection.name,
+                    exists=True,
+                    dimensions=profile["dimensions"],
+                    distance_metric=self.distance_metric,
+                    vector_count=profile["vector_count"],
+                    backend=self.backend_name,
+                    metadata={
+                        "storage": "postgresql",
+                        "provider": profile["provider"],
+                        "model": profile["model"],
+                        "knowledge_base": profile["knowledge_base_name"],
+                        "table": "embeddings",
+                        "index_type": "sql_cosine_distance",
+                    },
+                )
+            )
+        provider = summarize_vector_profile_value([profile["provider"] for profile in profiles])
+        model = summarize_vector_profile_value([profile["model"] for profile in profiles])
+        total_vectors = sum(profile["vector_count"] for profile in profiles)
         return VectorBackendHealth(
             backend=self.backend_name,
             healthy=True,
             status="healthy",
             distance_metric=self.distance_metric,
-            details={"dialect": dialect, "storage": "postgresql"},
+            collections=collections,
+            details={
+                "dialect": dialect,
+                "storage": "postgresql",
+                "dependency_status": "ready",
+                "provider": provider,
+                "model": model,
+                "total_vectors": total_vectors if collections else None,
+                "score_semantics": (
+                    "pgvector uses cosine distance; retrieval score is 1 - distance."
+                ),
+                "error": None,
+            },
         )
 
 
