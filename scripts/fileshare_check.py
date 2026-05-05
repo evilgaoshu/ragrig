@@ -9,6 +9,8 @@ from ragrig.plugins import get_plugin_registry
 from ragrig.plugins.sources.fileshare.client import FakeFileshareClient, FakeFileshareObject
 from ragrig.plugins.sources.fileshare.scanner import scan_files
 
+_FIXTURE_TIME = datetime(2026, 5, 5, tzinfo=timezone.utc)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run an offline fileshare plugin smoke check.")
@@ -92,5 +94,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-_FIXTURE_TIME = datetime(2026, 5, 5, tzinfo=timezone.utc)
