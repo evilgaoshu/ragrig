@@ -8,7 +8,7 @@ Define a contract-first plugin system for RAGRig that exposes stable plugin iden
 
 This spec covers the plugin registry core, versioned manifest schema, built-in core plugin manifests, official stub manifests, config validation, dependency guards, a discovery API, contract tests, and contributor-facing documentation.
 
-This spec does not implement real S3, Google Workspace, Microsoft 365, Office preview, OCR, Qdrant, or cloud model runtime connectors.
+This spec does not implement real Google Workspace, Microsoft 365, Office preview, OCR, Qdrant, or cloud model runtime connectors.
 
 ## Stable Plugin Identity
 
@@ -137,6 +137,12 @@ Each item includes:
 - docs reference
 
 The API must work without optional SDKs, secrets, network access, or seeded data.
+
+## Runtime Notes
+
+- `source.s3` ships a real S3-compatible ingestion runtime behind optional `boto3`.
+- `sink.object_storage` ships a real S3-compatible export runtime behind optional `boto3`.
+- `sink.object_storage` remains `degraded` even when `boto3` is installed because Google Cloud Storage and Azure Blob stay contract-only in this phase.
 
 ## Existing Runtime Boundaries
 

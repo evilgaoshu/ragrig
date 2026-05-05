@@ -60,6 +60,7 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "RAGRig Web Console" in response.text
     assert "Knowledge Bases" in response.text
     assert "Retrieval Lab" in response.text
+    assert "Plugin Readiness" in response.text
     assert "Vector Backend Readiness" in response.text
     assert "repeat(auto-fit, minmax(150px, 1fr))" in response.text
     assert "Backend · metric · score semantics" in response.text
@@ -162,6 +163,7 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     plugin_ids = {item["plugin_id"] for item in plugins.json()["items"]}
     assert "source.local" in plugin_ids
     assert "source.s3" in plugin_ids
+    assert "sink.object_storage" in plugin_ids
     assert "model.ollama" in plugin_ids
     assert "model.openai" in plugin_ids
 
