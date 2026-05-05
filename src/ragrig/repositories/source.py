@@ -10,6 +10,7 @@ def get_or_create_source(
     session: Session,
     *,
     knowledge_base_id,
+    kind: str = "local_directory",
     uri: str,
     config_json: dict[str, object],
 ) -> Source:
@@ -23,7 +24,7 @@ def get_or_create_source(
 
     source = Source(
         knowledge_base_id=knowledge_base_id,
-        kind="local_directory",
+        kind=kind,
         uri=uri,
         config_json=config_json,
     )

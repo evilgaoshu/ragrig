@@ -22,6 +22,7 @@ from ragrig.plugins import (
     get_plugin_registry,
 )
 from ragrig.plugins.contract import _is_valid_docs_reference, assert_registry_contracts
+from ragrig.plugins.guards import is_dependency_available
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -72,7 +73,10 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     assert registry.get("embedding.bge").tier is PluginTier.OFFICIAL
     assert registry.get("embedding.bge").status is PluginStatus.READY
     assert registry.get("source.s3").tier is PluginTier.OFFICIAL
-    assert registry.get("source.s3").status is PluginStatus.UNAVAILABLE
+    expected_s3_status = (
+        PluginStatus.READY if is_dependency_available("boto3") else PluginStatus.UNAVAILABLE
+    )
+    assert registry.get("source.s3").status is expected_s3_status
 
 
 def test_manifest_rejects_unknown_capabilities_for_documented_plugin_types() -> None:
@@ -259,6 +263,7 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
     assert discovery["source.s3"]["secret_requirements"] == [
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
     ]
     assert discovery["source.google_workspace"]["missing_dependencies"] == ["googleapiclient"]
 
@@ -291,6 +296,7 @@ async def test_plugins_endpoint_exposes_registry_status(tmp_path) -> None:
         "source.s3",
     }
     source_s3 = next(item for item in payload["items"] if item["plugin_id"] == "source.s3")
-    assert source_s3["status"] == "unavailable"
+    expected_s3_status = "ready" if is_dependency_available("boto3") else "unavailable"
+    assert source_s3["status"] == expected_s3_status
     assert source_s3["configurable"] is True
     assert "AWS_ACCESS_KEY_ID" in source_s3["secret_requirements"]

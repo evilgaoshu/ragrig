@@ -86,11 +86,11 @@ flowchart LR
 9. 最小 Retrieval API 与检索 smoke 路径。
 10. Provider registry core contract，并已把 `deterministic-local` 接入 registry。
 11. Phase 1e PR-2 已补齐 Ollama、LM Studio、OpenAI-compatible 本地模型运行时，以及可选 BGE embedding / reranker 的 provider 边界。
+12. `source.s3` 已支持真实 S3-compatible Markdown/Text 入库，默认测试仍保持 fake-client-first。
 
 还未完成：
 
 - 生产级 embedding provider。
-- 本地 Ollama / LM Studio / BGE adapter。
 - cloud provider stub / adapter。
 - Qdrant backend。
 - 真正可运行的 Web Console。
@@ -200,6 +200,62 @@ make index-local
 ```bash
 make index-check
 ```
+
+默认向量后端仍然是 `pgvector`。如果要显式启用 Qdrant，可选路径如下：
+
+```bash
+docker compose --profile qdrant up -d qdrant
+uv sync --extra vectorstores
+VECTOR_BACKEND=qdrant make index-local
+VECTOR_BACKEND=qdrant make retrieve-check QUERY="RAGRig Guide"
+```
+
+`qdrant-client` 是 optional extra。fresh clone 下不安装该依赖、也不启动 Qdrant，`make test` 和 `make coverage` 仍然必须通过。
+
+检查当前插件 readiness：
+
+```bash
+make plugins-check
+```
+
+`source.s3` 在未安装可选 S3 SDK 时会显示 `unavailable`。启用真实 connector 需要：
+
+```bash
+uv sync --extra s3
+```
+
+使用 MinIO 或其他 S3-compatible endpoint 做本地 smoke：
+
+```bash
+docker compose --profile minio up -d minio
+uv sync --extra s3
+make s3-check
+```
+
+默认 `.env.example` 已提供本地 MinIO 所需变量。`make s3-check` 会先把
+`tests/fixtures/local_ingestion/` 上传到目标 bucket，再执行 S3 ingest。
+
+最小配置只允许通过 manifest 声明的 secret refs 传入凭据：
+
+```json
+{
+  "bucket": "ragrig-smoke",
+  "prefix": "ragrig-smoke",
+  "endpoint_url": "http://127.0.0.1:9000",
+  "region": "us-east-1",
+  "use_path_style": true,
+  "verify_tls": false,
+  "access_key": "env:AWS_ACCESS_KEY_ID",
+  "secret_key": "env:AWS_SECRET_ACCESS_KEY",
+  "session_token": "env:AWS_SESSION_TOKEN"
+}
+```
+
+当前 `source.s3` 边界：
+
+- 只解析 Markdown 和纯文本对象
+- 不支持扩展、二进制对象、超大对象会 skip 并记录 reason
+- 暂不实现 delete detection、tombstone、独立 cursor state
 
 启动完整本地 API 栈：
 

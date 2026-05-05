@@ -26,7 +26,12 @@ local-ml = [
   "sentence-transformers>=3.4.1,<4.0.0",
   "torch>=2.7.0,<3.0.0",
 ]
-vectorstores = []
+s3 = [
+  "boto3>=1.35.0,<2.0.0",
+]
+vectorstores = [
+  "qdrant-client>=1.9.0,<2.0.0",
+]
 
 [dependency-groups]
 dev = [
@@ -55,7 +60,6 @@ source = ["ragrig"]
 omit = [
   "src/ragrig/cleaners/*",
   "src/ragrig/main.py",
-  "src/ragrig/vectorstore/*",
   "src/ragrig/web_console.py",
 ]
 

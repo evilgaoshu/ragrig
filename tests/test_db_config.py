@@ -50,3 +50,11 @@ def test_get_settings_is_cached(monkeypatch) -> None:
     assert first is second
     assert second.app_name == "cached-ragrig"
     get_settings.cache_clear()
+
+
+def test_settings_include_vector_backend_defaults() -> None:
+    settings = Settings()
+
+    assert settings.vector_backend == "pgvector"
+    assert settings.qdrant_url == "http://localhost:6333"
+    assert settings.qdrant_api_key is None

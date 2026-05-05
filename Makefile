@@ -1,7 +1,7 @@
 UV ?= uv
 ARTIFACTS_DIR ?= docs/operations/artifacts
 
-.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check plugins-check
+.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check minio-up
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -90,5 +90,20 @@ index-check:
 retrieve-check:
 	$(UV) run python -m scripts.retrieve_check --knowledge-base "$(INGEST_KB)" --query "$(QUERY)"
 
+qdrant-up:
+	docker compose --profile qdrant up -d qdrant
+
+qdrant-check:
+	$(UV) run python -m scripts.retrieve_check --knowledge-base "$(INGEST_KB)" --query "$(QUERY)"
+
+vector-check:
+	$(MAKE) index-check && $(MAKE) retrieve-check QUERY="$(QUERY)"
+
 plugins-check:
 	$(UV) run python -m scripts.plugins_check --format json
+
+minio-up:
+	docker compose --profile minio up -d minio
+
+s3-check:
+	$(UV) run python -m scripts.s3_check

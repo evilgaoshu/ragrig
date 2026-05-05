@@ -2,15 +2,10 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from ragrig.plugins import guards
 from ragrig.plugins.manifest import PluginConfigModel, PluginManifest, SecretRequirement
+from ragrig.plugins.sources.s3.config import S3SourceConfig
 from ragrig.plugins.types import Capability, PluginStatus, PluginTier, PluginType
-
-
-class S3SourceConfig(PluginConfigModel):
-    bucket: str
-    access_key: str
-    secret_key: str
-    endpoint_url: str | None = None
 
 
 class FileshareSourceConfig(PluginConfigModel):
@@ -78,6 +73,7 @@ def _official_manifest(
     plugin_type: PluginType,
     family: str,
     capabilities: tuple[Capability, ...],
+    docs_reference: str = "docs/specs/ragrig-plugin-system-spec.md",
     optional_dependencies: tuple[str, ...] = (),
     config_model: type[PluginConfigModel] | None = None,
     example_config: dict[str, str] | None = None,
@@ -96,7 +92,7 @@ def _official_manifest(
         tier=PluginTier.OFFICIAL,
         status=status,
         capabilities=capabilities,
-        docs_reference="docs/specs/ragrig-plugin-system-spec.md",
+        docs_reference=docs_reference,
         config_model=config_model,
         example_config=example_config,
         secret_requirements=secret_requirements,
@@ -106,6 +102,7 @@ def _official_manifest(
 
 
 def official_stub_manifests() -> list[PluginManifest]:
+    s3_ready = guards.is_dependency_available("boto3")
     return [
         _official_manifest(
             plugin_id="vector.qdrant",
@@ -233,28 +230,45 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="source.s3",
             display_name="S3-Compatible Source",
-            description="Stub manifest for S3-compatible source ingestion.",
+            description="Reads S3-compatible object storage into the ingestion pipeline.",
             plugin_type=PluginType.SOURCE,
             family="s3",
             capabilities=(
                 Capability.READ,
                 Capability.INCREMENTAL_SYNC,
-                Capability.DELETE_DETECTION,
             ),
+            docs_reference="docs/specs/ragrig-s3-source-plugin-spec.md",
             optional_dependencies=("boto3",),
             config_model=S3SourceConfig,
             example_config={
                 "bucket": "docs",
+                "prefix": "team-a",
+                "endpoint_url": "http://localhost:9000",
+                "region": "us-east-1",
+                "use_path_style": True,
+                "verify_tls": True,
                 "access_key": "env:AWS_ACCESS_KEY_ID",
                 "secret_key": "env:AWS_SECRET_ACCESS_KEY",
+                "session_token": "env:AWS_SESSION_TOKEN",
+                "include_patterns": ["*.md", "*.txt"],
+                "exclude_patterns": [],
+                "max_object_size_mb": 50,
+                "page_size": 1000,
+                "max_retries": 3,
+                "connect_timeout_seconds": 10,
+                "read_timeout_seconds": 30,
             },
             secret_requirements=(
                 SecretRequirement(name="AWS_ACCESS_KEY_ID", description="S3 access key id"),
                 SecretRequirement(name="AWS_SECRET_ACCESS_KEY", description="S3 secret access key"),
+                SecretRequirement(
+                    name="AWS_SESSION_TOKEN",
+                    description="Optional session token for temporary credentials",
+                    required=False,
+                ),
             ),
-            unavailable_reason=(
-                "Network connector and remote sync behavior are intentionally out of scope."
-            ),
+            unavailable_reason="Install boto3 to enable the S3-compatible runtime connector.",
+            status=PluginStatus.READY if s3_ready else PluginStatus.UNAVAILABLE,
         ),
         _official_manifest(
             plugin_id="sink.object_storage",
