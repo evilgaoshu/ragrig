@@ -4,6 +4,7 @@ from pydantic import Field
 
 from ragrig.plugins import guards
 from ragrig.plugins.manifest import PluginConfigModel, PluginManifest, SecretRequirement
+from ragrig.plugins.object_storage.config import ObjectStorageSinkConfig
 from ragrig.plugins.sources.s3.config import S3SourceConfig
 from ragrig.plugins.types import Capability, PluginStatus, PluginTier, PluginType
 
@@ -31,12 +32,6 @@ class WikiSourceConfig(PluginConfigModel):
 
 class DatabaseSourceConfig(PluginConfigModel):
     dsn: str
-
-
-class ObjectStorageSinkConfig(PluginConfigModel):
-    bucket: str
-    access_key: str
-    secret_key: str
 
 
 class AnalyticsSinkConfig(PluginConfigModel):
@@ -503,16 +498,35 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="sink.object_storage",
             display_name="Object Storage Sink",
-            description="Stub manifest for writing outputs to object storage.",
+            description=(
+                "Exports governed assets and audit artifacts to S3-compatible "
+                "object storage."
+            ),
             plugin_type=PluginType.SINK,
             family="object_storage",
             capabilities=(Capability.WRITE,),
+            docs_reference="docs/specs/ragrig-plugin-system-spec.md",
             optional_dependencies=("boto3",),
             config_model=ObjectStorageSinkConfig,
             example_config={
                 "bucket": "exports",
+                "prefix": "team-a",
+                "endpoint_url": "http://localhost:9000",
+                "region": "us-east-1",
+                "use_path_style": True,
+                "verify_tls": True,
                 "access_key": "env:AWS_ACCESS_KEY_ID",
                 "secret_key": "env:AWS_SECRET_ACCESS_KEY",
+                "session_token": "env:AWS_SESSION_TOKEN",
+                "path_template": "{knowledge_base}/{run_id}/{artifact}.{format}",
+                "overwrite": False,
+                "dry_run": False,
+                "include_retrieval_artifact": True,
+                "include_markdown_summary": True,
+                "max_retries": 3,
+                "connect_timeout_seconds": 10,
+                "read_timeout_seconds": 30,
+                "object_metadata": {"environment": "dev"},
             },
             secret_requirements=(
                 SecretRequirement(
@@ -521,8 +535,17 @@ def official_stub_manifests() -> list[PluginManifest]:
                 SecretRequirement(
                     name="AWS_SECRET_ACCESS_KEY", description="Object storage secret access key"
                 ),
+                SecretRequirement(
+                    name="AWS_SESSION_TOKEN",
+                    description="Optional session token for temporary credentials",
+                    required=False,
+                ),
             ),
-            unavailable_reason="Remote sink execution is intentionally out of scope.",
+            unavailable_reason=(
+                "S3-compatible export runtime is available when boto3 is installed. "
+                "GCS and Azure Blob remain contract-only in this phase."
+            ),
+            status=PluginStatus.DEGRADED if s3_ready else PluginStatus.UNAVAILABLE,
         ),
         _official_manifest(
             plugin_id="source.fileshare",

@@ -846,7 +846,59 @@ Executable commands in this repository:
 
 - `make coverage`: enforces 100% line coverage for the hard core scope: `db`, `repositories`, `ingestion`, `parsers`, `chunkers`, `embeddings`, `indexing`, `plugins`, `retrieval.py`, `config.py`, and `health.py`.
 - `make plugins-check`: prints the plugin registry discovery payload as offline JSON.
+- `make export-object-storage-check`: runs an opt-in object storage export smoke command and defaults to `dry_run` unless explicitly overridden.
 - `make licenses`: fails on GPL, AGPL, SSPL, or source-available third-party packages.
+
+## Object Storage Sink
+
+`sink.object_storage` now exports a minimal governed artifact set to S3-compatible object storage using optional `boto3`.
+
+Current runtime-ready targets:
+
+- AWS S3
+- Cloudflare R2
+- MinIO
+- Ceph RGW
+- Wasabi
+- Backblaze B2 S3 API
+- Tencent COS S3 API
+- Alibaba OSS in S3-compatible mode
+
+Contract-only targets in this phase:
+
+- Google Cloud Storage
+- Azure Blob Storage
+
+Example config:
+
+```json
+{
+  "bucket": "exports",
+  "prefix": "team-a",
+  "endpoint_url": "http://localhost:9000",
+  "region": "us-east-1",
+  "use_path_style": true,
+  "verify_tls": true,
+  "access_key": "env:AWS_ACCESS_KEY_ID",
+  "secret_key": "env:AWS_SECRET_ACCESS_KEY",
+  "session_token": "env:AWS_SESSION_TOKEN",
+  "path_template": "{knowledge_base}/{run_id}/{artifact}.{format}",
+  "overwrite": false,
+  "dry_run": true,
+  "include_markdown_summary": true,
+  "object_metadata": {
+    "environment": "dev"
+  }
+}
+```
+
+Behavior notes:
+
+- JSONL artifacts use `application/x-ndjson`.
+- Markdown summaries use `text/markdown; charset=utf-8`.
+- Existing objects are skipped when `overwrite=false`.
+- `dry_run=true` computes the export plan without uploading objects.
+- Retrieval and evaluation exports are explicitly marked unsupported/degraded until dedicated runtimes exist.
 - `make sbom`: writes a CycloneDX JSON SBOM to `docs/operations/artifacts/sbom.cyclonedx.json`.
 - `make audit`: runs a vulnerability audit of the local environment and writes `docs/operations/artifacts/pip-audit.json`.
 - `make dependency-inventory`: refreshes `docs/operations/dependency-inventory.md`.

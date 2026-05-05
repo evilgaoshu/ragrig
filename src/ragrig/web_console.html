@@ -274,6 +274,7 @@
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
         <div class="nav-item">Models</div>
+        <div class="nav-item">Plugins</div>
         <div class="nav-item">Evaluation</div>
         <div class="nav-item">Settings</div>
         <div class="aside-note" id="sidebar-note">Loading runtime state...</div>
@@ -347,6 +348,11 @@
             </section>
 
             <section class="panel">
+              <div class="panel-head"><div class="panel-title">Plugin Readiness</div><div class="panel-meta">Registry-backed source and sink status</div></div>
+              <div class="panel-body stack" id="plugins-panel"></div>
+            </section>
+
+            <section class="panel">
               <div class="panel-head"><div class="panel-title">Health / DB Status</div><div class="panel-meta">Backend readiness</div></div>
               <div class="panel-body stack" id="health-panel"></div>
             </section>
@@ -361,6 +367,7 @@
         sources: [],
         pipelineRuns: [],
         documents: [],
+        plugins: [],
         models: null,
         system: null,
       };
@@ -394,13 +401,14 @@
       }
 
       async function loadInitialData() {
-        const [system, knowledgeBases, sources, pipelineRuns, documents, models] = await Promise.all([
+        const [system, knowledgeBases, sources, pipelineRuns, documents, models, plugins] = await Promise.all([
           getJson('/system/status'),
           getJson('/knowledge-bases'),
           getJson('/sources'),
           getJson('/pipeline-runs'),
           getJson('/documents'),
           getJson('/models'),
+          getJson('/plugins'),
         ]);
         state.system = system;
         state.knowledgeBases = knowledgeBases.items;
@@ -408,6 +416,7 @@
         state.pipelineRuns = pipelineRuns.items;
         state.documents = documents.items;
         state.models = models;
+        state.plugins = plugins.items;
       }
 
       function renderStatusStrip() {
@@ -554,6 +563,29 @@
         root.innerHTML = blocks.join('');
       }
 
+      function renderPlugins() {
+        const root = document.getElementById('plugins-panel');
+        const importantPlugins = state.plugins.filter((item) => [
+          'source.s3',
+          'sink.object_storage',
+          'vector.pgvector',
+          'model.openai',
+        ].includes(item.plugin_id));
+        if (!importantPlugins.length) {
+          root.innerHTML = empty('No plugin discovery payload available.');
+          return;
+        }
+        root.innerHTML = importantPlugins.map((item) => `
+          <div class="card">
+            <div class="name">${escapeHtml(item.plugin_id)} <span class="${pillClass(item.status)}">${escapeHtml(item.status)}</span></div>
+            <div class="sub">${escapeHtml(item.description)}</div>
+            <div class="sub">capabilities: ${escapeHtml((item.capabilities || []).join(', ') || 'none')}</div>
+            <div class="sub">secrets: ${escapeHtml((item.secret_requirements || []).join(', ') || 'none')}</div>
+            <div class="sub">deps: ${escapeHtml((item.missing_dependencies || []).join(', ') || 'none')}</div>
+          </div>
+        `).join('');
+      }
+
       function renderHealthPanel() {
         const root = document.getElementById('health-panel');
         root.innerHTML = `
@@ -620,6 +652,7 @@
           await renderPipelineRuns();
           await renderDocumentPreview();
           renderModels();
+          renderPlugins();
           renderHealthPanel();
           renderRetrievalControls();
         } catch (error) {
