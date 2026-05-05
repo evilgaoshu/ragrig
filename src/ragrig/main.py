@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
@@ -20,6 +20,7 @@ from ragrig.retrieval import (
 )
 from ragrig.vectorstore import get_vector_backend, get_vector_backend_health
 from ragrig.web_console import (
+    PluginWizardValidationError,
     build_system_status,
     get_pipeline_run_detail,
     list_document_version_chunks,
@@ -31,6 +32,7 @@ from ragrig.web_console import (
     list_plugins,
     list_sources,
     load_console_html,
+    validate_plugin_config_for_wizard,
 )
 
 
@@ -51,6 +53,19 @@ def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
             "details": exc.details,
         }
     }
+
+
+def _plugin_validation_error_response(*, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={
+            "valid": False,
+            "error": {
+                "code": code,
+                "message": message,
+            },
+        },
+    )
 
 
 def create_runtime_settings(settings: Settings | None = None) -> Settings:
@@ -197,6 +212,34 @@ def create_app(
     @app.get("/plugins", response_model=None)
     def plugins() -> dict[str, list[dict[str, Any]]]:
         return {"items": list_plugins()}
+
+    @app.post("/plugins/{plugin_id}/validate-config", response_model=None)
+    async def validate_plugin_config(
+        plugin_id: str,
+        request: Request,
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            payload = await request.json()
+        except Exception:
+            return _plugin_validation_error_response(
+                code="malformed_request",
+                message="request body must be valid JSON",
+            )
+        if not isinstance(payload, dict):
+            return _plugin_validation_error_response(
+                code="malformed_request",
+                message="request body must be a JSON object",
+            )
+        config = payload.get("config", {})
+        if not isinstance(config, dict):
+            return _plugin_validation_error_response(
+                code="malformed_request",
+                message="config must be a JSON object",
+            )
+        try:
+            return validate_plugin_config_for_wizard(plugin_id, config)
+        except PluginWizardValidationError as exc:
+            return _plugin_validation_error_response(code=exc.code, message=exc.message)
 
     @app.post("/retrieval/search", response_model=None)
     def retrieval_search(

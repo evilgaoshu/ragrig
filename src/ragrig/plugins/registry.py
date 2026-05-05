@@ -68,6 +68,7 @@ class PluginRegistry:
             "reason": reason,
             "capabilities": list(manifest.capabilities),
             "configurable": manifest.config_model is not None,
+            "example_config": manifest.example_config or {},
             "missing_dependencies": missing_dependencies,
             "secret_requirements": [secret.name for secret in manifest.secret_requirements],
             "docs_reference": manifest.docs_reference,
