@@ -1,17 +1,11 @@
 from __future__ import annotations
 
-from pydantic import Field
-
 from ragrig.plugins import guards
 from ragrig.plugins.manifest import PluginConfigModel, PluginManifest, SecretRequirement
 from ragrig.plugins.object_storage.config import ObjectStorageSinkConfig
+from ragrig.plugins.sources.fileshare.config import FileshareSourceConfig
 from ragrig.plugins.sources.s3.config import S3SourceConfig
 from ragrig.plugins.types import Capability, PluginStatus, PluginTier, PluginType
-
-
-class FileshareSourceConfig(PluginConfigModel):
-    root_path: str
-    transport: str = Field(pattern=r"^(smb|nfs|webdav|sftp)$")
 
 
 class GoogleWorkspaceSourceConfig(PluginConfigModel):
@@ -143,6 +137,40 @@ def _official_manifest(
 
 def official_stub_manifests() -> list[PluginManifest]:
     s3_ready = guards.is_dependency_available("boto3")
+    fileshare_protocol_dependencies = {
+        "nfs_mounted": (),
+        "sftp": ("paramiko",),
+        "smb": ("smbprotocol",),
+        "webdav": ("httpx",),
+    }
+    fileshare_protocol_statuses = {
+        protocol: (
+            PluginStatus.READY
+            if not guards.list_missing_dependencies(dependencies)
+            else PluginStatus.UNAVAILABLE
+        )
+        for protocol, dependencies in fileshare_protocol_dependencies.items()
+    }
+    fileshare_missing_dependencies = sorted(
+        {
+            dependency
+            for dependencies in fileshare_protocol_dependencies.values()
+            for dependency in guards.list_missing_dependencies(dependencies)
+        }
+    )
+    fileshare_ready_count = sum(
+        1 for status in fileshare_protocol_statuses.values() if status is PluginStatus.READY
+    )
+    fileshare_status = PluginStatus.UNAVAILABLE
+    fileshare_reason = "Install fileshare protocol dependencies to enable the runtime connector."
+    if fileshare_ready_count == len(fileshare_protocol_statuses):
+        fileshare_status = PluginStatus.READY
+        fileshare_reason = None
+    elif fileshare_ready_count > 0:
+        fileshare_status = PluginStatus.DEGRADED
+        fileshare_reason = (
+            "Mounted NFS/local-path mode is ready; install optional SDKs for SMB, WebDAV, and SFTP."
+        )
     return [
         _official_manifest(
             plugin_id="vector.qdrant",
@@ -549,20 +577,41 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="source.fileshare",
             display_name="Fileshare Source",
-            description="Stub manifest for SMB, NFS, WebDAV, and SFTP sources.",
+            description="Enterprise fileshare source for SMB, mounted NFS, WebDAV, and SFTP.",
             plugin_type=PluginType.SOURCE,
             family="fileshare",
             capabilities=(
                 Capability.READ,
                 Capability.INCREMENTAL_SYNC,
+                Capability.DELETE_DETECTION,
                 Capability.PERMISSION_MAPPING,
             ),
-            optional_dependencies=("smbprotocol",),
+            optional_dependencies=tuple(fileshare_missing_dependencies),
             config_model=FileshareSourceConfig,
-            example_config={"root_path": "//server/share", "transport": "smb"},
-            unavailable_reason=(
-                "Enterprise fileshare connector logic is intentionally out of scope."
+            docs_reference="docs/specs/ragrig-fileshare-source-plugin-spec.md",
+            example_config={
+                "protocol": "smb",
+                "host": "files.example.internal",
+                "share": "knowledge",
+                "root_path": "/docs",
+                "username": "env:FILESHARE_USERNAME",
+                "password": "env:FILESHARE_PASSWORD",
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="FILESHARE_USERNAME", description="Fileshare username", required=False
+                ),
+                SecretRequirement(
+                    name="FILESHARE_PASSWORD", description="Fileshare password", required=False
+                ),
+                SecretRequirement(
+                    name="FILESHARE_PRIVATE_KEY",
+                    description="Fileshare private key for SFTP auth",
+                    required=False,
+                ),
             ),
+            status=fileshare_status,
+            unavailable_reason=fileshare_reason,
         ),
         _official_manifest(
             plugin_id="source.google_workspace",

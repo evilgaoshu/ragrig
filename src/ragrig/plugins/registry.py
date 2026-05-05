@@ -51,10 +51,10 @@ class PluginRegistry:
         missing_dependencies = guards.list_missing_dependencies(manifest.optional_dependencies)
         status = manifest.status
         reason = manifest.unavailable_reason
-        if missing_dependencies:
+        if missing_dependencies and manifest.plugin_id != "source.fileshare":
             status = PluginStatus.UNAVAILABLE
             reason = f"Missing optional dependencies: {', '.join(missing_dependencies)}"
-        return {
+        item = {
             "plugin_id": manifest.plugin_id,
             "manifest_version": manifest.manifest_version,
             "display_name": manifest.display_name,
@@ -72,6 +72,32 @@ class PluginRegistry:
             "secret_requirements": [secret.name for secret in manifest.secret_requirements],
             "docs_reference": manifest.docs_reference,
         }
+        if manifest.plugin_id == "source.fileshare":
+            protocol_dependencies = {
+                "nfs_mounted": (),
+                "sftp": ("paramiko",),
+                "smb": ("smbprotocol",),
+                "webdav": ("httpx",),
+            }
+            missing_dependencies = sorted(
+                {
+                    dependency
+                    for dependencies in protocol_dependencies.values()
+                    for dependency in guards.list_missing_dependencies(dependencies)
+                }
+            )
+            protocol_statuses = {
+                protocol: (
+                    PluginStatus.READY
+                    if not guards.list_missing_dependencies(dependencies)
+                    else PluginStatus.UNAVAILABLE
+                )
+                for protocol, dependencies in protocol_dependencies.items()
+            }
+            item["missing_dependencies"] = missing_dependencies
+            item["supported_protocols"] = sorted(protocol_dependencies)
+            item["protocol_statuses"] = protocol_statuses
+        return item
 
     def _validate_secret_references(self, manifest: PluginManifest, value: Any) -> None:
         declared = {secret.name for secret in manifest.secret_requirements}

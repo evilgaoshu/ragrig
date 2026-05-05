@@ -9,6 +9,7 @@ def test_plugins_check_payload_exposes_registry_items() -> None:
     assert "items" in payload
     assert any(item["plugin_id"] == "source.local" for item in payload["items"])
     assert any(item["plugin_id"] == "source.s3" for item in payload["items"])
+    assert any(item["plugin_id"] == "source.fileshare" for item in payload["items"])
     assert any(item["plugin_id"] == "sink.object_storage" for item in payload["items"])
     assert any(item["plugin_id"] == "model.ollama" for item in payload["items"])
     assert any(item["plugin_id"] == "model.openai" for item in payload["items"])
