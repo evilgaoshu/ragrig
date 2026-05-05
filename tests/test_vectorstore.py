@@ -30,6 +30,7 @@ from ragrig.vectorstore import (
     get_vector_backend,
     get_vector_backend_health,
 )
+from ragrig.vectorstore.base import sanitize_url, summarize_vector_profile_value
 from ragrig.vectorstore.pgvector import PgVectorBackend
 from ragrig.vectorstore.qdrant import QdrantBackend, QdrantCollectionConfigError
 
@@ -71,6 +72,22 @@ def test_build_vector_collection_is_deterministic_and_bounded() -> None:
     assert first.provider == "deterministic-local"
 
 
+def test_vector_status_helpers_cover_profile_summary_and_url_sanitization() -> None:
+    assert summarize_vector_profile_value([]) == "Unavailable from status API"
+    assert summarize_vector_profile_value(["deterministic-local", "deterministic-local"]) == (
+        "deterministic-local"
+    )
+    assert summarize_vector_profile_value(["deterministic-local", "other"]) == "Multiple profiles"
+    assert sanitize_url(None) is None
+    assert sanitize_url("/tmp/local") == "/tmp/local"
+    assert sanitize_url("http://user:pass@localhost:6333/collections/test") == (
+        "http://localhost:6333/collections/test"
+    )
+    assert sanitize_url("http://user:pass@localhost:6333/collections/test?api_key=secret") == (
+        "http://localhost:6333/collections/test"
+    )
+
+
 def test_get_vector_backend_defaults_to_pgvector() -> None:
     backend = get_vector_backend(Settings())
 
@@ -102,6 +119,72 @@ def test_get_vector_backend_health_reports_degraded_when_qdrant_dependency_missi
     assert health.backend == "qdrant"
     assert health.healthy is False
     assert health.status == "degraded"
+    assert health.details["dependency_status"] == "missing dependency"
+    assert health.details["error"] == "Missing dependency: qdrant-client is not installed."
+    assert health.collections == []
+
+
+def test_get_vector_backend_health_reports_unreachable_qdrant_without_raising(monkeypatch) -> None:
+    class BrokenBackend:
+        def health(self, session: Session):
+            raise RuntimeError("Qdrant unreachable at configured endpoint.")
+
+    monkeypatch.setattr("ragrig.vectorstore.get_vector_backend", lambda settings: BrokenBackend())
+
+    with _create_session() as session:
+        health = get_vector_backend_health(
+            session,
+            Settings(
+                vector_backend="qdrant",
+                qdrant_url="http://user:secret@localhost:6333?api_key=secret",
+            ),
+        )
+
+    assert health.backend == "qdrant"
+    assert health.status == "error"
+    assert health.healthy is False
+    assert health.details["dependency_status"] == "unreachable"
+    assert health.details["error"] == "Qdrant unreachable at configured endpoint."
+    assert health.details["url"] == "http://localhost:6333"
+
+
+def test_get_vector_backend_health_reports_invalid_backend_configuration(monkeypatch) -> None:
+    class BrokenBackend:
+        def health(self, session: Session):
+            raise VectorBackendConfigurationError("Unsupported vector backend: broken")
+
+    monkeypatch.setattr("ragrig.vectorstore.get_vector_backend", lambda settings: BrokenBackend())
+
+    with _create_session() as session:
+        health = get_vector_backend_health(session, Settings(vector_backend="pgvector"))
+
+    assert health.backend == "pgvector"
+    assert health.status == "error"
+    assert health.healthy is False
+    assert health.details["dependency_status"] == "not configured"
+    assert health.details["score_semantics"] is None
+    assert health.details["error"] == "Unsupported vector backend: broken"
+
+
+def test_get_vector_backend_health_reports_generic_pgvector_error(monkeypatch) -> None:
+    class BrokenBackend:
+        def health(self, session: Session):
+            raise RuntimeError("pgvector failed")
+
+    monkeypatch.setattr("ragrig.vectorstore.get_vector_backend", lambda settings: BrokenBackend())
+
+    with _create_session() as session:
+        health = get_vector_backend_health(session, Settings(vector_backend="pgvector"))
+
+    assert health.backend == "pgvector"
+    assert health.status == "error"
+    assert health.healthy is False
+    assert health.details["dependency_status"] == "error"
+    assert health.details["score_semantics"] == (
+        "pgvector uses cosine distance; retrieval score is 1 - distance."
+    )
+    assert health.details["url"] is None
+    assert health.details["error"] == "pgvector failed"
 
 
 def test_pgvector_backend_collection_and_health_cover_empty_session() -> None:
@@ -124,6 +207,10 @@ def test_pgvector_backend_collection_and_health_cover_empty_session() -> None:
     assert status.vector_count == 0
     assert health.backend == "pgvector"
     assert health.details["storage"] == "postgresql"
+    assert health.details["dependency_status"] == "ready"
+    assert health.details["provider"] == "Unavailable from status API"
+    assert health.details["model"] == "Unavailable from status API"
+    assert health.collections == []
 
 
 def test_pgvector_backend_search_and_delete_cover_non_empty_collection(tmp_path) -> None:
@@ -409,6 +496,11 @@ def test_qdrant_backend_upsert_and_search_use_fake_client() -> None:
     assert deleted == 1
     assert health.backend == "qdrant"
     assert health.healthy is True
+    assert health.collections == []
+    assert health.details["dependency_status"] == "ready"
+    assert health.details["score_semantics"] == (
+        "Qdrant uses cosine similarity; retrieval distance is 1 - score."
+    )
 
 
 def test_qdrant_backend_search_uses_query_points_when_search_api_is_unavailable() -> None:
@@ -546,3 +638,104 @@ def test_qdrant_backend_rejects_dimension_mismatch() -> None:
     with _create_session() as session:
         with pytest.raises(QdrantCollectionConfigError, match="dimensions"):
             backend.ensure_collection(session, collection)
+
+
+def test_qdrant_backend_health_reports_missing_collection_and_dimension_mismatch(tmp_path) -> None:
+    class FakeCollectionsResponse:
+        def __init__(self, names: list[str]) -> None:
+            self.collections = [types.SimpleNamespace(name=name) for name in names]
+
+    class FakeCollectionInfo:
+        def __init__(self, size: int, distance: str, count: int) -> None:
+            self.config = types.SimpleNamespace(
+                params=types.SimpleNamespace(
+                    vectors=types.SimpleNamespace(size=size, distance=distance)
+                )
+            )
+            self.points_count = count
+
+    class FakeClient:
+        def __init__(self, info_by_name: dict[str, FakeCollectionInfo]) -> None:
+            self.info_by_name = info_by_name
+
+        def get_collections(self):
+            return FakeCollectionsResponse(list(self.info_by_name))
+
+        def get_collection(self, collection_name: str):
+            return self.info_by_name[collection_name]
+
+    backend = QdrantBackend(
+        url="http://user:secret@localhost:6333",
+        api_key=None,
+        client=FakeClient({}),
+    )
+
+    with _create_session() as session:
+        knowledge_base = KnowledgeBase(name="fixture-local", description=None, metadata_json={})
+        source = Source(
+            knowledge_base=knowledge_base,
+            kind="local_directory",
+            uri=str(tmp_path),
+            config_json={},
+        )
+        document = Document(
+            knowledge_base=knowledge_base,
+            source=source,
+            uri=str(tmp_path / "guide.txt"),
+            content_hash="hash",
+            mime_type="text/plain",
+            metadata_json={},
+        )
+        version = DocumentVersion(
+            document=document,
+            version_number=1,
+            content_hash="hash",
+            parser_name="plaintext",
+            parser_config_json={},
+            extracted_text="guide text",
+            metadata_json={},
+        )
+        chunk = Chunk(
+            document_version=version,
+            chunk_index=0,
+            text="guide text",
+            char_start=0,
+            char_end=10,
+            metadata_json={},
+        )
+        embedding = Embedding(
+            chunk=chunk,
+            provider="deterministic-local",
+            model="hash-8d",
+            dimensions=8,
+            embedding=[0.25] * 8,
+            metadata_json={},
+        )
+        session.add_all([knowledge_base, source, document, version, chunk, embedding])
+        session.commit()
+
+        missing_health = backend.health(session)
+
+        expected_name = build_vector_collection(
+            knowledge_base_name="fixture-local",
+            provider="deterministic-local",
+            model="hash-8d",
+            dimensions=8,
+        ).name
+        backend.client = FakeClient(
+            {expected_name: FakeCollectionInfo(size=16, distance="Cosine", count=3)}
+        )
+        mismatch_health = backend.health(session)
+
+    assert missing_health.status == "degraded"
+    assert missing_health.collections[0].exists is False
+    assert missing_health.collections[0].metadata["unavailable_reason"] == (
+        f"Collection not found: {expected_name}."
+    )
+    assert mismatch_health.status == "degraded"
+    assert mismatch_health.collections[0].metadata["unavailable_reason"] == (
+        "Dimension mismatch: expected 8, got 16."
+    )
+    assert mismatch_health.collections[0].metadata["collection_url"] == (
+        f"http://localhost:6333/collections/{expected_name}"
+    )

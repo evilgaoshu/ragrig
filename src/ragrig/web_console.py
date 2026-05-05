@@ -24,6 +24,11 @@ from ragrig.plugins import get_plugin_registry
 from ragrig.providers import get_provider_registry
 from ragrig.vectorstore.base import VectorBackendHealth
 
+
+def _plugin_discovery_by_id() -> dict[str, dict[str, Any]]:
+    return {item["plugin_id"]: item for item in get_plugin_registry().list_discovery()}
+
+
 CONSOLE_HTML_PATH = Path(__file__).with_name("web_console.html")
 
 
@@ -91,6 +96,9 @@ def build_system_status(
     elif dialect != "unknown":
         extension_state = "not_applicable"
 
+    plugin_discovery = _plugin_discovery_by_id()
+    qdrant_plugin = plugin_discovery.get("vector.qdrant")
+
     return {
         "status": "healthy" if database_ok else "unhealthy",
         "app": {
@@ -117,13 +125,42 @@ def build_system_status(
             "health": {
                 "healthy": vector_health.healthy,
                 "distance_metric": vector_health.distance_metric,
+                "collections": [
+                    {
+                        "name": item.name,
+                        "exists": item.exists,
+                        "dimensions": item.dimensions,
+                        "distance_metric": item.distance_metric,
+                        "vector_count": item.vector_count,
+                        "backend": item.backend,
+                        "metadata": item.metadata,
+                        "unavailable_reason": item.metadata.get("unavailable_reason"),
+                    }
+                    for item in vector_health.collections
+                ],
+                "dependency_status": vector_health.details.get("dependency_status", "ready"),
+                "provider": vector_health.details.get("provider", "Unavailable from status API"),
+                "model": vector_health.details.get("model", "Unavailable from status API"),
+                "total_vectors": vector_health.details.get("total_vectors"),
+                "error": vector_health.details.get("error"),
+                "score_semantics": vector_health.details.get("score_semantics"),
                 "details": vector_health.details,
+            },
+            "plugin": {
+                "plugin_id": qdrant_plugin["plugin_id"] if qdrant_plugin is not None else None,
+                "status": qdrant_plugin["status"] if qdrant_plugin is not None else None,
+                "reason": qdrant_plugin["reason"] if qdrant_plugin is not None else None,
+                "missing_dependencies": (
+                    qdrant_plugin["missing_dependencies"] if qdrant_plugin is not None else []
+                ),
             },
         },
     }
 
 
-def list_knowledge_bases(session: Session) -> list[dict[str, Any]]:
+def list_knowledge_bases(session: Session, *, settings: Settings) -> list[dict[str, Any]]:
+    plugin_discovery = _plugin_discovery_by_id()
+    vector_plugin = plugin_discovery.get("vector.qdrant")
     items: list[dict[str, Any]] = []
     for knowledge_base in session.scalars(select(KnowledgeBase).order_by(KnowledgeBase.name)):
         source_count = session.scalar(
@@ -154,7 +191,10 @@ def list_knowledge_bases(session: Session) -> list[dict[str, Any]]:
                 "name": knowledge_base.name,
                 "description": knowledge_base.description,
                 "owner": knowledge_base.metadata_json.get("owner"),
-                "vector_backend": "pgvector",
+                "vector_backend": settings.vector_backend,
+                "vector_plugin_status": vector_plugin["status"]
+                if vector_plugin is not None
+                else None,
                 "source_count": source_count or 0,
                 "document_count": document_count or 0,
                 "chunk_count": chunk_count or 0,
