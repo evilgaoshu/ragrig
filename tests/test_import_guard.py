@@ -62,6 +62,7 @@ OPTIONAL_IMPORT_ROOTS = {
     "ollama",
     "openai",
     "opensearchpy",
+    "pyarrow",
     "paddleocr",
     "paramiko",
     "pyarrow",

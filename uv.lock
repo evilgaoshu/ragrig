@@ -3929,7 +3929,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0,<1.0.0" },
     { name = "voyageai", marker = "extra == 'cloud-voyage'", specifier = ">=0.3.2,<1.0.0" },
 ]
-provides-extras = ["cloud-aws", "cloud-cohere", "cloud-google", "cloud-jina", "cloud-openai", "cloud-voyage", "cloud-llm", "cloud-embeddings", "doc-parsers", "local-ml", "s3", "parquet", "fileshare", "vectorstores"]
+    provides-extras = ["cloud-aws", "cloud-cohere", "cloud-google", "cloud-jina", "cloud-openai", "cloud-voyage", "cloud-llm", "cloud-embeddings", "doc-parsers", "local-ml", "s3", "parquet", "fileshare", "vectorstores"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -643,7 +643,6 @@ def test_export_to_object_storage_dry_run_excludes_parquet_when_pyarrow_missing(
     assert all(not key.endswith(".parquet") for key in report.artifact_keys)
     assert any(key.endswith(".jsonl") for key in report.artifact_keys)
 
-
 def test_export_to_object_storage_dry_run_reports_planned_artifacts_without_writes(
     sqlite_session,
 ) -> None:
