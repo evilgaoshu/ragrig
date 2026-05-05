@@ -96,6 +96,10 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     )
     assert registry.get("source.s3").status is expected_s3_status
     assert registry.get("source.fileshare").status is expected_fileshare_status
+    expected_object_storage_status = (
+        PluginStatus.DEGRADED if is_dependency_available("boto3") else PluginStatus.UNAVAILABLE
+    )
+    assert registry.get("sink.object_storage").status is expected_object_storage_status
 
 
 def test_manifest_rejects_unknown_capabilities_for_documented_plugin_types() -> None:
@@ -326,6 +330,13 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
         "smb": "unavailable",
         "webdav": "unavailable",
     }
+    assert discovery["sink.object_storage"]["status"] == "unavailable"
+    assert discovery["sink.object_storage"]["missing_dependencies"] == ["boto3"]
+    assert discovery["sink.object_storage"]["secret_requirements"] == [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    ]
     assert discovery["source.google_workspace"]["missing_dependencies"] == ["googleapiclient"]
 
 
@@ -375,9 +386,19 @@ async def test_plugins_endpoint_exposes_registry_status(tmp_path) -> None:
         "source.local",
         "vector.pgvector",
         "source.s3",
+        "sink.object_storage",
     }
     source_s3 = next(item for item in payload["items"] if item["plugin_id"] == "source.s3")
     expected_s3_status = "ready" if is_dependency_available("boto3") else "unavailable"
     assert source_s3["status"] == expected_s3_status
     assert source_s3["configurable"] is True
     assert "AWS_ACCESS_KEY_ID" in source_s3["secret_requirements"]
+    object_storage_sink = next(
+        item for item in payload["items"] if item["plugin_id"] == "sink.object_storage"
+    )
+    expected_object_storage_status = (
+        "degraded" if is_dependency_available("boto3") else "unavailable"
+    )
+    assert object_storage_sink["status"] == expected_object_storage_status
+    assert object_storage_sink["configurable"] is True
+    assert "AWS_SESSION_TOKEN" in object_storage_sink["secret_requirements"]

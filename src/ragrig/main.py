@@ -144,7 +144,7 @@ def create_app(
     def knowledge_bases(
         session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, list[dict[str, Any]]]:
-        return {"items": list_knowledge_bases(session)}
+        return {"items": list_knowledge_bases(session, settings=active_settings)}
 
     @app.get("/sources", response_model=None)
     def sources(

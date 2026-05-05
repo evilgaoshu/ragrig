@@ -139,7 +139,7 @@
 
       .status-strip {
         display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
         gap: 12px;
         margin-bottom: 18px;
       }
@@ -198,6 +198,65 @@
       .panel-title { font-size: 15px; font-weight: 850; }
       .panel-meta { color: var(--muted); font-size: 12px; font-weight: 700; }
       .panel-body { padding: 14px 16px 16px; }
+
+      .vector-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+        gap: 14px;
+      }
+
+      .facts {
+        display: grid;
+        gap: 10px;
+      }
+
+      .fact-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .fact-label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .fact-value {
+        margin-top: 4px;
+        font-size: 14px;
+        font-weight: 800;
+        overflow-wrap: anywhere;
+      }
+
+      .pill-row,
+      .collection-meta,
+      .collection-header {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .collection-header {
+        justify-content: space-between;
+      }
+
+      .collection-name {
+        font-weight: 800;
+        overflow-wrap: anywhere;
+      }
+
+      .sub,
+      .code,
+      .fact-value,
+      .collection-name,
+      .pill,
+      td,
+      th {
+        overflow-wrap: anywhere;
+      }
 
       table { width: 100%; border-collapse: collapse; }
       th, td { text-align: left; border-bottom: 1px solid #ece8df; padding: 12px 10px; vertical-align: top; }
@@ -258,6 +317,7 @@
         .shell { grid-template-columns: 1fr; }
         .rail { display: none; }
         .status-strip, .grid { grid-template-columns: 1fr; }
+        .vector-layout, .fact-grid { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -274,6 +334,7 @@
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
         <div class="nav-item">Models</div>
+        <div class="nav-item">Plugins</div>
         <div class="nav-item">Evaluation</div>
         <div class="nav-item">Settings</div>
         <div class="aside-note" id="sidebar-note">Loading runtime state...</div>
@@ -293,9 +354,18 @@
         <section class="status-strip">
           <div class="status-card"><div class="status-head">API</div><strong id="api-status">Loading</strong><span id="api-subtext">Waiting for /system/status</span></div>
           <div class="status-card"><div class="status-head">Database</div><strong id="db-status">Loading</strong><span id="db-subtext">Runtime DB state</span></div>
+          <div class="status-card"><div class="status-head">Vector Backend</div><strong id="vector-backend-status">Loading</strong><span id="vector-backend-subtext">Waiting for /system/status.vector</span></div>
           <div class="status-card"><div class="status-head">Knowledge Bases</div><strong id="kb-count">0</strong><span id="kb-subtext">Knowledge inventory</span></div>
           <div class="status-card"><div class="status-head">Pipeline Runs</div><strong id="run-count">0</strong><span id="run-subtext">Recent ingestion and indexing</span></div>
           <div class="status-card"><div class="status-head">Embedding Profiles</div><strong id="model-count">0</strong><span id="model-subtext">Real indexed model profiles</span></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><div class="panel-title">Vector Backend Readiness</div><div class="panel-meta">GET /system/status · no secrets</div><div id="vector-panel-status" class="pill neutral">Loading</div></div>
+          <div class="panel-body vector-layout">
+            <div class="facts stack" id="vector-summary"></div>
+            <div class="stack" id="vector-collections"></div>
+          </div>
         </section>
 
         <section class="grid">
@@ -330,6 +400,7 @@
             <section class="panel">
               <div class="panel-head"><div class="panel-title">Retrieval Lab</div><div class="panel-meta">Real POST /retrieval/search</div></div>
               <div class="panel-body stack">
+                <div class="sub code" id="retrieval-backend-meta">Backend · metric · score semantics</div>
                 <label class="sub" for="retrieval-kb">Knowledge base</label>
                 <select id="retrieval-kb"></select>
                 <label class="sub" for="retrieval-query">Query</label>
@@ -347,6 +418,11 @@
             </section>
 
             <section class="panel">
+              <div class="panel-head"><div class="panel-title">Plugin Readiness</div><div class="panel-meta">Registry-backed source and sink status</div></div>
+              <div class="panel-body stack" id="plugins-panel"></div>
+            </section>
+
+            <section class="panel">
               <div class="panel-head"><div class="panel-title">Health / DB Status</div><div class="panel-meta">Backend readiness</div></div>
               <div class="panel-body stack" id="health-panel"></div>
             </section>
@@ -361,6 +437,7 @@
         sources: [],
         pipelineRuns: [],
         documents: [],
+        plugins: [],
         models: null,
         system: null,
       };
@@ -375,9 +452,14 @@
 
       function pillClass(status) {
         if (["completed", "healthy", "connected", "ready"].includes(status)) return "pill";
-        if (["completed_with_failures", "degraded", "warning", "disabled"].includes(status)) return "pill warn";
-        if (["failed", "error", "unhealthy"].includes(status)) return "pill error";
+        if (["completed_with_failures", "degraded", "warning", "missing dependency", "dimension mismatch"].includes(status)) return "pill warn";
+        if (["failed", "error", "unhealthy", "unreachable"].includes(status)) return "pill error";
         return "pill neutral";
+      }
+
+      function formatValue(value, fallback = 'Unavailable') {
+        if (value === null || value === undefined || value === '') return fallback;
+        return String(value);
       }
 
       function empty(message) {
@@ -394,13 +476,14 @@
       }
 
       async function loadInitialData() {
-        const [system, knowledgeBases, sources, pipelineRuns, documents, models] = await Promise.all([
+        const [system, knowledgeBases, sources, pipelineRuns, documents, models, plugins] = await Promise.all([
           getJson('/system/status'),
           getJson('/knowledge-bases'),
           getJson('/sources'),
           getJson('/pipeline-runs'),
           getJson('/documents'),
           getJson('/models'),
+          getJson('/plugins'),
         ]);
         state.system = system;
         state.knowledgeBases = knowledgeBases.items;
@@ -408,6 +491,7 @@
         state.pipelineRuns = pipelineRuns.items;
         state.documents = documents.items;
         state.models = models;
+        state.plugins = plugins.items;
       }
 
       function renderStatusStrip() {
@@ -415,6 +499,8 @@
         document.getElementById('api-subtext').textContent = `version ${state.system.app.version}`;
         document.getElementById('db-status').textContent = state.system.db.status;
         document.getElementById('db-subtext').textContent = `${state.system.db.dialect} · ${state.system.db.extension.state}`;
+        document.getElementById('vector-backend-status').textContent = formatValue(state.system.vector.backend);
+        document.getElementById('vector-backend-subtext').textContent = `${formatValue(state.system.vector.status)} · ${formatValue(state.system.vector.health.dependency_status)}`;
         document.getElementById('kb-count').textContent = String(state.knowledgeBases.length);
         document.getElementById('kb-subtext').textContent = state.knowledgeBases.length ? 'Live knowledge bases' : 'No knowledge bases yet';
         document.getElementById('run-count').textContent = String(state.pipelineRuns.length);
@@ -422,6 +508,67 @@
         document.getElementById('model-count').textContent = String(state.models.embedding_profiles.length);
         document.getElementById('model-subtext').textContent = state.models.embedding_profiles.length ? 'Indexed embedding profiles' : 'No indexed profiles';
         document.getElementById('sidebar-note').innerHTML = `${escapeHtml(state.system.db.dialect)} primary<br>${escapeHtml(state.system.db.extension.state)} extension state<br>${escapeHtml(state.system.db.runtime_database_url)}`;
+      }
+
+      function renderVectorPanel() {
+        const summary = document.getElementById('vector-summary');
+        const collections = document.getElementById('vector-collections');
+        const panelStatus = document.getElementById('vector-panel-status');
+        const vector = state.system.vector;
+        const health = vector.health;
+        panelStatus.className = pillClass(vector.status);
+        panelStatus.textContent = formatValue(vector.status, 'loading');
+
+        const detailCards = [
+          ['Backend', vector.backend],
+          ['Status', vector.status],
+          ['Dependency readiness', health.dependency_status],
+          ['Distance metric', health.distance_metric],
+          ['Provider', health.provider],
+          ['Model', health.model],
+          ['Total vectors', health.total_vectors],
+        ].map(([label, value]) => `
+          <div class="card">
+            <div class="fact-label">${escapeHtml(label)}</div>
+            <div class="fact-value">${escapeHtml(formatValue(value))}</div>
+          </div>
+        `).join('');
+
+        const detailLines = [];
+        if (health.error) {
+          detailLines.push(`<div class="card"><div class="name">${escapeHtml(health.error.length > 96 ? health.error.slice(0, 93) + '...' : health.error)}</div><div class="sub code">${escapeHtml(health.error)}</div></div>`);
+        }
+        if (health.score_semantics) {
+          detailLines.push(`<div class="card"><div class="name">Score semantics</div><div class="sub">${escapeHtml(health.score_semantics)}</div></div>`);
+        }
+        if (vector.plugin && (vector.plugin.reason || vector.plugin.status)) {
+          detailLines.push(`<div class="card"><div class="name">Plugin readiness</div><div class="sub">${escapeHtml(formatValue(vector.plugin.status, 'Unavailable'))}</div><div class="sub">${escapeHtml(formatValue(vector.plugin.reason, 'Unavailable from status API'))}</div></div>`);
+        }
+        summary.innerHTML = `<div class="fact-grid">${detailCards}</div>${detailLines.join('')}`;
+
+        if (!health.collections.length) {
+          collections.innerHTML = empty('No collection stats returned by status API.');
+          return;
+        }
+
+        collections.innerHTML = health.collections.map((item) => {
+          const metaEntries = Object.entries(item.metadata || {}).filter(([, value]) => value !== null && value !== undefined && value !== '');
+          return `
+            <div class="card">
+              <div class="collection-header">
+                <div class="collection-name code">${escapeHtml(item.name)}</div>
+                <div class="pill-row">
+                  <span class="${pillClass(item.exists ? 'ready' : 'warning')}">${item.exists ? 'exists' : 'missing'}</span>
+                  <span class="pill neutral">${escapeHtml(formatValue(item.backend))}</span>
+                  <span class="pill neutral">${escapeHtml(formatValue(item.dimensions, 'Unavailable'))} dims</span>
+                  <span class="pill neutral">${escapeHtml(formatValue(item.distance_metric))}</span>
+                  <span class="pill neutral">${escapeHtml(formatValue(item.vector_count))} vectors</span>
+                </div>
+              </div>
+              <div class="collection-meta sub">${metaEntries.map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(formatValue(value))}`).join(' · ')}</div>
+            </div>
+          `;
+        }).join('');
       }
 
       function renderKnowledgeBases() {
@@ -554,6 +701,29 @@
         root.innerHTML = blocks.join('');
       }
 
+      function renderPlugins() {
+        const root = document.getElementById('plugins-panel');
+        const importantPlugins = state.plugins.filter((item) => [
+          'source.s3',
+          'sink.object_storage',
+          'vector.pgvector',
+          'model.openai',
+        ].includes(item.plugin_id));
+        if (!importantPlugins.length) {
+          root.innerHTML = empty('No plugin discovery payload available.');
+          return;
+        }
+        root.innerHTML = importantPlugins.map((item) => `
+          <div class="card">
+            <div class="name">${escapeHtml(item.plugin_id)} <span class="${pillClass(item.status)}">${escapeHtml(item.status)}</span></div>
+            <div class="sub">${escapeHtml(item.description)}</div>
+            <div class="sub">capabilities: ${escapeHtml((item.capabilities || []).join(', ') || 'none')}</div>
+            <div class="sub">secrets: ${escapeHtml((item.secret_requirements || []).join(', ') || 'none')}</div>
+            <div class="sub">deps: ${escapeHtml((item.missing_dependencies || []).join(', ') || 'none')}</div>
+          </div>
+        `).join('');
+      }
+
       function renderHealthPanel() {
         const root = document.getElementById('health-panel');
         root.innerHTML = `
@@ -574,6 +744,8 @@
 
       function renderRetrievalControls() {
         const select = document.getElementById('retrieval-kb');
+        const backendMeta = document.getElementById('retrieval-backend-meta');
+        backendMeta.textContent = `${formatValue(state.system.vector.backend)} · ${formatValue(state.system.vector.health.distance_metric)} · ${formatValue(state.system.vector.health.score_semantics, 'Score semantics unavailable from status API')}`;
         if (!state.knowledgeBases.length) {
           select.innerHTML = '<option value="">No knowledge bases</option>';
           select.disabled = true;
@@ -620,7 +792,9 @@
           await renderPipelineRuns();
           await renderDocumentPreview();
           renderModels();
+          renderPlugins();
           renderHealthPanel();
+          renderVectorPanel();
           renderRetrievalControls();
         } catch (error) {
           document.body.innerHTML = `<main class="main">${empty(error.message)}</main>`;

@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
+from ragrig.config import Settings
 from ragrig.db.models import Base, DocumentVersion
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
@@ -59,6 +60,10 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "RAGRig Web Console" in response.text
     assert "Knowledge Bases" in response.text
     assert "Retrieval Lab" in response.text
+    assert "Plugin Readiness" in response.text
+    assert "Vector Backend Readiness" in response.text
+    assert "repeat(auto-fit, minmax(150px, 1fr))" in response.text
+    assert "Backend · metric · score semantics" in response.text
 
 
 @pytest.mark.anyio
@@ -103,8 +108,20 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     assert system_status.json()["db"]["dialect"] == "sqlite"
     assert system_status.json()["vector"]["backend"] == "pgvector"
     assert system_status.json()["vector"]["health"]["healthy"] is True
+    assert system_status.json()["vector"]["health"]["dependency_status"] == "ready"
+    assert system_status.json()["vector"]["health"]["provider"] == "deterministic-local"
+    assert system_status.json()["vector"]["health"]["model"] == "hash-8d"
+    assert system_status.json()["vector"]["health"]["total_vectors"] >= 2
+    assert system_status.json()["vector"]["health"]["score_semantics"] == (
+        "pgvector uses cosine distance; retrieval score is 1 - distance."
+    )
+    assert system_status.json()["vector"]["health"]["collections"][0]["backend"] == "pgvector"
+    assert system_status.json()["vector"]["health"]["collections"][0]["metadata"]["provider"] == (
+        "deterministic-local"
+    )
     assert knowledge_bases.status_code == 200
     assert knowledge_bases.json()["items"][0]["name"] == "fixture-local"
+    assert knowledge_bases.json()["items"][0]["vector_backend"] == "pgvector"
     assert knowledge_bases.json()["items"][0]["document_count"] == 2
     assert knowledge_bases.json()["items"][0]["chunk_count"] >= 2
     assert (
@@ -146,6 +163,7 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     plugin_ids = {item["plugin_id"] for item in plugins.json()["items"]}
     assert "source.local" in plugin_ids
     assert "source.s3" in plugin_ids
+    assert "sink.object_storage" in plugin_ids
     assert "model.ollama" in plugin_ids
     assert "model.openai" in plugin_ids
 
@@ -175,6 +193,75 @@ async def test_console_api_returns_empty_states_without_seed_data(tmp_path) -> N
     assert any(item["plugin_id"] == "vector.pgvector" for item in plugins.json()["items"])
 
 
+@pytest.mark.anyio
+async def test_system_status_reports_qdrant_dependency_gap_without_breaking_console(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-qdrant-missing.db"
+    session_factory = _create_file_session_factory(database_path)
+    monkeypatch.setitem(__import__("sys").modules, "qdrant_client.http.models", None)
+    monkeypatch.setitem(__import__("sys").modules, "qdrant_client", None)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        settings=Settings(vector_backend="qdrant"),
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        status_response = await client.get("/system/status")
+        console_response = await client.get("/console")
+
+    assert console_response.status_code == 200
+    assert status_response.status_code == 200
+    payload = status_response.json()["vector"]
+    assert payload["backend"] == "qdrant"
+    assert payload["status"] == "degraded"
+    assert payload["health"]["healthy"] is False
+    assert payload["health"]["dependency_status"] == "missing dependency"
+    assert payload["health"]["error"] == "Missing dependency: qdrant-client is not installed."
+    assert payload["health"]["collections"] == []
+
+
+@pytest.mark.anyio
+async def test_system_status_reports_unreachable_qdrant_without_white_screen(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-qdrant-unreachable.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    class BrokenBackend:
+        def health(self, session: Session):
+            raise RuntimeError("Qdrant unreachable at configured endpoint.")
+
+    monkeypatch.setattr("ragrig.vectorstore.get_vector_backend", lambda settings: BrokenBackend())
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        settings=Settings(
+            vector_backend="qdrant",
+            qdrant_url="http://user:secret@localhost:6333?api_key=secret",
+        ),
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        status_response = await client.get("/system/status")
+        console_response = await client.get("/console")
+        knowledge_bases = await client.get("/knowledge-bases")
+
+    assert console_response.status_code == 200
+    assert status_response.status_code == 200
+    payload = status_response.json()["vector"]
+    assert payload["backend"] == "qdrant"
+    assert payload["status"] == "error"
+    assert payload["health"]["dependency_status"] == "unreachable"
+    assert payload["health"]["error"] == "Qdrant unreachable at configured endpoint."
+    assert payload["health"]["details"]["url"] == "http://localhost:6333"
+    assert knowledge_bases.status_code == 200
+    assert knowledge_bases.json()["items"] == []
+
+
 def test_import_guard_includes_provider_registry_as_core_module() -> None:
     from tests.test_import_guard import CORE_PATHS, REPO_ROOT
 
@@ -199,3 +286,4 @@ async def test_system_status_reports_alembic_revision_when_revision_table_exists
     assert response.status_code == 200
     assert response.json()["db"]["alembic_revision"] == "20260503_0001"
     assert response.json()["vector"]["status"] == "healthy"
+    assert response.json()["vector"]["health"]["collections"] == []

@@ -103,6 +103,7 @@ Authoritative specs:
 - [Phase 1e local model provider plugin spec](./docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md)
 - [GitHub CI checks spec](./docs/specs/ragrig-github-ci-checks-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
+- [Vector backend status console spec](./docs/specs/ragrig-vector-backend-status-console-spec.md)
 - [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
 - [Core coverage and supply chain gates](./docs/specs/ragrig-core-coverage-supply-chain-gates.md)
 - [Web Console prototype](./docs/prototypes/web-console/index.html)
@@ -127,6 +128,7 @@ What the current MVP covers:
 - retrieval Playground backed by the real `POST /retrieval/search` contract
 - embedding profile inventory from indexed chunks
 - health, DB dialect, Alembic revision, extension state, and visible tables
+- vector backend readiness with backend type, dependency state, collection rows, and score semantics
 
 Current limitations:
 
@@ -134,6 +136,7 @@ Current limitations:
 - model registry remains read-only, but now exposes local LLM and reranker registry shells for PR-2 providers
 - provider registry metadata is exposed read-only, including Ollama, LM Studio, OpenAI-compatible local runtimes, and optional BGE boundaries
 - the console only shows capabilities backed by existing DB/API boundaries and uses empty, disabled, or degraded states for the rest
+- qdrant remains optional; missing `qdrant-client` or missing live collections degrade only the vector panel instead of the whole console
 
 <p align="center">
   <img src="./docs/prototypes/web-console/ragrig-web-console-prototype.png" alt="RAGRig Web Console prototype" width="860">
@@ -915,7 +918,59 @@ Executable commands in this repository:
 
 - `make coverage`: enforces 100% line coverage for the hard core scope: `db`, `repositories`, `ingestion`, `parsers`, `chunkers`, `embeddings`, `indexing`, `plugins`, `retrieval.py`, `config.py`, and `health.py`.
 - `make plugins-check`: prints the plugin registry discovery payload as offline JSON.
+- `make export-object-storage-check`: runs an opt-in object storage export smoke command and defaults to `dry_run` unless explicitly overridden.
 - `make licenses`: fails on GPL, AGPL, SSPL, or source-available third-party packages.
+
+## Object Storage Sink
+
+`sink.object_storage` now exports a minimal governed artifact set to S3-compatible object storage using optional `boto3`.
+
+Current runtime-ready targets:
+
+- AWS S3
+- Cloudflare R2
+- MinIO
+- Ceph RGW
+- Wasabi
+- Backblaze B2 S3 API
+- Tencent COS S3 API
+- Alibaba OSS in S3-compatible mode
+
+Contract-only targets in this phase:
+
+- Google Cloud Storage
+- Azure Blob Storage
+
+Example config:
+
+```json
+{
+  "bucket": "exports",
+  "prefix": "team-a",
+  "endpoint_url": "http://localhost:9000",
+  "region": "us-east-1",
+  "use_path_style": true,
+  "verify_tls": true,
+  "access_key": "env:AWS_ACCESS_KEY_ID",
+  "secret_key": "env:AWS_SECRET_ACCESS_KEY",
+  "session_token": "env:AWS_SESSION_TOKEN",
+  "path_template": "{knowledge_base}/{run_id}/{artifact}.{format}",
+  "overwrite": false,
+  "dry_run": true,
+  "include_markdown_summary": true,
+  "object_metadata": {
+    "environment": "dev"
+  }
+}
+```
+
+Behavior notes:
+
+- JSONL artifacts use `application/x-ndjson`.
+- Markdown summaries use `text/markdown; charset=utf-8`.
+- Existing objects are skipped when `overwrite=false`.
+- `dry_run=true` computes the export plan without uploading objects.
+- Retrieval and evaluation exports are explicitly marked unsupported/degraded until dedicated runtimes exist.
 - `make sbom`: writes a CycloneDX JSON SBOM to `docs/operations/artifacts/sbom.cyclonedx.json`.
 - `make audit`: runs a vulnerability audit of the local environment and writes `docs/operations/artifacts/pip-audit.json`.
 - `make dependency-inventory`: refreshes `docs/operations/dependency-inventory.md`.

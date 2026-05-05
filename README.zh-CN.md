@@ -579,11 +579,63 @@ RAGRig 需要把质量门槛和依赖治理写进项目规则：
 
 - `make coverage`：对硬范围 core 模块执行 100% line coverage gate，范围包括 `db`、`repositories`、`ingestion`、`parsers`、`chunkers`、`embeddings`、`indexing`、`plugins`、`retrieval.py`、`config.py`、`health.py`。
 - `make plugins-check`：输出插件 registry 的离线 JSON 状态。
+- `make export-object-storage-check`：执行可选的对象存储导出 smoke 命令，默认走 `dry_run`。
 - `make licenses`：对已安装的第三方依赖执行许可证检查，阻止 GPL、AGPL、SSPL 和 source-available 依赖进入默认路径。
 - `make sbom`：输出 CycloneDX JSON SBOM 到 `docs/operations/artifacts/sbom.cyclonedx.json`。
 - `make audit`：对当前本地环境做漏洞审计，并输出 `docs/operations/artifacts/pip-audit.json`。
 - `make dependency-inventory`：刷新 `docs/operations/dependency-inventory.md`。
 - `make supply-chain-check`：串行执行许可证检查、SBOM 导出和漏洞审计。
+
+## Object Storage Sink
+
+`sink.object_storage` 已支持通过可选 `boto3` 把最小治理产物导出到 S3-compatible 对象存储。
+
+本阶段 runtime-ready：
+
+- AWS S3
+- Cloudflare R2
+- MinIO
+- Ceph RGW
+- Wasabi
+- Backblaze B2 S3 API
+- 腾讯 COS S3 API
+- 阿里 OSS S3-compatible 模式
+
+本阶段仅 contract/stub：
+
+- Google Cloud Storage
+- Azure Blob Storage
+
+示例配置：
+
+```json
+{
+  "bucket": "exports",
+  "prefix": "team-a",
+  "endpoint_url": "http://localhost:9000",
+  "region": "us-east-1",
+  "use_path_style": true,
+  "verify_tls": true,
+  "access_key": "env:AWS_ACCESS_KEY_ID",
+  "secret_key": "env:AWS_SECRET_ACCESS_KEY",
+  "session_token": "env:AWS_SESSION_TOKEN",
+  "path_template": "{knowledge_base}/{run_id}/{artifact}.{format}",
+  "overwrite": false,
+  "dry_run": true,
+  "include_markdown_summary": true,
+  "object_metadata": {
+    "environment": "dev"
+  }
+}
+```
+
+行为说明：
+
+- JSONL 导出使用 `application/x-ndjson`。
+- Markdown 汇总使用 `text/markdown; charset=utf-8`。
+- `overwrite=false` 时遇到已存在对象会跳过。
+- `dry_run=true` 只生成导出计划，不真正上传。
+- retrieval / evaluation 导出目前会明确标记为 unsupported/degraded，不假装 ready。
 
 本轮显式不纳入 coverage hard gate 的路径：
 

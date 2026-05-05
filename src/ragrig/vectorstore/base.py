@@ -5,7 +5,9 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+from urllib.parse import urlsplit, urlunsplit
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 
@@ -114,6 +116,85 @@ def _slug(value: str) -> str:
     return normalized or "na"
 
 
+def summarize_vector_profile_value(values: list[str]) -> str:
+    unique_values = sorted({value for value in values if value})
+    if not unique_values:
+        return "Unavailable from status API"
+    if len(unique_values) == 1:
+        return unique_values[0]
+    return "Multiple profiles"
+
+
+def sanitize_url(value: str | None) -> str | None:
+    if not value:
+        return value
+    parts = urlsplit(value)
+    if not parts.scheme or not parts.netloc:
+        return value
+    host = parts.hostname or ""
+    if parts.port is not None:
+        host = f"{host}:{parts.port}"
+    return urlunsplit((parts.scheme, host, parts.path, "", ""))
+
+
+def list_embedding_profiles(session: Session) -> list[dict[str, Any]]:
+    from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding, KnowledgeBase
+
+    latest_version_numbers = (
+        select(
+            DocumentVersion.document_id.label("document_id"),
+            func.max(DocumentVersion.version_number).label("version_number"),
+        )
+        .group_by(DocumentVersion.document_id)
+        .subquery()
+    )
+    latest_versions = (
+        select(
+            DocumentVersion.id.label("document_version_id"),
+            DocumentVersion.document_id.label("document_id"),
+        )
+        .join(
+            latest_version_numbers,
+            (DocumentVersion.document_id == latest_version_numbers.c.document_id)
+            & (DocumentVersion.version_number == latest_version_numbers.c.version_number),
+        )
+        .subquery()
+    )
+    rows = session.execute(
+        select(
+            KnowledgeBase.id.label("knowledge_base_id"),
+            KnowledgeBase.name.label("knowledge_base_name"),
+            Embedding.provider.label("provider"),
+            Embedding.model.label("model"),
+            Embedding.dimensions.label("dimensions"),
+            func.count(Embedding.id).label("vector_count"),
+        )
+        .join(Document, Document.knowledge_base_id == KnowledgeBase.id)
+        .join(latest_versions, latest_versions.c.document_id == Document.id)
+        .join(Chunk, Chunk.document_version_id == latest_versions.c.document_version_id)
+        .join(Embedding, Embedding.chunk_id == Chunk.id)
+        .group_by(
+            KnowledgeBase.id,
+            KnowledgeBase.name,
+            Embedding.provider,
+            Embedding.model,
+            Embedding.dimensions,
+        )
+        .order_by(KnowledgeBase.name, Embedding.provider, Embedding.model, Embedding.dimensions)
+    ).all()
+    return [
+        {
+            "knowledge_base_id": row.knowledge_base_id,
+            "knowledge_base_name": row.knowledge_base_name,
+            "provider": row.provider,
+            "model": row.model,
+            "dimensions": int(row.dimensions),
+            "vector_count": int(row.vector_count or 0),
+        }
+        for row in rows
+    ]
+
+
 def build_vector_collection(
     *,
     knowledge_base_name: str,
@@ -152,4 +233,7 @@ __all__ = [
     "VectorEmbeddingRecord",
     "VectorSearchResult",
     "build_vector_collection",
+    "list_embedding_profiles",
+    "sanitize_url",
+    "summarize_vector_profile_value",
 ]

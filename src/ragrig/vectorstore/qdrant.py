@@ -12,6 +12,10 @@ from ragrig.vectorstore.base import (
     VectorCollectionStatus,
     VectorEmbeddingRecord,
     VectorSearchResult,
+    build_vector_collection,
+    list_embedding_profiles,
+    sanitize_url,
+    summarize_vector_profile_value,
 )
 
 
@@ -210,25 +214,91 @@ class QdrantBackend:
         ]
 
     def health(self, session: Session) -> VectorBackendHealth:
-        del session
-        collections = [
-            VectorCollectionStatus(
-                name=collection.name,
-                exists=True,
-                dimensions=0,
-                distance_metric=self.distance_metric,
-                vector_count=0,
-                backend=self.backend_name,
-            )
+        profiles = list_embedding_profiles(session)
+        live_collections = {
+            collection.name: self.client.get_collection(collection.name)
             for collection in self.client.get_collections().collections
+        }
+        collections: list[VectorCollectionStatus] = []
+        for profile in profiles:
+            collection = build_vector_collection(
+                knowledge_base_name=profile["knowledge_base_name"],
+                provider=profile["provider"],
+                model=profile["model"],
+                dimensions=profile["dimensions"],
+            )
+            info = live_collections.get(collection.name)
+            if info is None:
+                collections.append(
+                    VectorCollectionStatus(
+                        name=collection.name,
+                        exists=False,
+                        dimensions=profile["dimensions"],
+                        distance_metric=self.distance_metric,
+                        vector_count=0,
+                        backend=self.backend_name,
+                        metadata={
+                            "provider": profile["provider"],
+                            "model": profile["model"],
+                            "knowledge_base": profile["knowledge_base_name"],
+                            "unavailable_reason": f"Collection not found: {collection.name}.",
+                        },
+                    )
+                )
+                continue
+            size = int(info.config.params.vectors.size)
+            distance = str(info.config.params.vectors.distance)
+            metadata = {
+                "provider": profile["provider"],
+                "model": profile["model"],
+                "knowledge_base": profile["knowledge_base_name"],
+                "expected_dimensions": profile["dimensions"],
+                "actual_dimensions": size,
+                "collection_url": sanitize_url(
+                    f"{self.url.rstrip('/')}/collections/{collection.name}"
+                ),
+            }
+            if size != int(profile["dimensions"]):
+                metadata["unavailable_reason"] = (
+                    f"Dimension mismatch: expected {profile['dimensions']}, got {size}."
+                )
+            collections.append(
+                VectorCollectionStatus(
+                    name=collection.name,
+                    exists=True,
+                    dimensions=size,
+                    distance_metric=self.distance_metric,
+                    vector_count=int(getattr(info, "points_count", 0) or 0),
+                    backend=self.backend_name,
+                    metadata=metadata | {"distance": distance},
+                )
+            )
+        provider = summarize_vector_profile_value([profile["provider"] for profile in profiles])
+        model = summarize_vector_profile_value([profile["model"] for profile in profiles])
+        total_vectors = sum(item.vector_count for item in collections) if collections else None
+        errors = [
+            item.metadata.get("unavailable_reason")
+            for item in collections
+            if item.metadata.get("unavailable_reason")
         ]
+        healthy = not errors
         return VectorBackendHealth(
             backend=self.backend_name,
-            healthy=True,
-            status="healthy",
+            healthy=healthy,
+            status="healthy" if healthy else "degraded",
             distance_metric=self.distance_metric,
             collections=collections,
-            details={"url": self.url},
+            details={
+                "url": sanitize_url(self.url),
+                "dependency_status": "ready",
+                "provider": provider,
+                "model": model,
+                "total_vectors": total_vectors,
+                "score_semantics": (
+                    "Qdrant uses cosine similarity; retrieval distance is 1 - score."
+                ),
+                "error": errors[0] if errors else None,
+            },
         )
 
 
