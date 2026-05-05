@@ -100,6 +100,7 @@ Authoritative specs:
 - [Phase 1e local model provider plugin spec](./docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md)
 - [GitHub CI checks spec](./docs/specs/ragrig-github-ci-checks-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
+- [Vector backend status console spec](./docs/specs/ragrig-vector-backend-status-console-spec.md)
 - [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
 - [Core coverage and supply chain gates](./docs/specs/ragrig-core-coverage-supply-chain-gates.md)
 - [Web Console prototype](./docs/prototypes/web-console/index.html)
@@ -124,6 +125,7 @@ What the current MVP covers:
 - retrieval Playground backed by the real `POST /retrieval/search` contract
 - embedding profile inventory from indexed chunks
 - health, DB dialect, Alembic revision, extension state, and visible tables
+- vector backend readiness with backend type, dependency state, collection rows, and score semantics
 
 Current limitations:
 
@@ -131,6 +133,7 @@ Current limitations:
 - model registry is still a read-only shell except for real indexed embedding profiles
 - provider registry metadata is now exposed read-only, but real LLM/reranker adapters are still deferred to later Phase 1e PRs
 - the console only shows capabilities backed by existing DB/API boundaries and uses empty, disabled, or degraded states for the rest
+- qdrant remains optional; missing `qdrant-client` or missing live collections degrade only the vector panel instead of the whole console
 
 <p align="center">
   <img src="./docs/prototypes/web-console/ragrig-web-console-prototype.png" alt="RAGRig Web Console prototype" width="860">

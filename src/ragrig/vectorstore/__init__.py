@@ -13,6 +13,7 @@ from ragrig.vectorstore.base import (
     VectorEmbeddingRecord,
     VectorSearchResult,
     build_vector_collection,
+    sanitize_url,
 )
 from ragrig.vectorstore.pgvector import PgVectorBackend, cosine_distance, normalize_vector
 from ragrig.vectorstore.qdrant import QdrantBackend
@@ -35,9 +36,63 @@ def get_vector_backend_health(session: Session, settings: Settings) -> VectorBac
             healthy=False,
             status="degraded",
             distance_metric="cosine",
-            details={"error": str(exc)},
+            collections=[],
+            details={
+                "dependency_status": "missing dependency",
+                "provider": "Unavailable from status API",
+                "model": "Unavailable from status API",
+                "total_vectors": None,
+                "score_semantics": (
+                    "Qdrant uses cosine similarity; retrieval distance is 1 - score."
+                ),
+                "error": "Missing dependency: qdrant-client is not installed.",
+                "exception": str(exc),
+            },
         )
-    return backend.health(session)
+    try:
+        return backend.health(session)
+    except VectorBackendConfigurationError as exc:
+        return VectorBackendHealth(
+            backend=settings.vector_backend,
+            healthy=False,
+            status="error",
+            distance_metric="cosine",
+            collections=[],
+            details={
+                "dependency_status": "not configured",
+                "provider": "Unavailable from status API",
+                "model": "Unavailable from status API",
+                "total_vectors": None,
+                "score_semantics": None,
+                "error": str(exc),
+            },
+        )
+    except Exception as exc:
+        score_semantics = None
+        if settings.vector_backend == "qdrant":
+            score_semantics = "Qdrant uses cosine similarity; retrieval distance is 1 - score."
+        elif settings.vector_backend == "pgvector":
+            score_semantics = "pgvector uses cosine distance; retrieval score is 1 - distance."
+        return VectorBackendHealth(
+            backend=settings.vector_backend,
+            healthy=False,
+            status="error",
+            distance_metric="cosine",
+            collections=[],
+            details={
+                "dependency_status": (
+                    "unreachable" if settings.vector_backend == "qdrant" else "error"
+                ),
+                "provider": "Unavailable from status API",
+                "model": "Unavailable from status API",
+                "total_vectors": None,
+                "score_semantics": score_semantics,
+                "error": str(exc),
+                "url": sanitize_url(settings.qdrant_url)
+                if settings.vector_backend == "qdrant"
+                else None,
+            },
+        )
 
 
 __all__ = [
