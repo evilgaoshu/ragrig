@@ -368,8 +368,7 @@ def _prepare_artifacts(
                     {
                         "status": "unsupported",
                         "reason": (
-                            "explicit retrieval report export is not implemented "
-                            "in this phase"
+                            "explicit retrieval report export is not implemented in this phase"
                         ),
                     }
                 ],

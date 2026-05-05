@@ -499,8 +499,7 @@ def official_stub_manifests() -> list[PluginManifest]:
             plugin_id="sink.object_storage",
             display_name="Object Storage Sink",
             description=(
-                "Exports governed assets and audit artifacts to S3-compatible "
-                "object storage."
+                "Exports governed assets and audit artifacts to S3-compatible object storage."
             ),
             plugin_type=PluginType.SINK,
             family="object_storage",

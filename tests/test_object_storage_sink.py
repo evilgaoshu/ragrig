@@ -682,14 +682,17 @@ def test_object_storage_internal_helpers_cover_edge_cases() -> None:
             del bucket, key, body, content_type, metadata
 
     assert _sink_uri("exports", "") == "s3://exports"
-    assert _render_key(
-        path_template="{knowledge_base}/{artifact}.{format}",
-        prefix="",
-        knowledge_base="fixture-export",
-        run_id="run-1",
-        artifact="documents",
-        artifact_format="jsonl",
-    ) == "fixture-export/documents.jsonl"
+    assert (
+        _render_key(
+            path_template="{knowledge_base}/{artifact}.{format}",
+            prefix="",
+            knowledge_base="fixture-export",
+            run_id="run-1",
+            artifact="documents",
+            artifact_format="jsonl",
+        )
+        == "fixture-export/documents.jsonl"
+    )
 
     with pytest.raises(ObjectStorageConfigError, match="missing required secret reference"):
         _resolve_secrets(
