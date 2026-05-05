@@ -17,7 +17,7 @@ Practical rules:
   embeddings, and later local model providers.
 - Local model adapters have higher priority than cloud model adapters.
 - Cloud SDKs belong in optional plugin extras, not the core dependency set.
-- The Phase 1e provider registry contract is core. Real local/cloud adapters remain optional follow-on work.
+- The Phase 1e provider registry contract is core. PR-2 local adapters remain optional at install time even when their registry entries are present.
 - Every provider must expose capability metadata so operators can compare privacy,
   cost, latency, streaming, embedding, reranking, and batch support.
 - Official or open-source SDKs are preferred. If an official SDK does not exist or is too
@@ -42,14 +42,14 @@ Practical rules:
 
 | Plugin | Provider | SDK or protocol | Notes |
 | --- | --- | --- | --- |
-| `model.google_vertex` | [Google Vertex AI](https://cloud.google.com/vertex-ai) / Gemini on Vertex AI | [`google-genai`](https://cloud.google.com/vertex-ai/generative-ai/docs/sdks/overview) | Official Google Gen AI SDK. Must support project/location configuration and service-account auth. |
-| `model.aws_bedrock` | [Amazon Bedrock](https://aws.amazon.com/bedrock/) | [`boto3`](https://docs.aws.amazon.com/bedrock/latest/userguide/getting-started-api.html) / botocore | Official AWS SDK path. Must support region, profile, role, and retry configuration. |
-| `model.azure_openai` | [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service) | Official `openai` SDK configured for Azure endpoints, plus Azure identity packages when needed | Enterprise cloud model path for Microsoft tenants. |
-| `model.openrouter` | [OpenRouter](https://openrouter.ai/) | [OpenRouter API](https://openrouter.ai/docs/quickstart), OpenRouter SDK, or official `openai` SDK with OpenRouter base URL | Cloud model routing path. Must record selected upstream model/provider. |
-| `model.openai` | [OpenAI](https://platform.openai.com/docs/overview) | Official `openai` SDK | Optional cloud model provider. |
-| `model.cohere` | [Cohere](https://cohere.com/) | Official `cohere` SDK or Cohere HTTP API | Cloud embedding, reranking, and generation. |
-| `model.voyage` | [Voyage AI](https://www.voyageai.com/) | Official [`voyageai`](https://docs.voyageai.com/docs/api-key-and-installation) Python package | Cloud embedding and reranking. |
-| `model.jina` | [Jina AI](https://jina.ai/) | [Jina API](https://docs.jina.ai/) via `httpx` unless an official Python SDK is selected | Cloud embeddings, reranking, and document APIs. |
+| `model.vertex_ai` | [Google Vertex AI](https://cloud.google.com/vertex-ai) / Gemini on Vertex AI | `google-cloud-aiplatform` today, with direct HTTP only if the official SDK proves too heavy | PR-3 ships contract-only metadata/stub visibility. Production adapter must support project/location configuration and service-account auth. |
+| `model.bedrock` | [Amazon Bedrock](https://aws.amazon.com/bedrock/) | [`boto3`](https://docs.aws.amazon.com/bedrock/latest/userguide/getting-started-api.html) / botocore | PR-3 ships contract-only metadata/stub visibility. Production adapter must support region, profile, role, and retry configuration. |
+| `model.azure_openai` | [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service) | Official `openai` SDK configured for Azure endpoints, plus Azure identity packages when needed | PR-3 ships contract-only metadata/stub visibility. Enterprise cloud model path for Microsoft tenants. |
+| `model.openrouter` | [OpenRouter](https://openrouter.ai/) | [OpenRouter API](https://openrouter.ai/docs/quickstart), OpenRouter SDK, or official `openai` SDK with OpenRouter base URL | PR-3 ships contract-only metadata/stub visibility. Production adapter must record selected upstream model/provider. |
+| `model.openai` | [OpenAI](https://platform.openai.com/docs/overview) | Official `openai` SDK | PR-3 ships contract-only metadata/stub visibility. |
+| `model.cohere` | [Cohere](https://cohere.com/) | Official `cohere` SDK or Cohere HTTP API | PR-3 ships contract-only metadata/stub visibility for cloud embedding, reranking, and generation. |
+| `model.voyage` | [Voyage AI](https://www.voyageai.com/) | Official [`voyageai`](https://docs.voyageai.com/docs/api-key-and-installation) Python package | PR-3 ships contract-only metadata/stub visibility for cloud embedding and reranking. |
+| `model.jina` | [Jina AI](https://jina.ai/) | [Jina API](https://docs.jina.ai/) via `httpx` unless an official Python SDK is selected | PR-3 ships contract-only metadata/stub visibility for cloud embeddings and reranking. |
 
 ## 3. Initial SDK and Dependency Inventory
 
@@ -75,11 +75,14 @@ the preferred supply chain for official plugins when those plugins are implement
 | Local embedding/rerank | `FlagEmbedding`, `sentence-transformers`, `torch` | Heavy ML packages must be optional extras, never core imports. |
 | Cloud model serving | `google-genai`, `boto3`, `openai`, `cohere`, `voyageai`, `httpx` | Official SDK first; direct official API second. |
 
-PR-1 note:
+PR-2 note:
 
 - `src/ragrig/providers/` is now part of the core dependency-safe path.
-- PR-1 must not add any provider SDK from the tables above into the default runtime.
+- PR-2 adds a `local-ml` optional extra for `ollama`, `openai`, `FlagEmbedding`, `sentence-transformers`, and `torch`.
+- PR-2 must not add any provider SDK from the tables above into the default runtime.
 - PR-2 and PR-3 may add extras or dependency groups, but core imports must remain optional-safe.
+ - PR-3 adds optional dependency groups `cloud-google`, `cloud-aws`, `cloud-openai`, `cloud-cohere`, `cloud-voyage`, and `cloud-jina` without changing the default install path.
+ - PR-3 cloud providers remain stub-only metadata surfaces; optional SDK presence may change discovery readiness, but default tests must not call live cloud endpoints.
 | Qdrant | `qdrant-client` | Official client. |
 | Enterprise vector stores | `pymilvus`, `weaviate-client`, `opensearch-py`, `elasticsearch`, `redis` | Official or project-maintained clients only. |
 | Object storage | `boto3`, `google-cloud-storage`, `azure-storage-blob`, `minio` | Prefer cloud/vendor SDKs; S3-compatible adapters must be tested against at least AWS S3, MinIO, and one non-AWS S3-compatible service. |
