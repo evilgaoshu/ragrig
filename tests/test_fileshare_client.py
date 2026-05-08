@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import sys
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
@@ -9,10 +8,6 @@ import httpx
 import pytest
 
 from ragrig.plugins.sources.fileshare.client import (
-    FakeFileshareClient,
-    FakeFileshareObject,
-    FileshareFileMetadata,
-    MountedPathClient,
     SFTPClient,
     SMBClient,
     WebDAVClient,
