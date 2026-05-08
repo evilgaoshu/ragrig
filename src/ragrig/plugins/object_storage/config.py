@@ -41,6 +41,7 @@ class ObjectStorageSinkConfig(S3CompatibleStorageConfig):
     dry_run: bool = False
     include_retrieval_artifact: bool = True
     include_markdown_summary: bool = True
+    parquet_export: bool = False
     object_metadata: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("path_template")

@@ -96,9 +96,7 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     )
     assert registry.get("source.s3").status is expected_s3_status
     assert registry.get("source.fileshare").status is expected_fileshare_status
-    expected_object_storage_status = (
-        PluginStatus.DEGRADED if is_dependency_available("boto3") else PluginStatus.UNAVAILABLE
-    )
+    expected_object_storage_status = PluginStatus.DEGRADED
     assert registry.get("sink.object_storage").status is expected_object_storage_status
 
 
@@ -273,6 +271,7 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
             "httpx",
             "openai",
             "paramiko",
+            "pyarrow",
             "smbprotocol",
             "voyageai",
         }
@@ -334,8 +333,8 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
         "smb": "unavailable",
         "webdav": "unavailable",
     }
-    assert discovery["sink.object_storage"]["status"] == "unavailable"
-    assert discovery["sink.object_storage"]["missing_dependencies"] == ["boto3"]
+    assert discovery["sink.object_storage"]["status"] == "degraded"
+    assert discovery["sink.object_storage"]["missing_dependencies"] == ["boto3", "pyarrow"]
     assert discovery["sink.object_storage"]["secret_requirements"] == [
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
@@ -400,9 +399,7 @@ async def test_plugins_endpoint_exposes_registry_status(tmp_path) -> None:
     object_storage_sink = next(
         item for item in payload["items"] if item["plugin_id"] == "sink.object_storage"
     )
-    expected_object_storage_status = (
-        "degraded" if is_dependency_available("boto3") else "unavailable"
-    )
+    expected_object_storage_status = "degraded"
     assert object_storage_sink["status"] == expected_object_storage_status
     assert object_storage_sink["configurable"] is True
     assert "AWS_SESSION_TOKEN" in object_storage_sink["secret_requirements"]

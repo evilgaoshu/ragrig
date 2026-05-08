@@ -52,7 +52,11 @@ class PluginRegistry:
         status = manifest.status
         reason = manifest.unavailable_reason
         if missing_dependencies and manifest.plugin_id != "source.fileshare":
-            status = PluginStatus.UNAVAILABLE
+            degraded_missing = set(manifest.degraded_missing_dependencies)
+            if degraded_missing and set(missing_dependencies).issubset(degraded_missing):
+                status = PluginStatus.DEGRADED
+            else:
+                status = PluginStatus.UNAVAILABLE
             reason = f"Missing optional dependencies: {', '.join(missing_dependencies)}"
         item = {
             "plugin_id": manifest.plugin_id,
