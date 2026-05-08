@@ -3,9 +3,9 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from starlette.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.responses import Response
 
 from ragrig import __version__
 from ragrig.config import Settings, get_settings
