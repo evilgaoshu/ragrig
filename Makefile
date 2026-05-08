@@ -1,7 +1,7 @@
 UV ?= uv
 ARTIFACTS_DIR ?= docs/operations/artifacts
 
-.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up
+.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -111,9 +111,14 @@ s3-check:
 fileshare-check:
 	$(UV) run python -m scripts.fileshare_check
 
-test-live-fileshare: fileshare-live-up
-	$(UV) run python -m scripts.seed_fileshare_live_fixtures
-	RAGRIG_FILESHARE_LIVE_SMOKE=1 $(UV) run pytest tests/test_fileshare_live_smoke.py -v
+preflight-fileshare-live:
+	$(UV) run python -m scripts.preflight_fileshare_live
+
+test-live-fileshare:
+	$(UV) run python -m scripts.test_live_fileshare
+
+test-live-fileshare-print-evidence:
+	$(UV) run python -m scripts.test_live_fileshare --print-evidence
 
 fileshare-live-up:
 	docker compose --profile fileshare-live up -d

@@ -204,3 +204,69 @@ Live smoke records:
 - list/read/stat for each supported protocol
 - scanner filter behavior (include/exclude, size limits, unsupported extensions)
 - graceful skip when optional SDK is missing
+
+## Live Smoke Preflight and Evidence
+
+This section defines the preflight checks and evidence output added to the live smoke path.
+
+### Preflight Checks (`scripts/preflight_fileshare_live.py`)
+
+Before starting containers, the preflight script verifies:
+
+1. **Docker CLI** — `docker --version` must succeed.
+2. **Docker Compose** — `docker compose version` must succeed (Compose v2).
+3. **Docker daemon** — `docker info` must succeed and show a running daemon.
+4. **Ports** — `127.0.0.1` ports `1445`, `8080`, and `2222` must be free (or overridden via env vars).
+5. **Optional SDKs** — `smbprotocol`, `paramiko`, and `httpx` import checks (warn-only; pytest will skip missing protocols).
+
+Failure behavior:
+
+- If any hard blocker (Docker missing, daemon down, port conflict) is found, the script exits `1` and prints an actionable, numbered list of blockers to `stderr`. No containers are started.
+- If only optional SDKs are missing, the script exits `0` with a warning; pytest skips the corresponding tests.
+- `--json` outputs a structured result for programmatic consumption.
+
+### Evidence Orchestration (`scripts/test_live_fileshare.py`)
+
+The orchestration script runs the live smoke end-to-end and produces a timestamped evidence record:
+
+1. **Preflight** — runs the preflight script; hard blockers stop before `compose up`.
+2. **Compose up** — `docker compose --profile fileshare-live up -d --wait`.
+3. **Seed fixtures** — copies `tests/fixtures/fileshare_live/` into each container.
+4. **Pytest** — runs `tests/test_fileshare_live_smoke.py` with `RAGRIG_FILESHARE_LIVE_SMOKE=1`.
+5. **Container logs** — tails the last N lines (default 100) from `samba`, `webdav`, and `sftp`.
+6. **Teardown** — runs `docker compose --profile fileshare-live down --remove-orphans` (default true; disable with `--no-teardown`).
+
+The evidence record is written to `docs/operations/artifacts/fileshare-live-smoke-record.json` by default and contains:
+
+- `meta`: start/finish timestamps, runner, cwd, overall result (`passed`/`failed`/`blocked`/`compose_up_failed`/`seed_failed`).
+- `preflight`: structured preflight result.
+- `steps`: ordered list of each step with timestamps, command, return code, stdout, and stderr.
+
+CLI flags:
+
+- `--no-start` — skip compose up (use when containers are already running).
+- `--no-teardown` — leave containers running after tests.
+- `--record <path>` — override the evidence file path.
+- `--print-evidence` — print the JSON record to stdout after running.
+- `--skip-preflight` — bypass preflight (not recommended).
+- `--logs-tail <N>` — change the number of log lines captured.
+
+### Makefile Targets
+
+- `make preflight-fileshare-live` — run preflight checks only.
+- `make test-live-fileshare` — run full orchestration with default evidence file.
+- `make test-live-fileshare-print-evidence` — same, but print evidence to stdout.
+- `make fileshare-live-up` / `make fileshare-live-down` — manual container lifecycle.
+
+### QA Acceptance Path
+
+1. Run `make preflight-fileshare-live` first. If blockers are reported, do not start containers.
+2. Run `make test-live-fileshare` to produce the evidence record.
+3. Paste the record (or `make test-live-fileshare-print-evidence` output) into the PR or issue as验收证据.
+
+### Unavailable Environment Fallback
+
+- No Docker / no daemon / port conflict → preflight blocks with actionable steps; containers are never started.
+- Missing optional SDKs → preflight warns; pytest skips the corresponding protocol tests.
+- No network in CI → `make test` and `make coverage` remain the hard gates; live smoke is opt-in only.
+- `make fileshare-check` (offline smoke) remains available without Docker or optional SDKs.
