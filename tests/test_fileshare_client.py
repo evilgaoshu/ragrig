@@ -662,8 +662,9 @@ class TestSFTPClientListFiles:
         mock_sftp.listdir_attr.return_value = [mock_stat]
 
         client = SFTPClient(host="host", username="u")
-        with patch.object(client, "_connect", return_value=mock_sftp):
-            result = client.list_files(root_path="/docs", cursor=None, page_size=100)
+        with patch.dict(sys.modules, {"paramiko": MagicMock()}):
+            with patch.object(client, "_connect", return_value=mock_sftp):
+                result = client.list_files(root_path="/docs", cursor=None, page_size=100)
 
         assert len(result.files) == 1
         assert result.files[0].path == "guide.md"
@@ -681,8 +682,9 @@ class TestSFTPClientListFiles:
 
         client = SFTPClient(host="host", username="u")
         future_cursor = datetime(2099, 1, 1, tzinfo=timezone.utc).isoformat()
-        with patch.object(client, "_connect", return_value=mock_sftp):
-            result = client.list_files(root_path="/docs", cursor=future_cursor, page_size=100)
+        with patch.dict(sys.modules, {"paramiko": MagicMock()}):
+            with patch.object(client, "_connect", return_value=mock_sftp):
+                result = client.list_files(root_path="/docs", cursor=future_cursor, page_size=100)
 
         assert result.files == []
         mock_sftp.close.assert_called_once()
@@ -708,8 +710,9 @@ class TestSFTPClientListFiles:
         mock_sftp.listdir_attr.side_effect = side_effect
 
         client = SFTPClient(host="host", username="u")
-        with patch.object(client, "_connect", return_value=mock_sftp):
-            result = client.list_files(root_path="/docs", cursor=None, page_size=100)
+        with patch.dict(sys.modules, {"paramiko": MagicMock()}):
+            with patch.object(client, "_connect", return_value=mock_sftp):
+                result = client.list_files(root_path="/docs", cursor=None, page_size=100)
 
         assert len(result.files) == 1
         assert result.files[0].path == "subdir/nested.md"
@@ -719,18 +722,20 @@ class TestSFTPClientListFiles:
         mock_sftp.listdir_attr.side_effect = IOError("permission denied")
 
         client = SFTPClient(host="host", username="u")
-        with patch.object(client, "_connect", return_value=mock_sftp):
-            with pytest.raises(FilesharePermanentError):
-                client.list_files(root_path="/docs", cursor=None, page_size=100)
+        with patch.dict(sys.modules, {"paramiko": MagicMock()}):
+            with patch.object(client, "_connect", return_value=mock_sftp):
+                with pytest.raises(FilesharePermanentError):
+                    client.list_files(root_path="/docs", cursor=None, page_size=100)
 
     def test_list_files_raises_on_generic_exception(self) -> None:
         mock_sftp = MagicMock()
         mock_sftp.listdir_attr.side_effect = ValueError("unexpected")
 
         client = SFTPClient(host="host", username="u")
-        with patch.object(client, "_connect", return_value=mock_sftp):
-            with pytest.raises(FilesharePermanentError):
-                client.list_files(root_path="/docs", cursor=None, page_size=100)
+        with patch.dict(sys.modules, {"paramiko": MagicMock()}):
+            with patch.object(client, "_connect", return_value=mock_sftp):
+                with pytest.raises(FilesharePermanentError):
+                    client.list_files(root_path="/docs", cursor=None, page_size=100)
 
 
 class TestSFTPClientReadFile:
@@ -743,8 +748,9 @@ class TestSFTPClientReadFile:
         mock_sftp.file.return_value = mock_fh
 
         client = SFTPClient(host="host", username="u")
-        with patch.object(client, "_connect", return_value=mock_sftp):
-            result = client.read_file(path="/docs/guide.md")
+        with patch.dict(sys.modules, {"paramiko": MagicMock()}):
+            with patch.object(client, "_connect", return_value=mock_sftp):
+                result = client.read_file(path="/docs/guide.md")
 
         assert result == b"hello"
         mock_sftp.close.assert_called_once()
@@ -754,9 +760,10 @@ class TestSFTPClientReadFile:
         mock_sftp.file.side_effect = IOError("read failed")
 
         client = SFTPClient(host="host", username="u")
-        with patch.object(client, "_connect", return_value=mock_sftp):
-            with pytest.raises(FilesharePermanentError, match="SFTP read failed"):
-                client.read_file(path="/docs/guide.md")
+        with patch.dict(sys.modules, {"paramiko": MagicMock()}):
+            with patch.object(client, "_connect", return_value=mock_sftp):
+                with pytest.raises(FilesharePermanentError, match="SFTP read failed"):
+                    client.read_file(path="/docs/guide.md")
 
         mock_sftp.close.assert_called_once()
 
@@ -765,8 +772,9 @@ class TestSFTPClientReadFile:
         mock_sftp.file.side_effect = FileshareCredentialError("bad creds")
 
         client = SFTPClient(host="host", username="u")
-        with patch.object(client, "_connect", return_value=mock_sftp):
-            with pytest.raises(FileshareCredentialError, match="bad creds"):
-                client.read_file(path="/docs/guide.md")
+        with patch.dict(sys.modules, {"paramiko": MagicMock()}):
+            with patch.object(client, "_connect", return_value=mock_sftp):
+                with pytest.raises(FileshareCredentialError, match="bad creds"):
+                    client.read_file(path="/docs/guide.md")
 
         mock_sftp.close.assert_called_once()
