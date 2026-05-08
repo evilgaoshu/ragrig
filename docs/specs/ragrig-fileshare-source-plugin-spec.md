@@ -213,17 +213,21 @@ This section defines the preflight checks and evidence output added to the live 
 
 Before starting containers, the preflight script verifies:
 
-1. **Docker CLI** — `docker --version` must succeed.
-2. **Docker Compose** — `docker compose version` must succeed (Compose v2).
-3. **Docker daemon** — `docker info` must succeed and show a running daemon.
-4. **Ports** — `127.0.0.1` ports `1445`, `8080`, and `2222` must be free (or overridden via env vars).
-5. **Optional SDKs** — `smbprotocol`, `paramiko`, and `httpx` import checks (warn-only; pytest will skip missing protocols).
+1. **`.env` file** — `.env` must exist. Missing `.env` emits an actionable blocker (`cp .env.example .env`) and stops before any container or port checks.
+2. **Docker CLI** — `docker --version` must succeed.
+3. **Docker Compose** — `docker compose version` must succeed (Compose v2).
+4. **Docker daemon** — `docker info` must succeed and show a running daemon.
+5. **Ports** — `127.0.0.1` ports `SMB_HOST_PORT` (default `1445`), `WEBDAV_HOST_PORT` (default `8080`), and `SFTP_HOST_PORT` (default `2222`) must be free. If a port is occupied, the blocker message includes the port number, env var name, and three fix options:
+   - free the port,
+   - override in `.env`,
+   - or enable `FILESHARE_AUTO_PICK_PORTS=1` to let preflight find free alternatives.
+6. **Optional SDKs** — `smbprotocol`, `paramiko`, and `httpx` import checks. Missing SDKs produce a warning with the exact install command (`uv sync --extra fileshare --dev`) and a fallback note that pytest will skip the protocol.
 
 Failure behavior:
 
-- If any hard blocker (Docker missing, daemon down, port conflict) is found, the script exits `1` and prints an actionable, numbered list of blockers to `stderr`. No containers are started.
+- If any hard blocker (`.env` missing, Docker missing, daemon down, port conflict) is found, the script exits `1` and prints an actionable, numbered list of blockers to `stderr`. No containers are started.
 - If only optional SDKs are missing, the script exits `0` with a warning; pytest skips the corresponding tests.
-- `--json` outputs a structured result for programmatic consumption.
+- `--json` outputs a structured result including `suggested_ports`, `target_ports`, and per-check details for programmatic consumption.
 
 ### Evidence Orchestration (`scripts/test_live_fileshare.py`)
 
