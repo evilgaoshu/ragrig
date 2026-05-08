@@ -873,11 +873,18 @@ make fileshare-check
 Live smoke (local Docker services, explicit opt-in):
 
 ```bash
-make test-live-fileshare   # starts containers, seeds fixtures, runs tests
-make fileshare-live-down   # tear down
+make test-live-fileshare          # preflight, up, seed, test, evidence
+make test-live-fileshare-print    # same, but also print evidence to stdout
+make fileshare-live-down          # tear down
 ```
 
-Live smoke requires `RAGRIG_FILESHARE_LIVE_SMOKE=1` and validates real list/read/stat/skip behavior against local Samba, WebDAV, and SFTP containers. It does not run in default CI.
+Live smoke validates real list/read/stat/skip behavior against local Samba, WebDAV, and SFTP containers. It does not run in default CI.
+
+**QA acceptance paths:**
+
+- **Docker available** — `make test-live-fileshare` runs preflight checks, starts containers, seeds fixtures, runs pytest, and writes evidence to `test-evidence/fileshare-live-<timestamp>.txt`.
+- **Docker unavailable** — preflight detects the missing dependency, prints actionable blockers, writes an evidence file, and exits 0 without starting containers.
+- **Default tests** — `make test` / `make coverage` remain isolated (no network, no secrets, no Docker).
 
 Example SMB config:
 

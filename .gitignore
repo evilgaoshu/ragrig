@@ -17,6 +17,7 @@ build/
 .coverage
 coverage.json
 docs/operations/artifacts/*.json
+test-evidence/
 
 *.log
 tmp/

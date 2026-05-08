@@ -532,6 +532,22 @@ uv sync --extra fileshare --dev
 make fileshare-check
 ```
 
+在线 live smoke（本地 Docker 服务，显式 opt-in）：
+
+```bash
+make test-live-fileshare         # 预检、启动容器、seed fixture、运行测试、输出证据
+make test-live-fileshare-print   # 同上，并直接将证据打印到 stdout
+make fileshare-live-down         # 清理容器
+```
+
+在线 live smoke 针对本地 Samba、WebDAV、SFTP 容器验证真实的 list/read/stat/skip 行为。默认 CI 不运行。
+
+**QA 验收路径：**
+
+- **Docker 可用** — `make test-live-fileshare` 会先运行预检，启动容器，seed fixture，运行 pytest，并将验收证据写入 `test-evidence/fileshare-live-<timestamp>.txt`。
+- **Docker 不可用** — 预检会检测到缺失的依赖，打印可操作的 blocker，写入证据文件，并以 exit 0 退出，不启动容器。
+- **默认测试** — `make test` / `make coverage` 保持隔离（无网络、无 secret、无 Docker）。
+
 SMB 配置示例：
 
 ```json
