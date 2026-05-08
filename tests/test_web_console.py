@@ -67,6 +67,15 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "no raw secrets" in response.text
     assert "repeat(auto-fit, minmax(150px, 1fr))" in response.text
     assert "Backend · metric · score semantics" in response.text
+    assert "Fileshare Source" in response.text
+    assert "SMB" in response.text
+    assert "NFS mounted path" in response.text
+    assert "WebDAV" in response.text
+    assert "SFTP" in response.text
+    assert "fileshare-protocols" in response.text
+    assert "fileshare-overall-status" in response.text
+    assert "make fileshare-check" in response.text
+    assert "make test-live-fileshare" in response.text
 
 
 @pytest.mark.anyio
@@ -172,6 +181,19 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     s3_plugin = next(item for item in plugins.json()["items"] if item["plugin_id"] == "source.s3")
     assert s3_plugin["example_config"]["bucket"] == "docs"
     assert s3_plugin["docs_reference"] == "docs/specs/ragrig-s3-source-plugin-spec.md"
+    fileshare_plugin = next(
+        item for item in plugins.json()["items"] if item["plugin_id"] == "source.fileshare"
+    )
+    assert fileshare_plugin["docs_reference"] == "docs/specs/ragrig-fileshare-source-plugin-spec.md"
+    assert "supported_protocols" in fileshare_plugin
+    assert "protocol_statuses" in fileshare_plugin
+    assert "protocol_example_configs" in fileshare_plugin
+    assert "protocol_secret_requirements" in fileshare_plugin
+    assert "protocol_missing_dependencies" in fileshare_plugin
+    assert "nfs_mounted" in fileshare_plugin["protocol_example_configs"]
+    assert "smb" in fileshare_plugin["protocol_example_configs"]
+    assert "webdav" in fileshare_plugin["protocol_example_configs"]
+    assert "sftp" in fileshare_plugin["protocol_example_configs"]
 
 
 @pytest.mark.anyio

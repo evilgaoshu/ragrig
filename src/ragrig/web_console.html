@@ -545,6 +545,17 @@
               <div class="panel-body stack" id="plugins-panel"></div>
             </section>
 
+            <section class="panel" id="fileshare-source-panel">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">Fileshare Source</div>
+                  <div class="panel-meta">SMB · NFS mounted path · WebDAV · SFTP</div>
+                </div>
+                <div id="fileshare-overall-status" class="pill neutral">Loading</div>
+              </div>
+              <div class="panel-body stack" id="fileshare-protocols"></div>
+            </section>
+
             <section class="panel">
               <div class="panel-head"><div class="panel-title">Health / DB Status</div><div class="panel-meta">Backend readiness</div></div>
               <div class="panel-body stack" id="health-panel"></div>
@@ -843,6 +854,7 @@
         const root = document.getElementById('plugins-panel');
         const importantPlugins = state.plugins.filter((item) => [
           'source.s3',
+          'source.fileshare',
           'sink.object_storage',
           'vector.pgvector',
           'model.openai',
@@ -860,6 +872,71 @@
             <div class="sub">deps: ${escapeHtml((item.missing_dependencies || []).join(', ') || 'none')}</div>
           </div>
         `).join('');
+      }
+
+      function renderFilesharePanel() {
+        const root = document.getElementById('fileshare-protocols');
+        const overallStatus = document.getElementById('fileshare-overall-status');
+        const plugin = state.plugins.find((item) => item.plugin_id === 'source.fileshare');
+        if (!plugin) {
+          root.innerHTML = empty('source.fileshare is not registered in the plugin registry.');
+          if (overallStatus) {
+            overallStatus.className = 'pill error';
+            overallStatus.textContent = 'missing';
+          }
+          return;
+        }
+        const protocols = plugin.supported_protocols || [];
+        const statuses = plugin.protocol_statuses || {};
+        const examples = plugin.protocol_example_configs || {};
+        const secrets = plugin.protocol_secret_requirements || {};
+        const deps = plugin.protocol_missing_dependencies || {};
+        const protocolLabels = {
+          smb: 'SMB',
+          nfs_mounted: 'NFS mounted path',
+          webdav: 'WebDAV',
+          sftp: 'SFTP',
+        };
+        const protocolFields = {
+          smb: ['host', 'share', 'root_path', 'port (optional)'],
+          nfs_mounted: ['root_path'],
+          webdav: ['base_url', 'root_path'],
+          sftp: ['host', 'root_path', 'port (optional)'],
+        };
+        if (overallStatus) {
+          overallStatus.className = pillClass(plugin.status);
+          overallStatus.textContent = plugin.status;
+        }
+        root.innerHTML = protocols.map((protocol) => {
+          const status = statuses[protocol] || 'unavailable';
+          const exampleConfig = examples[protocol] || {};
+          const secretList = secrets[protocol] || [];
+          const missingDeps = deps[protocol] || [];
+          const reason = missingDeps.length
+            ? `Missing optional SDK: ${missingDeps.join(', ')}`
+            : 'No optional dependencies required';
+          const fields = protocolFields[protocol] || [];
+          return `
+            <div class="card">
+              <div class="collection-header">
+                <div class="name">${escapeHtml(protocolLabels[protocol] || protocol)}</div>
+                <span class="${pillClass(status)}">${escapeHtml(status)}</span>
+              </div>
+              <div class="sub">fields: ${escapeHtml(fields.join(', ') || 'none')}</div>
+              <div class="sub">secrets: ${escapeHtml(secretList.join(', ') || 'none')}</div>
+              ${missingDeps.length ? `<div class="sub">sdk gap: ${escapeHtml(missingDeps.join(', '))}</div>` : ''}
+              <div class="sub">${escapeHtml(reason)}</div>
+              <pre class="code sub">${escapeHtml(JSON.stringify(exampleConfig, null, 2))}</pre>
+            </div>
+          `;
+        }).join('') + `
+          <div class="card">
+            <div class="name">Live smoke & docs</div>
+            <div class="sub">Offline: <span class="code">make fileshare-check</span></div>
+            <div class="sub">Live: <span class="code">make test-live-fileshare</span></div>
+            <div class="sub">Docs: <a class="code" href="${escapeHtml(plugin.docs_reference || '#')}" target="_blank">${escapeHtml(plugin.docs_reference || 'missing')}</a></div>
+          </div>
+        `;
       }
 
       function pluginMatchesWizardFilter(plugin, filter) {
@@ -1198,6 +1275,7 @@
           await renderDocumentPreview();
           renderModels();
           renderPlugins();
+          renderFilesharePanel();
           renderWizard();
           renderHealthPanel();
           renderVectorPanel();
