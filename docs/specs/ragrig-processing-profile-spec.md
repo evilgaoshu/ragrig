@@ -1058,3 +1058,74 @@ curl http://localhost:8000/knowledge-bases/fixture-local/understanding | jq '.un
 - API response includes `provider_available: false` — never fabricates a ready state
 - Ingestion/indexing pipelines record profile IDs in config snapshots and chunk/embed metadata for future fallback logic
 - All task types have active wildcard defaults; no pipeline path hits the safe fallback in current usage
+
+## 13. EVI-53 Implementation Delta (SupportedFormat Registry + Browser Upload)
+
+**PR:** [#32](https://github.com/evilgaoshu/ragrig/pull/32)
+**Branch:** `agent/dev-pi/f58150b9`
+
+### 13.1 Delivered: SupportedFormat Registry + Browser Upload
+
+This section documents the implementation of the SupportedFormat registry and browser
+upload entry point (Phase 1 items marked above). The following were implemented:
+
+#### New Modules
+
+- `src/ragrig/formats/` — SupportedFormat data model (`model.py`), registry (`registry.py`),
+  and YAML fixture (`supported_formats.yaml`) defining 13 file formats across
+  supported (4), preview (5), and planned (4) statuses.
+
+#### API Endpoints
+
+- `GET /supported-formats` — Lists all formats, optionally filtered by `?status=` query param.
+- `GET /supported-formats/check?extension=<ext>` — Checks a single extension against the
+  registry, returning `supported`/`preview`/`planned`/`unsupported` status with detail.
+- `POST /knowledge-bases/{kb_name}/upload` — Multipart file upload endpoint that:
+  - Validates each file's extension against the SupportedFormat registry
+  - Rejects unsupported/planned formats with HTTP 415 (`reason: unsupported_format`)
+  - Accepts supported/preview formats and triggers the ingestion pipeline
+  - Returns 202 with `pipeline_run_id`, `accepted_files`, `rejections`, and `warnings`
+
+#### Web Console Updates
+
+- **Supported Formats panel**: Displays formats grouped by status (supported/preview/planned)
+  with color-coded chips and hovers showing limitations.
+- **Browser Upload panel**: Drag-and-drop zone, file picker, per-file format validation
+  with status indicators (ready/warning/error), upload submission, and result display
+  with pipeline run link.
+
+#### Dependencies Added
+
+- `python-multipart` — Required by FastAPI for multipart form file uploads.
+- `pyyaml` — Required for parsing the SupportedFormat YAML fixture.
+
+#### Non-Implemented (per issue scope)
+
+- ProcessingProfile CRUD, matrix editing, or profile evaluation.
+- DocumentUnderstanding, term glossary, or knowledge map.
+- 10-100MB chunked upload.
+- PDF/DOCX/XLSX advanced parser capabilities.
+- Secret plaintext storage or display.
+
+#### Verification
+
+```bash
+# SupportedFormat count
+curl -s http://localhost:8000/supported-formats | jq '.formats | length'
+# => 13 (all statuses), >= 4 (supported status)
+
+# Check .md support
+curl -s 'http://localhost:8000/supported-formats/check?extension=.md' | jq -r '.supported, .status'
+# => true, supported
+
+# Upload .md to fixture KB
+echo "# test" > /tmp/test-upload.md
+curl -s -X POST http://localhost:8000/knowledge-bases/fixture-local/upload \
+  -F 'files=@/tmp/test-upload.md' | jq '.accepted_files, .pipeline_run_id'
+# => 1, <non-empty uuid>
+
+# Reject .jpg
+curl -s -X POST http://localhost:8000/knowledge-bases/fixture-local/upload \
+  -F 'files=@/tmp/test.jpg' | jq '.rejections[0].reason'
+# => "unsupported_format"
+```
