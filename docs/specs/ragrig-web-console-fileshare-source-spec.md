@@ -154,3 +154,80 @@ The Fileshare Source panel lives in the right column of the Web Console, below
 - `docs/specs/ragrig-fileshare-source-plugin-spec.md` — backend connector spec
 - `docs/specs/ragrig-web-console-spec.md` — overall Web Console spec
 - `docs/specs/ragrig-web-console-plugin-source-wizard-spec.md` — plugin wizard spec
+
+## 8. Phase 2 — Form Validation & Config Templates
+
+### 8.1 Goal
+
+Add browser-side form validation and copyable CLI/env config templates to the Fileshare Source panel, ensuring error/disabled states reflect real backend status.
+
+### 8.2 Scope
+
+In scope:
+
+- Per-protocol configuration forms in the Fileshare Source panel (SMB, NFS mounted, WebDAV, SFTP)
+- Browser-side field validation with inline error messages
+- "Copy CLI config" and "Copy ENV vars" buttons per protocol
+- Backend validation integration via `/plugins/source.fileshare/validate-config`
+- Disabled forms when protocol status is UNAVAILABLE
+- Warning banners when protocol status is DEGRADED
+- Tests covering validation cases
+
+Out of scope:
+
+- Secret storage or retrieval
+- Live connection testing from the browser
+- Pydantic config model changes
+
+### 8.3 Frontend Validation Rules
+
+| Field | Rule | Error Message |
+|-------|------|---------------|
+| `root_path` | Non-empty, no trailing whitespace | "root_path is required" / "root_path must not have trailing whitespace" |
+| `base_url` (WebDAV) | Must start with `http://` or `https://` | "base_url must start with http:// or https://" |
+| `host` (SMB/SFTP) | Non-empty | "host is required" |
+| `share` (SMB) | Non-empty | "share is required" |
+| `port` | Integer 1–65535 or empty | "port must be an integer between 1 and 65535" |
+| `username`/`password`/`private_key` | When non-empty, must match `env:VARIABLE_NAME` | "请使用 env: 引用，不要直接填写密钥" |
+
+### 8.4 Copyable Templates
+
+- **Copy CLI config**: JSON configuration template for the protocol, copied to clipboard
+- **Copy ENV vars**: `export VARIABLE_NAME=` lines for each required secret of the protocol
+
+### 8.5 Backend Validation Integration
+
+Form submission calls `POST /plugins/source.fileshare/validate-config` with the assembled config object. The endpoint returns:
+- `valid: true` with the validated config
+- `valid: false` with an error code and message
+
+The wizard layer enforces additional validations not present in the Pydantic model:
+- WebDAV `base_url` must start with `http://` or `https://`
+- Fileshare `username`/`password`/`private_key` must use `env:` references
+
+### 8.6 Status Semantics
+
+- **UNAVAILABLE**: Form is disabled, inputs are `disabled`, unavailable reason is shown
+- **DEGRADED**: Form is enabled, a warning banner is displayed
+- **READY**: Form is enabled, no warning
+
+### 8.7 Acceptance Criteria
+
+- [x] Fileshare Source panel renders per-protocol configuration forms
+- [x] Frontend validates all specified fields with inline error messages
+- [x] "Copy CLI config" button copies JSON template to clipboard
+- [x] "Copy ENV vars" button copies export statements to clipboard
+- [x] UNAVAILABLE protocols have disabled forms and no "Ready" text
+- [x] DEGRADED protocols show warning banners
+- [x] Form submission calls `/plugins/source.fileshare/validate-config` and displays results
+- [x] Backend wizard layer validates URL format and fileshare secret refs
+- [x] `make test` passes (286 passed, 9 skipped)
+- [x] `make web-check` passes (10 passed)
+- [x] New test covers 4 validation cases: required missing, URL format error, port out of bounds, plaintext secret rejection
+
+### 8.8 Non-goals
+
+- Secret value storage or retrieval
+- Browser-side live connection testing to real fileshares
+- i18n beyond the current hard-coded messages
+- Mobile-specific UI beyond responsive layout

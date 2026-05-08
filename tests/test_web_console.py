@@ -76,6 +76,19 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "fileshare-overall-status" in response.text
     assert "make fileshare-check" in response.text
     assert "make test-live-fileshare" in response.text
+    assert "FILESHARE_FIELD_SCHEMAS" in response.text
+    assert "validateFileshareField" in response.text
+    assert "handleFileshareFormSubmit" in response.text
+    assert "handleFileshareCopyClick" in response.text
+    assert "请使用 env: 引用，不要直接填写密钥" in response.text
+    assert "Copy CLI config" in response.text
+    assert "Copy ENV vars" in response.text
+    assert "fileshare-warning" in response.text
+    assert "fileshare-unavailable-reason" in response.text
+    assert "validateSingleFileshareField" in response.text
+    assert "showFileshareFieldError" in response.text
+    assert "root_path must not have trailing whitespace" in response.text
+    assert "trailing whitespace" in response.text
 
 
 @pytest.mark.anyio
@@ -371,6 +384,93 @@ async def test_system_status_reports_unreachable_qdrant_without_white_screen(
     assert payload["health"]["details"]["url"] == "http://localhost:6333"
     assert knowledge_bases.status_code == 200
     assert knowledge_bases.json()["items"] == []
+
+
+@pytest.mark.anyio
+async def test_fileshare_config_validation_cases(tmp_path) -> None:
+    """Verify /plugins/source.fileshare/validate-config rejects invalid frontend inputs."""
+    database_path = tmp_path / "web-console-fileshare-validation.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # 1. Missing required field (root_path empty)
+        missing_required = await client.post(
+            "/plugins/source.fileshare/validate-config",
+            json={
+                "config": {
+                    "protocol": "nfs_mounted",
+                    "root_path": "   ",
+                }
+            },
+        )
+        # 2. Invalid URL format for base_url (WebDAV)
+        invalid_url = await client.post(
+            "/plugins/source.fileshare/validate-config",
+            json={
+                "config": {
+                    "protocol": "webdav",
+                    "base_url": "ftp://webdav.example.com",
+                    "root_path": "/docs",
+                }
+            },
+        )
+        # 3. Port out of bounds
+        port_oob = await client.post(
+            "/plugins/source.fileshare/validate-config",
+            json={
+                "config": {
+                    "protocol": "smb",
+                    "host": "files.example.internal",
+                    "share": "team-a",
+                    "root_path": "/docs",
+                    "port": 70000,
+                }
+            },
+        )
+        # 4. Plaintext secret rejection
+        plaintext_secret = await client.post(
+            "/plugins/source.fileshare/validate-config",
+            json={
+                "config": {
+                    "protocol": "smb",
+                    "host": "files.example.internal",
+                    "share": "team-a",
+                    "root_path": "/docs",
+                    "username": "admin",
+                    "password": "env:FILESHARE_PASSWORD",
+                }
+            },
+        )
+        # 5. root_path trailing whitespace (WebDAV)
+        trailing_whitespace = await client.post(
+            "/plugins/source.fileshare/validate-config",
+            json={
+                "config": {
+                    "protocol": "webdav",
+                    "base_url": "https://webdav.example.com",
+                    "root_path": "/docs ",
+                }
+            },
+        )
+
+    assert missing_required.status_code == 400
+    assert "root_path" in missing_required.json()["error"]["message"].lower()
+
+    assert invalid_url.status_code == 400
+    assert invalid_url.json()["error"]["code"] == "plugin_config_invalid"
+
+    assert port_oob.status_code == 400
+    assert "port" in port_oob.json()["error"]["message"].lower()
+
+    assert plaintext_secret.status_code == 400
+    assert plaintext_secret.json()["error"]["code"] == "raw_secret_not_allowed"
+    assert "env:VARIABLE_NAME" in plaintext_secret.json()["error"]["message"]
+
+    assert trailing_whitespace.status_code == 400
+    assert trailing_whitespace.json()["error"]["code"] == "plugin_config_invalid"
+    assert "trailing whitespace" in trailing_whitespace.json()["error"]["message"].lower()
 
 
 def test_import_guard_includes_provider_registry_as_core_module() -> None:

@@ -408,6 +408,78 @@
         white-space: pre-wrap;
       }
 
+      .fileshare-form {
+        margin-top: 10px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .form-group {
+        display: grid;
+        gap: 4px;
+      }
+
+      .fileshare-label {
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .fileshare-input {
+        width: 100%;
+      }
+
+      .fileshare-input:disabled {
+        opacity: 0.6;
+        background: #f0f0f0;
+      }
+
+      .fileshare-input.input-error {
+        border-color: var(--red);
+        background: var(--red-soft);
+      }
+
+      .field-error {
+        color: var(--red);
+        font-size: 12px;
+        font-weight: 700;
+        min-height: 16px;
+      }
+
+      .required {
+        color: var(--red);
+      }
+
+      .fileshare-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 4px;
+      }
+
+      .fileshare-warning {
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: var(--amber-soft);
+        color: var(--amber);
+        font-size: 12px;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+
+      .fileshare-unavailable-reason {
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: var(--red-soft);
+        color: var(--red);
+        font-size: 12px;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+
+      .fileshare-validation-result {
+        margin-top: 8px;
+      }
+
       @media (max-width: 1100px) {
         .shell { grid-template-columns: 1fr; }
         .rail { display: none; }
@@ -874,6 +946,71 @@
         `).join('');
       }
 
+      const FILESHARE_FIELD_SCHEMAS = {
+        smb: [
+          { name: 'host', label: 'host', required: true, validate: 'nonempty' },
+          { name: 'share', label: 'share', required: true, validate: 'nonempty' },
+          { name: 'root_path', label: 'root_path', required: true, validate: 'root_path' },
+          { name: 'port', label: 'port (optional)', required: false, validate: 'port' },
+          { name: 'username', label: 'username', required: false, validate: 'secret' },
+          { name: 'password', label: 'password', required: false, validate: 'secret' },
+        ],
+        nfs_mounted: [
+          { name: 'root_path', label: 'root_path', required: true, validate: 'root_path' },
+        ],
+        webdav: [
+          { name: 'base_url', label: 'base_url', required: true, validate: 'url' },
+          { name: 'root_path', label: 'root_path', required: true, validate: 'root_path' },
+          { name: 'username', label: 'username', required: false, validate: 'secret' },
+          { name: 'password', label: 'password', required: false, validate: 'secret' },
+        ],
+        sftp: [
+          { name: 'host', label: 'host', required: true, validate: 'nonempty' },
+          { name: 'root_path', label: 'root_path', required: true, validate: 'root_path' },
+          { name: 'port', label: 'port (optional)', required: false, validate: 'port' },
+          { name: 'username', label: 'username', required: false, validate: 'secret' },
+          { name: 'password', label: 'password', required: false, validate: 'secret' },
+          { name: 'private_key', label: 'private_key', required: false, validate: 'secret' },
+        ],
+      };
+
+      function validateFileshareField(field, value) {
+        switch (field.validate) {
+          case 'root_path':
+            if (!value || !value.trim()) return 'root_path is required';
+            if (value !== value.trim()) return 'root_path must not have trailing whitespace';
+            return null;
+          case 'url':
+            if (!value || !value.trim()) return 'base_url is required for WebDAV';
+            if (!/^https?:\/\//i.test(value.trim())) return 'base_url must start with http:// or https://';
+            return null;
+          case 'nonempty':
+            if (!value || !value.trim()) return `${field.label} is required`;
+            return null;
+          case 'port':
+            if (!value) return null;
+            const num = Number(value);
+            if (!Number.isInteger(num) || num < 1 || num > 65535) return 'port must be an integer between 1 and 65535';
+            return null;
+          case 'secret':
+            if (!value) return null;
+            if (!/^env:[A-Za-z_][A-Za-z0-9_]*$/.test(value.trim())) return '请使用 env: 引用，不要直接填写密钥';
+            return null;
+          default:
+            return null;
+        }
+      }
+
+      function buildFileshareConfig(protocol, data) {
+        const config = { protocol };
+        Object.entries(data).forEach(([key, value]) => {
+          if (value !== null && value !== undefined && value !== '') {
+            config[key] = value;
+          }
+        });
+        return config;
+      }
+
       function renderFilesharePanel() {
         const root = document.getElementById('fileshare-protocols');
         const overallStatus = document.getElementById('fileshare-overall-status');
@@ -897,12 +1034,6 @@
           webdav: 'WebDAV',
           sftp: 'SFTP',
         };
-        const protocolFields = {
-          smb: ['host', 'share', 'root_path', 'port (optional)'],
-          nfs_mounted: ['root_path'],
-          webdav: ['base_url', 'root_path'],
-          sftp: ['host', 'root_path', 'port (optional)'],
-        };
         if (overallStatus) {
           overallStatus.className = pillClass(plugin.status);
           overallStatus.textContent = plugin.status;
@@ -912,21 +1043,52 @@
           const exampleConfig = examples[protocol] || {};
           const secretList = secrets[protocol] || [];
           const missingDeps = deps[protocol] || [];
-          const reason = missingDeps.length
-            ? `Missing optional SDK: ${missingDeps.join(', ')}`
-            : 'No optional dependencies required';
-          const fields = protocolFields[protocol] || [];
+          const isUnavailable = status === 'unavailable';
+          const isDegraded = status === 'degraded';
+          const schema = FILESHARE_FIELD_SCHEMAS[protocol] || [];
+          const fieldsHtml = schema.map((field) => {
+            const inputType = field.validate === 'port' ? 'number' : field.validate === 'url' ? 'url' : 'text';
+            const inputAttrs = [];
+            if (field.required) inputAttrs.push('required');
+            if (field.validate === 'port') {
+              inputAttrs.push('min="1"');
+              inputAttrs.push('max="65535"');
+            }
+            if (field.validate === 'url') {
+              inputAttrs.push('pattern="https?://.*"');
+            }
+            if (field.validate === 'secret') {
+              inputAttrs.push('pattern="^env:.*"');
+            }
+            return `
+              <div class="form-group">
+                <label class="sub fileshare-label">${escapeHtml(field.label)}${field.required ? ' <span class="required">*</span>' : ''}</label>
+                <input type="${inputType}" name="${escapeHtml(field.name)}" class="fileshare-input"
+                  ${inputAttrs.join(' ')} placeholder="${field.validate === 'secret' ? 'env:VARIABLE_NAME' : ''}"
+                  ${isUnavailable ? 'disabled' : ''}>
+                <div class="field-error" data-field="${escapeHtml(field.name)}"></div>
+              </div>
+            `;
+          }).join('');
+          const warningBanner = isDegraded ? `<div class="fileshare-warning">Warning: this protocol is degraded. Configuration may not work as expected.</div>` : '';
+          const disabledOverlay = isUnavailable ? `<div class="fileshare-unavailable-reason"><strong>Unavailable</strong>: ${escapeHtml(missingDeps.length ? `Missing optional SDK: ${missingDeps.join(', ')}` : 'Protocol unavailable')}</div>` : '';
           return `
-            <div class="card">
+            <div class="card fileshare-protocol-card" data-protocol="${escapeHtml(protocol)}">
               <div class="collection-header">
                 <div class="name">${escapeHtml(protocolLabels[protocol] || protocol)}</div>
                 <span class="${pillClass(status)}">${escapeHtml(status)}</span>
               </div>
-              <div class="sub">fields: ${escapeHtml(fields.join(', ') || 'none')}</div>
-              <div class="sub">secrets: ${escapeHtml(secretList.join(', ') || 'none')}</div>
-              ${missingDeps.length ? `<div class="sub">sdk gap: ${escapeHtml(missingDeps.join(', '))}</div>` : ''}
-              <div class="sub">${escapeHtml(reason)}</div>
-              <pre class="code sub">${escapeHtml(JSON.stringify(exampleConfig, null, 2))}</pre>
+              ${warningBanner}
+              ${disabledOverlay}
+              <form class="fileshare-form" data-protocol="${escapeHtml(protocol)}">
+                ${fieldsHtml}
+                <div class="form-actions fileshare-actions">
+                  <button type="submit" class="button primary" ${isUnavailable ? 'disabled' : ''}>Validate Config</button>
+                  <button type="button" class="button" data-action="copy-cli">Copy CLI config</button>
+                  <button type="button" class="button" data-action="copy-env">Copy ENV vars</button>
+                </div>
+                <div class="fileshare-validation-result"></div>
+              </form>
             </div>
           `;
         }).join('') + `
@@ -937,6 +1099,97 @@
             <div class="sub">Docs: <a class="code" href="${escapeHtml(plugin.docs_reference || '#')}" target="_blank">${escapeHtml(plugin.docs_reference || 'missing')}</a></div>
           </div>
         `;
+      }
+
+      function showFileshareFieldError(form, field, message) {
+        const errorEl = form.querySelector(`.field-error[data-field="${field.name}"]`);
+        const inputEl = form.querySelector(`[name="${field.name}"]`);
+        if (errorEl) errorEl.textContent = message || '';
+        if (inputEl) {
+          if (message) inputEl.classList.add('input-error');
+          else inputEl.classList.remove('input-error');
+        }
+      }
+
+      function validateSingleFileshareField(form, input) {
+        const protocol = form.dataset.protocol;
+        const schema = FILESHARE_FIELD_SCHEMAS[protocol] || [];
+        const field = schema.find((f) => f.name === input.name);
+        if (!field) return;
+        const error = validateFileshareField(field, input.value);
+        showFileshareFieldError(form, field, error);
+        return error;
+      }
+
+      async function handleFileshareFormSubmit(event) {
+        event.preventDefault();
+        const form = event.target;
+        const protocol = form.dataset.protocol;
+        const schema = FILESHARE_FIELD_SCHEMAS[protocol] || [];
+        const data = {};
+        let hasErrors = false;
+        form.querySelectorAll('.field-error').forEach((el) => { el.textContent = ''; });
+        form.querySelectorAll('.fileshare-input').forEach((el) => { el.classList.remove('input-error'); });
+        schema.forEach((field) => {
+          const input = form.querySelector(`[name="${field.name}"]`);
+          const value = input ? input.value : '';
+          data[field.name] = value || null;
+          const error = validateFileshareField(field, value);
+          if (error) {
+            hasErrors = true;
+            showFileshareFieldError(form, field, error);
+          }
+        });
+        if (hasErrors) return;
+        const config = buildFileshareConfig(protocol, data);
+        const resultEl = form.querySelector('.fileshare-validation-result');
+        resultEl.innerHTML = '<div class="sub">Validating...</div>';
+        try {
+          const response = await fetch(`/plugins/${encodeURIComponent('source.fileshare')}/validate-config`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config }),
+          });
+          const payload = await response.json();
+          const isValid = payload.valid === true;
+          resultEl.innerHTML = `
+            <div class="card">
+              <div class="collection-header">
+                <div class="name">${isValid ? 'Validation passed' : 'Validation failed'}</div>
+                <span class="${isValid ? 'pill' : 'pill error'}">${escapeHtml(isValid ? 'valid' : (payload.error && payload.error.code) || 'invalid')}</span>
+              </div>
+              <div class="sub">${escapeHtml(isValid ? 'Config accepted by plugin registry schema.' : (payload.error && payload.error.message) || 'Unknown error')}</div>
+            </div>
+          `;
+        } catch (error) {
+          resultEl.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
+      async function handleFileshareCopyClick(event) {
+        const button = event.target.closest('[data-action]');
+        if (!button) return;
+        const form = button.closest('.fileshare-form');
+        if (!form) return;
+        const protocol = form.dataset.protocol;
+        const plugin = state.plugins.find((item) => item.plugin_id === 'source.fileshare');
+        const action = button.dataset.action;
+        if (action === 'copy-cli') {
+          const examples = plugin?.protocol_example_configs || {};
+          const config = examples[protocol] || {};
+          await navigator.clipboard.writeText(JSON.stringify(config, null, 2));
+          const originalText = button.textContent;
+          button.textContent = 'Copied!';
+          setTimeout(() => { button.textContent = originalText; }, 2000);
+        } else if (action === 'copy-env') {
+          const secretsMap = plugin?.protocol_secret_requirements || {};
+          const secretList = secretsMap[protocol] || [];
+          const envLines = secretList.map((name) => `export ${name}=`);
+          await navigator.clipboard.writeText(envLines.join('\n') + (envLines.length ? '\n' : ''));
+          const originalText = button.textContent;
+          button.textContent = 'Copied!';
+          setTimeout(() => { button.textContent = originalText; }, 2000);
+        }
       }
 
       function pluginMatchesWizardFilter(plugin, filter) {
@@ -1307,6 +1560,14 @@
           state.wizard.result = null;
           renderWizard();
         });
+        document.getElementById('fileshare-protocols').addEventListener('submit', handleFileshareFormSubmit);
+        document.getElementById('fileshare-protocols').addEventListener('click', handleFileshareCopyClick);
+        document.getElementById('fileshare-protocols').addEventListener('blur', (event) => {
+          const input = event.target.closest('.fileshare-input');
+          if (!input || input.disabled) return;
+          const form = input.closest('.fileshare-form');
+          if (form) validateSingleFileshareField(form, input);
+        }, true);
         document.addEventListener('click', (event) => {
           const filterButton = event.target.closest('[data-wizard-filter]');
           if (filterButton) {

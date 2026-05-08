@@ -533,6 +533,34 @@ def validate_plugin_config_for_wizard(plugin_id: str, config: dict[str, Any]) ->
             ),
         )
 
+    if plugin_id == "source.fileshare":
+        protocol = config.get("protocol") if isinstance(config, dict) else None
+        base_url = config.get("base_url") if isinstance(config, dict) else None
+        root_path = config.get("root_path") if isinstance(config, dict) else None
+        if protocol == "webdav" and base_url is not None:
+            import re
+
+            if not re.match(r"^https?://", str(base_url)):
+                raise PluginWizardValidationError(
+                    code="plugin_config_invalid",
+                    message="base_url must start with http:// or https://",
+                )
+        if isinstance(root_path, str) and root_path != root_path.rstrip():
+            raise PluginWizardValidationError(
+                code="plugin_config_invalid",
+                message="root_path must not have trailing whitespace",
+            )
+        for secret_key in ("username", "password", "private_key"):
+            value = config.get(secret_key) if isinstance(config, dict) else None
+            if isinstance(value, str) and value.strip() and not value.startswith("env:"):
+                raise PluginWizardValidationError(
+                    code="raw_secret_not_allowed",
+                    message=(
+                        "raw secret-like values are not accepted in the Web Console wizard; "
+                        f"use env:VARIABLE_NAME references for config.{secret_key}"
+                    ),
+                )
+
     try:
         validated = registry.validate_config(plugin_id, config)
     except PluginConfigValidationError as exc:
