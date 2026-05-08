@@ -299,9 +299,7 @@ def create_app(
             "created": result.created,
             "skipped": result.skipped,
             "failed": result.failed,
-            "errors": [
-                {"version_id": e.version_id, "error": e.error} for e in result.errors
-            ],
+            "errors": [{"version_id": e.version_id, "error": e.error} for e in result.errors],
         }
 
     @app.get("/knowledge-bases/{kb_id}/understanding-coverage", response_model=None)
