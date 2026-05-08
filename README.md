@@ -61,13 +61,19 @@ RAGRig treats RAG as an operational system:
 flowchart LR
     sources["Source plugins<br/>files, object storage, docs, wiki, DB"]
     pipeline["Pipeline engine<br/>scan, parse, clean, chunk, embed, index"]
+    profiles["Processing Profiles<br/>extension × task matrix"]
+    formats["Supported Format<br/>registry"]
+    understanding["Document Understanding<br/>summaries, glossary, knowledge map"]
     core["RAGRig core<br/>KB, versions, chunks, runs, audit"]
     vectors["Vector backends<br/>pgvector, Qdrant, others"]
-    console["Web Console<br/>operate, review, debug"]
+    console["Web Console<br/>operate, review, debug, upload"]
     api["Retrieval API / MCP / exports"]
 
+    formats --> pipeline
+    profiles --> pipeline
     sources --> pipeline --> core
     core --> vectors
+    core --> understanding
     core --> console
     vectors --> api
     core --> api
@@ -91,7 +97,8 @@ Current implementation status:
 10. `source.s3` now supports real S3-compatible Markdown/Text ingestion with fake-client-first tests and opt-in runtime dependencies.
 11. `source.fileshare` now supports offline-tested SMB, mounted NFS/local path, WebDAV, and SFTP ingestion contracts with truthful readiness, delete-detection placeholders, and an explicit `make fileshare-check` smoke path.
 12. The Web Console now includes a plugin/data source setup wizard that drafts registry-backed config, rejects raw secrets, and validates plugin config before wiring.
-13. Semantic production embeddings, live local runtime smoke checks, production cloud adapters, reranking, and richer source types remain intentionally limited or deferred in this repository state.
+13. A ProcessingProfile, SupportedFormat, browser upload, and Document Understanding architecture spec is committed as a design document; implementation is queued for follow-up issues.
+14. Semantic production embeddings, live local runtime smoke checks, production cloud adapters, reranking, and richer source types remain intentionally limited or deferred in this repository state.
 
 Authoritative specs:
 
@@ -106,6 +113,7 @@ Authoritative specs:
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
 - [Web Console plugin/source setup wizard spec](./docs/specs/ragrig-web-console-plugin-source-wizard-spec.md)
 - [Vector backend status console spec](./docs/specs/ragrig-vector-backend-status-console-spec.md)
+- [ProcessingProfile, SupportedFormat, browser upload, and Document Understanding spec](./docs/specs/ragrig-processing-profile-spec.md)
 - [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
 - [Core coverage and supply chain gates](./docs/specs/ragrig-core-coverage-supply-chain-gates.md)
 - [Web Console prototype](./docs/prototypes/web-console/index.html)
