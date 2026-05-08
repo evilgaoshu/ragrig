@@ -670,6 +670,11 @@
           </div>
 
           <div class="column">
+            <section class="panel" id="understanding-coverage-panel">
+              <div class="panel-head"><div class="panel-title">Understanding Coverage</div><div class="panel-meta">KB-level understand status</div></div>
+              <div class="panel-body stack" id="understanding-coverage-body"></div>
+            </section>
+
             <section class="panel">
               <div class="panel-head"><div class="panel-title">Document / Chunk Preview</div><div class="panel-meta">Latest version and provenance</div></div>
               <div class="panel-body stack" id="document-preview"></div>
@@ -977,6 +982,63 @@
           `;
         }));
         root.innerHTML = items.join('');
+      }
+
+      async function renderUnderstandingCoverage() {
+        const root = document.getElementById('understanding-coverage-body');
+        const kbItem = state.knowledgeBases[0];
+        if (!kbItem) {
+          root.innerHTML = empty('No knowledge bases available. Ingest fixture data first.');
+          return;
+        }
+        try {
+          const coverage = await getJson(`/knowledge-bases/${kbItem.id}/understanding-coverage`);
+          const scorePct = coverage.completeness_score != null
+            ? `${(coverage.completeness_score * 100).toFixed(1)}%`
+            : 'n/a';
+          root.innerHTML = `
+            <div class="card">
+              <div class="name">${escapeHtml(kbItem.name)} <span class="pill ok">${scorePct} complete</span></div>
+              <div class="sub">total versions: ${coverage.total_versions} · completed: ${coverage.completed} · missing: ${coverage.missing} · stale: ${coverage.stale} · failed: ${coverage.failed}</div>
+            </div>
+            <div class="card">
+              <div class="name">Coverage breakdown</div>
+              <div class="sub">
+                <span class="pill ok">completed: ${coverage.completed}</span>
+                <span class="pill warn">missing: ${coverage.missing}</span>
+                <span class="pill warn">stale: ${coverage.stale}</span>
+                <span class="pill bad">failed: ${coverage.failed}</span>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="button primary" id="run-understand-all" type="button">Run All Understanding</button>
+            </div>
+          `;
+        } catch (error) {
+          root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
+      async function runUnderstandAll() {
+        const kbItem = state.knowledgeBases[0];
+        if (!kbItem) return;
+        const button = document.getElementById('run-understand-all');
+        if (button) {
+          button.disabled = true;
+          button.textContent = 'Running...';
+        }
+        try {
+          const result = await getJson(`/knowledge-bases/${kbItem.id}/understand-all`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: 'deterministic-local', profile_id: '*.understand.default' }),
+          });
+          await renderUnderstandingCoverage();
+          await renderDocumentPreview();
+        } catch (error) {
+          const root = document.getElementById('understanding-coverage-body');
+          root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
       }
 
       async function renderDocumentPreview() {
@@ -1742,6 +1804,7 @@
           renderSources();
           renderIngestionPanel();
           await renderPipelineRuns();
+          await renderUnderstandingCoverage();
           await renderDocumentPreview();
           renderModels();
           await renderProfileMatrix();
@@ -1787,6 +1850,11 @@
           if (form) validateSingleFileshareField(form, input);
         }, true);
         document.addEventListener('click', (event) => {
+          const runAllButton = event.target.closest('#run-understand-all');
+          if (runAllButton && !runAllButton.disabled) {
+            runUnderstandAll();
+            return;
+          }
           const filterButton = event.target.closest('[data-wizard-filter]');
           if (filterButton) {
             state.wizard.filter = filterButton.dataset.wizardFilter;

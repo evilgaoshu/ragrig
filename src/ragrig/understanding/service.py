@@ -3,14 +3,25 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ragrig.db.models import DocumentUnderstanding, DocumentVersion
+from ragrig.db.models import (
+    Document,
+    DocumentUnderstanding,
+    DocumentVersion,
+    Source,
+)
 from ragrig.understanding.provider import (
     compute_input_hash,
     get_understanding_provider,
 )
-from ragrig.understanding.schema import UnderstandingRecord
+from ragrig.understanding.schema import (
+    BatchUnderstandingError,
+    BatchUnderstandingResult,
+    UnderstandingCoverage,
+    UnderstandingRecord,
+)
 
 
 class UnderstandingServiceError(RuntimeError):
@@ -151,3 +162,142 @@ def delete_document_understanding(session: Session, document_version_id: str) ->
     session.flush()
     session.commit()
     return True
+
+
+def _get_kb_document_versions(session: Session, kb_id: str) -> list[DocumentVersion]:
+    """Return all document versions for a knowledge base."""
+    kb_uuid = uuid.UUID(kb_id)
+    return list(
+        session.scalars(
+            select(DocumentVersion)
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .join(Source, Source.id == Document.source_id)
+            .where(Source.knowledge_base_id == kb_uuid)
+            .order_by(DocumentVersion.created_at)
+        )
+    )
+
+
+def understand_all_versions(
+    session: Session,
+    *,
+    knowledge_base_id: str,
+    provider: str = "deterministic-local",
+    model: str | None = None,
+    profile_id: str = "*.understand.default",
+) -> BatchUnderstandingResult:
+    """Batch-understand all document versions in a knowledge base.
+
+    - missing (no understanding record) → generate new
+    - fresh (input_hash matches and status=completed) → skip
+    - stale (input_hash mismatch) → regenerate
+    - failed → regenerate
+    """
+    versions = _get_kb_document_versions(session, knowledge_base_id)
+    total = len(versions)
+    created = 0
+    skipped = 0
+    failed = 0
+    errors: list[BatchUnderstandingError] = []
+
+    effective_model = model or ""
+
+    for version in versions:
+        version_id = str(version.id)
+        text = version.extracted_text
+        input_hash = compute_input_hash(text, profile_id, provider, effective_model)
+
+        existing = (
+            session.query(DocumentUnderstanding)
+            .filter(
+                DocumentUnderstanding.document_version_id == version.id,
+                DocumentUnderstanding.profile_id == profile_id,
+            )
+            .first()
+        )
+
+        # Fresh: completed with matching hash → skip
+        if (
+            existing is not None
+            and existing.status == "completed"
+            and existing.input_hash == input_hash
+        ):
+            skipped += 1
+            continue
+
+        # Otherwise: missing, stale, or failed → (re)generate
+        try:
+            generate_document_understanding(
+                session,
+                document_version_id=version_id,
+                provider=provider,
+                model=model,
+                profile_id=profile_id,
+            )
+            created += 1
+        except (DocumentVersionNotFoundError, ProviderUnavailableError) as exc:
+            failed += 1
+            errors.append(BatchUnderstandingError(version_id=version_id, error=str(exc)))
+
+    return BatchUnderstandingResult(
+        total=total,
+        created=created,
+        skipped=skipped,
+        failed=failed,
+        errors=errors,
+    )
+
+
+def get_understanding_coverage(
+    session: Session,
+    knowledge_base_id: str,
+) -> UnderstandingCoverage:
+    """Compute understanding coverage for a knowledge base.
+
+    staleness definition: a completed record exists but its input_hash
+    does not match the current hash(profile_id + provider + model + extracted_text).
+    """
+    versions = _get_kb_document_versions(session, knowledge_base_id)
+    total_versions = len(versions)
+    completed = 0
+    missing = 0
+    stale = 0
+    failed = 0
+
+    for version in versions:
+        understanding = (
+            session.query(DocumentUnderstanding)
+            .filter(DocumentUnderstanding.document_version_id == version.id)
+            .first()
+        )
+
+        if understanding is None:
+            missing += 1
+            continue
+
+        if understanding.status == "failed":
+            failed += 1
+            continue
+
+        # Completed record exists — check staleness
+        current_hash = compute_input_hash(
+            version.extracted_text,
+            understanding.profile_id,
+            understanding.provider,
+            understanding.model,
+        )
+        if understanding.input_hash != current_hash:
+            stale += 1
+        else:
+            completed += 1
+
+    completeness_score = completed / total_versions if total_versions > 0 else 0.0
+
+    return UnderstandingCoverage(
+        total_versions=total_versions,
+        completed=completed,
+        missing=missing,
+        stale=stale,
+        failed=failed,
+        completeness_score=round(completeness_score, 4),
+    )
