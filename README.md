@@ -89,7 +89,7 @@ Current implementation status:
 8. Phase 1e PR-2 now adds local provider adapters for Ollama, LM Studio, OpenAI-compatible local runtimes, and optional BGE boundaries without changing the default secret-free test path.
 9. Phase 1e PR-3 now adds cloud-second provider stubs for Vertex AI, Bedrock, Azure OpenAI, OpenRouter, OpenAI, Cohere, Voyage, and Jina through the same registry and discovery surfaces.
 10. `source.s3` now supports real S3-compatible Markdown/Text ingestion with fake-client-first tests and opt-in runtime dependencies.
-11. `source.fileshare` now supports offline-tested SMB, mounted NFS/local path, WebDAV, and SFTP ingestion contracts with truthful readiness, delete-detection placeholders, and an explicit `make fileshare-check` smoke path.
+11. `source.fileshare` now supports offline-tested SMB, mounted NFS/local path, WebDAV, and SFTP ingestion contracts with truthful readiness, delete-detection placeholders, an explicit `make fileshare-check` smoke path, and opt-in local live smoke via `make test-live-fileshare`.
 12. Semantic production embeddings, live local runtime smoke checks, production cloud adapters, reranking, and richer source types remain intentionally limited or deferred in this repository state.
 
 Authoritative specs:
@@ -864,6 +864,15 @@ Offline smoke:
 ```bash
 make fileshare-check
 ```
+
+Live smoke (local Docker services, explicit opt-in):
+
+```bash
+make test-live-fileshare   # starts containers, seeds fixtures, runs tests
+make fileshare-live-down   # tear down
+```
+
+Live smoke requires `RAGRIG_FILESHARE_LIVE_SMOKE=1` and validates real list/read/stat/skip behavior against local Samba, WebDAV, and SFTP containers. It does not run in default CI.
 
 Example SMB config:
 

@@ -111,5 +111,15 @@ s3-check:
 fileshare-check:
 	$(UV) run python -m scripts.fileshare_check
 
+test-live-fileshare: fileshare-live-up
+	$(UV) run python -m scripts.seed_fileshare_live_fixtures
+	RAGRIG_FILESHARE_LIVE_SMOKE=1 $(UV) run pytest tests/test_fileshare_live_smoke.py -v
+
+fileshare-live-up:
+	docker compose --profile fileshare-live up -d
+
+fileshare-live-down:
+	docker compose --profile fileshare-live down --remove-orphans
+
 export-object-storage-check:
 	$(UV) run python -m scripts.export_object_storage
