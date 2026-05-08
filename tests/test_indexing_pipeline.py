@@ -285,6 +285,8 @@ def test_replace_version_index_replaces_existing_chunks_and_embeddings(tmp_path)
             document=document,
             chunking_config=ChunkingConfig(chunk_size=6, chunk_overlap=1),
             embedding_provider=DeterministicEmbeddingProvider(dimensions=4),
+            chunk_profile_id="*.chunk.default",
+            embed_profile_id="*.embed.default",
         )
 
         replacement_chunks = session.scalars(
@@ -555,6 +557,8 @@ def test_acl_propagation_falls_back_to_document_version_metadata(tmp_path) -> No
             document=doc,
             chunking_config=chunking_config,
             embedding_provider=provider,
+            chunk_profile_id="test.chunk.default",
+            embed_profile_id="test.embed.default",
         )
 
         from ragrig.db.models import Chunk

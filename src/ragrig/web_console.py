@@ -14,6 +14,7 @@ from ragrig.config import Settings
 from ragrig.db.models import (
     Chunk,
     Document,
+    DocumentUnderstanding,
     DocumentVersion,
     Embedding,
     KnowledgeBase,
@@ -404,6 +405,29 @@ def list_document_version_chunks(
             }
         )
     return items
+
+
+def get_document_version_understanding(
+    session: Session, document_version_id: str
+) -> dict[str, Any] | None:
+    version_id = uuid.UUID(document_version_id)
+    row = session.scalar(
+        select(DocumentUnderstanding).where(DocumentUnderstanding.document_version_id == version_id)
+    )
+    if row is None:
+        return None
+    return {
+        "id": str(row.id),
+        "document_version_id": str(row.document_version_id),
+        "profile_id": row.profile_id,
+        "provider": row.provider,
+        "model": row.model,
+        "status": row.status,
+        "result": row.result_json,
+        "error": row.error,
+        "created_at": _isoformat(row.created_at),
+        "updated_at": _isoformat(row.updated_at),
+    }
 
 
 def list_models(session: Session) -> dict[str, Any]:

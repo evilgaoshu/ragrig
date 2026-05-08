@@ -10,6 +10,7 @@ from ragrig.db.models import DocumentVersion
 from ragrig.ingestion.scanner import scan_paths
 from ragrig.parsers import MarkdownParser, PlainTextParser
 from ragrig.plugins import get_plugin_registry
+from ragrig.processing_profile import TaskType, resolve_profile
 from ragrig.repositories import (
     create_pipeline_run,
     create_pipeline_run_item,
@@ -82,6 +83,9 @@ def ingest_local_directory(
             "max_file_size_bytes": max_file_size_bytes,
         },
     )
+    correct_profile = resolve_profile("*", TaskType.CORRECT)
+    clean_profile = resolve_profile("*", TaskType.CLEAN)
+
     run = create_pipeline_run(
         session,
         knowledge_base_id=knowledge_base.id,
@@ -92,6 +96,8 @@ def ingest_local_directory(
             "exclude_patterns": exclude_patterns or [],
             "max_file_size_bytes": max_file_size_bytes,
             "dry_run": dry_run,
+            "correct_profile_id": correct_profile.profile_id,
+            "clean_profile_id": clean_profile.profile_id,
         },
     )
 
