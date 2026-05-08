@@ -17,6 +17,9 @@ from ragrig.plugins.sources.fileshare.client import (
     FileshareClientProtocol,
     FileshareFileMetadata,
     MountedPathClient,
+    SFTPClient,
+    SMBClient,
+    WebDAVClient,
 )
 from ragrig.plugins.sources.fileshare.errors import (
     FileshareConfigError,
@@ -69,7 +72,7 @@ def ingest_fileshare_source(
         )
 
     secrets = _resolve_secrets(validated, env=env or os.environ)
-    active_client = client or _build_client(validated)
+    active_client = client or _build_client(validated, secrets=secrets)
     source_uri = _source_uri(validated)
     knowledge_base = get_or_create_knowledge_base(session, knowledge_base_name)
     source = get_or_create_source(
@@ -327,11 +330,36 @@ def _resolve_secrets(
     )
 
 
-def _build_client(config: dict[str, object]) -> FileshareClientProtocol:
-    if config["protocol"] == "nfs_mounted":
+def _build_client(
+    config: dict[str, object], *, secrets: ResolvedFileshareSecrets
+) -> FileshareClientProtocol:
+    protocol = str(config["protocol"])
+    if protocol == "nfs_mounted":
         return MountedPathClient(root_path=Path(str(config["root_path"])))
+    if protocol == "smb":
+        return SMBClient(
+            host=str(config.get("host") or ""),
+            share=str(config.get("share") or ""),
+            username=secrets.username,
+            password=secrets.password,
+            port=int(config.get("port") or 445),
+        )
+    if protocol == "webdav":
+        return WebDAVClient(
+            base_url=str(config.get("base_url") or ""),
+            username=secrets.username,
+            password=secrets.password,
+        )
+    if protocol == "sftp":
+        return SFTPClient(
+            host=str(config.get("host") or ""),
+            username=secrets.username or "",
+            password=secrets.password,
+            private_key=secrets.private_key,
+            port=int(config.get("port") or 22),
+        )
     return FakeFileshareClient(
-        protocol=str(config["protocol"]),
+        protocol=protocol,
         host=str(config.get("host") or "") or None,
         share=str(config.get("share") or "") or None,
         base_url=str(config.get("base_url") or "") or None,

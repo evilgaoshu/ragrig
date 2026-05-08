@@ -870,6 +870,15 @@ Offline smoke:
 make fileshare-check
 ```
 
+Live smoke (local Docker services, explicit opt-in):
+
+```bash
+make test-live-fileshare   # starts containers, seeds fixtures, runs tests
+make fileshare-live-down   # tear down
+```
+
+Live smoke requires `RAGRIG_FILESHARE_LIVE_SMOKE=1` and validates real list/read/stat/skip behavior against local Samba, WebDAV, and SFTP containers. It does not run in default CI.
+
 Example SMB config:
 
 ```json
