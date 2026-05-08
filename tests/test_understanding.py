@@ -116,8 +116,8 @@ class TestLLMUnderstandingProvider:
         from ragrig.providers import (
             BaseProvider,
             ProviderCapability,
-            ProviderMetadata,
             ProviderKind,
+            ProviderMetadata,
         )
 
         class FakeProvider(BaseProvider):
@@ -166,8 +166,8 @@ class TestLLMUnderstandingProvider:
         from ragrig.providers import (
             BaseProvider,
             ProviderCapability,
-            ProviderMetadata,
             ProviderKind,
+            ProviderMetadata,
         )
 
         class FakeProvider(BaseProvider):
@@ -208,9 +208,9 @@ class TestLLMUnderstandingProvider:
         from ragrig.providers import (
             BaseProvider,
             ProviderCapability,
-            ProviderMetadata,
-            ProviderKind,
             ProviderError,
+            ProviderKind,
+            ProviderMetadata,
         )
 
         class FakeProvider(BaseProvider):
@@ -248,8 +248,8 @@ class TestLLMUnderstandingProvider:
         from ragrig.providers import (
             BaseProvider,
             ProviderCapability,
-            ProviderMetadata,
             ProviderKind,
+            ProviderMetadata,
         )
 
         class FakeProvider(BaseProvider):
@@ -300,8 +300,8 @@ class TestLLMUnderstandingProvider:
         from ragrig.providers import (
             BaseProvider,
             ProviderCapability,
-            ProviderMetadata,
             ProviderKind,
+            ProviderMetadata,
         )
 
         class FakeProvider(BaseProvider):
@@ -327,7 +327,11 @@ class TestLLMUnderstandingProvider:
 
             def chat(self, messages: list[dict[str, object]]) -> dict[str, object]:
                 return {
-                    "response": '{"summary": "response-key", "table_of_contents": [], "entities": [], "key_claims": [], "limitations": [], "source_spans": []}'
+                    "response": (
+                        '{"summary": "response-key", "table_of_contents": [], '
+                        '"entities": [], "key_claims": [], '
+                        '"limitations": [], "source_spans": []}'
+                    )
                 }
 
         from ragrig.understanding.provider import LLMUnderstandingProvider
@@ -340,8 +344,8 @@ class TestLLMUnderstandingProvider:
         from ragrig.providers import (
             BaseProvider,
             ProviderCapability,
-            ProviderMetadata,
             ProviderKind,
+            ProviderMetadata,
         )
 
         class FakeProvider(BaseProvider):
@@ -367,7 +371,11 @@ class TestLLMUnderstandingProvider:
 
             def chat(self, messages: list[dict[str, object]]) -> dict[str, object]:
                 return {
-                    "content": '{"summary": "content-key", "table_of_contents": [], "entities": [], "key_claims": [], "limitations": [], "source_spans": []}'
+                    "content": (
+                        '{"summary": "content-key", "table_of_contents": [], '
+                        '"entities": [], "key_claims": [], '
+                        '"limitations": [], "source_spans": []}'
+                    )
                 }
 
         from ragrig.understanding.provider import LLMUnderstandingProvider
@@ -384,7 +392,6 @@ class TestLLMUnderstandingProvider:
             ProviderMetadata,
             ProviderRegistry,
             ProviderRetryPolicy,
-            get_provider_registry,
         )
 
         fake_metadata = ProviderMetadata(
@@ -429,8 +436,8 @@ class TestLLMUnderstandingProvider:
         from ragrig.providers import (
             BaseProvider,
             ProviderCapability,
-            ProviderMetadata,
             ProviderKind,
+            ProviderMetadata,
         )
 
         class FakeProvider(BaseProvider):
@@ -539,7 +546,6 @@ class TestUnderstandingSchema:
 
 class TestProviderUnavailableError:
     def test_error_attributes(self) -> None:
-        from ragrig.understanding.service import ProviderUnavailableError
 
         exc = ProviderUnavailableError("my-provider", "connection refused")
         assert exc.code == "provider_unavailable"
@@ -549,7 +555,6 @@ class TestProviderUnavailableError:
 class TestServiceProviderFailure:
     def test_provider_failure_marks_failed_and_raises(self, sqlite_session: Session) -> None:
         from ragrig.ingestion.pipeline import ingest_local_directory
-        from ragrig.understanding.service import ProviderUnavailableError
 
         ingest_local_directory(
             session=sqlite_session,
