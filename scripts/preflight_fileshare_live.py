@@ -68,7 +68,8 @@ def _ports_free(ports: Iterable[int]) -> list[str]:
             if s.connect_ex(("127.0.0.1", port)) == 0:
                 blockers.append(
                     f"Port {port} is already in use on 127.0.0.1. "
-                    f"Free it or override with env var (SMB_HOST_PORT / WEBDAV_HOST_PORT / SFTP_HOST_PORT)."
+                    f"Free it or override with env var "
+                    f"(SMB_HOST_PORT / WEBDAV_HOST_PORT / SFTP_HOST_PORT)."
                 )
     return blockers
 
@@ -156,7 +157,8 @@ def main() -> int:
                     print(f"  {i}. {w}", file=sys.stderr)
             if result["ok"]:
                 print(
-                    "\nPreflight passed with warnings. Containers will start, but some protocol tests may be skipped."
+                    "\nPreflight passed with warnings. "
+                    "Containers will start, but some protocol tests may be skipped."
                 )
 
     return 0 if result["ok"] else 1
