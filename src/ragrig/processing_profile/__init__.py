@@ -9,11 +9,17 @@ from ragrig.processing_profile.registry import (
     DEFAULT_PROFILES,
     build_api_profile_list,
     build_matrix,
+    clear_overrides,
+    create_override,
+    delete_override,
     get_default_profiles,
     get_matrix_task_types,
+    get_override,
     get_registered_extensions,
+    list_overrides,
     resolve_profile,
     resolve_provider_availability,
+    update_override,
 )
 
 __all__ = [
@@ -25,9 +31,15 @@ __all__ = [
     "TaskType",
     "build_api_profile_list",
     "build_matrix",
+    "clear_overrides",
+    "create_override",
+    "delete_override",
     "get_default_profiles",
     "get_matrix_task_types",
+    "get_override",
     "get_registered_extensions",
+    "list_overrides",
     "resolve_profile",
     "resolve_provider_availability",
+    "update_override",
 ]

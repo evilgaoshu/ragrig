@@ -704,6 +704,64 @@
                 <div id="profile-matrix-legend" class="stack" style="flex-direction:row; gap:12px; font-size:12px; align-items:center;"></div>
               </div>
               <div class="panel-body">
+                <div class="actions" style="margin-bottom:12px;">
+                  <button class="button primary" id="profile-create-btn" type="button">Create Override</button>
+                </div>
+                <div id="profile-create-form" style="display:none; margin-bottom:12px;">
+                  <div class="card">
+                    <div class="name">Create Override Profile</div>
+                    <div class="sub">Overrides take precedence over wildcard defaults for the exact (extension, task_type) pair.</div>
+                    <div class="fileshare-form" style="margin-top:10px; display:grid; gap:10px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+                      <div class="form-group">
+                        <label class="sub fileshare-label">Profile ID <span class="required">*</span></label>
+                        <input type="text" id="profile-create-id" class="fileshare-input" placeholder="pdf.chunk.override">
+                      </div>
+                      <div class="form-group">
+                        <label class="sub fileshare-label">Extension <span class="required">*</span></label>
+                        <input type="text" id="profile-create-ext" class="fileshare-input" placeholder=".pdf">
+                      </div>
+                      <div class="form-group">
+                        <label class="sub fileshare-label">Task Type <span class="required">*</span></label>
+                        <select id="profile-create-task" class="fileshare-input">
+                          <option value="correct">correct</option>
+                          <option value="clean">clean</option>
+                          <option value="chunk">chunk</option>
+                          <option value="summarize">summarize</option>
+                          <option value="understand">understand</option>
+                          <option value="embed">embed</option>
+                        </select>
+                      </div>
+                      <div class="form-group">
+                        <label class="sub fileshare-label">Display Name <span class="required">*</span></label>
+                        <input type="text" id="profile-create-name" class="fileshare-input" placeholder="PDF Chunk Override">
+                      </div>
+                      <div class="form-group">
+                        <label class="sub fileshare-label">Description</label>
+                        <input type="text" id="profile-create-desc" class="fileshare-input" placeholder="Custom chunking for PDFs">
+                      </div>
+                      <div class="form-group">
+                        <label class="sub fileshare-label">Provider <span class="required">*</span></label>
+                        <input type="text" id="profile-create-provider" class="fileshare-input" placeholder="deterministic-local">
+                      </div>
+                      <div class="form-group">
+                        <label class="sub fileshare-label">Model ID</label>
+                        <input type="text" id="profile-create-model" class="fileshare-input" placeholder="">
+                      </div>
+                      <div class="form-group">
+                        <label class="sub fileshare-label">Kind</label>
+                        <select id="profile-create-kind" class="fileshare-input">
+                          <option value="deterministic">deterministic</option>
+                          <option value="LLM-assisted">LLM-assisted</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="fileshare-actions" style="margin-top:10px;">
+                      <button class="button primary" id="profile-create-submit" type="button">Save Override</button>
+                      <button class="button" id="profile-create-cancel" type="button">Cancel</button>
+                    </div>
+                    <div id="profile-create-error" class="field-error" style="margin-top:8px;"></div>
+                  </div>
+                </div>
                 <div class="profile-matrix-scroll">
                   <table class="profile-matrix-table" id="profile-matrix-table">
                     <thead id="profile-matrix-head"></thead>
@@ -1127,16 +1185,100 @@
               kindLabel = '⚠ unavail';
             }
             var sourceLabel = cell.is_default ? 'default' : 'override';
+            var actions = '';
+            if (!cell.is_default) {
+              var statusAction = cell.status === 'disabled' ? 'Enable' : 'Disable';
+              actions = '<div style="margin-top:4px; display:flex; gap:4px; flex-wrap:wrap;">' +
+                '<button class="button" style="height:24px; padding:0 6px; font-size:11px;" data-profile-action="toggle" data-profile-id="' + escapeHtml(cell.profile_id) + '" data-profile-status="' + escapeHtml(cell.status) + '">' + statusAction + '</button>' +
+                '<button class="button" style="height:24px; padding:0 6px; font-size:11px;" data-profile-action="delete" data-profile-id="' + escapeHtml(cell.profile_id) + '">Delete</button>' +
+                '</div>';
+            }
             return '<td>' +
               '<div class="profile-matrix-cell">' +
                 '<span class="cell-name">' + escapeHtml(cell.display_name || cell.profile_id) + '</span>' +
                 '<span class="cell-kind ' + kindClass + '">' + kindLabel + '</span>' +
-                '<span class="cell-source">' + sourceLabel + '</span>' +
+                '<span class="cell-source">' + sourceLabel + (cell.status === 'disabled' ? ' · disabled' : '') + '</span>' +
+                actions +
               '</div>' +
               '</td>';
           });
           return '<tr><td>' + escapeHtml(ext) + '</td>' + cells.join('') + '</tr>';
         }).join('');
+      }
+
+      function showProfileCreateForm(show) {
+        document.getElementById('profile-create-form').style.display = show ? 'block' : 'none';
+        document.getElementById('profile-create-btn').style.display = show ? 'none' : 'inline-flex';
+      }
+
+      async function submitProfileCreate() {
+        const errorEl = document.getElementById('profile-create-error');
+        errorEl.textContent = '';
+        const payload = {
+          profile_id: document.getElementById('profile-create-id').value.trim(),
+          extension: document.getElementById('profile-create-ext').value.trim(),
+          task_type: document.getElementById('profile-create-task').value,
+          display_name: document.getElementById('profile-create-name').value.trim(),
+          description: document.getElementById('profile-create-desc').value.trim(),
+          provider: document.getElementById('profile-create-provider').value.trim(),
+          model_id: document.getElementById('profile-create-model').value.trim() || null,
+          kind: document.getElementById('profile-create-kind').value,
+        };
+        if (!payload.profile_id || !payload.extension || !payload.display_name || !payload.provider) {
+          errorEl.textContent = 'Profile ID, Extension, Display Name, and Provider are required.';
+          return;
+        }
+        try {
+          const response = await fetch('/processing-profiles', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            errorEl.textContent = 'Error: ' + (data.error || response.statusText);
+            return;
+          }
+          showProfileCreateForm(false);
+          document.querySelectorAll('#profile-create-form input').forEach(function(el) { el.value = ''; });
+          await renderProfileMatrix();
+        } catch (error) {
+          errorEl.textContent = 'Network error: ' + error.message;
+        }
+      }
+
+      async function toggleProfileStatus(profileId, currentStatus) {
+        const newStatus = currentStatus === 'disabled' ? 'active' : 'disabled';
+        try {
+          const response = await fetch('/processing-profiles/overrides/' + encodeURIComponent(profileId), {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus }),
+          });
+          if (!response.ok) {
+            alert('Failed to update profile: ' + response.statusText);
+            return;
+          }
+          await renderProfileMatrix();
+        } catch (error) {
+          alert('Network error: ' + error.message);
+        }
+      }
+
+      async function deleteProfile(profileId) {
+        if (!confirm('Delete override profile "' + profileId + '"?')) return;
+        try {
+          const response = await fetch('/processing-profiles/overrides/' + encodeURIComponent(profileId), {
+            method: 'DELETE',
+          });
+          if (!response.ok) {
+            alert('Failed to delete profile: ' + response.statusText);
+            return;
+          }
+          await renderProfileMatrix();
+        } catch (error) {
+          alert('Network error: ' + error.message);
+        }
       }
 
       function renderPlugins() {
@@ -1786,6 +1928,20 @@
           const form = input.closest('.fileshare-form');
           if (form) validateSingleFileshareField(form, input);
         }, true);
+        document.getElementById('profile-create-btn').addEventListener('click', () => showProfileCreateForm(true));
+        document.getElementById('profile-create-cancel').addEventListener('click', () => showProfileCreateForm(false));
+        document.getElementById('profile-create-submit').addEventListener('click', submitProfileCreate);
+        document.getElementById('profile-matrix-body').addEventListener('click', (event) => {
+          const toggleBtn = event.target.closest('[data-profile-action="toggle"]');
+          if (toggleBtn) {
+            toggleProfileStatus(toggleBtn.dataset.profileId, toggleBtn.dataset.profileStatus);
+            return;
+          }
+          const deleteBtn = event.target.closest('[data-profile-action="delete"]');
+          if (deleteBtn) {
+            deleteProfile(deleteBtn.dataset.profileId);
+          }
+        });
         document.addEventListener('click', (event) => {
           const filterButton = event.target.closest('[data-wizard-filter]');
           if (filterButton) {

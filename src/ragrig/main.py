@@ -3,6 +3,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -10,7 +11,18 @@ from ragrig import __version__
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
 from ragrig.health import create_database_check
-from ragrig.processing_profile import build_api_profile_list, build_matrix
+from ragrig.processing_profile import (
+    ProfileStatus,
+    TaskType,
+    build_api_profile_list,
+    build_matrix,
+    create_override,
+    delete_override,
+    get_override,
+    list_overrides,
+    resolve_provider_availability,
+    update_override,
+)
 from ragrig.retrieval import (
     EmbeddingProfileMismatchError,
     EmptyQueryError,
@@ -53,6 +65,31 @@ class RetrievalSearchRequest(BaseModel):
     dimensions: int | None = Field(default=None, gt=0)
     principal_ids: list[str] | None = None
     enforce_acl: bool = True
+
+
+class CreateProcessingProfileRequest(BaseModel):
+    profile_id: str
+    extension: str
+    task_type: TaskType
+    display_name: str
+    description: str
+    provider: str
+    model_id: str | None = None
+    kind: str = "deterministic"
+    tags: list[str] | None = None
+    metadata: dict[str, object] | None = None
+    created_by: str | None = None
+
+
+class PatchProcessingProfileRequest(BaseModel):
+    status: ProfileStatus | None = None
+    display_name: str | None = None
+    description: str | None = None
+    provider: str | None = None
+    model_id: str | None = None
+    kind: str | None = None
+    tags: list[str] | None = None
+    metadata: dict[str, object] | None = None
 
 
 def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
@@ -367,6 +404,89 @@ def create_app(
     @app.get("/processing-profiles", response_model=None)
     def processing_profiles() -> dict[str, list[dict[str, Any]]]:
         return {"profiles": build_api_profile_list()}
+
+    @app.get("/processing-profiles/overrides", response_model=None)
+    def processing_profile_overrides() -> dict[str, list[dict[str, Any]]]:
+        return {"overrides": [p.to_api_dict() for p in list_overrides()]}
+
+    @app.get("/processing-profiles/overrides/{profile_id}", response_model=None)
+    def processing_profile_override_detail(profile_id: str) -> dict[str, Any] | JSONResponse:
+        profile = get_override(profile_id)
+        if profile is None:
+            return JSONResponse(status_code=404, content={"error": "override_not_found"})
+        entry = profile.to_api_dict()
+        entry["provider_available"] = resolve_provider_availability(profile.provider)
+        return entry
+
+    @app.post("/processing-profiles", response_model=None)
+    def create_processing_profile(
+        request: CreateProcessingProfileRequest,
+    ) -> dict[str, Any] | JSONResponse:
+        from ragrig.processing_profile.models import ProcessingKind
+
+        kind = ProcessingKind.DETERMINISTIC
+        if request.kind == "LLM-assisted":
+            kind = ProcessingKind.LLM_ASSISTED
+        try:
+            profile = create_override(
+                profile_id=request.profile_id,
+                extension=request.extension,
+                task_type=request.task_type,
+                display_name=request.display_name,
+                description=request.description,
+                provider=request.provider,
+                model_id=request.model_id,
+                kind=kind,
+                tags=request.tags,
+                metadata=request.metadata,
+                created_by=request.created_by,
+            )
+        except ValueError as exc:
+            return JSONResponse(status_code=409, content={"error": str(exc)})
+        entry = profile.to_api_dict()
+        entry["provider_available"] = resolve_provider_availability(profile.provider)
+        return entry
+
+    @app.patch("/processing-profiles/overrides/{profile_id}", response_model=None)
+    def patch_processing_profile(
+        profile_id: str,
+        request: PatchProcessingProfileRequest,
+    ) -> dict[str, Any] | JSONResponse:
+        from ragrig.processing_profile.models import ProcessingKind
+
+        if get_override(profile_id) is None:
+            return JSONResponse(status_code=404, content={"error": "override_not_found"})
+        kind = None
+        if request.kind is not None:
+            kind = (
+                ProcessingKind.LLM_ASSISTED
+                if request.kind == "LLM-assisted"
+                else ProcessingKind.DETERMINISTIC
+            )
+        try:
+            profile = update_override(
+                profile_id,
+                status=request.status,
+                display_name=request.display_name,
+                description=request.description,
+                provider=request.provider,
+                model_id=request.model_id,
+                kind=kind,
+                tags=request.tags,
+                metadata=request.metadata,
+            )
+        except ValueError as exc:
+            return JSONResponse(status_code=404, content={"error": str(exc)})
+        entry = profile.to_api_dict()
+        entry["provider_available"] = resolve_provider_availability(profile.provider)
+        return entry
+
+    @app.delete("/processing-profiles/overrides/{profile_id}", response_model=None)
+    def delete_processing_profile(profile_id: str) -> Response | JSONResponse:
+        deleted = delete_override(profile_id)
+        if not deleted:
+            return JSONResponse(status_code=404, content={"error": "override_not_found"})
+        return Response(status_code=204)
 
     @app.get("/processing-profiles/matrix", response_model=None)
     def processing_profiles_matrix() -> dict[str, Any]:
