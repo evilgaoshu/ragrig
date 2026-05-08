@@ -1,0 +1,157 @@
+# RAGRig Supported Formats Registry
+#
+# This file defines every file format RAGRig knows about.
+# The Web Console upload endpoint and the ingestion pipeline
+# use this registry to validate incoming files.
+#
+# Status values:
+#   supported - Fully implemented, tested, production-ready
+#   preview   - Partially implemented, opt-in, may have limitations
+#   planned   - On the roadmap, not yet implemented
+
+- extension: ".md"
+  mime_type: "text/markdown"
+  display_name: "Markdown (.md)"
+  parser_id: "parser.markdown"
+  status: "supported"
+  max_file_size_mb: 50
+  capabilities:
+    - parse
+    - chunk
+    - embed
+  limitations: null
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".markdown"
+  mime_type: "text/markdown"
+  display_name: "Markdown (.markdown)"
+  parser_id: "parser.markdown"
+  status: "supported"
+  max_file_size_mb: 50
+  capabilities:
+    - parse
+    - chunk
+    - embed
+  limitations: null
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".txt"
+  mime_type: "text/plain"
+  display_name: "Plain Text (.txt)"
+  parser_id: "parser.text"
+  status: "supported"
+  max_file_size_mb: 50
+  capabilities:
+    - parse
+    - chunk
+    - embed
+  limitations: null
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".text"
+  mime_type: "text/plain"
+  display_name: "Plain Text (.text)"
+  parser_id: "parser.text"
+  status: "supported"
+  max_file_size_mb: 50
+  capabilities:
+    - parse
+    - chunk
+    - embed
+  limitations: null
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".rst"
+  mime_type: "text/x-rst"
+  display_name: "reStructuredText (.rst)"
+  parser_id: "parser.text"
+  status: "preview"
+  max_file_size_mb: 50
+  capabilities:
+    - parse
+  limitations: "Parsed as plain text, no RST structure awareness."
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".csv"
+  mime_type: "text/csv"
+  display_name: "CSV (.csv)"
+  parser_id: "parser.text"
+  status: "preview"
+  max_file_size_mb: 50
+  capabilities:
+    - parse
+  limitations: "Parsed as plain text, no table awareness."
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".json"
+  mime_type: "application/json"
+  display_name: "JSON (.json)"
+  parser_id: "parser.text"
+  status: "preview"
+  max_file_size_mb: 50
+  capabilities:
+    - parse
+  limitations: "Parsed as plain text."
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".xml"
+  mime_type: "application/xml"
+  display_name: "XML (.xml)"
+  parser_id: "parser.text"
+  status: "preview"
+  max_file_size_mb: 50
+  capabilities:
+    - parse
+  limitations: "Parsed as plain text."
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".html"
+  mime_type: "text/html"
+  display_name: "HTML (.html)"
+  parser_id: "parser.text"
+  status: "preview"
+  max_file_size_mb: 50
+  capabilities:
+    - parse
+  limitations: "Parsed as plain text, tags stripped."
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".pdf"
+  mime_type: "application/pdf"
+  display_name: "PDF (.pdf)"
+  parser_id: "parser.pdf"
+  status: "planned"
+  max_file_size_mb: 50
+  capabilities: []
+  limitations: "Requires PDF parser plugin."
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".docx"
+  mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  display_name: "Microsoft Word (.docx)"
+  parser_id: "parser.advanced_documents"
+  status: "planned"
+  max_file_size_mb: 50
+  capabilities: []
+  limitations: "Requires DOCX parser."
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".xlsx"
+  mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  display_name: "Microsoft Excel (.xlsx)"
+  parser_id: "parser.advanced_documents"
+  status: "planned"
+  max_file_size_mb: 50
+  capabilities: []
+  limitations: "Requires XLSX parser."
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".pptx"
+  mime_type: "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  display_name: "Microsoft PowerPoint (.pptx)"
+  parser_id: "parser.advanced_documents"
+  status: "planned"
+  max_file_size_mb: 50
+  capabilities: []
+  limitations: "Requires PPTX parser."
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"

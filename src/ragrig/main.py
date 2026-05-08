@@ -1,7 +1,10 @@
+import tempfile
 from collections.abc import Callable
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, File, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
@@ -9,8 +12,18 @@ from sqlalchemy.orm import Session, sessionmaker
 from ragrig import __version__
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
+from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.health import create_database_check
+from ragrig.ingestion.pipeline import _select_parser
 from ragrig.processing_profile import build_api_profile_list, build_matrix
+from ragrig.repositories import (
+    create_pipeline_run,
+    create_pipeline_run_item,
+    get_knowledge_base_by_name,
+    get_next_version_number,
+    get_or_create_document,
+    get_or_create_source,
+)
 from ragrig.retrieval import (
     EmbeddingProfileMismatchError,
     EmptyQueryError,
@@ -30,6 +43,7 @@ from ragrig.vectorstore import get_vector_backend, get_vector_backend_health
 from ragrig.web_console import (
     PluginWizardValidationError,
     build_system_status,
+    check_format,
     get_pipeline_run_detail,
     list_document_version_chunks,
     list_documents,
@@ -39,6 +53,7 @@ from ragrig.web_console import (
     list_pipeline_runs,
     list_plugins,
     list_sources,
+    list_supported_formats,
     load_console_html,
     validate_plugin_config_for_wizard,
 )
@@ -83,6 +98,17 @@ def create_runtime_settings(settings: Settings | None = None) -> Settings:
     payload = active_settings.model_dump()
     payload["database_url"] = active_settings.runtime_database_url
     return Settings(**payload)
+
+
+def _sanitize_filename(filename: str) -> str:
+    """Remove path traversal characters and sanitize a filename."""
+    from pathlib import PurePath
+
+    name = PurePath(filename).name
+    name = name.replace("/", "_").replace("\\", "_").replace("\0", "")
+    if not name or name.startswith("."):
+        name = f"upload_{name or 'file'}"
+    return name
 
 
 def create_app(
@@ -310,6 +336,250 @@ def create_app(
             return validate_plugin_config_for_wizard(plugin_id, config)
         except PluginWizardValidationError as exc:
             return _plugin_validation_error_response(code=exc.code, message=exc.message)
+
+    @app.get("/supported-formats", response_model=None)
+    def supported_formats(
+        status: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        return list_supported_formats(status=status)
+
+    @app.get("/supported-formats/check", response_model=None)
+    def supported_formats_check(
+        extension: str,
+    ) -> dict[str, Any] | JSONResponse:
+        if not extension:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "extension query parameter is required"},
+            )
+        result = check_format(extension)
+        return result
+
+    _MAX_UPLOAD_FILE_SIZE = 10 * 1024 * 1024
+
+    @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
+    async def knowledge_base_upload(
+        kb_name: str,
+        session: Annotated[Session, Depends(get_session)],
+        files: Annotated[list[UploadFile], File(...)],
+    ) -> JSONResponse:
+        from ragrig.db.models import DocumentVersion
+
+        kb = get_knowledge_base_by_name(session, kb_name)
+        if kb is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"knowledge base '{kb_name}' not found"},
+            )
+
+        if not files:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "at least one file is required"},
+            )
+
+        registry = get_format_registry()
+        accepted_files: list[UploadFile] = []
+        rejected: list[dict[str, Any]] = []
+        warnings: list[dict[str, Any]] = []
+
+        for f in files:
+            filename = f.filename or "unknown"
+            extension = Path(filename).suffix.lower()
+            if not extension:
+                extension = ""
+
+            fmt = registry.lookup(extension)
+            if fmt is None:
+                rejected.append(
+                    {
+                        "filename": filename,
+                        "extension": extension or "(none)",
+                        "reason": "unsupported_format",
+                        "message": (
+                            f"File format {extension or '(no extension)'} is not supported."
+                        ),
+                    }
+                )
+                continue
+
+            if fmt.status == FormatStatus.PLANNED:
+                rejected.append(
+                    {
+                        "filename": filename,
+                        "extension": extension,
+                        "reason": "unsupported_format",
+                        "message": (
+                            f"{fmt.display_name} support is planned. "
+                            f"{fmt.limitations or 'Not yet implemented.'}"
+                        ),
+                    }
+                )
+                continue
+
+            if fmt.status == FormatStatus.PREVIEW:
+                warnings.append(
+                    {
+                        "filename": filename,
+                        "extension": extension,
+                        "status": "preview",
+                        "message": (
+                            f"{fmt.display_name} is in preview status — "
+                            f"{fmt.limitations or 'content will be parsed as plain text.'}"
+                        ),
+                    }
+                )
+
+            accepted_files.append(f)
+
+        if not accepted_files:
+            return JSONResponse(
+                status_code=415,
+                content={
+                    "accepted_files": 0,
+                    "rejected_files": len(rejected),
+                    "rejections": rejected,
+                    "warnings": warnings,
+                },
+            )
+
+        if len(accepted_files) > 10:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": (
+                        f"too many files: {len(accepted_files)}. Maximum 10 files per request."
+                    ),
+                },
+            )
+
+        with tempfile.TemporaryDirectory(prefix="ragrig-upload-") as staging_dir:
+            staging_path = Path(staging_dir)
+            saved_paths: list[Path] = []
+
+            for f in accepted_files:
+                filename = f.filename or "unnamed"
+                safe_name = _sanitize_filename(filename)
+                dest = staging_path / safe_name
+                content = await f.read()
+                if len(content) > _MAX_UPLOAD_FILE_SIZE:
+                    rejected.append(
+                        {
+                            "filename": filename,
+                            "extension": Path(filename).suffix.lower(),
+                            "reason": "file_too_large",
+                            "message": (f"File '{filename}' exceeds the 10 MB size limit."),
+                        }
+                    )
+                    continue
+                dest.write_bytes(content)
+                saved_paths.append(dest)
+
+            if not saved_paths:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "accepted_files": 0,
+                        "rejected_files": len(rejected),
+                        "rejections": rejected,
+                        "warnings": warnings,
+                    },
+                )
+
+            source = get_or_create_source(
+                session,
+                knowledge_base_id=kb.id,
+                uri=str(staging_path),
+                config_json={
+                    "kind": "web_upload",
+                    "staging_dir": str(staging_path),
+                },
+            )
+
+            run = create_pipeline_run(
+                session,
+                knowledge_base_id=kb.id,
+                source_id=source.id,
+                run_type="web_upload",
+                config_snapshot_json={
+                    "source": "web_upload",
+                    "knowledge_base": kb_name,
+                    "file_count": len(saved_paths),
+                },
+            )
+
+            created_documents = 0
+            created_versions = 0
+            failed_count = 0
+
+            for dest in saved_paths:
+                document = None
+                try:
+                    parser = _select_parser(dest)
+                    parse_result = parser.parse(dest)
+                    document, was_created = get_or_create_document(
+                        session,
+                        knowledge_base_id=kb.id,
+                        source_id=source.id,
+                        uri=str(dest),
+                        content_hash=parse_result.content_hash,
+                        mime_type=parse_result.mime_type,
+                        metadata_json=parse_result.metadata,
+                    )
+                    if was_created:
+                        created_documents += 1
+
+                    version = DocumentVersion(
+                        document_id=document.id,
+                        version_number=get_next_version_number(session, document_id=document.id),
+                        content_hash=parse_result.content_hash,
+                        parser_name=parse_result.parser_name,
+                        parser_config_json={},
+                        extracted_text=parse_result.extracted_text,
+                        metadata_json=parse_result.metadata,
+                    )
+                    session.add(version)
+                    session.flush()
+                    created_versions += 1
+
+                    create_pipeline_run_item(
+                        session,
+                        pipeline_run_id=run.id,
+                        document_id=document.id,
+                        status="success",
+                        metadata_json={
+                            "file_name": dest.name,
+                            "version_number": version.version_number,
+                        },
+                    )
+                except Exception as exc:
+                    failed_count += 1
+                    create_pipeline_run_item(
+                        session,
+                        pipeline_run_id=run.id,
+                        document_id=document.id if document is not None else None,
+                        status="failed",
+                        error_message=str(exc),
+                        metadata_json={"file_name": dest.name},
+                    )
+
+            run.total_items = len(saved_paths)
+            run.success_count = created_versions
+            run.failure_count = failed_count
+            run.status = "completed_with_failures" if failed_count else "completed"
+            run.finished_at = datetime.now(timezone.utc)
+            session.commit()
+
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "pipeline_run_id": str(run.id),
+                    "accepted_files": len(saved_paths),
+                    "rejected_files": len(rejected),
+                    "rejections": rejected,
+                    "warnings": warnings,
+                },
+            )
 
     @app.post("/retrieval/search", response_model=None)
     def retrieval_search(

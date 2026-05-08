@@ -22,6 +22,7 @@ from ragrig.db.models import (
     PipelineRunItem,
     Source,
 )
+from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
 from ragrig.providers import get_provider_registry
 from ragrig.vectorstore.base import VectorBackendHealth
@@ -692,3 +693,30 @@ def _plugin_next_steps(discovery: dict[str, Any]) -> list[str]:
     return [
         "Review the docs reference and keep this plugin unavailable until runtime support lands."
     ]
+
+
+def list_supported_formats(status: str | None = None) -> dict[str, list[dict[str, Any]]]:
+    registry = get_format_registry()
+    fmt_status = FormatStatus(status) if status else None
+    formats = registry.list(status=fmt_status)
+    return {
+        "formats": [
+            {
+                "extension": fmt.extension,
+                "mime_type": fmt.mime_type,
+                "display_name": fmt.display_name,
+                "parser_id": fmt.parser_id,
+                "status": fmt.status.value,
+                "max_file_size_mb": fmt.max_file_size_mb,
+                "capabilities": fmt.capabilities,
+                "limitations": fmt.limitations,
+                "docs_reference": fmt.docs_reference,
+            }
+            for fmt in formats
+        ]
+    }
+
+
+def check_format(extension: str) -> dict[str, Any]:
+    registry = get_format_registry()
+    return registry.check(extension)
