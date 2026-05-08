@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 
 import httpx
@@ -500,6 +501,7 @@ async def test_system_status_reports_alembic_revision_when_revision_table_exists
     assert response.json()["vector"]["health"]["collections"] == []
 
 
+# Processing Profiles tests (from main)
 @pytest.mark.anyio
 async def test_processing_profiles_endpoint_returns_default_profiles(tmp_path) -> None:
     database_path = tmp_path / "web-console-profiles.db"
@@ -665,3 +667,130 @@ async def test_indexing_metadata_includes_profile_ids(tmp_path) -> None:
         assert embedding is not None
         assert "profile_id" in embedding.metadata_json
         assert embedding.metadata_json["profile_id"] == "*.embed.default"
+
+
+# Document Understanding tests (from HEAD)
+@pytest.mark.anyio
+async def test_document_understanding_endpoints(tmp_path) -> None:
+    from ragrig.db.models import DocumentVersion
+    from ragrig.indexing.pipeline import index_knowledge_base
+    from ragrig.ingestion.pipeline import ingest_local_directory
+
+    database_path = tmp_path / "web-console-understanding.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "guide.md": "# Guide\n\nA test guide for understanding.",
+        },
+    )
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
+        version = session.scalars(
+            select(DocumentVersion).order_by(DocumentVersion.version_number.desc())
+        ).first()
+
+    assert version is not None
+    version_id = str(version.id)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # GET before generation -> 404
+        get_before = await client.get(f"/document-versions/{version_id}/understanding")
+        assert get_before.status_code == 404
+        assert get_before.json()["error"] == "understanding_not_found"
+
+        # POST to generate
+        post_response = await client.post(
+            f"/document-versions/{version_id}/understand",
+            json={"provider": "deterministic-local", "profile_id": "*.understand.default"},
+        )
+        assert post_response.status_code == 200
+        payload = post_response.json()
+        assert payload["status"] == "completed"
+        assert payload["document_version_id"] == version_id
+        assert payload["provider"] == "deterministic-local"
+        assert payload["result"]["summary"] is not None
+        assert payload["error"] is None
+
+        # GET after generation -> 200
+        get_after = await client.get(f"/document-versions/{version_id}/understanding")
+        assert get_after.status_code == 200
+        assert get_after.json()["status"] == "completed"
+        assert get_after.json()["result"]["summary"] == payload["result"]["summary"]
+
+        # Idempotency: POST again returns same result
+        post_again = await client.post(
+            f"/document-versions/{version_id}/understand",
+            json={"provider": "deterministic-local", "profile_id": "*.understand.default"},
+        )
+        assert post_again.status_code == 200
+        assert post_again.json()["id"] == payload["id"]
+
+        # POST for nonexistent version -> 404
+        bad_version = await client.post(
+            f"/document-versions/{uuid.uuid4()}/understand",
+            json={"provider": "deterministic-local"},
+        )
+        assert bad_version.status_code == 404
+        assert bad_version.json()["error"] == "document_version_not_found"
+
+
+@pytest.mark.anyio
+async def test_document_understanding_shown_in_console(tmp_path) -> None:
+    from ragrig.db.models import DocumentVersion
+    from ragrig.indexing.pipeline import index_knowledge_base
+    from ragrig.ingestion.pipeline import ingest_local_directory
+
+    database_path = tmp_path / "web-console-understanding-ui.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "guide.md": "# Guide\n\nA test guide for understanding.",
+        },
+    )
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
+        version = session.scalars(
+            select(DocumentVersion).order_by(DocumentVersion.version_number.desc())
+        ).first()
+
+    assert version is not None
+    version_id = str(version.id)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Console should show "not_generated" before understanding exists
+        console_before = await client.get("/console")
+        assert console_before.status_code == 200
+        assert "not_generated" in console_before.text
+        assert "No understanding result yet" in console_before.text
+
+        # Generate understanding
+        await client.post(
+            f"/document-versions/{version_id}/understand",
+            json={"provider": "deterministic-local", "profile_id": "*.understand.default"},
+        )
+
+        # Console should show completed state after generation
+        console_after = await client.get("/console")
+        assert console_after.status_code == 200
+        assert "completed" in console_after.text
+        assert "Document Understanding" in console_after.text

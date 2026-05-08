@@ -19,6 +19,13 @@ from ragrig.retrieval import (
     RetrievalError,
     search_knowledge_base,
 )
+from ragrig.understanding import (
+    DocumentVersionNotFoundError,
+    ProviderUnavailableError,
+    UnderstandingRequest,
+    generate_document_understanding,
+    get_understanding_by_version,
+)
 from ragrig.vectorstore import get_vector_backend, get_vector_backend_health
 from ragrig.web_console import (
     PluginWizardValidationError,
@@ -203,6 +210,66 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, list[dict[str, Any]]]:
         return {"items": list_document_version_chunks(session, document_version_id)}
+
+    @app.post("/document-versions/{document_version_id}/understand", response_model=None)
+    def understand_document_version(
+        document_version_id: str,
+        request: UnderstandingRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            record = generate_document_understanding(
+                session,
+                document_version_id=document_version_id,
+                provider=request.provider,
+                model=request.model or "",
+                profile_id=request.profile_id,
+            )
+        except DocumentVersionNotFoundError as exc:
+            return JSONResponse(status_code=404, content={"error": exc.code, "message": str(exc)})
+        except ProviderUnavailableError as exc:
+            return JSONResponse(status_code=503, content={"error": exc.code, "message": str(exc)})
+        return {
+            "id": record.id,
+            "document_version_id": record.document_version_id,
+            "profile_id": record.profile_id,
+            "provider": record.provider,
+            "model": record.model,
+            "status": record.status,
+            "result": record.result,
+            "error": record.error,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+        }
+
+    @app.get("/document-versions/{document_version_id}/understanding", response_model=None)
+    def get_document_understanding(
+        document_version_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        record = get_understanding_by_version(session, document_version_id)
+        if record is None:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "understanding_not_found",
+                    "message": (
+                        f"No understanding result for document version '{document_version_id}'."
+                    ),
+                },
+            )
+        return {
+            "id": record.id,
+            "document_version_id": record.document_version_id,
+            "profile_id": record.profile_id,
+            "provider": record.provider,
+            "model": record.model,
+            "status": record.status,
+            "result": record.result,
+            "error": record.error,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+        }
 
     @app.get("/models", response_model=None)
     def models(
