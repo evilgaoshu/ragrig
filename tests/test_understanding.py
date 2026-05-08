@@ -91,8 +91,6 @@ class TestGetUnderstandingProvider:
         assert exc_info.value.code == "provider_not_registered"
 
 
-
-
 class TestDeterministicProviderEdgeCases:
     def test_extracts_up_to_five_entities(self) -> None:
         prov = DeterministicUnderstandingProvider()
@@ -115,7 +113,12 @@ class TestDeterministicProviderEdgeCases:
 
 class TestLLMUnderstandingProvider:
     def test_chat_path_with_valid_json_response(self) -> None:
-        from ragrig.providers import BaseProvider, ProviderCapability, ProviderMetadata, ProviderKind
+        from ragrig.providers import (
+            BaseProvider,
+            ProviderCapability,
+            ProviderMetadata,
+            ProviderKind,
+        )
 
         class FakeProvider(BaseProvider):
             metadata = ProviderMetadata(
@@ -160,7 +163,12 @@ class TestLLMUnderstandingProvider:
         assert result.summary == "test"
 
     def test_generate_fallback_path(self) -> None:
-        from ragrig.providers import BaseProvider, ProviderCapability, ProviderMetadata, ProviderKind
+        from ragrig.providers import (
+            BaseProvider,
+            ProviderCapability,
+            ProviderMetadata,
+            ProviderKind,
+        )
 
         class FakeProvider(BaseProvider):
             metadata = ProviderMetadata(
@@ -197,7 +205,13 @@ class TestLLMUnderstandingProvider:
         assert result.summary == "fallback"
 
     def test_raises_on_invalid_json(self) -> None:
-        from ragrig.providers import BaseProvider, ProviderCapability, ProviderMetadata, ProviderKind, ProviderError
+        from ragrig.providers import (
+            BaseProvider,
+            ProviderCapability,
+            ProviderMetadata,
+            ProviderKind,
+            ProviderError,
+        )
 
         class FakeProvider(BaseProvider):
             metadata = ProviderMetadata(
@@ -231,7 +245,12 @@ class TestLLMUnderstandingProvider:
         assert exc_info.value.code == "understanding_schema_invalid"
 
     def test_strips_markdown_code_blocks(self) -> None:
-        from ragrig.providers import BaseProvider, ProviderCapability, ProviderMetadata, ProviderKind
+        from ragrig.providers import (
+            BaseProvider,
+            ProviderCapability,
+            ProviderMetadata,
+            ProviderKind,
+        )
 
         class FakeProvider(BaseProvider):
             metadata = ProviderMetadata(
@@ -278,7 +297,12 @@ class TestLLMUnderstandingProvider:
         assert result.summary == "stripped"
 
     def test_response_key_path(self) -> None:
-        from ragrig.providers import BaseProvider, ProviderCapability, ProviderMetadata, ProviderKind
+        from ragrig.providers import (
+            BaseProvider,
+            ProviderCapability,
+            ProviderMetadata,
+            ProviderKind,
+        )
 
         class FakeProvider(BaseProvider):
             metadata = ProviderMetadata(
@@ -302,7 +326,9 @@ class TestLLMUnderstandingProvider:
             )
 
             def chat(self, messages: list[dict[str, object]]) -> dict[str, object]:
-                return {"response": '{"summary": "response-key", "table_of_contents": [], "entities": [], "key_claims": [], "limitations": [], "source_spans": []}'}
+                return {
+                    "response": '{"summary": "response-key", "table_of_contents": [], "entities": [], "key_claims": [], "limitations": [], "source_spans": []}'
+                }
 
         from ragrig.understanding.provider import LLMUnderstandingProvider
 
@@ -311,7 +337,12 @@ class TestLLMUnderstandingProvider:
         assert result.summary == "response-key"
 
     def test_content_key_path(self) -> None:
-        from ragrig.providers import BaseProvider, ProviderCapability, ProviderMetadata, ProviderKind
+        from ragrig.providers import (
+            BaseProvider,
+            ProviderCapability,
+            ProviderMetadata,
+            ProviderKind,
+        )
 
         class FakeProvider(BaseProvider):
             metadata = ProviderMetadata(
@@ -335,7 +366,9 @@ class TestLLMUnderstandingProvider:
             )
 
             def chat(self, messages: list[dict[str, object]]) -> dict[str, object]:
-                return {"content": '{"summary": "content-key", "table_of_contents": [], "entities": [], "key_claims": [], "limitations": [], "source_spans": []}'}
+                return {
+                    "content": '{"summary": "content-key", "table_of_contents": [], "entities": [], "key_claims": [], "limitations": [], "source_spans": []}'
+                }
 
         from ragrig.understanding.provider import LLMUnderstandingProvider
 
@@ -382,6 +415,7 @@ class TestLLMUnderstandingProvider:
 
         # Temporarily swap global registry
         import ragrig.providers as providers_mod
+
         original = providers_mod._provider_registry
         providers_mod._provider_registry = registry
         try:
@@ -392,7 +426,12 @@ class TestLLMUnderstandingProvider:
             providers_mod._provider_registry = original
 
     def test_strips_plain_code_block(self) -> None:
-        from ragrig.providers import BaseProvider, ProviderCapability, ProviderMetadata, ProviderKind
+        from ragrig.providers import (
+            BaseProvider,
+            ProviderCapability,
+            ProviderMetadata,
+            ProviderKind,
+        )
 
         class FakeProvider(BaseProvider):
             metadata = ProviderMetadata(
@@ -474,6 +513,7 @@ class TestLLMUnderstandingProvider:
         registry.register(fake_metadata, lambda **config: FakeProvider())
 
         import ragrig.providers as providers_mod
+
         original = providers_mod._provider_registry
         providers_mod._provider_registry = registry
         try:
@@ -536,9 +576,7 @@ class TestServiceProviderFailure:
 class TestGenerateDocumentUnderstanding:
     def test_raises_when_version_not_found(self, sqlite_session: Session) -> None:
         with pytest.raises(DocumentVersionNotFoundError):
-            generate_document_understanding(
-                sqlite_session, document_version_id=str(uuid.uuid4())
-            )
+            generate_document_understanding(sqlite_session, document_version_id=str(uuid.uuid4()))
 
     def test_generates_and_persists_result(self, sqlite_session: Session) -> None:
         from ragrig.ingestion.pipeline import ingest_local_directory

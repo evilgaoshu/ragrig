@@ -58,9 +58,11 @@ def get_understanding_by_version(
     session: Session, document_version_id: str
 ) -> UnderstandingRecord | None:
     version_uuid = uuid.UUID(document_version_id)
-    row = session.query(DocumentUnderstanding).filter(
-        DocumentUnderstanding.document_version_id == version_uuid
-    ).first()
+    row = (
+        session.query(DocumentUnderstanding)
+        .filter(DocumentUnderstanding.document_version_id == version_uuid)
+        .first()
+    )
     if row is None:
         return None
     return _to_record(row)
@@ -83,10 +85,14 @@ def generate_document_understanding(
     input_hash = compute_input_hash(text, profile_id, provider, model or "")
 
     # Idempotency: if hash matches existing record, return it
-    existing = session.query(DocumentUnderstanding).filter(
-        DocumentUnderstanding.document_version_id == version_uuid,
-        DocumentUnderstanding.profile_id == profile_id,
-    ).first()
+    existing = (
+        session.query(DocumentUnderstanding)
+        .filter(
+            DocumentUnderstanding.document_version_id == version_uuid,
+            DocumentUnderstanding.profile_id == profile_id,
+        )
+        .first()
+    )
     if existing is not None and existing.input_hash == input_hash:
         return _to_record(existing)
 
@@ -134,9 +140,11 @@ def generate_document_understanding(
 
 def delete_document_understanding(session: Session, document_version_id: str) -> bool:
     version_uuid = uuid.UUID(document_version_id)
-    row = session.query(DocumentUnderstanding).filter(
-        DocumentUnderstanding.document_version_id == version_uuid
-    ).first()
+    row = (
+        session.query(DocumentUnderstanding)
+        .filter(DocumentUnderstanding.document_version_id == version_uuid)
+        .first()
+    )
     if row is None:
         return False
     session.delete(row)

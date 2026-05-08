@@ -118,9 +118,7 @@ class LLMUnderstandingProvider(UnderstandingProvider):
         try:
             raw = self._provider.chat(messages)
         except ProviderError:
-            raw_text = self._provider.generate(
-                f"{prompt}\n\nDocument text:\n{text}"
-            )
+            raw_text = self._provider.generate(f"{prompt}\n\nDocument text:\n{text}")
             raw = {"choices": [{"message": {"content": raw_text}}]}
 
         content = ""

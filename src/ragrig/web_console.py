@@ -409,9 +409,7 @@ def get_document_version_understanding(
 ) -> dict[str, Any] | None:
     version_id = uuid.UUID(document_version_id)
     row = session.scalar(
-        select(DocumentUnderstanding).where(
-            DocumentUnderstanding.document_version_id == version_id
-        )
+        select(DocumentUnderstanding).where(DocumentUnderstanding.document_version_id == version_id)
     )
     if row is None:
         return None
