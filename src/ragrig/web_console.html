@@ -878,6 +878,51 @@
         }
         const chunkResponse = await getJson(`/document-versions/${documentItem.latest_version.id}/chunks`);
         const chunks = chunkResponse.items;
+        const understandingResponse = await getJson(`/document-versions/${documentItem.latest_version.id}/understanding`);
+        const understanding = understandingResponse.error ? null : understandingResponse;
+        let understandingHtml = '';
+        if (!understanding) {
+          understandingHtml = `
+            <div class="card">
+              <div class="name">Document Understanding</div>
+              <div class="sub"><span class="pill warn">not_generated</span> No understanding result yet. Run POST /document-versions/{id}/understand to generate.</div>
+            </div>
+          `;
+        } else if (understanding.status === 'failed') {
+          understandingHtml = `
+            <div class="card">
+              <div class="name">Document Understanding</div>
+              <div class="sub"><span class="pill bad">failed</span> ${escapeHtml(understanding.error || 'Unknown error')}</div>
+              <div class="sub">provider: ${escapeHtml(understanding.provider)} · model: ${escapeHtml(understanding.model || 'n/a')}</div>
+            </div>
+          `;
+        } else if (understanding.status === 'processing') {
+          understandingHtml = `
+            <div class="card">
+              <div class="name">Document Understanding</div>
+              <div class="sub"><span class="pill warn">processing</span> Understanding is being generated...</div>
+            </div>
+          `;
+        } else {
+          const result = understanding.result || {};
+          const summary = result.summary || 'No summary available.';
+          const toc = (result.table_of_contents || []).slice(0, 5).map((e) => `${'  '.repeat(e.level - 1)}${escapeHtml(e.title)}`).join('<br>');
+          const entities = (result.entities || []).slice(0, 5).map((e) => escapeHtml(e.name)).join(', ');
+          const claims = (result.key_claims || []).slice(0, 3).map((c) => escapeHtml(c.claim)).join('<br>');
+          understandingHtml = `
+            <div class="card">
+              <div class="name">Document Understanding <span class="pill ok">${escapeHtml(understanding.status)}</span></div>
+              <div class="sub">provider: ${escapeHtml(understanding.provider)} · model: ${escapeHtml(understanding.model || 'n/a')} · profile: ${escapeHtml(understanding.profile_id)}</div>
+            </div>
+            <div class="card">
+              <div class="name">Summary</div>
+              <div class="sub">${escapeHtml(summary)}</div>
+            </div>
+            ${toc ? `<div class="card"><div class="name">Table of Contents</div><div class="sub code">${toc}</div></div>` : ''}
+            ${entities ? `<div class="card"><div class="name">Entities</div><div class="sub">${entities}</div></div>` : ''}
+            ${claims ? `<div class="card"><div class="name">Key Claims</div><div class="sub">${claims}</div></div>` : ''}
+          `;
+        }
         const preview = `
           <div class="card">
             <div class="name">${escapeHtml(documentItem.uri)}</div>
@@ -888,6 +933,7 @@
             <div class="name">Extracted Preview</div>
             <div class="sub">${escapeHtml(documentItem.latest_version.text_preview || 'No extracted text')}</div>
           </div>
+          ${understandingHtml}
         `;
         if (!chunks.length) {
           root.innerHTML = preview + empty('No chunks exist for this version yet. This is a real empty state, not mock data.');

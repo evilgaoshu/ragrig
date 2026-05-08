@@ -111,6 +111,9 @@ class DocumentVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     document: Mapped[Document] = relationship(back_populates="versions")
     chunks: Mapped[list["Chunk"]] = relationship(back_populates="document_version")
+    understandings: Mapped[list["DocumentUnderstanding"]] = relationship(
+        back_populates="document_version"
+    )
 
 
 class Chunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -222,3 +225,27 @@ class PipelineRunItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     pipeline_run: Mapped[PipelineRun] = relationship(back_populates="items")
     document: Mapped[Document] = relationship(back_populates="pipeline_run_items")
+
+
+class DocumentUnderstanding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "document_understandings"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_version_id", "profile_id", name="uq_understandings_doc_version_profile"
+        ),
+    )
+
+    document_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("document_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    profile_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider: Mapped[str] = mapped_column(String(128), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+
+    document_version: Mapped[DocumentVersion] = relationship(back_populates="understandings")
