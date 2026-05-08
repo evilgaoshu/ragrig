@@ -109,6 +109,7 @@ def _official_manifest(
     capabilities: tuple[Capability, ...],
     docs_reference: str = "docs/specs/ragrig-plugin-system-spec.md",
     optional_dependencies: tuple[str, ...] = (),
+    degraded_missing_dependencies: tuple[str, ...] = (),
     config_model: type[PluginConfigModel] | None = None,
     example_config: dict[str, str] | None = None,
     secret_requirements: tuple[SecretRequirement, ...] = (),
@@ -131,6 +132,7 @@ def _official_manifest(
         example_config=example_config,
         secret_requirements=secret_requirements,
         optional_dependencies=optional_dependencies,
+        degraded_missing_dependencies=degraded_missing_dependencies,
         unavailable_reason=unavailable_reason,
     )
 
@@ -533,7 +535,8 @@ def official_stub_manifests() -> list[PluginManifest]:
             family="object_storage",
             capabilities=(Capability.WRITE,),
             docs_reference="docs/specs/ragrig-plugin-system-spec.md",
-            optional_dependencies=("boto3",),
+            optional_dependencies=("boto3", "pyarrow"),
+            degraded_missing_dependencies=("boto3", "pyarrow"),
             config_model=ObjectStorageSinkConfig,
             example_config={
                 "bucket": "exports",
@@ -550,6 +553,7 @@ def official_stub_manifests() -> list[PluginManifest]:
                 "dry_run": False,
                 "include_retrieval_artifact": True,
                 "include_markdown_summary": True,
+                "parquet_export": False,
                 "max_retries": 3,
                 "connect_timeout_seconds": 10,
                 "read_timeout_seconds": 30,
@@ -572,7 +576,7 @@ def official_stub_manifests() -> list[PluginManifest]:
                 "S3-compatible export runtime is available when boto3 is installed. "
                 "GCS and Azure Blob remain contract-only in this phase."
             ),
-            status=PluginStatus.DEGRADED if s3_ready else PluginStatus.UNAVAILABLE,
+            status=PluginStatus.DEGRADED,
         ),
         _official_manifest(
             plugin_id="source.fileshare",

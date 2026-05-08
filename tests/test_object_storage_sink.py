@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import types
 from datetime import datetime, timezone
@@ -142,6 +143,83 @@ def _seed_export_fixture(sqlite_session):
     return knowledge_base, retrieval_report
 
 
+def _install_fake_pyarrow(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    captures: list[dict[str, object]] = []
+
+    class FakeArrowType:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class FakeField:
+        def __init__(self, name: str, arrow_type: FakeArrowType, *, nullable: bool = True) -> None:
+            self.name = name
+            self.type = arrow_type
+            self.nullable = nullable
+
+    class FakeSchema:
+        def __init__(self, fields: list[FakeField]) -> None:
+            self.fields = fields
+
+    class FakeTable:
+        def __init__(self, rows: list[dict[str, object]], schema: FakeSchema) -> None:
+            self.rows = rows
+            self.schema = schema
+
+        @classmethod
+        def from_pylist(cls, rows: list[dict[str, object]], schema: FakeSchema) -> "FakeTable":
+            return cls(rows, schema)
+
+    fake_pyarrow = types.ModuleType("pyarrow")
+    fake_pyarrow.field = lambda name, arrow_type, nullable=True: FakeField(
+        name, arrow_type, nullable=nullable
+    )
+    fake_pyarrow.schema = lambda fields: FakeSchema(list(fields))
+    fake_pyarrow.string = lambda: FakeArrowType("string")
+    fake_pyarrow.int64 = lambda: FakeArrowType("int64")
+    fake_pyarrow.float64 = lambda: FakeArrowType("float64")
+    fake_pyarrow.bool_ = lambda: FakeArrowType("bool")
+    fake_pyarrow.Table = FakeTable
+
+    fake_parquet = types.ModuleType("pyarrow.parquet")
+
+    def _write_table(table: FakeTable, sink) -> None:
+        captures.append(
+            {
+                "rows": table.rows,
+                "schema": [
+                    {
+                        "name": field.name,
+                        "type": field.type.name,
+                        "nullable": field.nullable,
+                    }
+                    for field in table.schema.fields
+                ],
+            }
+        )
+        sink.write(
+            json.dumps(
+                {
+                    "rows": table.rows,
+                    "schema": [
+                        {
+                            "name": field.name,
+                            "type": field.type.name,
+                            "nullable": field.nullable,
+                        }
+                        for field in table.schema.fields
+                    ],
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        )
+
+    fake_parquet.write_table = _write_table
+
+    monkeypatch.setitem(sys.modules, "pyarrow", fake_pyarrow)
+    monkeypatch.setitem(sys.modules, "pyarrow.parquet", fake_parquet)
+    return captures
+
+
 def test_object_storage_plugin_config_validation_accepts_declared_secrets_only() -> None:
     registry = build_plugin_registry()
 
@@ -189,9 +267,23 @@ def test_object_storage_plugin_readiness_depends_on_boto3(monkeypatch: pytest.Mo
         item["plugin_id"]: item for item in unavailable_registry.list_discovery()
     }["sink.object_storage"]
 
-    assert unavailable_manifest.status is PluginStatus.UNAVAILABLE
-    assert unavailable_discovery["status"] == "unavailable"
-    assert unavailable_discovery["missing_dependencies"] == ["boto3"]
+    assert unavailable_manifest.status is PluginStatus.DEGRADED
+    assert unavailable_discovery["status"] == "degraded"
+    assert unavailable_discovery["missing_dependencies"] == ["boto3", "pyarrow"]
+
+    monkeypatch.setattr(
+        "ragrig.plugins.guards.is_dependency_available",
+        lambda import_name: import_name != "pyarrow",
+    )
+    parquet_missing_registry = build_plugin_registry()
+    parquet_missing_manifest = parquet_missing_registry.get("sink.object_storage")
+    parquet_missing_discovery = {
+        item["plugin_id"]: item for item in parquet_missing_registry.list_discovery()
+    }["sink.object_storage"]
+
+    assert parquet_missing_manifest.status is PluginStatus.DEGRADED
+    assert parquet_missing_discovery["status"] == "degraded"
+    assert parquet_missing_discovery["missing_dependencies"] == ["pyarrow"]
 
     monkeypatch.setattr("ragrig.plugins.guards.is_dependency_available", lambda import_name: True)
     ready_registry = build_plugin_registry()
@@ -263,6 +355,291 @@ def test_export_to_object_storage_writes_jsonl_and_markdown_artifacts(sqlite_ses
         )
         == 1
     )
+
+
+def test_export_to_object_storage_writes_parquet_artifacts_when_enabled(
+    sqlite_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragrig.plugins.object_storage.client import FakeObjectStorageClient
+    from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
+
+    _seed_export_fixture(sqlite_session)
+    captures = _install_fake_pyarrow(monkeypatch)
+    client = FakeObjectStorageClient()
+
+    report = export_to_object_storage(
+        sqlite_session,
+        knowledge_base_name="fixture-export",
+        config=_config(parquet_export=True),
+        env={
+            "AWS_ACCESS_KEY_ID": "test-access-key",
+            "AWS_SECRET_ACCESS_KEY": "test-secret-key",
+        },
+        client=client,
+    )
+
+    parquet_keys = sorted(key for key in report.artifact_keys if key.endswith(".parquet"))
+    assert report.uploaded_count == 11
+    assert len(parquet_keys) == 4
+    assert parquet_keys == [
+        f"team-a/fixture-export/{report.pipeline_run_id}/chunks.parquet",
+        f"team-a/fixture-export/{report.pipeline_run_id}/document_versions.parquet",
+        f"team-a/fixture-export/{report.pipeline_run_id}/documents.parquet",
+        f"team-a/fixture-export/{report.pipeline_run_id}/retrieval_status.parquet",
+    ]
+    assert all(
+        client.objects[key].content_type == "application/vnd.apache.parquet" for key in parquet_keys
+    )
+    assert all(client.objects[key].metadata["team"] == "alpha" for key in parquet_keys)
+    assert all(
+        client.objects[key].metadata["knowledge_base"] == "fixture-export" for key in parquet_keys
+    )
+
+    chunk_export = json.loads(client.objects[parquet_keys[0]].body.decode("utf-8"))
+    assert chunk_export["rows"] == [
+        {
+            "char_end": 24,
+            "char_start": 0,
+            "chunk_id": str(
+                sqlite_session.scalars(select(Chunk.id).order_by(Chunk.chunk_index.asc())).one()
+            ),
+            "chunk_index": 0,
+            "document_uri": "file:///tmp/fixture-export/guide.md",
+            "document_version_id": str(
+                sqlite_session.scalars(
+                    select(DocumentVersion.id).order_by(DocumentVersion.version_number.asc())
+                ).one()
+            ),
+            "heading": "Guide",
+            "metadata": json.dumps(
+                {
+                    "dimensions": 8,
+                    "document_uri": "file:///tmp/fixture-export/guide.md",
+                    "model": "hash-8d",
+                    "provider": "deterministic-local",
+                    "source_uri": "/tmp/fixture-export",
+                },
+                sort_keys=True,
+            ),
+            "page_number": None,
+            "text": "retrieval export fixture",
+        }
+    ]
+    assert chunk_export["schema"] == [
+        {"name": "chunk_id", "nullable": False, "type": "string"},
+        {"name": "document_version_id", "nullable": False, "type": "string"},
+        {"name": "document_uri", "nullable": True, "type": "string"},
+        {"name": "chunk_index", "nullable": False, "type": "int64"},
+        {"name": "text", "nullable": False, "type": "string"},
+        {"name": "char_start", "nullable": True, "type": "int64"},
+        {"name": "char_end", "nullable": True, "type": "int64"},
+        {"name": "page_number", "nullable": True, "type": "int64"},
+        {"name": "heading", "nullable": True, "type": "string"},
+        {"name": "metadata", "nullable": True, "type": "string"},
+    ]
+
+    retrieval_export = json.loads(client.objects[parquet_keys[3]].body.decode("utf-8"))
+    assert retrieval_export["rows"] == [
+        {
+            "reason": "explicit retrieval report export is not implemented in this phase",
+            "status": "unsupported",
+        }
+    ]
+    assert retrieval_export["schema"] == [
+        {"name": "status", "nullable": False, "type": "string"},
+        {"name": "reason", "nullable": False, "type": "string"},
+    ]
+    parquet_captures = [
+        capture for capture in captures if capture["schema"] == retrieval_export["schema"]
+    ]
+    assert len(captures) >= 4
+    assert len(parquet_captures) >= 1
+
+
+def test_export_to_object_storage_skips_existing_parquet_objects_when_overwrite_disabled(
+    sqlite_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragrig.plugins.object_storage.client import FakeObjectStorageClient, FakeStoredObject
+    from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
+
+    _seed_export_fixture(sqlite_session)
+    _install_fake_pyarrow(monkeypatch)
+
+    document_key = "team-a/fixture-export/fixed-run/documents.parquet"
+    retrieval_key = "team-a/fixture-export/fixed-run/retrieval_status.parquet"
+    pipeline_key = "team-a/fixture-export/fixed-run/pipeline_runs.jsonl"
+    client = FakeObjectStorageClient(
+        objects={
+            document_key: FakeStoredObject(
+                key=document_key,
+                body=b"existing-document-parquet",
+                content_type="application/vnd.apache.parquet",
+                metadata={
+                    "artifact": "documents",
+                    "knowledge_base": "fixture-export",
+                    "content_sha256": "existing-doc-parquet-hash",
+                },
+                last_modified=datetime(2026, 5, 5, tzinfo=timezone.utc),
+            ),
+            retrieval_key: FakeStoredObject(
+                key=retrieval_key,
+                body=b"existing-retrieval-parquet",
+                content_type="application/vnd.apache.parquet",
+                metadata={
+                    "artifact": "retrieval_status",
+                    "knowledge_base": "fixture-export",
+                    "content_sha256": "existing-retrieval-parquet-hash",
+                },
+                last_modified=datetime(2026, 5, 5, tzinfo=timezone.utc),
+            ),
+            pipeline_key: FakeStoredObject(
+                key=pipeline_key,
+                body=b'{"status": "completed"}\n',
+                content_type="application/x-ndjson",
+                metadata={
+                    "artifact": "pipeline_runs",
+                    "knowledge_base": "fixture-export",
+                    "content_sha256": "existing-pipeline-hash",
+                },
+                last_modified=datetime(2026, 5, 5, tzinfo=timezone.utc),
+            ),
+        }
+    )
+
+    report = export_to_object_storage(
+        sqlite_session,
+        knowledge_base_name="fixture-export",
+        config=_config(
+            parquet_export=True,
+            path_template="{knowledge_base}/fixed-run/{artifact}.{format}",
+        ),
+        env={
+            "AWS_ACCESS_KEY_ID": "test-access-key",
+            "AWS_SECRET_ACCESS_KEY": "test-secret-key",
+        },
+        client=client,
+    )
+
+    assert report.skipped_count >= 3
+    assert report.uploaded_count + report.skipped_count == 11
+    assert client.objects[document_key].body == b"existing-document-parquet"
+    assert client.objects[retrieval_key].body == b"existing-retrieval-parquet"
+
+
+def test_export_to_object_storage_keeps_jsonl_exports_working_without_pyarrow(
+    sqlite_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragrig.plugins.object_storage.client import FakeObjectStorageClient
+    from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
+
+    _seed_export_fixture(sqlite_session)
+    monkeypatch.setitem(sys.modules, "pyarrow", None)
+    monkeypatch.setitem(sys.modules, "pyarrow.parquet", None)
+    client = FakeObjectStorageClient()
+
+    report = export_to_object_storage(
+        sqlite_session,
+        knowledge_base_name="fixture-export",
+        config=_config(),
+        env={
+            "AWS_ACCESS_KEY_ID": "test-access-key",
+            "AWS_SECRET_ACCESS_KEY": "test-secret-key",
+        },
+        client=client,
+    )
+
+    assert report.uploaded_count == 7
+    assert all(not key.endswith(".parquet") for key in report.artifact_keys)
+
+
+def test_export_to_object_storage_requires_pyarrow_for_parquet_export(
+    sqlite_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragrig.plugins.object_storage.errors import ObjectStorageConfigError
+    from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
+
+    class NoopClient:
+        def check_bucket_access(self, *, bucket: str, prefix: str) -> None:
+            del bucket, prefix
+            raise AssertionError("artifact preparation should fail before remote checks")
+
+        def get_object(self, *, bucket: str, key: str):
+            del bucket, key
+            raise AssertionError("artifact preparation should fail before lookups")
+
+        def put_object(self, *, bucket: str, key: str, body: bytes, content_type: str, metadata):
+            del bucket, key, body, content_type, metadata
+            raise AssertionError("artifact preparation should fail before uploads")
+
+    _seed_export_fixture(sqlite_session)
+    monkeypatch.setitem(sys.modules, "pyarrow", None)
+    monkeypatch.setitem(sys.modules, "pyarrow.parquet", None)
+
+    with pytest.raises(ObjectStorageConfigError, match="pyarrow is required for parquet export"):
+        export_to_object_storage(
+            sqlite_session,
+            knowledge_base_name="fixture-export",
+            config=_config(parquet_export=True),
+            env={
+                "AWS_ACCESS_KEY_ID": "test-access-key",
+                "AWS_SECRET_ACCESS_KEY": "test-secret-key",
+            },
+            client=NoopClient(),
+        )
+
+    latest_run = sqlite_session.scalars(
+        select(PipelineRun).where(PipelineRun.run_type == "object_storage_export")
+    ).one()
+    assert latest_run is not None
+    assert latest_run.status == "failed"
+    assert "pyarrow is required" in (latest_run.error_message or "")
+
+
+def test_export_to_object_storage_dry_run_excludes_parquet_when_pyarrow_missing(
+    sqlite_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
+
+    class DryRunClient:
+        def __init__(self) -> None:
+            self.objects: dict[str, object] = {}
+
+        def check_bucket_access(self, *, bucket: str, prefix: str) -> None:
+            del bucket, prefix
+            raise AssertionError("dry run should not check remote bucket access")
+
+        def get_object(self, *, bucket: str, key: str):
+            del bucket, key
+            raise AssertionError("dry run should not look up remote objects")
+
+        def put_object(self, *, bucket: str, key: str, body: bytes, content_type: str, metadata):
+            del bucket, key, body, content_type, metadata
+            raise AssertionError("dry run should not upload remote objects")
+
+    _seed_export_fixture(sqlite_session)
+    monkeypatch.setitem(sys.modules, "pyarrow", None)
+    monkeypatch.setitem(sys.modules, "pyarrow.parquet", None)
+
+    report = export_to_object_storage(
+        sqlite_session,
+        knowledge_base_name="fixture-export",
+        config=_config(dry_run=True, parquet_export=True),
+        env={
+            "AWS_ACCESS_KEY_ID": "test-access-key",
+            "AWS_SECRET_ACCESS_KEY": "test-secret-key",
+        },
+        client=DryRunClient(),
+    )
+
+    assert report.dry_run is True
+    assert report.planned_count == 7
+    assert all(not key.endswith(".parquet") for key in report.artifact_keys)
+    assert any(key.endswith(".jsonl") for key in report.artifact_keys)
 
 
 def test_export_to_object_storage_dry_run_reports_planned_artifacts_without_writes(
@@ -663,6 +1040,9 @@ def test_object_storage_internal_helpers_cover_edge_cases() -> None:
     )
     from ragrig.plugins.sinks.object_storage.connector import (
         PreparedArtifact,
+        _document_uri_for_version_id,
+        _encode_parquet_payload,
+        _json_string,
         _put_with_retries,
         _render_key,
         _resolve_secrets,
@@ -682,6 +1062,8 @@ def test_object_storage_internal_helpers_cover_edge_cases() -> None:
             del bucket, key, body, content_type, metadata
 
     assert _sink_uri("exports", "") == "s3://exports"
+    assert _document_uri_for_version_id([], "missing") is None
+    assert _json_string(None) is None
     assert (
         _render_key(
             path_template="{knowledge_base}/{artifact}.{format}",
@@ -741,6 +1123,26 @@ def test_object_storage_internal_helpers_cover_edge_cases() -> None:
             ),
             max_retries=-1,
         )
+
+    with pytest.raises(ObjectStorageConfigError, match="parquet export payload must be a list"):
+        _encode_parquet_payload("not-a-list")
+
+
+def test_parquet_schema_helpers_cover_empty_and_fallback_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragrig.plugins.sinks.object_storage.connector import _schema_for_parquet_payload
+
+    _install_fake_pyarrow(monkeypatch)
+
+    empty_schema = _schema_for_parquet_payload([])
+    assert [field.name for field in empty_schema.fields] == []
+
+    fallback_schema = _schema_for_parquet_payload([{"custom_field": "value"}])
+    assert [
+        {"name": field.name, "type": field.type.name, "nullable": field.nullable}
+        for field in fallback_schema.fields
+    ] == [{"name": "custom_field", "type": "string", "nullable": True}]
 
 
 @pytest.mark.parametrize(

@@ -45,6 +45,7 @@ class PluginManifest(BaseModel):
     example_config: dict[str, Any] | None = None
     secret_requirements: tuple[SecretRequirement, ...] = ()
     optional_dependencies: tuple[str, ...] = ()
+    degraded_missing_dependencies: tuple[str, ...] = ()
     unavailable_reason: str | None = None
 
     @field_validator("plugin_id")

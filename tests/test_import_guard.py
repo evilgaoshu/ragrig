@@ -58,6 +58,7 @@ OPTIONAL_IMPORT_ROOTS = {
     "opensearchpy",
     "paddleocr",
     "paramiko",
+    "pyarrow",
     "pymilvus",
     "qdrant_client",
     "redis",
