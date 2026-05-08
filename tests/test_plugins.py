@@ -348,15 +348,9 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
         "FILESHARE_PRIVATE_KEY",
     ]
     assert discovery["source.fileshare"]["protocol_missing_dependencies"]["nfs_mounted"] == []
-    assert discovery["source.fileshare"]["protocol_missing_dependencies"]["smb"] == [
-        "smbprotocol"
-    ]
-    assert discovery["source.fileshare"]["protocol_missing_dependencies"]["webdav"] == [
-        "httpx"
-    ]
-    assert discovery["source.fileshare"]["protocol_missing_dependencies"]["sftp"] == [
-        "paramiko"
-    ]
+    assert discovery["source.fileshare"]["protocol_missing_dependencies"]["smb"] == ["smbprotocol"]
+    assert discovery["source.fileshare"]["protocol_missing_dependencies"]["webdav"] == ["httpx"]
+    assert discovery["source.fileshare"]["protocol_missing_dependencies"]["sftp"] == ["paramiko"]
     assert discovery["sink.object_storage"]["status"] == "degraded"
     assert discovery["sink.object_storage"]["missing_dependencies"] == ["boto3", "pyarrow"]
     assert discovery["sink.object_storage"]["secret_requirements"] == [
