@@ -498,3 +498,170 @@ async def test_system_status_reports_alembic_revision_when_revision_table_exists
     assert response.json()["db"]["alembic_revision"] == "20260503_0001"
     assert response.json()["vector"]["status"] == "healthy"
     assert response.json()["vector"]["health"]["collections"] == []
+
+
+@pytest.mark.anyio
+async def test_processing_profiles_endpoint_returns_default_profiles(tmp_path) -> None:
+    database_path = tmp_path / "web-console-profiles.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/processing-profiles")
+
+    assert response.status_code == 200
+    profiles = response.json()["profiles"]
+    assert len(profiles) >= 6
+    task_types = {p["task_type"] for p in profiles}
+    assert "correct" in task_types
+    assert "clean" in task_types
+    assert "chunk" in task_types
+    assert "summarize" in task_types
+    assert "understand" in task_types
+    assert "embed" in task_types
+    for p in profiles:
+        assert "profile_id" in p
+        assert "extension" in p
+        assert "task_type" in p
+        assert "provider" in p
+        assert "status" in p
+        assert "provider_available" in p
+        # Must not contain raw secrets
+        assert "secret" not in str(p)
+        assert "api_key" not in str(p)
+
+
+@pytest.mark.anyio
+async def test_processing_profiles_matrix_endpoint_returns_grid(tmp_path) -> None:
+    database_path = tmp_path / "web-console-matrix.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/processing-profiles/matrix")
+
+    assert response.status_code == 200
+    matrix = response.json()
+    assert "extensions" in matrix
+    assert "task_types" in matrix
+    assert "cells" in matrix
+    assert ".md" in matrix["extensions"]
+    assert ".txt" in matrix["extensions"]
+    assert ".pdf" in matrix["extensions"]
+    assert ".docx" in matrix["extensions"]
+    assert ".xlsx" in matrix["extensions"]
+    assert "*" in matrix["extensions"]
+    assert "correct" in matrix["task_types"]
+    assert "clean" in matrix["task_types"]
+    assert "chunk" in matrix["task_types"]
+    assert "summarize" in matrix["task_types"]
+    assert "understand" in matrix["task_types"]
+    assert "embed" in matrix["task_types"]
+    # Each cell has the required fields
+    for _key, cell in matrix["cells"].items():
+        assert "profile_id" in cell
+        assert "kind" in cell
+        assert "source" in cell
+        assert "is_default" in cell
+        assert "provider_available" in cell
+        assert cell["kind"] in ("deterministic", "LLM-assisted")
+        assert cell["source"] in ("default", "override")
+        assert isinstance(cell["is_default"], bool)
+
+
+@pytest.mark.anyio
+async def test_processing_profiles_api_no_secrets_leakage(tmp_path) -> None:
+    database_path = tmp_path / "web-console-no-secrets.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        profiles_resp = await client.get("/processing-profiles")
+        matrix_resp = await client.get("/processing-profiles/matrix")
+
+    for response in [profiles_resp, matrix_resp]:
+        text_body = response.text
+        assert "secret" not in text_body.lower()
+        assert "api_key" not in text_body.lower()
+        assert "password" not in text_body.lower()
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_profile_matrix_section(tmp_path) -> None:
+    database_path = tmp_path / "web-console-matrix-section.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Processing Profile Matrix" in html
+    assert "profile-matrix-table" in html
+    assert "profile-matrix-panel" in html
+    assert "/processing-profiles/matrix" in html
+    assert "renderProfileMatrix" in html
+    assert "cell-kind" in html
+    assert "deterministic" in html
+    assert "LLM-assisted" in html
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_profile_matrix_nav_item(tmp_path) -> None:
+    database_path = tmp_path / "web-console-nav-matrix.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    assert "Profile Matrix" in response.text
+
+
+@pytest.mark.anyio
+async def test_indexing_metadata_includes_profile_ids(tmp_path) -> None:
+    database_path = tmp_path / "web-console-index-metadata.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"notes.txt": "hello world content"})
+
+    with session_factory() as session:
+        from sqlalchemy import select
+
+        from ragrig.db.models import Chunk, Embedding, PipelineRun
+        from ragrig.indexing.pipeline import index_knowledge_base
+        from ragrig.ingestion.pipeline import ingest_local_directory
+
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
+
+        run = session.scalars(
+            select(PipelineRun)
+            .where(PipelineRun.run_type == "chunk_embedding")
+            .order_by(PipelineRun.started_at.desc())
+        ).first()
+        config = run.config_snapshot_json
+        assert "chunk_profile_id" in config
+        assert "embed_profile_id" in config
+        assert config["chunk_profile_id"] == "*.chunk.default"
+        assert config["embed_profile_id"] == "*.embed.default"
+
+        chunk = session.scalars(select(Chunk)).first()
+        assert chunk is not None
+        assert "profile_id" in chunk.metadata_json
+        assert chunk.metadata_json["profile_id"] == "*.chunk.default"
+
+        embedding = session.scalars(select(Embedding)).first()
+        assert embedding is not None
+        assert "profile_id" in embedding.metadata_json
+        assert embedding.metadata_json["profile_id"] == "*.embed.default"

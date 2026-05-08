@@ -10,6 +10,7 @@ from ragrig.chunkers import ChunkingConfig, chunk_text
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding
 from ragrig.embeddings import EmbeddingResult
 from ragrig.plugins import get_plugin_registry
+from ragrig.processing_profile import ProcessingProfile, TaskType, resolve_profile
 from ragrig.providers import BaseProvider, get_provider_registry
 from ragrig.repositories import (
     create_pipeline_run,
@@ -87,6 +88,8 @@ def _replace_version_index(
     document: Document,
     chunking_config: ChunkingConfig,
     embedding_provider: BaseProvider,
+    chunk_profile_id: str,
+    embed_profile_id: str,
 ) -> tuple[int, int]:
     existing_chunk_ids = list(
         session.scalars(select(Chunk.id).where(Chunk.document_version_id == document_version.id))
@@ -112,6 +115,7 @@ def _replace_version_index(
                 "document_uri": document.uri,
                 "parser_name": document_version.parser_name,
                 "version_number": document_version.version_number,
+                "profile_id": chunk_profile_id,
             },
         )
         session.add(chunk)
@@ -130,6 +134,7 @@ def _replace_version_index(
                     **embedding.metadata,
                     "config_hash": chunking_config.config_hash,
                     "document_version_id": str(document_version.id),
+                    "profile_id": embed_profile_id,
                 },
             )
         )
@@ -217,6 +222,10 @@ def index_knowledge_base(
         "deterministic-local", dimensions=embedding_dimensions
     )
     provider_name, model_name = _embedding_provider_profile(embedding_provider)
+
+    chunk_profile: ProcessingProfile = resolve_profile("*", TaskType.CHUNK)
+    embed_profile: ProcessingProfile = resolve_profile("*", TaskType.EMBED)
+
     run = create_pipeline_run(
         session,
         knowledge_base_id=knowledge_base.id,
@@ -227,6 +236,8 @@ def index_knowledge_base(
             "embedding_dimensions": embedding_dimensions,
             "embedding_model": model_name,
             "embedding_provider": provider_name,
+            "chunk_profile_id": chunk_profile.profile_id,
+            "embed_profile_id": embed_profile.profile_id,
         },
     )
 
@@ -283,6 +294,8 @@ def index_knowledge_base(
                     document=document,
                     chunking_config=chunking_config,
                     embedding_provider=embedding_provider,
+                    chunk_profile_id=chunk_profile.profile_id,
+                    embed_profile_id=embed_profile.profile_id,
                 )
                 chunk_count += created_chunks
                 embedding_count += created_embeddings

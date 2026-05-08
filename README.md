@@ -247,6 +247,44 @@ PR-3 keeps cloud SDKs out of the default install and ships only contract-first c
 
 Optional cloud dependency groups:
 
+## Processing Profile System
+
+PR-5 introduces a read-only ProcessingProfile module that defines a file-type × task-type pipeline matrix. The system ships with default wildcard profiles and serves as the resolution layer for processing decisions in the ingestion and indexing pipelines.
+
+### Concepts
+
+- **TaskType**: `correct`, `clean`, `chunk`, `summarize`, `understand`, `embed`
+- **ProcessingProfile**: defines provider, kind (deterministic/LLM-assisted), and status per (extension, task_type) combination
+- **Profile Resolution**: extension override → wildcard default → safe fallback
+- **Default Profiles**: all task types ship with wildcard defaults; chunk/embed use deterministic providers, summarize/understand are LLM-assisted stubs
+
+### Current Scope (P0)
+
+- `src/ragrig/processing_profile/` core module with 100% test coverage
+- `GET /processing-profiles` — list all profiles (with provider, status, task_type; no raw secrets)
+- `GET /processing-profiles/matrix` — returns extension × task_type grid with default/override and deterministic/LLM-assisted markers
+- Chunk and embed metadata include `profile_id` for traceability
+- Web Console `Processing Profile Matrix` read-only view
+- `resolve_provider_availability()` correctly reports unavailable providers (not faked as ready)
+
+### Limitations (not yet implemented)
+
+- No browser-side profile CRUD (create/edit/delete)
+- No real LLM summarize/understand calls — profiles define configuration only
+- No per-profile A/B evaluation metrics
+- No secret storage or secret echo in API responses
+- Provider availability for LLM tasks is read-only; no runtime health check past plugin registry status
+
+### Degradation Semantics
+
+When a profile's LLM provider is unavailable:
+
+- The matrix marks the cell with `provider_available: false` and an amber "⚠ unavail" indicator in the console
+- The API response includes `provider_available: false` without fabricating a ready state
+- Pipeline runs record `chunk_profile_id`/`embed_profile_id` in config snapshots; future phases will use these for fallback logic
+
+## Cloud Provider Extras (cont.)
+
 - `cloud-google`: `google-cloud-aiplatform`
 - `cloud-aws`: `boto3`
 - `cloud-openai`: `openai`
