@@ -539,9 +539,7 @@ def test_fileshare_config_accepts_valid_webdav_and_helpers_cover_remote_paths() 
 
     sftp_client = _build_client(
         _config(protocol="sftp", host="sftp.example.internal"),
-        secrets=ResolvedFileshareSecrets(
-            username="alice", password="secret", private_key="KEY"
-        ),
+        secrets=ResolvedFileshareSecrets(username="alice", password="secret", private_key="KEY"),
     )
     assert sftp_client.protocol == "sftp"
 

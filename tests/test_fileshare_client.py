@@ -256,9 +256,7 @@ class TestWebDAVClientListFiles:
     def test_list_files_maps_500_to_permanent_error(self) -> None:
         mock_response = MagicMock()
         mock_response.status_code = 500
-        error = httpx.HTTPStatusError(
-            "500 Error", request=MagicMock(), response=mock_response
-        )
+        error = httpx.HTTPStatusError("500 Error", request=MagicMock(), response=mock_response)
         mock_response.raise_for_status.side_effect = error
 
         mock_client = MagicMock()
@@ -542,9 +540,7 @@ class TestWebDAVClientReadFile:
 class TestWebDAVClientAuth:
     def test_client_uses_basic_auth_when_credentials_set(self) -> None:
         with patch("httpx.Client") as mock_cls:
-            client = WebDAVClient(
-                base_url="http://localhost", username="u", password="p"
-            )
+            client = WebDAVClient(base_url="http://localhost", username="u", password="p")
             client._client()
             _, kwargs = mock_cls.call_args
             assert kwargs["auth"] is not None
@@ -591,9 +587,7 @@ class TestSFTPClientConnect:
             result = client._connect()
 
         assert result == mock_sftp
-        mock_transport.connect.assert_called_once_with(
-            username="u", password="p", pkey=None
-        )
+        mock_transport.connect.assert_called_once_with(username="u", password="p", pkey=None)
 
     def test_connect_with_private_key(self) -> None:
         mock_transport = MagicMock()
@@ -610,9 +604,7 @@ class TestSFTPClientConnect:
             result = client._connect()
 
         assert result == mock_sftp
-        mock_transport.connect.assert_called_once_with(
-            username="u", password=None, pkey=mock_pkey
-        )
+        mock_transport.connect.assert_called_once_with(username="u", password=None, pkey=mock_pkey)
 
     def test_connect_maps_auth_exception(self) -> None:
         client = SFTPClient(host="host", username="u")
@@ -630,7 +622,9 @@ class TestSFTPClientConnect:
             mock_paramiko = sys.modules["paramiko"]
             SSHException = type("SSHException", (Exception,), {})
             mock_paramiko.Transport.side_effect = SSHException("connection refused")
-            mock_paramiko.AuthenticationException = type("AuthenticationException", (Exception,), {})
+            mock_paramiko.AuthenticationException = type(
+                "AuthenticationException", (Exception,), {}
+            )
             mock_paramiko.SSHException = SSHException
             with pytest.raises(FileshareRetryableError):
                 client._connect()
@@ -640,7 +634,9 @@ class TestSFTPClientConnect:
         with patch.dict(sys.modules, {"paramiko": MagicMock()}):
             mock_paramiko = sys.modules["paramiko"]
             mock_paramiko.Transport.side_effect = ValueError("boom")
-            mock_paramiko.AuthenticationException = type("AuthenticationException", (Exception,), {})
+            mock_paramiko.AuthenticationException = type(
+                "AuthenticationException", (Exception,), {}
+            )
             mock_paramiko.SSHException = type("SSHException", (Exception,), {})
             with pytest.raises(FilesharePermanentError):
                 client._connect()
@@ -651,7 +647,9 @@ class TestSFTPClientConnect:
             mock_paramiko = sys.modules["paramiko"]
             SSHException = type("SSHException", (Exception,), {})
             mock_paramiko.Transport.side_effect = SSHException("some ssh error")
-            mock_paramiko.AuthenticationException = type("AuthenticationException", (Exception,), {})
+            mock_paramiko.AuthenticationException = type(
+                "AuthenticationException", (Exception,), {}
+            )
             mock_paramiko.SSHException = SSHException
             with pytest.raises(FilesharePermanentError):
                 client._connect()
