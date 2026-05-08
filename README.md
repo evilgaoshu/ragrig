@@ -873,11 +873,26 @@ make fileshare-check
 Live smoke (local Docker services, explicit opt-in):
 
 ```bash
-make test-live-fileshare   # starts containers, seeds fixtures, runs tests
-make fileshare-live-down   # tear down
+make preflight-fileshare-live          # check Docker, ports, and optional SDKs
+make test-live-fileshare               # preflight + up + seed + pytest + evidence
+make test-live-fileshare-print-evidence # same, but prints the evidence record to stdout
+make fileshare-live-down               # tear down
 ```
 
-Live smoke requires `RAGRIG_FILESHARE_LIVE_SMOKE=1` and validates real list/read/stat/skip behavior against local Samba, WebDAV, and SFTP containers. It does not run in default CI.
+Live smoke validates real list/read/stat/skip behavior against local Samba, WebDAV, and SFTP containers. It does not run in default CI.
+
+**QA acceptance path:**
+
+1. Run `make preflight-fileshare-live` first. If it reports blockers, do not start containers.
+2. Run `make test-live-fileshare` to produce a full evidence record at `docs/operations/artifacts/fileshare-live-smoke-record.json`.
+3. Paste the record (or `make test-live-fileshare-print-evidence` output) into the PR or issue as验收证据.
+
+**Unavailable environment fallback:**
+
+- If Docker is not installed or the daemon is not running, preflight prints actionable steps and exits without starting containers.
+- If optional SDKs (`smbprotocol`, `paramiko`, `httpx`) are missing, preflight warns but still allows the test to proceed; pytest will skip the corresponding protocol tests.
+- If a required port is occupied, preflight suggests freeing it or overriding via `SMB_HOST_PORT`, `WEBDAV_HOST_PORT`, or `SFTP_HOST_PORT`.
+- Offline coverage is still enforced by `make test` and `make coverage`; live smoke is an additive, explicit opt-in only.
 
 Example SMB config:
 
