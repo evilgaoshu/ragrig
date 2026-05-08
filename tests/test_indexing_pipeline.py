@@ -285,6 +285,8 @@ def test_replace_version_index_replaces_existing_chunks_and_embeddings(tmp_path)
             document=document,
             chunking_config=ChunkingConfig(chunk_size=6, chunk_overlap=1),
             embedding_provider=DeterministicEmbeddingProvider(dimensions=4),
+            chunk_profile_id="*.chunk.default",
+            embed_profile_id="*.embed.default",
         )
 
         replacement_chunks = session.scalars(

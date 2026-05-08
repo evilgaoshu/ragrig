@@ -12,6 +12,7 @@ from ragrig.indexing import IndexingReport, index_knowledge_base
 from ragrig.ingestion import IngestionReport, ingest_local_directory
 from ragrig.parsers import MarkdownParser, ParseResult, PlainTextParser
 from ragrig.plugins import Capability, PluginManifest, PluginRegistry, get_plugin_registry
+from ragrig.processing_profile import ProcessingProfile, TaskType, get_default_profiles
 from ragrig.providers import ProviderRegistry, get_provider_registry
 from ragrig.repositories import (
     create_pipeline_run,
@@ -35,6 +36,7 @@ CORE_PATHS = [
     REPO_ROOT / "src/ragrig/chunkers",
     REPO_ROOT / "src/ragrig/embeddings",
     REPO_ROOT / "src/ragrig/indexing",
+    REPO_ROOT / "src/ragrig/processing_profile",
     REPO_ROOT / "src/ragrig/providers",
     REPO_ROOT / "src/ragrig/plugins",
     REPO_ROOT / "src/ragrig/providers",
@@ -131,6 +133,9 @@ def test_core_package_exports_are_available_without_optional_dependencies() -> N
     assert IndexingReport is not None
     assert search_knowledge_base is not None
     assert create_database_check is not None
+    assert ProcessingProfile is not None
+    assert TaskType is not None
+    assert get_default_profiles is not None
 
 
 def test_core_modules_do_not_import_optional_sdks_at_top_level() -> None:

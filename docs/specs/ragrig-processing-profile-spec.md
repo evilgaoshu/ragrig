@@ -1,7 +1,7 @@
 # RAGRig ProcessingProfile, SupportedFormat, and Document Understanding Spec
 
 Date: 2026-05-08
-Status: Design spec — no code implementation yet
+Status: P0 implemented (EVI-54, PR #33) — ProcessingProfile core, APIs, Web Console matrix
 
 ## 1. Goal
 
@@ -1006,3 +1006,55 @@ curl http://localhost:8000/knowledge-bases/fixture-local/understanding | jq '.un
 - [RAGRig Plugin System Spec](./ragrig-plugin-system-spec.md)
 - [RAGRig Web Console Spec](./ragrig-web-console-spec.md)
 - [RAGRig MVP Spec](./ragrig-mvp-spec.md)
+
+## 12. EVI-54 Implementation Delta (ProcessingProfile P0)
+
+**PR:** [#33](https://github.com/evilgaoshu/ragrig/pull/33)
+**Branch:** `agent/dev-pi/d76578cb`
+
+### 12.1 Implemented
+
+| Spec Item | Implementation | Notes |
+|---|---|---|
+| ProcessingProfile data model | `src/ragrig/processing_profile/models.py` | TaskType, ProfileStatus, ProcessingProfile, ProcessingKind, ProfileSource |
+| Default profiles (6 wildcards) | `src/ragrig/processing_profile/registry.py` | `*.correct.default`, `*.clean.default`, `*.chunk.default`, `*.summarize.default`, `*.understand.default`, `*.embed.default` |
+| Profile resolution (extension → wildcard → fallback) | `resolve_profile()` in registry | Supports per-extension overrides via `overrides` parameter |
+| `GET /profiles` → `/processing-profiles` | `src/ragrig/main.py` | Returns profile list with task_type/extension/provider/status/provider_available; no raw secrets |
+| `GET /profiles/matrix` → `/processing-profiles/matrix` | `src/ragrig/main.py` | 6 extensions × 6 task_types = 36 cells; each cell has profile_id/kind/source/is_default/provider_available |
+| Web Console matrix | `src/ragrig/web_console.html` | Read-only table with sticky extension column, kind badges (deterministic/LLM-assisted/unavailable), source labels (default/override) |
+| Pipeline profile tracking | `src/ragrig/indexing/pipeline.py`, `src/ragrig/ingestion/pipeline.py` | config_snapshot includes profile IDs; chunk.embed metadata includes `profile_id` |
+| Provider availability check | `resolve_provider_availability()` in registry | Checks plugin registry status; deterministic-local always available; unavailable providers NOT faked as ready |
+| 100% test coverage | `tests/test_processing_profile.py` (24 tests) + web-check tests (6) | Core hard scope maintained |
+
+### 12.2 Deferred (per spec non-goals)
+
+| Spec Item | Reason |
+|---|---|
+| SupportedFormat registry | Separate issue, not in P0 scope |
+| Browser file upload | Separate issue, not in P0 scope |
+| DocumentUnderstanding data model/runner | Separate issue, not in P0 scope |
+| Profile CRUD (POST/PUT/DELETE) | Read-only only; CRUD deferred to future phase |
+| Real LLM summarize/understand calls | Profiles define config only; stubs |
+| Per-profile A/B evaluation | Deferred |
+| Secret storage / secret echo in API | Never introduced; API validates no secrets |
+
+### 12.3 Delta from Spec API Contract
+
+| Spec Path | Implemented Path | Delta |
+|---|---|---|
+| `GET /profiles` | `GET /processing-profiles` | Renamed for clarity; response structure matches spec |
+| `GET /profiles/{profile_id}` | Not implemented | Deferred; not in P0 hard requirements |
+| `GET /profiles/matrix` | `GET /processing-profiles/matrix` | Renamed for consistency |
+| `GET /supported-formats` | Not implemented | SupportedFormat deferred to separate issue |
+| `GET /supported-formats/check` | Not implemented | SupportedFormat deferred to separate issue |
+| `POST /knowledge-bases/{kb_name}/upload` | Not implemented | Browser upload deferred to separate issue |
+| `GET /knowledge-bases/{kb_name}/understanding` | Not implemented | Understanding deferred to separate issue |
+| `GET /documents/{doc_id}/understanding` | Not implemented | Understanding deferred to separate issue |
+| `GET /knowledge-bases/{kb_name}/knowledge-map` | Not implemented | Knowledge map deferred to separate issue |
+
+### 12.4 Degradation Semantics
+
+- When a profile's LLM provider is unavailable: matrix cell shows `provider_available: false` and amber ⚠ indicator in Web Console
+- API response includes `provider_available: false` — never fabricates a ready state
+- Ingestion/indexing pipelines record profile IDs in config snapshots and chunk/embed metadata for future fallback logic
+- All task types have active wildcard defaults; no pipeline path hits the safe fallback in current usage

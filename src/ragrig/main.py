@@ -10,6 +10,7 @@ from ragrig import __version__
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
 from ragrig.health import create_database_check
+from ragrig.processing_profile import build_api_profile_list, build_matrix
 from ragrig.retrieval import (
     EmbeddingProfileMismatchError,
     EmptyQueryError,
@@ -358,6 +359,14 @@ def create_app(
                 for result in report.results
             ],
         }
+
+    @app.get("/processing-profiles", response_model=None)
+    def processing_profiles() -> dict[str, list[dict[str, Any]]]:
+        return {"profiles": build_api_profile_list()}
+
+    @app.get("/processing-profiles/matrix", response_model=None)
+    def processing_profiles_matrix() -> dict[str, Any]:
+        return build_matrix()
 
     return app
 

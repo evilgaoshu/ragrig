@@ -480,6 +480,88 @@
         margin-top: 8px;
       }
 
+      .profile-matrix-scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .profile-matrix-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        min-width: 700px;
+      }
+
+      .profile-matrix-table th,
+      .profile-matrix-table td {
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+        white-space: nowrap;
+      }
+
+      .profile-matrix-table th {
+        background: #f5f7f4;
+        font-weight: 800;
+        font-size: 11px;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .profile-matrix-table th:first-child,
+      .profile-matrix-table td:first-child {
+        position: sticky;
+        left: 0;
+        background: var(--panel);
+        z-index: 1;
+        font-weight: 700;
+        font-family: "SFMono-Regular", "Cascadia Code", monospace;
+      }
+
+      .profile-matrix-table th:first-child {
+        background: #f5f7f4;
+        z-index: 2;
+      }
+
+      .profile-matrix-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .profile-matrix-cell .cell-name {
+        font-weight: 700;
+        font-size: 11px;
+      }
+
+      .profile-matrix-cell .cell-kind {
+        font-size: 10px;
+        padding: 1px 5px;
+        border-radius: 3px;
+        display: inline-block;
+      }
+
+      .cell-kind.deterministic {
+        background: #e2f0e6;
+        color: #1b6e3a;
+      }
+
+      .cell-kind.llm {
+        background: #ede5f5;
+        color: #6638a6;
+      }
+
+      .cell-kind.unavailable {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .profile-matrix-cell .cell-source {
+        font-size: 10px;
+        color: var(--muted);
+      }
+
       @media (max-width: 1100px) {
         .shell { grid-template-columns: 1fr; }
         .rail { display: none; }
@@ -502,6 +584,7 @@
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
         <div class="nav-item">Models</div>
+        <div class="nav-item">Profile Matrix</div>
         <div class="nav-item">Plugins</div>
         <div class="nav-item">Evaluation</div>
         <div class="nav-item">Settings</div>
@@ -610,6 +693,25 @@
             <section class="panel">
               <div class="panel-head"><div class="panel-title">Model Configuration</div><div class="panel-meta">Real profiles + degraded shells</div></div>
               <div class="panel-body stack" id="models-panel"></div>
+            </section>
+
+            <section class="panel" id="profile-matrix-panel">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">Processing Profile Matrix</div>
+                  <div class="panel-meta">extension × task_type · default/override · deterministic/LLM-assisted</div>
+                </div>
+                <div id="profile-matrix-legend" class="stack" style="flex-direction:row; gap:12px; font-size:12px; align-items:center;"></div>
+              </div>
+              <div class="panel-body">
+                <div class="profile-matrix-scroll">
+                  <table class="profile-matrix-table" id="profile-matrix-table">
+                    <thead id="profile-matrix-head"></thead>
+                    <tbody id="profile-matrix-body"></tbody>
+                  </table>
+                </div>
+                <div id="profile-matrix-empty" class="empty" style="display:none;">No processing profiles registered.</div>
+              </div>
             </section>
 
             <section class="panel">
@@ -966,6 +1068,63 @@
           <div class="card"><div class="name">Reranker registry</div><div class="sub">${escapeHtml(state.models.registry_shell.reranker.reason)}</div><div class="sub"><span class="pill warn">${escapeHtml(state.models.registry_shell.reranker.status)}</span></div></div>
         `);
         root.innerHTML = blocks.join('');
+      }
+
+      async function renderProfileMatrix() {
+        const head = document.getElementById('profile-matrix-head');
+        const body = document.getElementById('profile-matrix-body');
+        const empty = document.getElementById('profile-matrix-empty');
+        const legend = document.getElementById('profile-matrix-legend');
+
+        let matrix;
+        try {
+          const response = await fetch('/processing-profiles/matrix');
+          matrix = await response.json();
+        } catch (error) {
+          empty.style.display = 'block';
+          empty.textContent = 'Failed to load profile matrix: ' + error.message;
+          return;
+        }
+
+        if (!matrix.extensions || matrix.extensions.length === 0) {
+          empty.style.display = 'block';
+          empty.textContent = 'No processing profiles registered.';
+          return;
+        }
+        empty.style.display = 'none';
+
+        legend.innerHTML = [
+          '<span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#e2f0e6;border:1px solid #1b6e3a;"></span> ○ deterministic</span>',
+          '<span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ede5f5;border:1px solid #6638a6;"></span> ● LLM-assisted</span>',
+          '<span style="display:inline-flex;align-items:center;gap:4px;"><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--amber-soft);border:1px solid var(--amber);"></span> ⚠ provider unavailable</span>',
+        ].join('');
+
+        head.innerHTML = '<tr><th>Extension</th>' + matrix.task_types.map(function(tt) {
+          return '<th>' + escapeHtml(tt) + '</th>';
+        }).join('') + '</tr>';
+
+        body.innerHTML = matrix.extensions.map(function(ext) {
+          var cells = matrix.task_types.map(function(tt) {
+            var key = ext + '.' + tt;
+            var cell = matrix.cells[key];
+            if (!cell) return '<td><span class="cell-kind unavailable">—</span></td>';
+            var kindLabel = cell.kind === 'deterministic' ? '○ det' : '● LLM';
+            var kindClass = cell.kind === 'deterministic' ? 'deterministic' : 'llm';
+            if (!cell.provider_available) {
+              kindClass = 'unavailable';
+              kindLabel = '⚠ unavail';
+            }
+            var sourceLabel = cell.is_default ? 'default' : 'override';
+            return '<td>' +
+              '<div class="profile-matrix-cell">' +
+                '<span class="cell-name">' + escapeHtml(cell.display_name || cell.profile_id) + '</span>' +
+                '<span class="cell-kind ' + kindClass + '">' + kindLabel + '</span>' +
+                '<span class="cell-source">' + sourceLabel + '</span>' +
+              '</div>' +
+              '</td>';
+          });
+          return '<tr><td>' + escapeHtml(ext) + '</td>' + cells.join('') + '</tr>';
+        }).join('');
       }
 
       function renderPlugins() {
@@ -1573,6 +1732,7 @@
           await renderPipelineRuns();
           await renderDocumentPreview();
           renderModels();
+          await renderProfileMatrix();
           renderPlugins();
           renderFilesharePanel();
           renderWizard();
