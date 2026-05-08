@@ -490,3 +490,78 @@ def test_mirror_version_index_returns_zero_when_no_embeddings(sqlite_session) ->
     )
 
     assert count == 0
+
+
+def test_acl_propagation_falls_back_to_document_version_metadata(tmp_path) -> None:
+    """When document lacks ACL, it falls back to document_version metadata."""
+    from ragrig.chunkers import ChunkingConfig
+    from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
+    from ragrig.embeddings import DeterministicEmbeddingProvider
+    from ragrig.indexing.pipeline import _replace_version_index
+
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+
+    with Session(engine, expire_on_commit=False) as session:
+        kb = KnowledgeBase(name="test-acl-fallback", metadata_json={})
+        session.add(kb)
+        session.flush()
+
+        source = Source(
+            knowledge_base_id=kb.id,
+            kind="local",
+            uri="/tmp/test",
+            config_json={},
+        )
+        session.add(source)
+        session.flush()
+
+        doc = Document(
+            knowledge_base_id=kb.id,
+            source_id=source.id,
+            uri="/tmp/test/doc.txt",
+            content_hash="abc123",
+            metadata_json={},  # No ACL
+        )
+        session.add(doc)
+        session.flush()
+
+        dv = DocumentVersion(
+            document_id=doc.id,
+            version_number=1,
+            content_hash="abc123",
+            parser_name="plaintext",
+            parser_config_json={},
+            extracted_text="test content",
+            metadata_json={
+                "acl": {
+                    "visibility": "protected",
+                    "allowed_principals": ["alice"],
+                    "denied_principals": [],
+                    "acl_source": "test",
+                    "acl_source_hash": "hash",
+                    "inheritance": "document",
+                }
+            },
+        )
+        session.add(dv)
+        session.flush()
+
+        chunking_config = ChunkingConfig(chunk_size=500, chunk_overlap=0)
+        provider = DeterministicEmbeddingProvider(dimensions=8)
+        created, _ = _replace_version_index(
+            session,
+            document_version=dv,
+            document=doc,
+            chunking_config=chunking_config,
+            embedding_provider=provider,
+        )
+
+        from ragrig.db.models import Chunk
+
+        chunks = session.scalars(select(Chunk)).all()
+        assert len(chunks) == 1
+        acl = chunks[0].metadata_json.get("acl")
+        assert acl is not None
+        assert acl["visibility"] == "protected"
+        assert acl["inheritance"] == "propagated"

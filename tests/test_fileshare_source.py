@@ -185,12 +185,12 @@ def test_ingest_fileshare_source_persists_documents_versions_and_protocol_metada
         "smb://files.example.internal/team-a/engineering/notes.txt",
     ]
     assert documents[0].metadata_json["protocol"] == "smb"
-    assert documents[0].metadata_json["permission_mapping"] == {
-        "owner": "alice",
-        "group": "engineering",
-        "permissions": "rw-r-----",
-        "enforcement": "not_implemented",
-    }
+    acl = documents[0].metadata_json["permission_mapping"]["acl"]
+    assert acl["visibility"] == "protected"
+    assert acl["allowed_principals"] == ["alice", "group:engineering"]
+    assert acl["denied_principals"] == []
+    assert acl["acl_source"] == "fileshare:alice:engineering"
+    assert acl["inheritance"] == "document"
     assert versions[0].metadata_json["source_snapshot"]
     assert items[0].metadata_json["remote_path"] == "guide.md"
     assert items[0].metadata_json["version_number"] == 1
@@ -618,3 +618,81 @@ def test_ingest_fileshare_source_fails_run_on_download_credential_error(sqlite_s
     assert run.status == "failed"
     assert run.error_message is not None
     assert "ultra-secret-value" not in run.error_message
+
+
+def test_permission_mapping_public_visibility() -> None:
+    """Files with world-readable permissions yield ACL visibility 'public'."""
+    from ragrig.plugins.sources.fileshare.client import FileshareFileMetadata
+    from ragrig.plugins.sources.fileshare.connector import _permission_mapping
+
+    metadata = FileshareFileMetadata(
+        path="public.txt",
+        modified_at=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        size=100,
+        content_type="text/plain",
+        owner="alice",
+        group="eng",
+        permissions="rw-r--r--",
+    )
+    result = _permission_mapping(metadata)
+    acl = result["acl"]
+    assert acl["visibility"] == "public"
+
+
+def test_permission_mapping_unknown_visibility() -> None:
+    """Files without owner read permission yield ACL visibility 'unknown'."""
+    from ragrig.plugins.sources.fileshare.client import FileshareFileMetadata
+    from ragrig.plugins.sources.fileshare.connector import _permission_mapping
+
+    metadata = FileshareFileMetadata(
+        path="locked.txt",
+        modified_at=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        size=100,
+        content_type="text/plain",
+        owner="alice",
+        group="eng",
+        permissions="-w-------",
+    )
+    result = _permission_mapping(metadata)
+    acl = result["acl"]
+    assert acl["visibility"] == "unknown"
+
+
+def test_permission_mapping_no_owner_no_group() -> None:
+    """Files without owner or group still produce valid ACL."""
+    from ragrig.plugins.sources.fileshare.client import FileshareFileMetadata
+    from ragrig.plugins.sources.fileshare.connector import _permission_mapping
+
+    metadata = FileshareFileMetadata(
+        path="anon.txt",
+        modified_at=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        size=100,
+        content_type="text/plain",
+        owner=None,
+        group=None,
+        permissions=None,
+    )
+    result = _permission_mapping(metadata)
+    acl = result["acl"]
+    assert acl["visibility"] == "protected"
+    assert acl["allowed_principals"] == []
+    assert acl["acl_source"] == "fileshare:unknown:unknown"
+
+
+def test_permission_mapping_directory_prefix_strip() -> None:
+    """Directory permission strings (starting with 'd') are handled."""
+    from ragrig.plugins.sources.fileshare.client import FileshareFileMetadata
+    from ragrig.plugins.sources.fileshare.connector import _permission_mapping
+
+    metadata = FileshareFileMetadata(
+        path="mydir",
+        modified_at=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        size=4096,
+        content_type=None,
+        owner="alice",
+        group="eng",
+        permissions="drw-r--r--",
+    )
+    result = _permission_mapping(metadata)
+    acl = result["acl"]
+    assert acl["visibility"] == "public"

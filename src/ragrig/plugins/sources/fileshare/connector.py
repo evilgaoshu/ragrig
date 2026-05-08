@@ -431,11 +431,38 @@ def _file_metadata_payload(
 
 
 def _permission_mapping(file_metadata: FileshareFileMetadata) -> dict[str, object]:
+    """Build canonical ACL metadata from fileshare permission info."""
+    import hashlib
+
+    acl_source = f"fileshare:{file_metadata.owner or 'unknown'}:{file_metadata.group or 'unknown'}"
+    acl_source_hash = hashlib.sha256(acl_source.encode()).hexdigest()[:16]
+    allowed_principals: list[str] = []
+    if file_metadata.owner:
+        allowed_principals.append(file_metadata.owner)
+    if file_metadata.group:
+        allowed_principals.append(f"group:{file_metadata.group}")
+    visibility: str = "protected"
+    rights = file_metadata.permissions or ""
+    if rights and rights[0] == "d":
+        rights = rights[1:]
+    if rights and len(rights) >= 9:
+        owner_read = rights[0] == "r"
+        other_read = rights[6] == "r"
+        if other_read and owner_read:
+            visibility = "public"
+        elif not owner_read:
+            visibility = "unknown"
+        else:
+            visibility = "protected"
     return {
-        "owner": file_metadata.owner,
-        "group": file_metadata.group,
-        "permissions": file_metadata.permissions,
-        "enforcement": "not_implemented",
+        "acl": {
+            "visibility": visibility,
+            "allowed_principals": allowed_principals,
+            "denied_principals": [],
+            "acl_source": acl_source,
+            "acl_source_hash": acl_source_hash,
+            "inheritance": "document",
+        },
     }
 
 

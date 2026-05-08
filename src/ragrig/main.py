@@ -43,6 +43,8 @@ class RetrievalSearchRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     dimensions: int | None = Field(default=None, gt=0)
+    principal_ids: list[str] | None = None
+    enforce_acl: bool = True
 
 
 def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
@@ -257,6 +259,8 @@ def create_app(
                 model=request.model,
                 dimensions=request.dimensions,
                 vector_backend=vector_backend,
+                principal_ids=request.principal_ids,
+                enforce_acl=request.enforce_acl,
             )
         except KnowledgeBaseNotFoundError as exc:
             return JSONResponse(status_code=404, content=_serialize_error(exc))
