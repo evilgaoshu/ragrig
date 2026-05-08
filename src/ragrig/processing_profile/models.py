@@ -82,9 +82,7 @@ def _sanitize_metadata(metadata: dict[str, object]) -> dict[str, object]:
         "service_account",
     )
     return {
-        k: v
-        for k, v in metadata.items()
-        if not any(part in k.lower() for part in secret_parts)
+        k: v for k, v in metadata.items() if not any(part in k.lower() for part in secret_parts)
     }
 
 

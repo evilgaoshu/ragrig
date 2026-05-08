@@ -997,7 +997,9 @@ async def test_unavailable_provider_not_faked_as_ready(tmp_path) -> None:
             },
         )
         profiles_resp = await client.get("/processing-profiles")
-        profile = next(p for p in profiles_resp.json()["profiles"] if p["profile_id"] == "pdf.chunk.override")
+        profile = next(
+            p for p in profiles_resp.json()["profiles"] if p["profile_id"] == "pdf.chunk.override"
+        )
         assert profile["provider_available"] is False
 
         matrix_resp = await client.get("/processing-profiles/matrix")
