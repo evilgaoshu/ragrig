@@ -62,6 +62,9 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "Retrieval Lab" in response.text
     assert "Plugin Readiness" in response.text
     assert "Vector Backend Readiness" in response.text
+    assert "Plugin / Data Source Setup Wizard" in response.text
+    assert "Validate Config" in response.text
+    assert "no raw secrets" in response.text
     assert "repeat(auto-fit, minmax(150px, 1fr))" in response.text
     assert "Backend · metric · score semantics" in response.text
 
@@ -166,6 +169,92 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     assert "sink.object_storage" in plugin_ids
     assert "model.ollama" in plugin_ids
     assert "model.openai" in plugin_ids
+    s3_plugin = next(item for item in plugins.json()["items"] if item["plugin_id"] == "source.s3")
+    assert s3_plugin["example_config"]["bucket"] == "docs"
+    assert s3_plugin["docs_reference"] == "docs/specs/ragrig-s3-source-plugin-spec.md"
+
+
+@pytest.mark.anyio
+async def test_plugin_config_validation_accepts_registry_example_configs(tmp_path) -> None:
+    database_path = tmp_path / "web-console-plugin-validation.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        plugins = await client.get("/plugins")
+        configurable_plugins = [
+            item for item in plugins.json()["items"] if item["configurable"] is True
+        ]
+        assert configurable_plugins
+        for plugin in configurable_plugins:
+            response = await client.post(
+                f"/plugins/{plugin['plugin_id']}/validate-config",
+                json={"config": plugin["example_config"]},
+            )
+            assert response.status_code == 200, (plugin["plugin_id"], response.text)
+            payload = response.json()
+            assert payload["valid"] is True
+            assert payload["plugin_id"] == plugin["plugin_id"]
+            for key, value in plugin["example_config"].items():
+                assert payload["config"][key] == value
+            assert "next_steps" in payload
+            assert "missing_dependencies" in payload
+
+
+@pytest.mark.anyio
+async def test_plugin_config_validation_rejects_unsafe_or_malformed_payloads(tmp_path) -> None:
+    database_path = tmp_path / "web-console-plugin-validation-failures.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        raw_secret = await client.post(
+            "/plugins/source.s3/validate-config",
+            json={
+                "config": {
+                    "bucket": "docs",
+                    "access_key": "literal-access-key",
+                    "secret_key": "env:AWS_SECRET_ACCESS_KEY",
+                }
+            },
+        )
+        unknown_plugin = await client.post(
+            "/plugins/source.unknown/validate-config",
+            json={"config": {}},
+        )
+        malformed_config = await client.post(
+            "/plugins/source.local/validate-config",
+            json={"config": []},
+        )
+        non_configurable = await client.post(
+            "/plugins/preview.office/validate-config",
+            json={"config": {"enabled": True}},
+        )
+        malformed_json = await client.post(
+            "/plugins/source.local/validate-config",
+            content="{",
+            headers={"Content-Type": "application/json"},
+        )
+        null_body = await client.post(
+            "/plugins/source.local/validate-config",
+            json=None,
+        )
+
+    assert raw_secret.status_code == 400
+    assert raw_secret.json()["error"]["code"] == "raw_secret_not_allowed"
+    assert "env:VARIABLE_NAME" in raw_secret.json()["error"]["message"]
+    assert unknown_plugin.status_code == 400
+    assert unknown_plugin.json()["error"]["code"] == "plugin_not_found"
+    assert malformed_config.status_code == 400
+    assert malformed_config.json()["error"]["code"] == "malformed_request"
+    assert non_configurable.status_code == 400
+    assert non_configurable.json()["error"]["code"] == "plugin_config_invalid"
+    assert malformed_json.status_code == 400
+    assert malformed_json.json()["error"]["code"] == "malformed_request"
+    assert null_body.status_code == 400
+    assert null_body.json()["error"]["code"] == "malformed_request"
 
 
 @pytest.mark.anyio

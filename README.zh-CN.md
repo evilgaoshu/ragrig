@@ -109,6 +109,8 @@ flowchart LR
 - [Phase 1e local model provider plugin spec](./docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md)
 - [GitHub CI checks spec](./docs/specs/ragrig-github-ci-checks-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
+- [Web Console plugin/source setup wizard spec](./docs/specs/ragrig-web-console-plugin-source-wizard-spec.md)
+- [Vector backend status console spec](./docs/specs/ragrig-vector-backend-status-console-spec.md)
 - [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
 - [Core coverage and supply chain gates](./docs/specs/ragrig-core-coverage-supply-chain-gates.md)
 - [Web Console prototype](./docs/prototypes/web-console/index.html)
@@ -495,6 +497,7 @@ secret_requirements:
 
 - `src/ragrig/plugins/`：registry、manifest schema、dependency guard、内置插件和官方 stub。
 - `GET /plugins`：默认离线可用的插件发现 API，可返回 readiness、缺失依赖、是否可配置、secret requirements。
+- `POST /plugins/{plugin_id}/validate-config`：供 Web Console 安全校验插件配置草稿，不收集原始 secret。
 - `make plugins-check`：离线 JSON 输出当前 registry 状态。
 - `source.fileshare`：已升级为真实官方 source plugin，支持 mounted NFS/local path、SMB/WebDAV/SFTP fake-client contract tests，以及协议级 readiness 展示。
 - `make fileshare-check`：离线验证 mounted path 和 fake SMB/WebDAV/SFTP scanner 行为。
@@ -688,10 +691,17 @@ Web Console 的第一版目标是轻量管理台，而不是聊天页面。
 - 模型配置
 - 检索调试 Playground
 - 健康检查和数据库状态
+- 插件/数据源配置向导：读取真实 registry metadata，生成配置草稿，要求使用 `env:VARIABLE_NAME` 引用 secret，并调用 `POST /plugins/{plugin_id}/validate-config` 做后端校验
+
+当前边界：
+
+- 向导不会持久化插件配置，也不会从浏览器创建 source。
+- 向导只展示真实 ready/degraded/unavailable 状态、缺失依赖、secret requirements 和下一步 CLI/配置提示。
 
 设计文档：
 
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
+- [Web Console plugin/source setup wizard spec](./docs/specs/ragrig-web-console-plugin-source-wizard-spec.md)
 - [Web Console prototype](./docs/prototypes/web-console/index.html)
 
 <p align="center">

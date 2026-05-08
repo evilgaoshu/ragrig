@@ -89,8 +89,9 @@ Current implementation status:
 8. Phase 1e PR-2 now adds local provider adapters for Ollama, LM Studio, OpenAI-compatible local runtimes, and optional BGE boundaries without changing the default secret-free test path.
 9. Phase 1e PR-3 now adds cloud-second provider stubs for Vertex AI, Bedrock, Azure OpenAI, OpenRouter, OpenAI, Cohere, Voyage, and Jina through the same registry and discovery surfaces.
 10. `source.s3` now supports real S3-compatible Markdown/Text ingestion with fake-client-first tests and opt-in runtime dependencies.
-11. `source.fileshare` now supports offline-tested SMB, mounted NFS/local path, WebDAV, and SFTP ingestion contracts with truthful readiness, delete-detection placeholders, an explicit `make fileshare-check` smoke path, and opt-in local live smoke via `make test-live-fileshare`.
-12. Semantic production embeddings, live local runtime smoke checks, production cloud adapters, reranking, and richer source types remain intentionally limited or deferred in this repository state.
+11. `source.fileshare` now supports offline-tested SMB, mounted NFS/local path, WebDAV, and SFTP ingestion contracts with truthful readiness, delete-detection placeholders, and an explicit `make fileshare-check` smoke path.
+12. The Web Console now includes a plugin/data source setup wizard that drafts registry-backed config, rejects raw secrets, and validates plugin config before wiring.
+13. Semantic production embeddings, live local runtime smoke checks, production cloud adapters, reranking, and richer source types remain intentionally limited or deferred in this repository state.
 
 Authoritative specs:
 
@@ -103,6 +104,7 @@ Authoritative specs:
 - [Phase 1e local model provider plugin spec](./docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md)
 - [GitHub CI checks spec](./docs/specs/ragrig-github-ci-checks-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
+- [Web Console plugin/source setup wizard spec](./docs/specs/ragrig-web-console-plugin-source-wizard-spec.md)
 - [Vector backend status console spec](./docs/specs/ragrig-vector-backend-status-console-spec.md)
 - [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
 - [Core coverage and supply chain gates](./docs/specs/ragrig-core-coverage-supply-chain-gates.md)
@@ -129,10 +131,12 @@ What the current MVP covers:
 - embedding profile inventory from indexed chunks
 - health, DB dialect, Alembic revision, extension state, and visible tables
 - vector backend readiness with backend type, dependency state, collection rows, and score semantics
+- plugin/data source setup wizard backed by real registry metadata and `POST /plugins/{plugin_id}/validate-config`
 
 Current limitations:
 
 - browser-triggered create/update actions are intentionally not implemented yet
+- the plugin wizard validates config drafts and next-step commands, but does not persist plugin configuration or create sources from the browser
 - model registry remains read-only, but now exposes local LLM and reranker registry shells for PR-2 providers
 - provider registry metadata is exposed read-only, including Ollama, LM Studio, OpenAI-compatible local runtimes, and optional BGE boundaries
 - the console only shows capabilities backed by existing DB/API boundaries and uses empty, disabled, or degraded states for the rest
@@ -831,6 +835,7 @@ Current contract-first implementation adds:
 
 - `src/ragrig/plugins/` for the registry, manifest schema, dependency guards, and built-in plus official stub manifests.
 - `GET /plugins` for offline plugin discovery with readiness, missing dependency, configurability, and secret requirement reporting.
+- `POST /plugins/{plugin_id}/validate-config` for safe Web Console config validation without collecting raw secrets.
 - `make plugins-check` for offline JSON inspection of the registry.
 - `source.fileshare` as a real official source plugin with mounted-path NFS support, fake-client SMB/WebDAV/SFTP coverage, and protocol-level readiness reporting.
 - `make fileshare-check` for offline mounted-path and fake remote fileshare smoke validation.
@@ -1049,6 +1054,7 @@ After the first successful GitHub Actions run exists, the repository owner may s
 │       ├── ragrig-phase-1c-chunking-embedding-spec.md
 │       ├── ragrig-phase-1d-retrieval-api-spec.md
 │       ├── ragrig-local-first-quality-supply-chain-policy.md
+│       ├── ragrig-web-console-plugin-source-wizard-spec.md
 │       └── ragrig-web-console-spec.md
 ├── scripts/
 │   ├── db_check.py

@@ -6,12 +6,12 @@
     <title>RAGRig Web Console</title>
     <style>
       :root {
-        --bg: #f3efe7;
-        --panel: #fffaf2;
-        --panel-strong: #fffdf8;
+        --bg: #eef3ef;
+        --panel: #ffffff;
+        --panel-strong: #fbfdf9;
         --ink: #18202f;
         --muted: #687385;
-        --line: #d8ddd2;
+        --line: #d7e0da;
         --teal: #0b8d81;
         --teal-soft: #d8f2ed;
         --amber: #bf7907;
@@ -137,6 +137,34 @@
         color: white;
       }
 
+      .button:disabled {
+        opacity: 0.48;
+        cursor: not-allowed;
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-strong);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      input,
+      select {
+        height: 38px;
+        padding: 0 10px;
+      }
+
+      textarea {
+        min-height: 150px;
+        padding: 10px;
+        resize: vertical;
+      }
+
       .status-strip {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -192,7 +220,7 @@
         min-height: 52px;
         padding: 0 16px;
         border-bottom: 1px solid var(--line);
-        background: linear-gradient(180deg, #fffdf8, #f7f1e4);
+        background: linear-gradient(180deg, #ffffff, #edf3ef);
       }
 
       .panel-title { font-size: 15px; font-weight: 850; }
@@ -203,6 +231,68 @@
         display: grid;
         grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
         gap: 14px;
+      }
+
+      .wizard-layout {
+        display: grid;
+        grid-template-columns: minmax(220px, 0.82fr) minmax(280px, 1fr) minmax(240px, 0.9fr);
+        gap: 14px;
+      }
+
+      .wizard-filter-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .filter-chip {
+        min-height: 30px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--panel-strong);
+        color: var(--ink);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .filter-chip.active {
+        border-color: #101827;
+        background: #101827;
+        color: white;
+      }
+
+      .plugin-list {
+        max-height: 360px;
+        overflow: auto;
+        padding-right: 4px;
+      }
+
+      .plugin-option {
+        width: 100%;
+        margin: 0;
+        padding: 11px;
+        border: 1px solid #dfe6df;
+        border-radius: 8px;
+        background: var(--panel-strong);
+        color: var(--ink);
+        text-align: left;
+      }
+
+      .plugin-option.active {
+        border-color: #0b8d81;
+        background: #eefaf7;
+      }
+
+      .config-editor {
+        min-height: 276px;
+        font-family: "SFMono-Regular", "Cascadia Code", monospace;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .wizard-result {
+        min-height: 276px;
       }
 
       .facts {
@@ -259,7 +349,7 @@
       }
 
       table { width: 100%; border-collapse: collapse; }
-      th, td { text-align: left; border-bottom: 1px solid #ece8df; padding: 12px 10px; vertical-align: top; }
+      th, td { text-align: left; border-bottom: 1px solid #e4ebe4; padding: 12px 10px; vertical-align: top; }
       th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
       tr:last-child td { border-bottom: 0; }
 
@@ -286,7 +376,7 @@
 
       .card {
         padding: 12px;
-        border: 1px solid #e5e0d6;
+        border: 1px solid #dfe6df;
         border-radius: 8px;
         background: var(--panel-strong);
       }
@@ -313,11 +403,16 @@
         font-size: 12px;
       }
 
+      pre.code {
+        margin: 8px 0 0;
+        white-space: pre-wrap;
+      }
+
       @media (max-width: 1100px) {
         .shell { grid-template-columns: 1fr; }
         .rail { display: none; }
         .status-strip, .grid { grid-template-columns: 1fr; }
-        .vector-layout, .fact-grid { grid-template-columns: 1fr; }
+        .vector-layout, .wizard-layout, .fact-grid { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -329,6 +424,7 @@
         <div class="nav-item active">Overview</div>
         <div class="nav-item">Knowledge Bases</div>
         <div class="nav-item">Sources</div>
+        <div class="nav-item">Setup Wizard</div>
         <div class="nav-item">Pipelines</div>
         <div class="nav-item">Documents</div>
         <div class="nav-label">Inspect</div>
@@ -365,6 +461,33 @@
           <div class="panel-body vector-layout">
             <div class="facts stack" id="vector-summary"></div>
             <div class="stack" id="vector-collections"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="plugin-source-wizard">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Plugin / Data Source Setup Wizard</div>
+              <div class="panel-meta">Registry-backed config draft, no raw secrets, validation before wiring</div>
+            </div>
+            <div id="wizard-selected-status" class="pill neutral">Select plugin</div>
+          </div>
+          <div class="panel-body wizard-layout">
+            <div class="stack">
+              <div class="wizard-filter-row" id="wizard-filters"></div>
+              <input id="wizard-search" type="search" placeholder="Filter by id, family, capability">
+              <div class="plugin-list stack" id="wizard-plugin-list"></div>
+            </div>
+            <div class="stack">
+              <div id="wizard-plugin-detail"></div>
+              <label class="sub" for="wizard-config">Configuration draft</label>
+              <textarea class="config-editor" id="wizard-config" spellcheck="false"></textarea>
+              <div class="actions">
+                <button class="button primary" id="wizard-validate" type="button">Validate Config</button>
+                <button class="button" id="wizard-reset" type="button">Reset Example</button>
+              </div>
+            </div>
+            <div class="stack wizard-result" id="wizard-validation-result"></div>
           </div>
         </section>
 
@@ -440,7 +563,22 @@
         plugins: [],
         models: null,
         system: null,
+        wizard: {
+          filter: 'source',
+          search: '',
+          selectedPluginId: null,
+          drafts: {},
+          result: null,
+        },
       };
+
+      const WIZARD_FILTERS = [
+        { key: 'source', label: 'Sources' },
+        { key: 'sink', label: 'Sinks' },
+        { key: 'model', label: 'Models' },
+        { key: 'vector', label: 'Vectors' },
+        { key: 'all', label: 'All' },
+      ];
 
       function escapeHtml(value) {
         return String(value ?? "")
@@ -724,11 +862,278 @@
         `).join('');
       }
 
+      function pluginMatchesWizardFilter(plugin, filter) {
+        if (filter === 'all') return true;
+        if (filter === 'model') {
+          return ['model', 'embedding', 'reranker'].includes(plugin.plugin_type);
+        }
+        return plugin.plugin_type === filter;
+      }
+
+      function filteredWizardPlugins() {
+        const query = state.wizard.search.trim().toLowerCase();
+        const statusRank = { ready: 0, degraded: 1, unavailable: 2 };
+        return state.plugins
+          .filter((plugin) => pluginMatchesWizardFilter(plugin, state.wizard.filter))
+          .filter((plugin) => {
+            if (!query) return true;
+            const haystack = [
+              plugin.plugin_id,
+              plugin.display_name,
+              plugin.description,
+              plugin.family,
+              plugin.plugin_type,
+              ...(plugin.capabilities || []),
+            ].join(' ').toLowerCase();
+            return haystack.includes(query);
+          })
+          .sort((left, right) => (
+            Number(right.configurable) - Number(left.configurable)
+            || (statusRank[left.status] ?? 9) - (statusRank[right.status] ?? 9)
+            || left.plugin_id.localeCompare(right.plugin_id)
+          ));
+      }
+
+      function selectedPlugin() {
+        const visiblePlugins = filteredWizardPlugins();
+        const selected = visiblePlugins.find((plugin) => plugin.plugin_id === state.wizard.selectedPluginId);
+        if (selected) return selected;
+        const fallback = visiblePlugins[0] || null;
+        state.wizard.selectedPluginId = fallback ? fallback.plugin_id : null;
+        return fallback;
+      }
+
+      function pluginDraft(plugin) {
+        if (!plugin) return '{}';
+        if (!(plugin.plugin_id in state.wizard.drafts)) {
+          state.wizard.drafts[plugin.plugin_id] = JSON.stringify(plugin.example_config || {}, null, 2);
+        }
+        return state.wizard.drafts[plugin.plugin_id];
+      }
+
+      function renderWizard() {
+        const plugin = selectedPlugin();
+        renderWizardFilters();
+        renderWizardPluginList(plugin);
+        renderWizardDetail(plugin);
+        renderWizardResult(plugin);
+      }
+
+      function renderWizardFilters() {
+        const root = document.getElementById('wizard-filters');
+        root.innerHTML = WIZARD_FILTERS.map((filter) => {
+          const count = state.plugins.filter((plugin) => pluginMatchesWizardFilter(plugin, filter.key)).length;
+          return `
+            <button class="filter-chip ${state.wizard.filter === filter.key ? 'active' : ''}" type="button" data-wizard-filter="${escapeHtml(filter.key)}">
+              ${escapeHtml(filter.label)} ${count}
+            </button>
+          `;
+        }).join('');
+        const search = document.getElementById('wizard-search');
+        if (search.value !== state.wizard.search) search.value = state.wizard.search;
+      }
+
+      function renderWizardPluginList(activePlugin) {
+        const root = document.getElementById('wizard-plugin-list');
+        const plugins = filteredWizardPlugins();
+        if (!plugins.length) {
+          root.innerHTML = empty('No plugins match this filter.');
+          return;
+        }
+        root.innerHTML = plugins.map((plugin) => `
+          <button class="plugin-option ${activePlugin && plugin.plugin_id === activePlugin.plugin_id ? 'active' : ''}" type="button" data-plugin-id="${escapeHtml(plugin.plugin_id)}">
+            <div class="collection-header">
+              <div class="name">${escapeHtml(plugin.display_name)}</div>
+              <span class="${pillClass(plugin.status)}">${escapeHtml(plugin.status)}</span>
+            </div>
+            <div class="sub code">${escapeHtml(plugin.plugin_id)}</div>
+            <div class="sub">${escapeHtml(plugin.family)} · ${escapeHtml(plugin.tier)} · ${plugin.configurable ? 'configurable' : 'no config needed'}</div>
+            <div class="sub">capabilities: ${escapeHtml((plugin.capabilities || []).join(', ') || 'none')}</div>
+          </button>
+        `).join('');
+      }
+
+      function renderWizardDetail(plugin) {
+        const detail = document.getElementById('wizard-plugin-detail');
+        const editor = document.getElementById('wizard-config');
+        const validateButton = document.getElementById('wizard-validate');
+        const resetButton = document.getElementById('wizard-reset');
+        const statusPill = document.getElementById('wizard-selected-status');
+        if (!plugin) {
+          detail.innerHTML = empty('Select a plugin family to begin.');
+          editor.value = '{}';
+          editor.disabled = true;
+          validateButton.disabled = true;
+          resetButton.disabled = true;
+          statusPill.className = 'pill neutral';
+          statusPill.textContent = 'No plugin';
+          return;
+        }
+        const secretText = (plugin.secret_requirements || []).join(', ') || 'none';
+        const depsText = (plugin.missing_dependencies || []).join(', ') || 'none';
+        editor.value = plugin.configurable ? pluginDraft(plugin) : '{}';
+        editor.disabled = !plugin.configurable;
+        validateButton.disabled = !plugin.configurable;
+        resetButton.disabled = !plugin.configurable;
+        statusPill.className = pillClass(plugin.status);
+        statusPill.textContent = plugin.status;
+        detail.innerHTML = `
+          <div class="card">
+            <div class="collection-header">
+              <div>
+                <div class="name">${escapeHtml(plugin.display_name)}</div>
+                <div class="sub code">${escapeHtml(plugin.plugin_id)}</div>
+              </div>
+              <span class="${pillClass(plugin.status)}">${escapeHtml(plugin.status)}</span>
+            </div>
+            <div class="sub">${escapeHtml(plugin.description)}</div>
+            <div class="sub">type: ${escapeHtml(plugin.plugin_type)} · family: ${escapeHtml(plugin.family)} · tier: ${escapeHtml(plugin.tier)}</div>
+            <div class="sub">secrets: ${escapeHtml(secretText)}</div>
+            <div class="sub">deps: ${escapeHtml(depsText)}</div>
+            <div class="sub">docs: <span class="code">${escapeHtml(plugin.docs_reference || 'missing')}</span></div>
+          </div>
+        `;
+      }
+
+      function renderWizardResult(plugin) {
+        const root = document.getElementById('wizard-validation-result');
+        if (!plugin) {
+          root.innerHTML = empty('Validation result will appear here.');
+          return;
+        }
+        const result = state.wizard.result;
+        if (!plugin.configurable) {
+          root.innerHTML = `
+            <div class="card">
+              <div class="name">No configuration model</div>
+              <div class="sub">This plugin does not accept browser-side configuration yet. Readiness still comes from the registry.</div>
+              <div class="sub code">${escapeHtml(plugin.docs_reference || 'missing docs')}</div>
+            </div>
+          `;
+          return;
+        }
+        if (!result || result.plugin_id !== plugin.plugin_id) {
+          root.innerHTML = `
+            <div class="card">
+              <div class="name">Ready to validate</div>
+              <div class="sub">Edit the JSON draft, keep secrets as env:VARIABLE_NAME references, then run validation.</div>
+            </div>
+            ${renderWizardNextSteps(localWizardNextSteps(plugin))}
+          `;
+          return;
+        }
+        const isValid = result.valid === true;
+        const message = isValid ? 'Config accepted by plugin registry schema.' : result.error.message;
+        const configBlock = isValid ? `<pre class="code">${escapeHtml(JSON.stringify(result.config, null, 2))}</pre>` : '';
+        root.innerHTML = `
+          <div class="card">
+            <div class="collection-header">
+              <div class="name">${isValid ? 'Validation passed' : 'Validation failed'}</div>
+              <span class="${isValid ? 'pill' : 'pill error'}">${escapeHtml(isValid ? 'valid' : result.error.code)}</span>
+            </div>
+            <div class="sub">${escapeHtml(message)}</div>
+            ${configBlock}
+          </div>
+          ${renderWizardNextSteps(isValid ? result.next_steps : localWizardNextSteps(plugin))}
+        `;
+      }
+
+      function renderWizardNextSteps(steps) {
+        if (!steps.length) return '';
+        return `
+          <div class="card">
+            <div class="name">Next steps</div>
+            ${steps.map((step) => `<div class="sub">${escapeHtml(step)}</div>`).join('')}
+          </div>
+        `;
+      }
+
+      function localWizardNextSteps(plugin) {
+        const steps = [];
+        if ((plugin.secret_requirements || []).length) {
+          steps.push(`Use env: references for ${plugin.secret_requirements.join(', ')}.`);
+        }
+        if ((plugin.missing_dependencies || []).length) {
+          steps.push(`Install optional dependencies: ${plugin.missing_dependencies.join(', ')}.`);
+        }
+        if (plugin.plugin_id === 'source.local') {
+          steps.push('Run make ingest-local-dry-run before ingesting local files.');
+        } else if (plugin.plugin_id === 'source.s3') {
+          steps.push('Run make s3-check after exporting AWS_* environment variables.');
+        } else if (plugin.plugin_id === 'source.fileshare') {
+          steps.push('Run make fileshare-check with the protocol-specific env vars.');
+        } else if (plugin.plugin_id === 'sink.object_storage') {
+          steps.push('Run make export-object-storage-check before enabling writes.');
+        } else {
+          steps.push('Use the validated draft as the plugin config once the write path exists.');
+        }
+        return steps;
+      }
+
+      async function validateWizardConfig() {
+        const plugin = selectedPlugin();
+        if (!plugin) return;
+        const editor = document.getElementById('wizard-config');
+        let config;
+        try {
+          config = JSON.parse(editor.value || '{}');
+          if (!config || Array.isArray(config) || typeof config !== 'object') {
+            throw new Error('config must be a JSON object');
+          }
+        } catch (error) {
+          state.wizard.result = {
+            valid: false,
+            plugin_id: plugin.plugin_id,
+            error: {
+              code: 'invalid_json',
+              message: error.message,
+            },
+          };
+          renderWizardResult(plugin);
+          return;
+        }
+
+        state.wizard.result = {
+          valid: false,
+          plugin_id: plugin.plugin_id,
+          error: { code: 'validating', message: 'Validating with registry...' },
+        };
+        renderWizardResult(plugin);
+        let response;
+        try {
+          response = await fetch(`/plugins/${encodeURIComponent(plugin.plugin_id)}/validate-config`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config }),
+          });
+        } catch (error) {
+          state.wizard.result = {
+            valid: false,
+            plugin_id: plugin.plugin_id,
+            error: {
+              code: 'network_error',
+              message: error.message,
+            },
+          };
+          renderWizardResult(plugin);
+          return;
+        }
+        const payload = await response.json().catch(() => ({
+          valid: false,
+          error: {
+            code: 'bad_response',
+            message: 'Validation route returned non-JSON response.',
+          },
+        }));
+        state.wizard.result = { ...payload, plugin_id: plugin.plugin_id };
+        renderWizardResult(plugin);
+      }
+
       function renderHealthPanel() {
         const root = document.getElementById('health-panel');
         root.innerHTML = `
           <div class="card"><div class="name">API</div><div class="sub">${escapeHtml(state.system.app.status)} · version ${escapeHtml(state.system.app.version)}</div></div>
-          <div class="card"><div class="name">Database</div><div class="sub">${escapeHtml(state.system.db.status)} · ${escapeHtml(state.system.db.dialect)}</div><div class="sub">Alebmic revision: ${escapeHtml(state.system.db.alembic_revision || 'missing')}</div></div>
+          <div class="card"><div class="name">Database</div><div class="sub">${escapeHtml(state.system.db.status)} · ${escapeHtml(state.system.db.dialect)}</div><div class="sub">Alembic revision: ${escapeHtml(state.system.db.alembic_revision || 'missing')}</div></div>
           <div class="card"><div class="name">Extension / Tables</div><div class="sub">vector: ${escapeHtml(state.system.db.extension.state)}</div><div class="sub">tables: ${escapeHtml(state.system.db.tables.join(', ') || 'none')}</div></div>
           ${state.system.db.detail ? `<div class="card"><div class="name">Latest error</div><div class="sub">${escapeHtml(state.system.db.detail)}</div></div>` : ''}
         `;
@@ -793,6 +1198,7 @@
           await renderDocumentPreview();
           renderModels();
           renderPlugins();
+          renderWizard();
           renderHealthPanel();
           renderVectorPanel();
           renderRetrievalControls();
@@ -805,6 +1211,38 @@
         document.getElementById('copy-retrieval-request').addEventListener('click', async () => {
           const payload = JSON.stringify(buildRetrievalRequest(), null, 2);
           await navigator.clipboard.writeText(payload);
+        });
+        document.getElementById('wizard-search').addEventListener('input', (event) => {
+          state.wizard.search = event.target.value;
+          state.wizard.result = null;
+          renderWizard();
+        });
+        document.getElementById('wizard-config').addEventListener('input', (event) => {
+          const plugin = selectedPlugin();
+          if (plugin) state.wizard.drafts[plugin.plugin_id] = event.target.value;
+        });
+        document.getElementById('wizard-validate').addEventListener('click', validateWizardConfig);
+        document.getElementById('wizard-reset').addEventListener('click', () => {
+          const plugin = selectedPlugin();
+          if (!plugin) return;
+          state.wizard.drafts[plugin.plugin_id] = JSON.stringify(plugin.example_config || {}, null, 2);
+          state.wizard.result = null;
+          renderWizard();
+        });
+        document.addEventListener('click', (event) => {
+          const filterButton = event.target.closest('[data-wizard-filter]');
+          if (filterButton) {
+            state.wizard.filter = filterButton.dataset.wizardFilter;
+            state.wizard.result = null;
+            renderWizard();
+            return;
+          }
+          const pluginButton = event.target.closest('[data-plugin-id]');
+          if (pluginButton) {
+            state.wizard.selectedPluginId = pluginButton.dataset.pluginId;
+            state.wizard.result = null;
+            renderWizard();
+          }
         });
       }
 

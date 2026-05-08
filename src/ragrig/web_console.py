@@ -20,7 +20,7 @@ from ragrig.db.models import (
     PipelineRunItem,
     Source,
 )
-from ragrig.plugins import get_plugin_registry
+from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
 from ragrig.providers import get_provider_registry
 from ragrig.vectorstore.base import VectorBackendHealth
 
@@ -490,3 +490,150 @@ def list_models(session: Session) -> dict[str, Any]:
 
 def list_plugins() -> list[dict[str, Any]]:
     return get_plugin_registry().list_discovery()
+
+
+_SECRET_KEY_PARTS = (
+    "api_key",
+    "access_key",
+    "secret",
+    "session_token",
+    "token",
+    "password",
+    "private_key",
+    "credential",
+    "dsn",
+    "service_account",
+)
+
+
+class PluginWizardValidationError(ValueError):
+    def __init__(self, *, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def validate_plugin_config_for_wizard(plugin_id: str, config: dict[str, Any]) -> dict[str, Any]:
+    registry = get_plugin_registry()
+    discovery_by_id = {item["plugin_id"]: item for item in registry.list_discovery()}
+    discovery = discovery_by_id.get(plugin_id)
+    if discovery is None:
+        raise PluginWizardValidationError(
+            code="plugin_not_found",
+            message=f"plugin '{plugin_id}' is not registered",
+        )
+
+    raw_secret_paths = _find_raw_secret_values(config)
+    if raw_secret_paths:
+        raise PluginWizardValidationError(
+            code="raw_secret_not_allowed",
+            message=(
+                "raw secret-like values are not accepted in the Web Console wizard; "
+                f"use env:VARIABLE_NAME references for {', '.join(raw_secret_paths)}"
+            ),
+        )
+
+    try:
+        validated = registry.validate_config(plugin_id, config)
+    except PluginConfigValidationError as exc:
+        raise PluginWizardValidationError(
+            code="plugin_config_invalid",
+            message=str(exc),
+        ) from exc
+
+    return {
+        "valid": True,
+        "plugin_id": plugin_id,
+        "status": discovery["status"],
+        "reason": discovery["reason"],
+        "display_name": discovery["display_name"],
+        "plugin_type": discovery["plugin_type"],
+        "family": discovery["family"],
+        "capabilities": discovery["capabilities"],
+        "config": validated,
+        "secret_requirements": discovery["secret_requirements"],
+        "missing_dependencies": discovery["missing_dependencies"],
+        "docs_reference": discovery["docs_reference"],
+        "next_steps": _plugin_next_steps(discovery),
+    }
+
+
+def _find_raw_secret_values(value: Any, path: str = "config") -> list[str]:
+    findings: list[str] = []
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            nested_path = f"{path}.{key}"
+            key_lower = str(key).lower()
+            if _looks_like_secret_key(key_lower) and _is_raw_secret_value(nested):
+                findings.append(nested_path)
+            findings.extend(_find_raw_secret_values(nested, nested_path))
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            findings.extend(_find_raw_secret_values(nested, f"{path}[{index}]"))
+    return findings
+
+
+def _looks_like_secret_key(key: str) -> bool:
+    return any(part in key for part in _SECRET_KEY_PARTS)
+
+
+def _is_raw_secret_value(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip()) and not value.startswith("env:")
+
+
+def _plugin_next_steps(discovery: dict[str, Any]) -> list[str]:
+    plugin_id = discovery["plugin_id"]
+    plugin_type = discovery["plugin_type"]
+    family = discovery["family"]
+    if plugin_id == "source.local":
+        return [
+            "Run make ingest-local-dry-run to preview local files.",
+            "Run make ingest-local and make index-local after the source path is correct.",
+        ]
+    if plugin_id == "source.s3":
+        return [
+            "Export the declared AWS_* environment variables.",
+            "Run make s3-check to verify the S3-compatible source config.",
+            "Use the generated config as the source plugin config once browser writes exist.",
+        ]
+    if plugin_id == "source.fileshare":
+        return [
+            "For NFS, mount the share first and validate through the local path mode.",
+            "For SMB, WebDAV, or SFTP, install the optional fileshare dependencies.",
+            "Run make fileshare-check with explicit env vars before enabling live ingestion.",
+        ]
+    if plugin_id == "sink.object_storage":
+        return [
+            "Export the declared object storage env vars.",
+            "Run make export-object-storage-check to validate the sink path.",
+            "Use dry_run=true before writing governed assets to a real bucket.",
+        ]
+    if plugin_id == "vector.qdrant":
+        return [
+            "Start local Qdrant with make qdrant-up when using the Qdrant backend.",
+            "Run make qdrant-check or make vector-check to verify collection readiness.",
+        ]
+    if plugin_type == "model":
+        if str(family) in {"ollama", "lm_studio", "llama_cpp", "vllm", "xinference", "localai"}:
+            return [
+                "Start the local model runtime.",
+                "Use GET /models and GET /plugins to verify provider readiness.",
+            ]
+        return [
+            "Install the provider optional dependency if required.",
+            "Export the declared provider secrets.",
+            "Keep cloud providers disabled until live smoke is explicitly enabled.",
+        ]
+    if plugin_type == "source":
+        return [
+            "Validate the config draft here before wiring a runtime connector.",
+            "Keep live sync disabled until credentials and rate limits are confirmed.",
+        ]
+    if plugin_type == "sink":
+        return [
+            "Validate the sink config here before exporting artifacts.",
+            "Prefer dry-run output before writing to external systems.",
+        ]
+    return [
+        "Review the docs reference and keep this plugin unavailable until runtime support lands."
+    ]
