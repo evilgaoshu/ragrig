@@ -5,6 +5,7 @@ Exit codes:
   0 - all checks passed
   1 - one or more blockers found (actionable message printed to stderr)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -30,7 +31,9 @@ def _docker_available() -> str | None:
     """Return blocker message if docker CLI is missing, else None."""
     result = _run_quiet(["docker", "--version"])
     if result.returncode != 0:
-        return "Docker CLI not found. Install Docker or OrbStack: https://docs.docker.com/get-docker/"
+        return (
+            "Docker CLI not found. Install Docker or OrbStack: https://docs.docker.com/get-docker/"
+        )
     return None
 
 
@@ -47,7 +50,10 @@ def _docker_daemon_running() -> str | None:
     result = _run_quiet(["docker", "info"])
     if result.returncode != 0:
         stderr = result.stderr.strip()
-        if "Cannot connect to the Docker daemon" in stderr or "connection refused" in stderr.lower():
+        if (
+            "Cannot connect to the Docker daemon" in stderr
+            or "connection refused" in stderr.lower()
+        ):
             return f"Docker daemon is not running. Start Docker Desktop or OrbStack. ({stderr})"
         return f"Docker daemon check failed: {stderr}"
     return None
@@ -116,9 +122,7 @@ def run_checks() -> dict[str, object]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Preflight checks for fileshare live smoke tests."
-    )
+    parser = argparse.ArgumentParser(description="Preflight checks for fileshare live smoke tests.")
     parser.add_argument(
         "--json",
         action="store_true",
@@ -151,7 +155,9 @@ def main() -> int:
                 for i, w in enumerate(result["warnings"], 1):
                     print(f"  {i}. {w}", file=sys.stderr)
             if result["ok"]:
-                print("\nPreflight passed with warnings. Containers will start, but some protocol tests may be skipped.")
+                print(
+                    "\nPreflight passed with warnings. Containers will start, but some protocol tests may be skipped."
+                )
 
     return 0 if result["ok"] else 1
 

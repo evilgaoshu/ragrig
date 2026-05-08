@@ -13,6 +13,7 @@ Exit codes:
   1 - preflight blocker (no containers started)
   2 - smoke test failed (containers may still be running unless --teardown)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -98,7 +99,9 @@ def _seed_fixtures() -> dict[str, object]:
 def _run_pytest(verbose: bool = True) -> dict[str, object]:
     start = _now()
     cmd = [
-        sys.executable, "-m", "pytest",
+        sys.executable,
+        "-m",
+        "pytest",
         "tests/test_fileshare_live_smoke.py",
         "-v",
     ]
@@ -228,9 +231,16 @@ def main() -> int:
             cwd=_REPO_ROOT,
         )
         try:
-            preflight = json.loads(preflight_proc.stdout) if preflight_proc.stdout else {"ok": False, "blockers": ["preflight output empty"]}
+            preflight = (
+                json.loads(preflight_proc.stdout)
+                if preflight_proc.stdout
+                else {"ok": False, "blockers": ["preflight output empty"]}
+            )
         except json.JSONDecodeError:
-            preflight = {"ok": False, "blockers": [f"preflight JSON parse error: {preflight_proc.stdout}"]}
+            preflight = {
+                "ok": False,
+                "blockers": [f"preflight JSON parse error: {preflight_proc.stdout}"],
+            }
         record["preflight"] = preflight
         record["steps"].append({"step": "preflight", **preflight})
         if not preflight["ok"]:
@@ -239,7 +249,9 @@ def main() -> int:
             _persist(record, args.record)
             if args.print_evidence:
                 print(json.dumps(record, indent=2))
-            print("\nBLOCKED: preflight checks failed. Containers were NOT started.", file=sys.stderr)
+            print(
+                "\nBLOCKED: preflight checks failed. Containers were NOT started.", file=sys.stderr
+            )
             print("Run `python -m scripts.preflight_fileshare_live` for details.", file=sys.stderr)
             return 1
 
