@@ -9,6 +9,7 @@ from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
 
 from ragrig import __version__
+from ragrig.acl import acl_summary_from_metadata
 from ragrig.config import Settings
 from ragrig.db.models import (
     Chunk,
@@ -362,6 +363,7 @@ def list_documents(session: Session) -> list[dict[str, Any]]:
                 "mime_type": document.mime_type,
                 "content_hash": document.content_hash,
                 "metadata": document.metadata_json,
+                "acl_summary": acl_summary_from_metadata(document.metadata_json),
                 "latest_version": {
                     "id": str(version.id),
                     "version_number": version.version_number,
@@ -399,6 +401,7 @@ def list_document_version_chunks(
                 "page_number": chunk.page_number,
                 "text": chunk.text,
                 "metadata": chunk.metadata_json,
+                "acl_summary": acl_summary_from_metadata(chunk.metadata_json),
             }
         )
     return items

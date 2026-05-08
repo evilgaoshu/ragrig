@@ -780,6 +780,14 @@
         return "pill neutral";
       }
 
+      function aclBadgeHtml(aclSummary) {
+        if (!aclSummary) return '';
+        const vis = aclSummary.visibility || 'unknown';
+        const stale = aclSummary.stale ? ' · stale' : '';
+        const cls = vis === 'public' ? 'pill' : vis === 'protected' ? 'pill warn' : 'pill error';
+        return `<span class="${cls}">ACL: ${escapeHtml(vis)}${escapeHtml(stale)}</span>`;
+      }
+
       function formatValue(value, fallback = 'Unavailable') {
         if (value === null || value === undefined || value === '') return fallback;
         return String(value);
@@ -978,6 +986,7 @@
           root.innerHTML = empty('No documents available. Ingest fixture data first.');
           return;
         }
+        const aclBadge = aclBadgeHtml(documentItem.acl_summary);
         const chunkResponse = await getJson(`/document-versions/${documentItem.latest_version.id}/chunks`);
         const chunks = chunkResponse.items;
         const understandingResponse = await getJson(`/document-versions/${documentItem.latest_version.id}/understanding`);
@@ -1027,7 +1036,7 @@
         }
         const preview = `
           <div class="card">
-            <div class="name">${escapeHtml(documentItem.uri)}</div>
+            <div class="name">${escapeHtml(documentItem.uri)} ${aclBadge}</div>
             <div class="sub">source: ${escapeHtml(documentItem.source_uri)} · parser: ${escapeHtml(documentItem.latest_version.parser_name)} · version ${documentItem.latest_version.version_number}</div>
             <div class="sub">mime: ${escapeHtml(documentItem.mime_type || 'unknown')} · hash: ${escapeHtml(documentItem.content_hash)}</div>
           </div>
@@ -1041,13 +1050,16 @@
           root.innerHTML = preview + empty('No chunks exist for this version yet. This is a real empty state, not mock data.');
           return;
         }
-        root.innerHTML = preview + chunks.slice(0, 3).map((chunk) => `
+        root.innerHTML = preview + chunks.slice(0, 3).map((chunk) => {
+          const chunkBadge = aclBadgeHtml(chunk.acl_summary);
+          return `
           <div class="card">
-            <div class="name">Chunk ${chunk.chunk_index}</div>
+            <div class="name">Chunk ${chunk.chunk_index} ${chunkBadge}</div>
             <div class="sub">chars ${chunk.char_start ?? 'n/a'}-${chunk.char_end ?? 'n/a'} · heading: ${escapeHtml(chunk.heading || 'none')}</div>
             <div class="sub">${escapeHtml(chunk.text.slice(0, 240))}</div>
           </div>
-        `).join('');
+        `;
+        }).join('');
       }
 
       function renderModels() {

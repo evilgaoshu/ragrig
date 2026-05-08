@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ragrig.acl import acl_permits_chunk_metadata
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding, KnowledgeBase
 from ragrig.providers import get_provider_registry
 from ragrig.repositories import get_knowledge_base_by_name
@@ -148,19 +149,23 @@ def _search_with_sql_distance(
     dimensions: int,
     query_vector: list[float],
     top_k: int,
+    principal_ids: list[str] | None = None,
+    enforce_acl: bool = True,
 ) -> list[RetrievalResult]:
     distance_expr = Embedding.embedding.cosine_distance(query_vector)
-    rows = session.execute(
-        _build_base_statement(
-            knowledge_base_id=knowledge_base_id,
-            provider=provider,
-            model=model,
-            dimensions=dimensions,
-        )
-        .add_columns(distance_expr.label("distance"))
-        .order_by(distance_expr.asc(), Chunk.chunk_index.asc())
-        .limit(top_k)
-    ).all()
+    statement = _build_base_statement(
+        knowledge_base_id=knowledge_base_id,
+        provider=provider,
+        model=model,
+        dimensions=dimensions,
+    ).add_columns(distance_expr.label("distance"))
+    if enforce_acl and principal_ids is not None:
+        if len(principal_ids) > 0:
+            statement = statement.where(_build_acl_where_clause(principal_ids))
+        else:
+            statement = statement.where(_build_acl_public_only_clause())
+    statement = statement.order_by(distance_expr.asc(), Chunk.chunk_index.asc()).limit(top_k)
+    rows = session.execute(statement).all()
     return [
         RetrievalResult(
             document_id=row.document_id,
@@ -188,6 +193,8 @@ def _search_with_python_distance(
     dimensions: int,
     query_vector: list[float],
     top_k: int,
+    principal_ids: list[str] | None = None,
+    enforce_acl: bool = True,
 ) -> list[RetrievalResult]:
     rows = session.execute(
         _build_base_statement(
@@ -197,6 +204,17 @@ def _search_with_python_distance(
             dimensions=dimensions,
         )
     ).all()
+
+    if enforce_acl and principal_ids is not None:
+        rows = [
+            row
+            for row in rows
+            if acl_permits_chunk_metadata(
+                row.chunk_metadata,
+                principal_ids if len(principal_ids) > 0 else None,
+            )
+        ]
+
     ranked = sorted(
         rows,
         key=lambda row: (
@@ -225,6 +243,37 @@ def _search_with_python_distance(
     return results
 
 
+def _build_acl_where_clause(principal_ids: list[str]) -> Any:
+    """Build a SQLAlchemy WHERE clause for chunk ACL filtering on JSONB metadata."""
+    from sqlalchemy import Text as _Text
+    from sqlalchemy import or_
+    from sqlalchemy import type_coerce as _tc
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    principals_json = [pid.lower() for pid in principal_ids]
+    not_public = (
+        Chunk.metadata_json["acl", "visibility"].astext.cast(_Text).in_(["protected", "unknown"])
+    )
+    is_public = Chunk.metadata_json["acl", "visibility"].astext == "public"
+    allowed = Chunk.metadata_json["acl", "allowed_principals"].has_any(_tc(principals_json, JSONB))
+    denied = Chunk.metadata_json["acl", "denied_principals"].has_any(_tc(principals_json, JSONB))
+    no_acl = ~Chunk.metadata_json.has_key("acl")
+    return or_(
+        is_public,
+        no_acl,
+        (not_public & allowed & ~denied),
+    )
+
+
+def _build_acl_public_only_clause() -> Any:
+    """Build WHERE clause that only returns public/no-ACL chunks."""
+    from sqlalchemy import or_
+
+    is_public = Chunk.metadata_json["acl", "visibility"].astext == "public"
+    no_acl = ~Chunk.metadata_json.has_key("acl")
+    return or_(is_public, no_acl)
+
+
 def search_knowledge_base(
     session: Session,
     *,
@@ -235,6 +284,8 @@ def search_knowledge_base(
     model: str | None = None,
     dimensions: int | None = None,
     vector_backend: VectorBackend | None = None,
+    principal_ids: list[str] | None = None,
+    enforce_acl: bool = True,
 ) -> RetrievalReport:
     if top_k <= 0:
         raise InvalidTopKError(
@@ -275,12 +326,22 @@ def search_knowledge_base(
     )
     if vector_backend is not None:
         vector_backend.ensure_collection(session, collection)
+        fetch_k = top_k * 3 if (enforce_acl and principal_ids is not None) else top_k
         vector_results = vector_backend.search(
             session,
             collection,
             query_vector=query_embedding.vector,
-            top_k=top_k,
+            top_k=fetch_k,
         )
+        if enforce_acl and principal_ids is not None:
+            vector_results = [
+                r
+                for r in vector_results
+                if acl_permits_chunk_metadata(
+                    r.metadata.get("chunk_metadata"),
+                    principal_ids if len(principal_ids) > 0 else None,
+                )
+            ][:top_k]
         results = [
             RetrievalResult(
                 document_id=result.document_id,
@@ -323,6 +384,8 @@ def search_knowledge_base(
             dimensions=resolved_dimensions,
             query_vector=query_embedding.vector,
             top_k=top_k,
+            principal_ids=principal_ids,
+            enforce_acl=enforce_acl,
         )
     else:
         results = _search_with_python_distance(
@@ -333,6 +396,8 @@ def search_knowledge_base(
             dimensions=resolved_dimensions,
             query_vector=query_embedding.vector,
             top_k=top_k,
+            principal_ids=principal_ids,
+            enforce_acl=enforce_acl,
         )
 
     return RetrievalReport(

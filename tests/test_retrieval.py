@@ -669,3 +669,578 @@ async def test_retrieval_search_api_rejects_non_positive_top_k() -> None:
         )
 
     assert response.status_code == 422
+
+
+# ── ACL filtering integration tests ────────────────────────────────────────────
+
+
+def test_public_document_retrievable_without_principal(tmp_path) -> None:
+    """Public document with no ACL in metadata is retrievable without principal."""
+    docs = _seed_documents(tmp_path, {"guide.txt": "public accessible content"})
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        # No ACL metadata → default public; search without principal should work
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="public accessible content",
+            principal_ids=None,
+            enforce_acl=True,
+        )
+
+    assert report.total_results == 1
+    assert report.results[0].text == "public accessible content"
+
+
+def test_protected_document_returned_with_valid_principal(tmp_path) -> None:
+    """Protected document + valid principal → returned."""
+    docs = _seed_documents(tmp_path, {"secret.md": "protected secret content"})
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        # Manually set ACL on chunks to protected with alice allowed
+        from ragrig.db.models import Chunk
+
+        chunks = session.scalars(select(Chunk)).all()
+        for chunk in chunks:
+            chunk.metadata_json = {
+                **chunk.metadata_json,
+                "acl": {
+                    "visibility": "protected",
+                    "allowed_principals": ["alice", "group:eng"],
+                    "denied_principals": [],
+                    "acl_source": "test",
+                    "acl_source_hash": "abc",
+                    "inheritance": "document",
+                },
+            }
+        session.commit()
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="protected secret content",
+            principal_ids=["alice"],
+            enforce_acl=True,
+        )
+
+    assert report.total_results == 1
+    assert report.results[0].text == "protected secret content"
+
+
+def test_protected_document_not_returned_without_principal(tmp_path) -> None:
+    """Protected document + no principal → not returned."""
+    docs = _seed_documents(tmp_path, {"secret.md": "top secret guarded content"})
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        from ragrig.db.models import Chunk
+
+        chunks = session.scalars(select(Chunk)).all()
+        for chunk in chunks:
+            chunk.metadata_json = {
+                **chunk.metadata_json,
+                "acl": {
+                    "visibility": "protected",
+                    "allowed_principals": ["alice"],
+                    "denied_principals": [],
+                    "acl_source": "test",
+                    "acl_source_hash": "abc",
+                    "inheritance": "document",
+                },
+            }
+        session.commit()
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="top secret guarded content",
+            principal_ids=[],
+            enforce_acl=True,
+        )
+
+    assert report.total_results == 0
+
+
+def test_protected_document_not_returned_with_denied_principal(tmp_path) -> None:
+    """Protected document + denied principal → not returned."""
+    docs = _seed_documents(tmp_path, {"secret.md": "denied access content"})
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        from ragrig.db.models import Chunk
+
+        chunks = session.scalars(select(Chunk)).all()
+        for chunk in chunks:
+            chunk.metadata_json = {
+                **chunk.metadata_json,
+                "acl": {
+                    "visibility": "protected",
+                    "allowed_principals": ["alice", "bob"],
+                    "denied_principals": ["bob"],
+                    "acl_source": "test",
+                    "acl_source_hash": "abc",
+                    "inheritance": "document",
+                },
+            }
+        session.commit()
+
+        # bob is denied even though in allowed_principals
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="denied access content",
+            principal_ids=["bob"],
+            enforce_acl=True,
+        )
+
+        assert report.total_results == 0
+
+        # alice should still be allowed (same session)
+        report_alice = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="denied access content",
+            principal_ids=["alice"],
+            enforce_acl=True,
+        )
+
+        assert report_alice.total_results == 1
+
+
+def test_mixed_top_k_acl_filtering_maintains_count_and_order(tmp_path) -> None:
+    """Mixed top-k: public + protected chunks, filtered count correct, order stable."""
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "public_a.txt": "zzz public alpha",
+            "protected_b.txt": "yyy protected beta",
+            "public_c.txt": "xxx public gamma",
+        },
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        from ragrig.db.models import Chunk
+
+        chunks = session.scalars(select(Chunk).order_by(Chunk.chunk_index)).all()
+        # Make the second document (protected_b) protected with alice only
+        for chunk in chunks:
+            if "protected beta" in chunk.text:
+                chunk.metadata_json = {
+                    **chunk.metadata_json,
+                    "acl": {
+                        "visibility": "protected",
+                        "allowed_principals": ["alice"],
+                        "denied_principals": [],
+                        "acl_source": "test",
+                        "acl_source_hash": "abc",
+                        "inheritance": "document",
+                    },
+                }
+        session.commit()
+
+        # Without alice, only public documents should appear (2 results)
+        report_no_auth = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="public",
+            top_k=5,
+            principal_ids=["guest"],
+            enforce_acl=True,
+        )
+
+        public_texts = {r.text for r in report_no_auth.results}
+        assert len(public_texts) == 2
+        assert "zzz public alpha" in public_texts
+        assert "xxx public gamma" in public_texts
+        assert "yyy protected beta" not in public_texts
+
+        # With alice, all 3 should be returned
+        report_with_alice = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="public",
+            top_k=5,
+            principal_ids=["alice"],
+            enforce_acl=True,
+        )
+
+        all_texts = {r.text for r in report_with_alice.results}
+        assert len(all_texts) == 3
+        assert "yyy protected beta" in all_texts
+
+        # Results must be sorted by distance (score descending)
+        scores = [r.score for r in report_with_alice.results]
+        assert scores == sorted(scores, reverse=True)
+
+
+def test_old_call_without_acl_context_is_defined_and_permissive(tmp_path) -> None:
+    """Old caller not passing ACL context gets default behavior (all results).
+
+    Without principal_ids, enforce_acl defaults to True but with no principals,
+    only public chunks (or chunks without ACL metadata) are returned.
+    Chunks without ACL metadata default to 'public' visibility."""
+    docs = _seed_documents(tmp_path, {"guide.txt": "old caller fixture content"})
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        # Old-style call: no principal_ids, no enforce_acl
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="old caller fixture content",
+        )
+
+    assert report.total_results == 1
+
+
+@pytest.mark.anyio
+async def test_retrieval_search_api_supports_acl_parameters(tmp_path) -> None:
+    """POST /retrieval/search accepts principal_ids and enforce_acl."""
+    database_path = tmp_path / "retrieval-acl-api.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    docs = _seed_documents(tmp_path, {"guide.txt": "acl api parameter test"})
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # With principal_ids and enforce_acl
+        response = await client.post(
+            "/retrieval/search",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "acl api parameter test",
+                "top_k": 1,
+                "principal_ids": ["alice"],
+                "enforce_acl": True,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["total_results"] == 1
+
+
+@pytest.mark.anyio
+async def test_retrieval_search_api_acl_fields_are_optional(tmp_path) -> None:
+    """POST /retrieval/search without ACL fields still works (backward compat)."""
+    database_path = tmp_path / "retrieval-acl-compat.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    docs = _seed_documents(tmp_path, {"guide.txt": "acl compat backward test"})
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Old-style call without principal_ids or enforce_acl
+        response = await client.post(
+            "/retrieval/search",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "acl compat backward test",
+                "top_k": 1,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["total_results"] == 1
+
+
+@pytest.mark.anyio
+async def test_retrieval_search_api_acl_filters_protected_document(tmp_path) -> None:
+    """POST /retrieval/search with empty principals excludes protected content."""
+    database_path = tmp_path / "retrieval-acl-protected.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    docs = _seed_documents(tmp_path, {"secret.md": "acl protected api test"})
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        from ragrig.db.models import Chunk
+
+        chunks = session.scalars(select(Chunk)).all()
+        for chunk in chunks:
+            chunk.metadata_json = {
+                **chunk.metadata_json,
+                "acl": {
+                    "visibility": "protected",
+                    "allowed_principals": ["alice"],
+                    "denied_principals": [],
+                    "acl_source": "test",
+                    "acl_source_hash": "abc",
+                    "inheritance": "document",
+                },
+            }
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response_no_principal = await client.post(
+            "/retrieval/search",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "acl protected api test",
+                "top_k": 1,
+                "principal_ids": [],
+                "enforce_acl": True,
+            },
+        )
+        assert response_no_principal.status_code == 200
+        assert response_no_principal.json()["total_results"] == 0
+
+        response_alice = await client.post(
+            "/retrieval/search",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "acl protected api test",
+                "top_k": 1,
+                "principal_ids": ["alice"],
+                "enforce_acl": True,
+            },
+        )
+        assert response_alice.status_code == 200
+        assert response_alice.json()["total_results"] == 1
+
+
+def test_search_with_sql_distance_acl_where_clauses() -> None:
+    """Verify _build_acl_where_clause and _build_acl_public_only_clause build expressions."""
+    from ragrig.retrieval import _build_acl_public_only_clause, _build_acl_where_clause
+
+    where_with_principals = _build_acl_where_clause(["alice"])
+    assert where_with_principals is not None
+
+    where_public_only = _build_acl_public_only_clause()
+    assert where_public_only is not None
+
+    where_empty = _build_acl_where_clause([])
+    assert where_empty is not None
+
+
+def test_search_with_sql_distance_acl_code_paths(monkeypatch) -> None:
+    """Exercise _search_with_sql_distance ACL branches via mocking."""
+    from ragrig.retrieval import _search_with_sql_distance
+
+    class FakeLabel:
+        def label(self, _name):
+            return self
+
+        def asc(self):
+            return self
+
+    class FakeEmbedCol:
+        def cosine_distance(self, _vector):
+            return FakeLabel()
+
+    class FakeStatement:
+        def add_columns(self, _col):
+            return self
+
+        def where(self, _clause):
+            return self
+
+        def order_by(self, *_args):
+            return self
+
+        def limit(self, _n):
+            return self
+
+    class FakeResult:
+        def all(self):
+            return []
+
+    class FakeSession:
+        def execute(self, _statement):
+            return FakeResult()
+
+    monkeypatch.setattr("ragrig.retrieval.Embedding.embedding", FakeEmbedCol())
+    monkeypatch.setattr("ragrig.retrieval.Chunk.chunk_index", FakeLabel())
+    monkeypatch.setattr(
+        "ragrig.retrieval._build_base_statement",
+        lambda **kwargs: FakeStatement(),
+    )
+
+    # Test with principal_ids → triggers _build_acl_where_clause
+    results_with = _search_with_sql_distance(
+        FakeSession(),
+        knowledge_base_id="kb-id",
+        provider="p",
+        model="m",
+        dimensions=8,
+        query_vector=[0.0] * 8,
+        top_k=5,
+        principal_ids=["alice"],
+        enforce_acl=True,
+    )
+    assert results_with == []
+
+    # Test with empty principal_ids → triggers _build_acl_public_only_clause
+    results_empty = _search_with_sql_distance(
+        FakeSession(),
+        knowledge_base_id="kb-id",
+        provider="p",
+        model="m",
+        dimensions=8,
+        query_vector=[0.0] * 8,
+        top_k=5,
+        principal_ids=[],
+        enforce_acl=True,
+    )
+    assert results_empty == []
+
+    # Test without enforce_acl
+    results_no_enforce = _search_with_sql_distance(
+        FakeSession(),
+        knowledge_base_id="kb-id",
+        provider="p",
+        model="m",
+        dimensions=8,
+        query_vector=[0.0] * 8,
+        top_k=5,
+        principal_ids=["alice"],
+        enforce_acl=False,
+    )
+    assert results_no_enforce == []
+
+
+def test_acl_filtering_with_explicit_vector_backend(tmp_path) -> None:
+    """Vector backend returns results; ACL filters after fetch."""
+    import uuid as _uuid
+
+    docs = _seed_documents(tmp_path, {"guide.txt": "vector backend acl filter"})
+
+    class FakeAclBackend:
+        backend_name = "qdrant"
+        distance_metric = "cosine"
+
+        def ensure_collection(self, session, collection):
+            return None
+
+        def search(self, session, collection, *, query_vector, top_k, filters=None):
+            from ragrig.vectorstore.base import VectorSearchResult
+
+            return [
+                VectorSearchResult(
+                    embedding_id=_uuid.uuid4(),
+                    document_id=_uuid.uuid4(),
+                    document_version_id=_uuid.uuid4(),
+                    chunk_id=_uuid.uuid4(),
+                    chunk_index=0,
+                    text="vector backend acl filter",
+                    score=0.95,
+                    distance=0.05,
+                    metadata={
+                        "document_uri": str(docs / "guide.txt"),
+                        "source_uri": str(docs),
+                        "chunk_metadata": {
+                            "acl": {
+                                "visibility": "protected",
+                                "allowed_principals": ["alice"],
+                                "denied_principals": [],
+                                "acl_source": "test",
+                                "acl_source_hash": "abc",
+                                "inheritance": "document",
+                            }
+                        },
+                    },
+                ),
+            ]
+
+        def upsert_embeddings(self, session, collection, records):
+            return []
+
+        def delete_embeddings(self, session, collection, *, embedding_ids):
+            return 0
+
+        def health(self, session):
+            return None
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        report_blocked = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="vector backend acl filter",
+            vector_backend=FakeAclBackend(),
+            principal_ids=["guest"],
+            enforce_acl=True,
+        )
+        assert report_blocked.backend == "qdrant"
+        assert report_blocked.total_results == 0
+
+        report_allowed = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="vector backend acl filter",
+            vector_backend=FakeAclBackend(),
+            principal_ids=["alice"],
+            enforce_acl=True,
+        )
+        assert report_allowed.backend == "qdrant"
+        assert report_allowed.total_results == 1

@@ -102,6 +102,18 @@ def _replace_version_index(
     chunk_drafts = chunk_text(document_version.extracted_text, chunking_config)
     created_chunks: list[Chunk] = []
 
+    acl_payload: dict[str, object] = {}
+    document_acl = (document.metadata_json or {}).get("acl") or (
+        document_version.metadata_json or {}
+    ).get("acl")
+    if isinstance(document_acl, dict):
+        acl_payload = {
+            "acl": {
+                **document_acl,
+                "inheritance": "propagated",
+            }
+        }
+
     for draft in chunk_drafts:
         chunk = Chunk(
             document_version_id=document_version.id,
@@ -113,8 +125,10 @@ def _replace_version_index(
                 **draft.metadata,
                 "content_hash": document_version.content_hash,
                 "document_uri": document.uri,
+                "document_id": str(document.id),
                 "parser_name": document_version.parser_name,
                 "version_number": document_version.version_number,
+                **acl_payload,
                 "profile_id": chunk_profile_id,
             },
         )
