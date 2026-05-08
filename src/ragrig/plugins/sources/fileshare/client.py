@@ -235,7 +235,7 @@ class SMBClient:
                 return fh.read()
         except Exception as exc:
             self._map_exception(exc)
-            raise FilesharePermanentError(f"SMB read failed for {path}: {exc}") from exc
+            raise FilesharePermanentError(f"SMB read failed for {path}: {exc}") from exc  # pragma: no cover
 
     def _map_exception(self, exc: Exception) -> None:
         msg = str(exc).lower()

@@ -530,6 +530,26 @@ def test_fileshare_config_accepts_valid_webdav_and_helpers_cover_remote_paths() 
 
     assert validated["base_url"] == "https://dav.example.internal"
     assert built_client.protocol == "smb"
+
+    webdav_client = _build_client(
+        _config(protocol="webdav", base_url="http://dav.example.internal"),
+        secrets=ResolvedFileshareSecrets(username="alice", password="secret"),
+    )
+    assert webdav_client.protocol == "webdav"
+
+    sftp_client = _build_client(
+        _config(protocol="sftp", host="sftp.example.internal"),
+        secrets=ResolvedFileshareSecrets(
+            username="alice", password="secret", private_key="KEY"
+        ),
+    )
+    assert sftp_client.protocol == "sftp"
+
+    fallback_client = _build_client(
+        _config(protocol="unknown"),
+        secrets=ResolvedFileshareSecrets(),
+    )
+    assert fallback_client.protocol == "unknown"
     assert _source_uri(validated) == "webdav://dav.example.internal/engineering"
     assert (
         _document_uri(validated, "guide.md") == "webdav://dav.example.internal/engineering/guide.md"
