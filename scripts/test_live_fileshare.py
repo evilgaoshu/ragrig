@@ -254,6 +254,16 @@ def main() -> int:
             print("Run `python -m scripts.preflight_fileshare_live` for details.", file=sys.stderr)
             return 1
 
+        # Apply auto-picked ports so compose and tests use them
+        suggested_ports = preflight.get("suggested_ports", {})
+        for var_name, port in suggested_ports.items():
+            current = os.environ.get(var_name)
+            if current != str(port):
+                os.environ[var_name] = str(port)
+                print(f"  [preflight] Auto-picked {var_name}={port}")
+        if suggested_ports:
+            print("  [preflight] Auto-picked ports exported for compose and tests.")
+
     # Compose up (unless skipped)
     if not args.no_start:
         up_result = _docker_compose_up()

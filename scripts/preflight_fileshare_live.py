@@ -10,21 +10,38 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import subprocess
 import sys
-from typing import Iterable
+from pathlib import Path
 
-_REQUIRED_PORTS = [1445, 8080, 2222]
+_REPO_ROOT = Path(__file__).parent.parent
+_REQUIRED_PORTS = {
+    "SMB_HOST_PORT": 1445,
+    "WEBDAV_HOST_PORT": 8080,
+    "SFTP_HOST_PORT": 2222,
+}
 _OPTIONAL_SDKS = {
-    "smbprotocol": "SMB live client (pip install 'ragrig[fileshare]')",
-    "paramiko": "SFTP live client (pip install 'ragrig[fileshare]')",
-    "httpx": "WebDAV live client (pip install 'ragrig[fileshare]')",
+    "smbprotocol": ("SMB live tests", "uv sync --extra fileshare --dev"),
+    "paramiko": ("SFTP live tests", "uv sync --extra fileshare --dev"),
+    "httpx": ("WebDAV live tests", "uv sync --extra fileshare --dev"),
 }
 
 
 def _run_quiet(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def _env_file_exists() -> str | None:
+    """Return blocker message if .env is missing, else None."""
+    if not (_REPO_ROOT / ".env").exists():
+        return (
+            ".env file is missing. Create it with:\n"
+            "  cp .env.example .env\n"
+            "Then edit any host ports that conflict with your local environment."
+        )
+    return None
 
 
 def _docker_available() -> str | None:
@@ -59,29 +76,73 @@ def _docker_daemon_running() -> str | None:
     return None
 
 
-def _ports_free(ports: Iterable[int]) -> list[str]:
-    """Return list of blocker messages for occupied ports."""
+def _get_target_ports() -> dict[str, int]:
+    """Return env-aware port mapping for fileshare live services."""
+    return {name: int(os.environ.get(name, default)) for name, default in _REQUIRED_PORTS.items()}
+
+
+def _is_port_free(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        return s.connect_ex((host, port)) != 0
+
+
+def _find_free_port(start: int, host: str = "127.0.0.1") -> int:
+    port = start
+    while port < 65535:
+        if _is_port_free(host, port):
+            return port
+        port += 1
+    raise RuntimeError(f"No free port found starting from {start}")
+
+
+def _ports_free(ports: dict[str, int], *, auto_pick: bool) -> tuple[list[str], dict[str, int]]:
+    """Return (blockers, suggested_ports).
+
+    If auto_pick is True and a default port is occupied, attempt to find a
+    free alternative instead of emitting a hard blocker.
+    """
     blockers: list[str] = []
-    for port in ports:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(1)
-            if s.connect_ex(("127.0.0.1", port)) == 0:
+    suggested: dict[str, int] = {}
+    for var_name, port in ports.items():
+        if _is_port_free("127.0.0.1", port):
+            suggested[var_name] = port
+            continue
+
+        if auto_pick:
+            try:
+                free = _find_free_port(port + 1)
+                suggested[var_name] = free
+                continue
+            except RuntimeError as exc:
                 blockers.append(
-                    f"Port {port} is already in use on 127.0.0.1. "
-                    f"Free it or override with env var "
-                    f"(SMB_HOST_PORT / WEBDAV_HOST_PORT / SFTP_HOST_PORT)."
+                    f"Port {port} ({var_name}) is occupied and auto-pick failed: {exc}.\n"
+                    f"  Fix: manually free the port or set {var_name}=<free_port> in .env"
                 )
-    return blockers
+        else:
+            blockers.append(
+                f"Port {port} ({var_name}) is already in use on 127.0.0.1.\n"
+                f"  Fix options:\n"
+                f"    1) Free the port (e.g. `lsof -ti :{port} | xargs kill -9` on macOS)\n"
+                f"    2) Override in .env: {var_name}=<free_port>\n"
+                f"    3) Auto-pick: FILESHARE_AUTO_PICK_PORTS=1 make test-live-fileshare"
+            )
+    return blockers, suggested
 
 
 def _optional_sdks() -> list[str]:
     """Return list of blocker messages for missing optional SDKs."""
     blockers: list[str] = []
-    for module, hint in _OPTIONAL_SDKS.items():
+    for module, (purpose, install_cmd) in _OPTIONAL_SDKS.items():
         try:
             __import__(module)
         except ImportError:
-            blockers.append(f"Optional SDK missing: {module} ({hint})")
+            blockers.append(
+                f"Optional SDK missing: {module} (needed for {purpose}).\n"
+                f"  Install: {install_cmd}\n"
+                f"  Fallback: pytest will skip the corresponding protocol tests; "
+                f"offline `make test` / `make coverage` still pass."
+            )
     return blockers
 
 
@@ -94,6 +155,13 @@ def run_checks() -> dict[str, object]:
     checks: dict[str, object] = {}
     hard_blockers: list[str] = []
     warnings: list[str] = []
+    suggested_ports: dict[str, int] = {}
+
+    # .env file check
+    env_msg = _env_file_exists()
+    checks["env_file"] = {"ok": env_msg is None, "blocker": env_msg}
+    if env_msg:
+        hard_blockers.append(env_msg)
 
     for name, fn in [
         ("docker_cli", _docker_available),
@@ -105,8 +173,15 @@ def run_checks() -> dict[str, object]:
         if msg:
             hard_blockers.append(msg)
 
-    port_blockers = _ports_free(_REQUIRED_PORTS)
-    checks["ports"] = {"ok": not port_blockers, "blockers": port_blockers}
+    target_ports = _get_target_ports()
+    auto_pick = os.environ.get("FILESHARE_AUTO_PICK_PORTS", "").lower() in ("1", "true", "yes")
+    port_blockers, suggested_ports = _ports_free(target_ports, auto_pick=auto_pick)
+    checks["ports"] = {
+        "ok": not port_blockers,
+        "blockers": port_blockers,
+        "target_ports": target_ports,
+        "suggested_ports": suggested_ports,
+    }
     hard_blockers.extend(port_blockers)
 
     sdk_blockers = _optional_sdks()
@@ -119,6 +194,7 @@ def run_checks() -> dict[str, object]:
         "warnings": warnings,
         "blockers": hard_blockers + warnings,
         "checks": checks,
+        "suggested_ports": suggested_ports,
     }
 
 

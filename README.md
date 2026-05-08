@@ -873,13 +873,24 @@ make fileshare-check
 Live smoke (local Docker services, explicit opt-in):
 
 ```bash
-make preflight-fileshare-live          # check Docker, ports, and optional SDKs
+make preflight-fileshare-live          # check .env, Docker, ports, and optional SDKs
 make test-live-fileshare               # preflight + up + seed + pytest + evidence
 make test-live-fileshare-print-evidence # same, but prints the evidence record to stdout
 make fileshare-live-down               # tear down
 ```
 
 Live smoke validates real list/read/stat/skip behavior against local Samba, WebDAV, and SFTP containers. It does not run in default CI.
+
+**Prerequisites:**
+
+- `.env` must exist. If it is missing, preflight blocks with:
+  ```
+  cp .env.example .env
+  ```
+- Optional SDKs can be installed with:
+  ```bash
+  uv sync --extra fileshare --dev
+  ```
 
 **QA acceptance path:**
 
@@ -889,9 +900,13 @@ Live smoke validates real list/read/stat/skip behavior against local Samba, WebD
 
 **Unavailable environment fallback:**
 
+- If `.env` is missing, preflight blocks with `cp .env.example .env` and stops before any container checks.
 - If Docker is not installed or the daemon is not running, preflight prints actionable steps and exits without starting containers.
-- If optional SDKs (`smbprotocol`, `paramiko`, `httpx`) are missing, preflight warns but still allows the test to proceed; pytest will skip the corresponding protocol tests.
-- If a required port is occupied, preflight suggests freeing it or overriding via `SMB_HOST_PORT`, `WEBDAV_HOST_PORT`, or `SFTP_HOST_PORT`.
+- If optional SDKs (`smbprotocol`, `paramiko`, `httpx`) are missing, preflight warns with the exact install command (`uv sync --extra fileshare --dev`) and a fallback note; pytest will skip the corresponding protocol tests.
+- If a required port is occupied, preflight outputs the port number and three fix options:
+  1. free the port,
+  2. override in `.env` (e.g. `SMB_HOST_PORT=1446`),
+  3. or run with `FILESHARE_AUTO_PICK_PORTS=1 make test-live-fileshare` to auto-select free ports.
 - Offline coverage is still enforced by `make test` and `make coverage`; live smoke is an additive, explicit opt-in only.
 
 Example SMB config:
