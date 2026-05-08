@@ -591,6 +591,56 @@ def test_export_to_object_storage_requires_pyarrow_for_parquet_export(
             client=NoopClient(),
         )
 
+    latest_run = sqlite_session.scalars(
+        select(PipelineRun).where(PipelineRun.run_type == "object_storage_export")
+    ).one()
+    assert latest_run is not None
+    assert latest_run.status == "failed"
+    assert "pyarrow is required" in (latest_run.error_message or "")
+
+
+def test_export_to_object_storage_dry_run_excludes_parquet_when_pyarrow_missing(
+    sqlite_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
+
+    class DryRunClient:
+        def __init__(self) -> None:
+            self.objects: dict[str, object] = {}
+
+        def check_bucket_access(self, *, bucket: str, prefix: str) -> None:
+            del bucket, prefix
+            raise AssertionError("dry run should not check remote bucket access")
+
+        def get_object(self, *, bucket: str, key: str):
+            del bucket, key
+            raise AssertionError("dry run should not look up remote objects")
+
+        def put_object(self, *, bucket: str, key: str, body: bytes, content_type: str, metadata):
+            del bucket, key, body, content_type, metadata
+            raise AssertionError("dry run should not upload remote objects")
+
+    _seed_export_fixture(sqlite_session)
+    monkeypatch.setitem(sys.modules, "pyarrow", None)
+    monkeypatch.setitem(sys.modules, "pyarrow.parquet", None)
+
+    report = export_to_object_storage(
+        sqlite_session,
+        knowledge_base_name="fixture-export",
+        config=_config(dry_run=True, parquet_export=True),
+        env={
+            "AWS_ACCESS_KEY_ID": "test-access-key",
+            "AWS_SECRET_ACCESS_KEY": "test-secret-key",
+        },
+        client=DryRunClient(),
+    )
+
+    assert report.dry_run is True
+    assert report.planned_count == 7
+    assert all(not key.endswith(".parquet") for key in report.artifact_keys)
+    assert any(key.endswith(".jsonl") for key in report.artifact_keys)
+
 
 def test_export_to_object_storage_dry_run_reports_planned_artifacts_without_writes(
     sqlite_session,

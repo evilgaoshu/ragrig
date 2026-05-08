@@ -98,6 +98,8 @@ def export_to_object_storage(
             )
             session.commit()
             raise ObjectStorageConfigError("pyarrow is required for parquet export")
+        parquet_export = False
+        validated["parquet_export"] = False
 
     artifacts = _prepare_artifacts(
         session,
