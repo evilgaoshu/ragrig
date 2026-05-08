@@ -12,6 +12,10 @@ pytestmark = pytest.mark.skipif(
     reason="set RAGRIG_FILESHARE_LIVE_SMOKE=1 to run live fileshare smoke tests",
 )
 
+_WEBDAV_PORT = int(os.environ.get("WEBDAV_HOST_PORT", "8080"))
+_SMB_PORT = int(os.environ.get("SMB_HOST_PORT", "1445"))
+_SFTP_PORT = int(os.environ.get("SFTP_HOST_PORT", "2222"))
+
 
 def _live_config(protocol: str, **overrides: object) -> dict[str, object]:
     config: dict[str, object] = {
@@ -45,7 +49,7 @@ class TestWebDAVLiveSmoke:
         if not _try_import("httpx"):
             pytest.skip("httpx not installed")
         return WebDAVClient(
-            base_url="http://localhost:8080",
+            base_url=f"http://localhost:{_WEBDAV_PORT}",
             username="testuser",
             password="testpass",
         )
@@ -62,7 +66,9 @@ class TestWebDAVLiveSmoke:
         assert b"# Guide" in body
 
     def test_scanner_applies_filters_and_skips(self, client: WebDAVClient) -> None:
-        result = scan_files(client, config=_live_config("webdav", base_url="http://localhost:8080"))
+        result = scan_files(
+            client, config=_live_config("webdav", base_url=f"http://localhost:{_WEBDAV_PORT}")
+        )
         discovered_paths = [c.file_metadata.path for c in result.discovered]
         skipped_reasons = {s.file_metadata.path: s.reason for s in result.skipped}
 
@@ -81,7 +87,7 @@ class TestSMBLiveSmoke:
             share="share",
             username="testuser",
             password="testpass",
-            port=1445,
+            port=_SMB_PORT,
         )
 
     def test_list_files_returns_expected_entries(self, client: SMBClient) -> None:
@@ -101,7 +107,7 @@ class TestSMBLiveSmoke:
                 "smb",
                 host="localhost",
                 share="share",
-                port=1445,
+                port=_SMB_PORT,
             ),
         )
         discovered_paths = [c.file_metadata.path for c in result.discovered]
@@ -121,7 +127,7 @@ class TestSFTPLiveSmoke:
             host="localhost",
             username="testuser",
             password="testpass",
-            port=2222,
+            port=_SFTP_PORT,
         )
 
     def test_list_files_returns_expected_entries(self, client: SFTPClient) -> None:
@@ -140,7 +146,7 @@ class TestSFTPLiveSmoke:
             config=_live_config(
                 "sftp",
                 host="localhost",
-                port=2222,
+                port=_SFTP_PORT,
                 root_path="upload",
             ),
         )
