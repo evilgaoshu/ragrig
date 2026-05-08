@@ -99,9 +99,55 @@ class PluginRegistry:
                 )
                 for protocol, dependencies in protocol_dependencies.items()
             }
+            protocol_example_configs = {
+                "nfs_mounted": {
+                    "protocol": "nfs_mounted",
+                    "root_path": "/mnt/share/docs",
+                },
+                "smb": {
+                    "protocol": "smb",
+                    "host": "files.example.internal",
+                    "share": "knowledge",
+                    "root_path": "/docs",
+                    "username": "env:FILESHARE_USERNAME",
+                    "password": "env:FILESHARE_PASSWORD",
+                },
+                "webdav": {
+                    "protocol": "webdav",
+                    "base_url": "https://webdav.example.com",
+                    "root_path": "/docs",
+                    "username": "env:FILESHARE_USERNAME",
+                    "password": "env:FILESHARE_PASSWORD",
+                },
+                "sftp": {
+                    "protocol": "sftp",
+                    "host": "sftp.example.com",
+                    "root_path": "/docs",
+                    "username": "env:FILESHARE_USERNAME",
+                    "password": "env:FILESHARE_PASSWORD",
+                    "private_key": "env:FILESHARE_PRIVATE_KEY",
+                },
+            }
+            protocol_secret_requirements = {
+                "nfs_mounted": [],
+                "smb": ["FILESHARE_USERNAME", "FILESHARE_PASSWORD"],
+                "webdav": ["FILESHARE_USERNAME", "FILESHARE_PASSWORD"],
+                "sftp": [
+                    "FILESHARE_USERNAME",
+                    "FILESHARE_PASSWORD",
+                    "FILESHARE_PRIVATE_KEY",
+                ],
+            }
+            protocol_missing_dependencies = {
+                protocol: sorted(guards.list_missing_dependencies(dependencies))
+                for protocol, dependencies in protocol_dependencies.items()
+            }
             item["missing_dependencies"] = missing_dependencies
             item["supported_protocols"] = sorted(protocol_dependencies)
             item["protocol_statuses"] = protocol_statuses
+            item["protocol_example_configs"] = protocol_example_configs
+            item["protocol_secret_requirements"] = protocol_secret_requirements
+            item["protocol_missing_dependencies"] = protocol_missing_dependencies
         return item
 
     def _validate_secret_references(self, manifest: PluginManifest, value: Any) -> None:

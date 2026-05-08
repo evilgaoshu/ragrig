@@ -333,6 +333,24 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
         "smb": "unavailable",
         "webdav": "unavailable",
     }
+    assert discovery["source.fileshare"]["protocol_example_configs"]["nfs_mounted"] == {
+        "protocol": "nfs_mounted",
+        "root_path": "/mnt/share/docs",
+    }
+    assert discovery["source.fileshare"]["protocol_secret_requirements"]["nfs_mounted"] == []
+    assert discovery["source.fileshare"]["protocol_secret_requirements"]["smb"] == [
+        "FILESHARE_USERNAME",
+        "FILESHARE_PASSWORD",
+    ]
+    assert discovery["source.fileshare"]["protocol_secret_requirements"]["sftp"] == [
+        "FILESHARE_USERNAME",
+        "FILESHARE_PASSWORD",
+        "FILESHARE_PRIVATE_KEY",
+    ]
+    assert discovery["source.fileshare"]["protocol_missing_dependencies"]["nfs_mounted"] == []
+    assert discovery["source.fileshare"]["protocol_missing_dependencies"]["smb"] == ["smbprotocol"]
+    assert discovery["source.fileshare"]["protocol_missing_dependencies"]["webdav"] == ["httpx"]
+    assert discovery["source.fileshare"]["protocol_missing_dependencies"]["sftp"] == ["paramiko"]
     assert discovery["sink.object_storage"]["status"] == "degraded"
     assert discovery["sink.object_storage"]["missing_dependencies"] == ["boto3", "pyarrow"]
     assert discovery["sink.object_storage"]["secret_requirements"] == [
