@@ -50,7 +50,49 @@ services:
     volumes:
       - minio_data:/data
 
+  samba:
+    image: dperson/samba:latest
+    profiles:
+      - fileshare-live
+    environment:
+      USERID: 1000
+      GROUPID: 1000
+    command: >
+      -s "share;/mnt/share;yes;no;yes;all;none"
+      -u "testuser;testpass"
+      -p
+    ports:
+      - "${SMB_HOST_PORT:-1445}:445"
+    volumes:
+      - fileshare_samba_data:/mnt/share
+
+  webdav:
+    image: bytemark/webdav:latest
+    profiles:
+      - fileshare-live
+    environment:
+      AUTH_TYPE: Basic
+      USERNAME: testuser
+      PASSWORD: testpass
+    ports:
+      - "${WEBDAV_HOST_PORT:-8080}:80"
+    volumes:
+      - fileshare_webdav_data:/var/lib/dav
+
+  sftp:
+    image: atmoz/sftp:latest
+    profiles:
+      - fileshare-live
+    command: testuser:testpass:::upload
+    ports:
+      - "${SFTP_HOST_PORT:-2222}:22"
+    volumes:
+      - fileshare_sftp_data:/home/testuser/upload
+
 volumes:
   pgdata:
   qdrant_data:
   minio_data:
+  fileshare_samba_data:
+  fileshare_webdav_data:
+  fileshare_sftp_data:

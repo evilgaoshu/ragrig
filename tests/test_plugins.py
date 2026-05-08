@@ -263,8 +263,6 @@ def test_secret_reference_scan_handles_nested_lists() -> None:
 def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
     monkeypatch,
 ) -> None:
-    registry = get_plugin_registry()
-
     def _fake_dependency_check(import_name: str) -> bool:
         return import_name not in {
             "FlagEmbedding",
@@ -280,6 +278,12 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
         }
 
     monkeypatch.setattr("ragrig.plugins.guards.is_dependency_available", _fake_dependency_check)
+
+    # Reset cached registry so the monkeypatch takes effect
+    import ragrig.plugins
+
+    ragrig.plugins._REGISTRY = None
+    registry = get_plugin_registry()
 
     discovery = {item["plugin_id"]: item for item in registry.list_discovery()}
 

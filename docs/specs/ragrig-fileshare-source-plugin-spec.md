@@ -159,16 +159,23 @@ NFS support is mounted-path-first.
 
 ## Test Strategy
 
-Default tests use fake clients and local fixtures only.
+Tests are organized in three tiers:
 
-Coverage includes:
+1. **Fake/offline tests** (default `make test` / `make coverage`)
+   - No network, no secrets, no optional dependencies required.
+   - Uses `FakeFileshareClient` and local fixtures.
+   - Covers config validation, scanner filtering, ingestion behavior, mounted-path dry-run, and offline smoke payload generation.
 
-- config validation and declared secret refs
-- readiness and discovery output
-- scanner filtering and delete placeholders
-- ingestion success/skip/failure behavior
-- mounted-path dry-run
-- offline smoke payload generation
+2. **Local live smoke** (explicit opt-in)
+   - Requires optional SDKs (`uv pip install -e '.[fileshare]'`).
+   - Spins up local Samba/WebDAV/SFTP containers via Docker Compose profile `fileshare-live`.
+   - Validates real `list_files`, `read_file`, and `scan_files` against at least one protocol.
+   - Gated by `RAGRIG_FILESHARE_LIVE_SMOKE=1`.
+   - Not part of default CI.
+
+3. **Enterprise shared盘 live** (out of scope for this repo)
+   - Requires real credentials and network access.
+   - Operators validate independently using the same connector contract.
 
 ## Smoke Path
 
@@ -176,4 +183,24 @@ Offline smoke uses:
 
 - `make fileshare-check`
 
-This command validates mounted-path fixture input plus fake SMB/WebDAV/SFTP scanner behavior. Any future live smoke must be explicit and opt-in.
+This command validates mounted-path fixture input plus fake SMB/WebDAV/SFTP scanner behavior.
+
+Live smoke uses:
+
+- `make fileshare-live-up` — start local test services
+- `make test-live-fileshare` — run live smoke tests
+- `make fileshare-live-down` — tear down services
+
+Required environment / secrets for live smoke:
+
+| Protocol | Required env / config |
+|----------|----------------------|
+| SMB      | `SMB_HOST_PORT` (default 1445), username `testuser`, password `testpass` |
+| WebDAV   | `WEBDAV_HOST_PORT` (default 8080), username `testuser`, password `testpass` |
+| SFTP     | `SFTP_HOST_PORT` (default 2222), username `testuser`, password `testpass` |
+
+Live smoke records:
+
+- list/read/stat for each supported protocol
+- scanner filter behavior (include/exclude, size limits, unsupported extensions)
+- graceful skip when optional SDK is missing
