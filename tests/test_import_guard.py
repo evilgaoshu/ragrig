@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from ragrig import __version__
 from ragrig.db import SessionLocal, create_db_engine, get_db_engine, get_db_session
 from ragrig.db.models import Base, Chunk, Document, DocumentVersion, Embedding, KnowledgeBase
@@ -26,6 +28,8 @@ from ragrig.repositories import (
     list_latest_document_versions,
 )
 from ragrig.retrieval import search_knowledge_base
+
+pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CORE_PATHS = [

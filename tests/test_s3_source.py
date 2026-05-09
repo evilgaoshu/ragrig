@@ -24,6 +24,8 @@ from ragrig.plugins.sources.s3.errors import (
 )
 from ragrig.plugins.sources.s3.scanner import scan_objects
 
+pytestmark = pytest.mark.integration
+
 
 def _config(**overrides: object) -> dict[str, object]:
     config: dict[str, object] = {

@@ -27,6 +27,8 @@ from ragrig.retrieval import (
 )
 from ragrig.vectorstore.base import VectorCollection, VectorSearchResult
 
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
+
 
 @compiles(JSONB, "sqlite")
 def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:

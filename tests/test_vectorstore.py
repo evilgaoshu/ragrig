@@ -34,6 +34,8 @@ from ragrig.vectorstore.base import sanitize_url, summarize_vector_profile_value
 from ragrig.vectorstore.pgvector import PgVectorBackend
 from ragrig.vectorstore.qdrant import QdrantBackend, QdrantCollectionConfigError
 
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
+
 
 @compiles(JSONB, "sqlite")
 def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:

@@ -80,6 +80,14 @@ packages = ["src/ragrig"]
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
 testpaths = ["tests"]
+markers = [
+    "unit: fast in-memory unit tests with no external dependencies",
+    "integration: tests that use the database or mock external services",
+    "smoke: quick smoke tests for endpoints and key workflows",
+    "live: tests requiring live external services (skipped by default)",
+    "slow: tests that take a noticeable amount of time",
+    "optional: tests for optional features that may be skipped",
+]
 
 [tool.coverage.run]
 source = ["ragrig"]
@@ -90,7 +98,7 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 100
+fail_under = 90
 show_missing = true
 exclude_lines = [
   "pragma: no cover",

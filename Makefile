@@ -18,8 +18,29 @@ lint:
 test:
 	$(UV) run pytest
 
+test-unit:
+	$(UV) run pytest -m unit
+
+test-integration:
+	$(UV) run pytest -m integration
+
+test-smoke:
+	$(UV) run pytest -m smoke
+
+test-live:
+	$(UV) run pytest -m live
+
+test-fast:
+	$(UV) run pytest -m "not live and not slow"
+
+test-optional:
+	$(UV) run pytest -m optional
+
 coverage:
 	$(UV) run pytest --cov --cov-report=term-missing --cov-report=json:coverage.json
+
+coverage-strict:
+	$(UV) run pytest --cov=ragrig.chunkers --cov=ragrig.embeddings --cov=ragrig.retrieval --cov=ragrig.acl --cov-fail-under=100 --cov-report=term-missing
 
 audit:
 	$(UV) run python -m pip_audit --local --format=json -o "$(ARTIFACTS_DIR)/pip-audit.json"

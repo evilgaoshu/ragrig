@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ragrig.acl import (
     AclMetadata,
     acl_permits_chunk_metadata,
     acl_summary_from_metadata,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def test_public_document_permits_without_principal() -> None:

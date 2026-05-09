@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from scripts.plugins_check import build_payload
+
+pytestmark = pytest.mark.unit
 
 
 def test_plugins_check_payload_exposes_registry_items() -> None:

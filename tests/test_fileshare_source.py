@@ -17,6 +17,8 @@ from ragrig.plugins.sources.fileshare.errors import (
 )
 from ragrig.plugins.sources.fileshare.scanner import scan_files
 
+pytestmark = pytest.mark.integration
+
 
 def _config(**overrides: object) -> dict[str, object]:
     config: dict[str, object] = {

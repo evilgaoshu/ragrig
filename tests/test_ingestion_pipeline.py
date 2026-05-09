@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from ragrig.db.models import Base, Document, DocumentVersion, PipelineRun, PipelineRunItem
 from ragrig.ingestion.pipeline import _select_parser, ingest_local_directory
 
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
+
 
 @compiles(JSONB, "sqlite")
 def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
