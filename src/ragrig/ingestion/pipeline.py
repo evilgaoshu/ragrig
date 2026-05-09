@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ragrig.db.models import DocumentVersion
 from ragrig.ingestion.scanner import scan_paths
-from ragrig.parsers import MarkdownParser, PlainTextParser
+from ragrig.parsers import CsvParser, HtmlParser, MarkdownParser, PlainTextParser
 from ragrig.plugins import get_plugin_registry
 from ragrig.processing_profile import TaskType, resolve_profile
 from ragrig.repositories import (
@@ -33,8 +33,13 @@ class IngestionReport:
 
 def _select_parser(path: Path):
     get_plugin_registry()
-    if path.suffix.lower() in {".md", ".markdown"}:
+    ext = path.suffix.lower()
+    if ext in {".md", ".markdown"}:
         return MarkdownParser()
+    if ext == ".csv":
+        return CsvParser()
+    if ext == ".html":
+        return HtmlParser()
     return PlainTextParser()
 
 
