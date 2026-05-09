@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
 from ragrig.config import Settings
 from ragrig.db import engine as db_engine
 
+pytestmark = pytest.mark.unit
 
 def test_create_db_engine_uses_explicit_settings() -> None:
     engine = db_engine.create_db_engine(

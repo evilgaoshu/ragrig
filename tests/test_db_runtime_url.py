@@ -1,6 +1,9 @@
+import pytest
+
 from ragrig.config import Settings
 from ragrig.main import create_runtime_settings
 
+pytestmark = pytest.mark.unit
 
 def test_runtime_database_url_targets_localhost_for_host_side_commands() -> None:
     settings = Settings(

@@ -1,7 +1,10 @@
 from collections.abc import Iterator
 
+import pytest
+
 from ragrig.db.session import get_db_session
 
+pytestmark = pytest.mark.unit
 
 class FakeSession:
     def __init__(self) -> None:

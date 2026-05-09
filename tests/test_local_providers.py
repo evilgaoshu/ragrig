@@ -16,6 +16,7 @@ from ragrig.providers.cloud import (
 )
 from ragrig.providers.local import load_ollama_client, load_openai_compatible_client
 
+pytestmark = [pytest.mark.integration, pytest.mark.optional]
 
 class FakeOllamaClient:
     def __init__(self, *, models: list[str], embedding_models: list[str] | None = None) -> None:

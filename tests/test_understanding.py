@@ -21,6 +21,7 @@ from ragrig.understanding.service import (
     get_understanding_by_version,
 )
 
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 class TestComputeInputHash:
     def test_hash_is_deterministic(self) -> None:

@@ -23,6 +23,7 @@ from ragrig.processing_profile import (
     update_override,
 )
 
+pytestmark = pytest.mark.integration
 
 def test_default_profiles_cover_all_task_types() -> None:
     profiles = get_default_profiles()

@@ -1077,21 +1077,23 @@ See [core coverage and supply chain gates](./docs/specs/ragrig-core-coverage-sup
 
 ## GitHub CI
 
-RAGRig now includes a GitHub Actions baseline workflow named `RAGRig CI`, running on Python `3.11` and `3.12`.
+RAGRig now includes a GitHub Actions workflow named `RAGRig CI`, running on Python `3.11` and `3.12`.
 
-What it covers on `pull_request` and `push` to `main`:
+Jobs on `pull_request` and `push` to `main`:
 
-- frozen dependency install from `uv.lock` with `uv sync --dev --frozen`
-- formatting check with `uv run ruff format --check .`
-- lint with `uv run ruff check .`
-- repository test suite with `make test`
-- hard-scope coverage gate with `make coverage`
-- Web Console smoke contract with `make web-check`
+- `checks` (matrix 3.11/3.12):
+  - frozen dependency install from `uv.lock` with `uv sync --dev --frozen`
+  - formatting check with `uv run ruff format --check .`
+  - lint with `uv run ruff check .`
+  - fast test suite with `make test-fast`
+  - hard-scope coverage gate with `make coverage`
+  - Web Console smoke contract with `make web-check`
+- `db-smoke`: PostgreSQL + pgvector migration round-trip (`make migrate && make db-check && make migrate-down && make migrate && make db-check`)
+- `docker-build`: verify `docker build -t ragrig:ci .`
 
 What it does not cover yet:
 
 - shared-environment runtime validation on `192.168.3.100`
-- Docker Compose deployment checks
 - supply-chain, SBOM, license, or vulnerability gates that are still intentionally excluded from default GitHub CI
 - any workflow that depends on secrets, cloud accounts, GPUs, Ollama, LM Studio, or model downloads
 

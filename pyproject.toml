@@ -80,6 +80,14 @@ packages = ["src/ragrig"]
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
 testpaths = ["tests"]
+markers = [
+  "unit: fast unit tests with no external dependencies",
+  "integration: integration tests using sqlite or mocks",
+  "smoke: smoke tests covering basic system functionality",
+  "live: tests requiring real external services",
+  "slow: tests that are computationally expensive or long-running",
+  "optional: tests requiring optional dependencies",
+]
 
 [tool.coverage.run]
 source = ["ragrig"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import select
 
 from ragrig.db.models import DocumentVersion, PipelineRun, PipelineRunItem
@@ -15,6 +16,7 @@ from ragrig.repositories import (
     list_latest_document_versions,
 )
 
+pytestmark = pytest.mark.integration
 
 def test_repository_helpers_create_and_update_entities(sqlite_session) -> None:
     knowledge_base = get_or_create_knowledge_base(sqlite_session, "default")

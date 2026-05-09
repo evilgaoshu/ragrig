@@ -19,6 +19,7 @@ from ragrig.repositories import (
 )
 from ragrig.retrieval import RetrievalReport, RetrievalResult
 
+pytestmark = pytest.mark.integration
 
 def _config(**overrides: object) -> dict[str, object]:
     config: dict[str, object] = {

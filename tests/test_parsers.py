@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from hashlib import sha256
 
+import pytest
+
 from ragrig.parsers.markdown import MarkdownParser
 from ragrig.parsers.plaintext import PlainTextParser
 
+pytestmark = pytest.mark.unit
 
 def test_markdown_parser_returns_expected_content_hash_and_metadata(tmp_path) -> None:
     path = tmp_path / "guide.md"

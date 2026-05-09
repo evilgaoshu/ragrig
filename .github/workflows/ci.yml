@@ -6,38 +6,16 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  baseline:
-    name: RAGRig CI / baseline
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.11"
-          enable-cache: true
-
-      - name: Sync dependencies
-        run: uv sync --dev --frozen
-
-      - name: Check formatting
-        run: uv run ruff format --check .
-
-      - name: Lint
-        run: make lint
-
-      - name: Test
-        run: make test
-
-      - name: Coverage
-        run: make coverage
-
-      - name: Web check
-        run: make web-check
-
   checks:
+    name: RAGRig CI / checks
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -60,11 +38,61 @@ jobs:
       - name: Lint
         run: make lint
 
-      - name: Test
-        run: make test
+      - name: Fast tests
+        run: make test-fast
 
       - name: Coverage
         run: make coverage
 
       - name: Web check
         run: make web-check
+
+  db-smoke:
+    name: RAGRig CI / db-smoke
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: ragrig
+          POSTGRES_USER: ragrig
+          POSTGRES_PASSWORD: ragrig_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ragrig -d ragrig"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --dev --frozen
+
+      - name: Wait for database
+        run: |
+          for i in {1..30}; do
+            uv run python -c "import psycopg; psycopg.connect('postgresql://ragrig:ragrig_dev@localhost:5432/ragrig')" && break
+            sleep 1
+          done
+
+      - name: DB migration smoke test
+        run: make migrate && make db-check && make migrate-down && make migrate && make db-check
+
+  docker-build:
+    name: RAGRig CI / docker-build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t ragrig:ci .

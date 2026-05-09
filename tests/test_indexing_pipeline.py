@@ -23,6 +23,7 @@ from ragrig.indexing.pipeline import (
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.vectorstore.base import VectorCollection, VectorCollectionStatus, VectorEmbeddingRecord
 
+pytestmark = pytest.mark.integration
 
 @compiles(JSONB, "sqlite")
 def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:

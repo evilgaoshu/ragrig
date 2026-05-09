@@ -18,6 +18,21 @@ lint:
 test:
 	$(UV) run pytest
 
+test-unit:
+	$(UV) run pytest -m unit
+
+test-integration:
+	$(UV) run pytest -m integration
+
+test-smoke:
+	$(UV) run pytest -m smoke
+
+test-live:
+	$(UV) run pytest -m live
+
+test-fast:
+	$(UV) run pytest -m "not live and not slow"
+
 coverage:
 	$(UV) run pytest --cov --cov-report=term-missing --cov-report=json:coverage.json
 

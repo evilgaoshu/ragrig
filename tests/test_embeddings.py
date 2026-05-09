@@ -6,6 +6,7 @@ import pytest
 
 from ragrig.embeddings import DeterministicEmbeddingProvider
 
+pytestmark = pytest.mark.unit
 
 def test_deterministic_embedding_provider_rejects_invalid_dimensions() -> None:
     with pytest.raises(ValueError, match="dimensions must be greater than zero"):

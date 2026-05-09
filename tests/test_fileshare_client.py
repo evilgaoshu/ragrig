@@ -19,6 +19,7 @@ from ragrig.plugins.sources.fileshare.errors import (
     FileshareRetryableError,
 )
 
+pytestmark = pytest.mark.integration
 
 class TestSMBClientMissingSDK:
     def test_require_sdk_raises_when_smbprotocol_missing(self) -> None:

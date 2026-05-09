@@ -17,6 +17,7 @@ from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
 
+pytestmark = [pytest.mark.smoke, pytest.mark.slow]
 
 @compiles(JSONB, "sqlite")
 def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:

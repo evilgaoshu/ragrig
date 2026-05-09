@@ -1,5 +1,8 @@
 from subprocess import run
 
+import pytest
+
+pytestmark = pytest.mark.unit
 
 def test_alembic_upgrade_sql_renders_successfully() -> None:
     result = run(

@@ -7,10 +7,13 @@ import pytest
 from ragrig.plugins.sources.fileshare.client import SFTPClient, SMBClient, WebDAVClient
 from ragrig.plugins.sources.fileshare.scanner import scan_files
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("RAGRIG_FILESHARE_LIVE_SMOKE") != "1",
-    reason="set RAGRIG_FILESHARE_LIVE_SMOKE=1 to run live fileshare smoke tests",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        os.environ.get("RAGRIG_FILESHARE_LIVE_SMOKE") != "1",
+        reason="set RAGRIG_FILESHARE_LIVE_SMOKE=1 to run live fileshare smoke tests",
+    ),
+]
 
 _WEBDAV_PORT = int(os.environ.get("WEBDAV_HOST_PORT", "8080"))
 _SMB_PORT = int(os.environ.get("SMB_HOST_PORT", "1445"))

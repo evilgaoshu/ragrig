@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
 from ragrig.config import Settings
 from ragrig.health import create_database_check
 
+pytestmark = pytest.mark.unit
 
 class FakeCursor:
     def __init__(self) -> None:

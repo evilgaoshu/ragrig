@@ -1,5 +1,8 @@
+import pytest
+
 from scripts.db_check import REQUIRED_TABLES, evaluate_database_state
 
+pytestmark = pytest.mark.unit
 
 class FakeCursor:
     def __init__(self, results: list[tuple[object, ...]]) -> None:

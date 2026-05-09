@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from scripts.fileshare_check import build_payload
 
+pytestmark = pytest.mark.unit
 
 def test_fileshare_check_payload_exposes_plugin_and_offline_protocol_smoke() -> None:
     payload = build_payload(mounted_root=Path("tests/fixtures/local_ingestion"))

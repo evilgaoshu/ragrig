@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from ragrig import __version__
 from ragrig.db import SessionLocal, create_db_engine, get_db_engine, get_db_session
 from ragrig.db.models import Base, Chunk, Document, DocumentVersion, Embedding, KnowledgeBase
@@ -74,6 +76,8 @@ OPTIONAL_IMPORT_ROOTS = {
     "weaviate",
 }
 
+
+pytestmark = pytest.mark.unit
 
 def _iter_core_files() -> list[Path]:
     files: list[Path] = []

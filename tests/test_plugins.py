@@ -28,6 +28,8 @@ from ragrig.providers.cloud import CLOUD_MODEL_METADATA
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+pytestmark = pytest.mark.integration
+
 @compiles(JSONB, "sqlite")
 def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
     return compiler.process(JSON(), **kwargs)

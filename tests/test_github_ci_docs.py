@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+
+pytestmark = pytest.mark.integration
 
 def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     workflow_path = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -13,8 +17,12 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     workflow = workflow_path.read_text(encoding="utf-8")
 
     assert "name: RAGRig CI" in workflow
-    assert "baseline:" in workflow
-    assert "name: RAGRig CI / baseline" in workflow
+    assert "checks:" in workflow
+    assert "name: RAGRig CI / checks" in workflow
+    assert "db-smoke:" in workflow
+    assert "docker-build:" in workflow
+    assert "permissions:" in workflow
+    assert "concurrency:" in workflow
     assert "pull_request:" in workflow
     assert "push:" in workflow
     assert "branches: [main]" in workflow
@@ -22,7 +30,7 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "uv sync --dev --frozen" in workflow
     assert "uv run ruff format --check ." in workflow
     assert "make lint" in workflow
-    assert "make test" in workflow
+    assert "make test-fast" in workflow
     assert "make coverage" in workflow
     assert "make web-check" in workflow
 

@@ -4,6 +4,7 @@ import pytest
 
 from ragrig.chunkers import ChunkingConfig, chunk_text
 
+pytestmark = pytest.mark.unit
 
 def test_chunking_config_rejects_invalid_sizes() -> None:
     with pytest.raises(ValueError, match="chunk_size must be greater than zero"):
