@@ -1292,6 +1292,8 @@ async def test_upload_planned_format_returns_415(tmp_path) -> None:
     payload = response.json()
     assert payload["rejections"][0]["reason"] == "unsupported_format"
     assert ".pdf" in payload["rejections"][0]["extension"]
+
+
 # Understanding coverage + batch understand tests
 @pytest.mark.anyio
 async def test_understand_all_endpoint_creates_and_skips(tmp_path) -> None:

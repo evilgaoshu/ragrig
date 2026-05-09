@@ -298,9 +298,7 @@ def get_understanding_coverage(
     failed_rows = (
         session.query(DocumentUnderstanding)
         .filter(
-            DocumentUnderstanding.document_version_id.in_(
-                [v.id for v in versions]
-            ),
+            DocumentUnderstanding.document_version_id.in_([v.id for v in versions]),
             DocumentUnderstanding.status == "failed",
         )
         .order_by(DocumentUnderstanding.updated_at.desc())
