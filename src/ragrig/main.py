@@ -13,6 +13,13 @@ from starlette.responses import Response
 from ragrig import __version__
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
+from ragrig.evaluation import (
+    build_evaluation_list_report,
+    build_evaluation_run_report,
+    list_runs_from_store,
+    load_run_from_store,
+    run_evaluation,
+)
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.health import create_database_check
 from ragrig.ingestion.pipeline import _select_parser
@@ -81,6 +88,16 @@ from ragrig.web_console import (
     load_console_html,
     validate_plugin_config_for_wizard,
 )
+
+
+class EvaluationRunRequest(BaseModel):
+    golden_path: str
+    knowledge_base: str = "fixture-local"
+    top_k: int = Field(default=5, ge=1, le=50)
+    provider: str | None = None
+    model: str | None = None
+    dimensions: int | None = Field(default=None, gt=0)
+    baseline_path: str | None = None
 
 
 class RetrievalSearchRequest(BaseModel):
@@ -941,6 +958,65 @@ def create_app(
             response["degraded"] = True
             response["degraded_reason"] = report.degraded_reason
         return response
+
+    @app.post("/evaluations/runs", response_model=None)
+    def evaluation_run(
+        request: EvaluationRunRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Run a golden question evaluation against a knowledge base."""
+        from pathlib import Path
+
+        golden_path = Path(request.golden_path)
+        if not golden_path.exists():
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Golden question file not found: {golden_path}"},
+            )
+
+        baseline_path = Path(request.baseline_path) if request.baseline_path else None
+        try:
+            run = run_evaluation(
+                session=session,
+                golden_path=golden_path,
+                knowledge_base=request.knowledge_base,
+                top_k=request.top_k,
+                provider=request.provider,
+                model=request.model,
+                dimensions=request.dimensions,
+                baseline_path=baseline_path,
+                store_dir=Path("evaluation_runs"),
+            )
+        except Exception as exc:
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Evaluation failed: {exc}"},
+            )
+        return build_evaluation_run_report(run, include_items=True)
+
+    @app.get("/evaluations/runs/{run_id}", response_model=None)
+    def evaluation_run_detail(
+        run_id: str,
+        store_dir: str | None = None,
+    ) -> dict[str, Any] | JSONResponse:
+        """Get details for a specific evaluation run."""
+        store_path = Path(store_dir) if store_dir else Path("evaluation_runs")
+        run = load_run_from_store(run_id, store_dir=store_path)
+        if run is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "evaluation_run_not_found"},
+            )
+        return build_evaluation_run_report(run, include_items=True)
+
+    @app.get("/evaluations", response_model=None)
+    def evaluation_runs_list(
+        store_dir: str | None = None,
+    ) -> dict[str, Any]:
+        """List all evaluation runs."""
+        store_path = Path(store_dir) if store_dir else Path("evaluation_runs")
+        runs = list_runs_from_store(store_dir=store_path)
+        return build_evaluation_list_report(runs)
 
     @app.get("/processing-profiles", response_model=None)
     def processing_profiles(
