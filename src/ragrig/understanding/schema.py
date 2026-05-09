@@ -124,4 +124,6 @@ class UnderstandingRunFilter(BaseModel):
     model: str | None = None
     profile_id: str | None = None
     status: str | None = None
+    started_after: str | None = None
+    started_before: str | None = None
     limit: int = Field(default=50, ge=1, le=200)

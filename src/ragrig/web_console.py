@@ -720,14 +720,32 @@ def list_understanding_runs(
     session: Session,
     knowledge_base_id: str | None = None,
     limit: int = 20,
+    provider: str | None = None,
+    model: str | None = None,
+    profile_id: str | None = None,
+    status: str | None = None,
+    started_after: str | None = None,
+    started_before: str | None = None,
 ) -> list[dict[str, Any]]:
-    """List recent understanding runs, optionally filtered by KB."""
+    """List recent understanding runs, optionally filtered by KB and other criteria."""
     query = select(UnderstandingRun, KnowledgeBase).join(
         KnowledgeBase, KnowledgeBase.id == UnderstandingRun.knowledge_base_id
     )
     if knowledge_base_id is not None:
         kb_uuid = uuid.UUID(knowledge_base_id)
         query = query.where(UnderstandingRun.knowledge_base_id == kb_uuid)
+    if provider is not None:
+        query = query.where(UnderstandingRun.provider == provider)
+    if model is not None:
+        query = query.where(UnderstandingRun.model == model)
+    if profile_id is not None:
+        query = query.where(UnderstandingRun.profile_id == profile_id)
+    if status is not None:
+        query = query.where(UnderstandingRun.status == status)
+    if started_after is not None:
+        query = query.where(UnderstandingRun.started_at >= started_after)
+    if started_before is not None:
+        query = query.where(UnderstandingRun.started_at <= started_before)
     query = query.order_by(UnderstandingRun.started_at.desc()).limit(limit)
 
     items: list[dict[str, Any]] = []
