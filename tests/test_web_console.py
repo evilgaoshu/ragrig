@@ -800,7 +800,6 @@ async def test_document_understanding_shown_in_console(tmp_path) -> None:
         assert "Document Understanding" in console_after.text
 
 
-
 # Override CRUD API tests
 @pytest.mark.anyio
 async def test_post_processing_profile_creates_override(tmp_path) -> None:
