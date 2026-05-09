@@ -1330,9 +1330,7 @@ async def test_upload_preview_format_tracks_parser_in_pipeline_items(tmp_path) -
 
     # Query pipeline run items
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        items_response = await client.get(
-            f"/pipeline-runs/{payload['pipeline_run_id']}/items"
-        )
+        items_response = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
 
     assert items_response.status_code == 200
     items = items_response.json()["items"]
@@ -1374,9 +1372,7 @@ async def test_upload_preview_html_tracks_parser_and_stripped_reason(tmp_path) -
     assert payload["warnings"][0]["fallback_policy"] == "strip_tags_then_plaintext"
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        items_response = await client.get(
-            f"/pipeline-runs/{payload['pipeline_run_id']}/items"
-        )
+        items_response = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
 
     assert items_response.status_code == 200
     items = items_response.json()["items"]

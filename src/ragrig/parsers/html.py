@@ -32,8 +32,6 @@ class HtmlParser(TextFileParser):
                 "line_count": line_count,
                 "char_count": len(text),
                 "stripped_char_count": len(stripped),
-                "degraded_reason": (
-                    "HTML tags stripped; structure and links are lost."
-                ),
+                "degraded_reason": ("HTML tags stripped; structure and links are lost."),
             },
         )
