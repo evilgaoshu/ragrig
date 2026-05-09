@@ -45,9 +45,7 @@ def _assert_no_raw_secrets(data: object, source: str) -> None:
     if isinstance(data, str):
         for fragment in FORBIDDEN_FRAGMENTS:
             if fragment in data:
-                raise RuntimeError(
-                    f"{source}: raw secret fragment '{fragment}' detected in output"
-                )
+                raise RuntimeError(f"{source}: raw secret fragment '{fragment}' detected in output")
     elif isinstance(data, dict):
         for k, v in data.items():
             _assert_no_raw_secrets(v, f"{source}.{k}")
