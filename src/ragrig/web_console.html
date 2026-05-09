@@ -562,6 +562,92 @@
         color: var(--muted);
       }
 
+      .upload-drop-zone {
+        padding: 24px;
+        border: 2px dashed #c7cdbf;
+        border-radius: 10px;
+        text-align: center;
+        background: rgba(255,255,255,0.35);
+        transition: border-color 0.2s, background 0.2s;
+      }
+
+      .upload-drop-zone.drag-over {
+        border-color: var(--teal);
+        background: #d8f2ed;
+      }
+
+      .upload-drop-text {
+        margin-bottom: 14px;
+        color: var(--ink);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .upload-file-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-strong);
+        font-size: 13px;
+      }
+
+      .upload-file-item.error {
+        border-color: var(--red);
+        background: var(--red-soft);
+      }
+
+      .upload-file-item.warn {
+        border-color: var(--amber);
+        background: var(--amber-soft);
+      }
+
+      .format-group {
+        margin-bottom: 6px;
+      }
+
+      .format-group-label {
+        display: inline-flex;
+        align-items: center;
+        min-height: 18px;
+        font-size: 10px;
+        font-weight: 800;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+        color: var(--muted);
+      }
+
+      .format-chip-row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 4px;
+      }
+
+      .format-chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 22px;
+        padding: 0 8px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 800;
+        background: var(--teal-soft);
+        color: #0c6158;
+      }
+
+      .format-chip.preview-chip {
+        background: var(--amber-soft);
+        color: #7a4b02;
+      }
+
+      .format-chip.planned-chip {
+        background: #ebedf0;
+        color: #4f5b6b;
+      }
+
       @media (max-width: 1100px) {
         .shell { grid-template-columns: 1fr; }
         .rail { display: none; }
@@ -580,6 +666,8 @@
         <div class="nav-item">Sources</div>
         <div class="nav-item">Setup Wizard</div>
         <div class="nav-item">Pipelines</div>
+        <div class="nav-item" data-section="upload">Upload</div>
+        <div class="nav-item" data-section="formats">Formats</div>
         <div class="nav-item">Documents</div>
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
@@ -661,6 +749,31 @@
             <section class="panel">
               <div class="panel-head"><div class="panel-title">Local File / Markdown Ingestion</div><div class="panel-meta">CLI-connected</div></div>
               <div class="panel-body stack" id="ingestion-panel"></div>
+            </section>
+
+            <section class="panel" id="browser-upload-panel">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">Browser Upload</div>
+                  <div class="panel-meta">Upload files directly to a knowledge base</div>
+                </div>
+                <div id="upload-status" class="pill neutral">Ready</div>
+              </div>
+              <div class="panel-body stack">
+                <label class="sub" for="upload-kb-select">Target Knowledge Base</label>
+                <select id="upload-kb-select"></select>
+                <div class="upload-drop-zone" id="upload-drop-zone">
+                  <div class="upload-drop-text">Drag and drop files here<br><span class="sub">or</span></div>
+                  <button class="button primary" id="upload-choose-btn" type="button">Choose Files</button>
+                  <input type="file" id="upload-file-input" multiple hidden accept=".md,.markdown,.txt,.text,.rst,.csv,.json,.xml,.html">
+                </div>
+                <div id="upload-file-list" class="stack"></div>
+                <div class="actions">
+                  <button class="button primary" id="upload-submit-btn" type="button" disabled>Upload &amp; Ingest</button>
+                  <button class="button" id="upload-clear-btn" type="button">Clear</button>
+                </div>
+                <div id="upload-result"></div>
+              </div>
             </section>
 
             <section class="panel">
@@ -770,6 +883,17 @@
                 </div>
                 <div id="profile-matrix-empty" class="empty" style="display:none;">No processing profiles registered.</div>
               </div>
+            </section>
+
+            <section class="panel" id="supported-formats-panel">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">Supported Formats</div>
+                  <div class="panel-meta">File format registry — supported, preview, planned</div>
+                </div>
+                <div id="formats-count-pill" class="pill neutral">Loading</div>
+              </div>
+              <div class="panel-body stack" id="formats-list"></div>
             </section>
 
             <section class="panel">
@@ -1876,9 +2000,172 @@
         }
       }
 
+
+      async function loadFormats() {
+        try {
+          const formats = await getJson('/supported-formats');
+          state.formats = formats.formats;
+        } catch {
+          state.formats = [];
+        }
+      }
+
+      function renderFormats() {
+        const root = document.getElementById('formats-list');
+        const countPill = document.getElementById('formats-count-pill');
+        const formats = state.formats || [];
+        if (!formats.length) {
+          root.innerHTML = empty('Format registry unavailable.');
+          countPill.textContent = '0';
+          return;
+        }
+        const supported = formats.filter(f => f.status === 'supported');
+        const preview = formats.filter(f => f.status === 'preview');
+        const planned = formats.filter(f => f.status === 'planned');
+        countPill.textContent = String(formats.length);
+        root.innerHTML = [
+          { label: 'supported', items: supported, chipClass: '' },
+          { label: 'preview', items: preview, chipClass: 'preview-chip' },
+          { label: 'planned', items: planned, chipClass: 'planned-chip' },
+        ].map(group => {
+          if (!group.items.length) return '';
+          const chips = group.items.map(fmt => {
+            const lim = fmt.limitations ? `title="${escapeHtml(fmt.limitations)}"` : '';
+            return `<span class="format-chip ${group.chipClass}" ${lim}>${escapeHtml(fmt.extension)}</span>`;
+          }).join('');
+          return `<div class="format-group"><div class="format-group-label">${group.label} (${group.items.length})</div><div class="format-chip-row">${chips}</div></div>`;
+        }).join('') + `<div class="format-group"><div class="format-chip-row"><span class="pill neutral" style="font-size:10px">GET /supported-formats</span><span class="pill neutral" style="font-size:10px">GET /supported-formats/check?extension=.md</span></div></div>`;
+      }
+
+      const uploadState = {
+        files: [],
+      };
+
+      function renderUploadKBSelect() {
+        const select = document.getElementById('upload-kb-select');
+        if (!state.knowledgeBases.length) {
+          select.innerHTML = '<option value="">No knowledge bases</option>';
+          select.disabled = true;
+          return;
+        }
+        select.disabled = false;
+        select.innerHTML = state.knowledgeBases.map(item =>
+          `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`
+        ).join('');
+      }
+
+      function updateUploadSubmitButton() {
+        const btn = document.getElementById('upload-submit-btn');
+        const select = document.getElementById('upload-kb-select');
+        btn.disabled = uploadState.files.length === 0 || !select.value;
+      }
+
+      function renderUploadFileList() {
+        const root = document.getElementById('upload-file-list');
+        if (!uploadState.files.length) {
+          root.innerHTML = '';
+          return;
+        }
+        root.innerHTML = uploadState.files.map((file, index) => {
+          const ext = file.name.includes('.') ? '.' + file.name.split('.').pop().toLowerCase() : '';
+          const fmt = (state.formats || []).find(f => f.extension === ext);
+          let statusClass = '';
+          let statusIcon = '';
+          let statusText = 'Ready';
+          if (!fmt || fmt.status === 'planned') {
+            statusClass = 'error';
+            statusIcon = '\u274C';
+            statusText = 'Unsupported format';
+          } else if (fmt.status === 'preview') {
+            statusClass = 'warn';
+            statusIcon = '\u26A0\uFE0F';
+            statusText = 'Preview — parsed as text';
+          } else {
+            statusIcon = '\u2705';
+            statusText = 'Ready';
+          }
+          const sizeKB = (file.size / 1024).toFixed(1);
+          return `
+            <div class="upload-file-item ${statusClass}">
+              <div>
+                <span>${statusIcon} ${escapeHtml(file.name)}</span>
+                <span class="sub">${sizeKB} KB ${statusText}</span>
+              </div>
+              <button class="button" type="button" data-upload-remove="${index}" style="font-size:12px;padding:0 8px;height:28px">\u2715</button>
+            </div>
+          `;
+        }).join('');
+      }
+
+      function handleUploadFiles(fileList) {
+        uploadState.files = Array.from(fileList);
+        renderUploadFileList();
+        updateUploadSubmitButton();
+      }
+
+      async function submitUpload() {
+        const select = document.getElementById('upload-kb-select');
+        const kbName = select.value;
+        const resultRoot = document.getElementById('upload-result');
+        const statusPill = document.getElementById('upload-status');
+        if (!kbName || !uploadState.files.length) return;
+
+        const formData = new FormData();
+        for (const file of uploadState.files) {
+          formData.append('files', file);
+        }
+        statusPill.className = 'pill warn';
+        statusPill.textContent = 'Uploading...';
+        resultRoot.innerHTML = '<div class="sub">Uploading...</div>';
+
+        try {
+          const response = await fetch(`/knowledge-bases/${encodeURIComponent(kbName)}/upload`, {
+            method: 'POST',
+            body: formData,
+          });
+          const payload = await response.json().catch(() => ({
+            error: 'Server returned non-JSON response',
+          }));
+          if (response.ok) {
+            statusPill.className = 'pill';
+            statusPill.textContent = 'Success';
+            const runLink = payload.pipeline_run_id
+              ? `<div class="sub">Pipeline run: <span class="code">${escapeHtml(payload.pipeline_run_id)}</span></div>`
+              : '';
+            resultRoot.innerHTML = `
+              <div class="result">
+                <div class="name">Upload complete</div>
+                <div class="sub">Accepted: ${payload.accepted_files} · Rejected: ${payload.rejected_files || 0}</div>
+                ${runLink}
+              </div>
+              ${payload.rejections && payload.rejections.length ? `<div class="result" style="border-left-color:var(--red);background:#fef5f5"><div class="name">Rejections</div>${payload.rejections.map(r => `<div class="sub">${escapeHtml(r.filename)}: ${escapeHtml(r.reason)}</div>`).join('')}</div>` : ''}
+              ${payload.warnings && payload.warnings.length ? `<div class="result" style="border-left-color:var(--amber);background:#fffdf1"><div class="name">Warnings</div>${payload.warnings.map(w => `<div class="sub">${escapeHtml(w.filename)}: ${escapeHtml(w.status)}</div>`).join('')}</div>` : ''}
+            `;
+            uploadState.files = [];
+            renderUploadFileList();
+            updateUploadSubmitButton();
+          } else {
+            statusPill.className = 'pill error';
+            statusPill.textContent = 'Failed';
+            resultRoot.innerHTML = `
+              <div class="result" style="border-left-color:var(--red);background:#fef5f5">
+                <div class="name">Upload failed (${response.status})</div>
+                ${payload.rejections ? payload.rejections.map(r => `<div class="sub">${escapeHtml(r.filename)}: ${escapeHtml(r.reason)} — ${escapeHtml(r.message)}</div>`).join('') : `<div class="sub">${escapeHtml(payload.error || 'Unknown error')}</div>`}
+              </div>
+            `;
+          }
+        } catch (error) {
+          statusPill.className = 'pill error';
+          statusPill.textContent = 'Error';
+          resultRoot.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
       async function boot() {
         try {
           await loadInitialData();
+          await loadFormats();
+          await loadFormats();
           renderStatusStrip();
           renderKnowledgeBases();
           renderSources();
@@ -1893,6 +2180,8 @@
           renderHealthPanel();
           renderVectorPanel();
           renderRetrievalControls();
+          renderFormats();
+          renderUploadKBSelect();
         } catch (error) {
           document.body.innerHTML = `<main class="main">${empty(error.message)}</main>`;
           return;
@@ -1956,7 +2245,45 @@
             state.wizard.result = null;
             renderWizard();
           }
+          const removeBtn = event.target.closest('[data-upload-remove]');
+          if (removeBtn) {
+            const idx = parseInt(removeBtn.dataset.uploadRemove, 10);
+            uploadState.files.splice(idx, 1);
+            renderUploadFileList();
+            updateUploadSubmitButton();
+          }
         });
+
+        const dropZone = document.getElementById('upload-drop-zone');
+        const fileInput = document.getElementById('upload-file-input');
+        const chooseBtn = document.getElementById('upload-choose-btn');
+
+        chooseBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', () => handleUploadFiles(fileInput.files));
+
+        dropZone.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          dropZone.classList.add('drag-over');
+        });
+        dropZone.addEventListener('dragleave', () => {
+          dropZone.classList.remove('drag-over');
+        });
+        dropZone.addEventListener('drop', (e) => {
+          e.preventDefault();
+          dropZone.classList.remove('drag-over');
+          if (e.dataTransfer.files.length) handleUploadFiles(e.dataTransfer.files);
+        });
+
+        document.getElementById('upload-submit-btn').addEventListener('click', submitUpload);
+        document.getElementById('upload-clear-btn').addEventListener('click', () => {
+          uploadState.files = [];
+          renderUploadFileList();
+          updateUploadSubmitButton();
+          document.getElementById('upload-result').innerHTML = '';
+          document.getElementById('upload-status').className = 'pill neutral';
+          document.getElementById('upload-status').textContent = 'Ready';
+        });
+        document.getElementById('upload-kb-select').addEventListener('change', updateUploadSubmitButton);
       }
 
       boot();
