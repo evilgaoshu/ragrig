@@ -1,0 +1,12 @@
+<html>
+<head><title>Malformed Page</title>
+<body>
+<h1>Welcome</h1>
+<p>This paragraph is not closed.
+<div>Unclosed div
+<script>if (x < 5) { alert('xss'); }</script>
+<table><tr><td>Cell 1<td>Cell 2</table>
+<a href="javascript:void(0)" onclick="steal_cookies()">Click me
+<!-- unclosed comment
+</body>
+</html>

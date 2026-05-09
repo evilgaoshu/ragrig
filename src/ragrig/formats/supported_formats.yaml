@@ -70,17 +70,19 @@
   capabilities:
     - parse
   limitations: "Parsed as plain text, no RST structure awareness."
+  fallback_policy: "parse_as_plaintext"
   docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
 
 - extension: ".csv"
   mime_type: "text/csv"
   display_name: "CSV (.csv)"
-  parser_id: "parser.text"
+  parser_id: "parser.csv"
   status: "preview"
   max_file_size_mb: 50
   capabilities:
     - parse
   limitations: "Parsed as plain text, no table awareness."
+  fallback_policy: "parse_as_plaintext"
   docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
 
 - extension: ".json"
@@ -92,6 +94,7 @@
   capabilities:
     - parse
   limitations: "Parsed as plain text."
+  fallback_policy: "parse_as_plaintext"
   docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
 
 - extension: ".xml"
@@ -103,17 +106,19 @@
   capabilities:
     - parse
   limitations: "Parsed as plain text."
+  fallback_policy: "parse_as_plaintext"
   docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
 
 - extension: ".html"
   mime_type: "text/html"
   display_name: "HTML (.html)"
-  parser_id: "parser.text"
+  parser_id: "parser.html"
   status: "preview"
   max_file_size_mb: 50
   capabilities:
     - parse
   limitations: "Parsed as plain text, tags stripped."
+  fallback_policy: "strip_tags_then_plaintext"
   docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
 
 - extension: ".pdf"

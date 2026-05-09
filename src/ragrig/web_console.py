@@ -767,6 +767,7 @@ def list_supported_formats(status: str | None = None) -> dict[str, list[dict[str
                 "display_name": fmt.display_name,
                 "parser_id": fmt.parser_id,
                 "status": fmt.status.value,
+                "fallback_policy": fmt.fallback_policy,
                 "max_file_size_mb": fmt.max_file_size_mb,
                 "capabilities": fmt.capabilities,
                 "limitations": fmt.limitations,

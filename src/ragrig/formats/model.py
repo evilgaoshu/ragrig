@@ -42,6 +42,9 @@ class SupportedFormat:
     limitations: str | None = None
     """Known limitations, displayed to users."""
 
+    fallback_policy: str | None = None
+    """What happens when this preview format fails or degrades, e.g. 'parse_as_plaintext'."""
+
     docs_reference: str | None = None
     """Link to documentation for this format's processing pipeline."""
 

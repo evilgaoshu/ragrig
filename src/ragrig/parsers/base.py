@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -13,6 +14,20 @@ class ParseResult:
     mime_type: str
     parser_name: str
     metadata: dict[str, Any]
+
+
+class ParserTimeoutError(TimeoutError):
+    """Raised when a parser exceeds its allowed execution time."""
+
+
+def _text_summary(text: str, max_chars: int = 80) -> str:
+    """Return a short text summary, never the full content."""
+    if not text:
+        return ""
+    summary = text[:max_chars]
+    if len(text) > max_chars:
+        summary += "…"
+    return summary
 
 
 class TextFileParser:
@@ -31,9 +46,25 @@ class TextFileParser:
             mime_type=self.mime_type,
             parser_name=self.parser_name,
             metadata={
+                "parser_id": f"parser.{self.parser_name}",
+                "status": "success",
                 "encoding": "utf-8",
                 "extension": path.suffix.lower(),
                 "line_count": line_count,
                 "char_count": len(text),
+                "byte_count": len(raw_bytes),
+                "text_summary": _text_summary(text),
             },
         )
+
+
+def parse_with_timeout(parser, path: Path, timeout_seconds: float = 30.0) -> ParseResult:
+    """Run parser.parse(path) with a timeout to avoid hung parsers."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(parser.parse, path)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError as exc:
+            raise ParserTimeoutError(
+                f"Parser '{parser.parser_name}' timed out after {timeout_seconds}s for {path.name}"
+            ) from exc

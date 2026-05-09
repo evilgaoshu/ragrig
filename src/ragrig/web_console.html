@@ -1261,11 +1261,24 @@
         const items = await Promise.all(latest.map(async (run) => {
           const detail = await getJson(`/pipeline-runs/${run.id}/items`);
           const firstItem = detail.items[0];
+          let itemDetail = 'No item detail';
+          if (firstItem) {
+            const meta = firstItem.metadata || {};
+            const parserInfo = meta.parser_id ? `parser: ${escapeHtml(meta.parser_id)}` : '';
+            const degraded = meta.degraded_reason ? `degraded: ${escapeHtml(meta.degraded_reason)}` : '';
+            const err = firstItem.error_message ? `error: ${escapeHtml(firstItem.error_message)}` : '';
+            itemDetail = [
+              `item: ${escapeHtml(firstItem.document_uri)} · ${escapeHtml(firstItem.status)}`,
+              parserInfo,
+              degraded,
+              err,
+            ].filter(Boolean).join(' · ');
+          }
           return `
             <div class="card">
               <div class="name">${escapeHtml(run.run_type)} <span class="${pillClass(run.status)}">${escapeHtml(run.status)}</span></div>
               <div class="sub">KB: ${escapeHtml(run.knowledge_base)} · total ${run.total_items} · success ${run.success_count} · skipped ${run.skipped_count} · failed ${run.failure_count}</div>
-              <div class="sub">${firstItem ? `first item: ${escapeHtml(firstItem.document_uri)} · ${escapeHtml(firstItem.status)}` : 'No item detail'}</div>
+              <div class="sub">${itemDetail}</div>
             </div>
           `;
         }));
@@ -2416,6 +2429,24 @@
             const runLink = payload.pipeline_run_id
               ? `<div class="sub">Pipeline run: <span class="code">${escapeHtml(payload.pipeline_run_id)}</span></div>`
               : '';
+            let pipelineItemsHtml = '';
+            if (payload.pipeline_run_id) {
+              try {
+                const itemsResp = await getJson(`/pipeline-runs/${payload.pipeline_run_id}/items`);
+                const items = itemsResp.items || [];
+                if (items.length) {
+                  pipelineItemsHtml = `<div class="result" style="border-left-color:var(--teal);background:#f3fbf8"><div class="name">Pipeline Items</div>` + items.map((it) => {
+                    const meta = it.metadata || {};
+                    const parser = meta.parser_id ? ` · parser: ${escapeHtml(meta.parser_id)}` : '';
+                    const degraded = meta.degraded_reason ? ` · degraded: ${escapeHtml(meta.degraded_reason)}` : '';
+                    const err = it.error_message ? ` · error: ${escapeHtml(it.error_message)}` : '';
+                    return `<div class="sub">${escapeHtml(meta.file_name || it.document_uri)} · ${escapeHtml(it.status)}${parser}${degraded}${err}</div>`;
+                  }).join('') + '</div>';
+                }
+              } catch {
+                // ignore item fetch errors
+              }
+            }
             resultRoot.innerHTML = `
               <div class="result">
                 <div class="name">Upload complete</div>
@@ -2423,7 +2454,8 @@
                 ${runLink}
               </div>
               ${payload.rejections && payload.rejections.length ? `<div class="result" style="border-left-color:var(--red);background:#fef5f5"><div class="name">Rejections</div>${payload.rejections.map(r => `<div class="sub">${escapeHtml(r.filename)}: ${escapeHtml(r.reason)}</div>`).join('')}</div>` : ''}
-              ${payload.warnings && payload.warnings.length ? `<div class="result" style="border-left-color:var(--amber);background:#fffdf1"><div class="name">Warnings</div>${payload.warnings.map(w => `<div class="sub">${escapeHtml(w.filename)}: ${escapeHtml(w.status)}</div>`).join('')}</div>` : ''}
+              ${payload.warnings && payload.warnings.length ? `<div class="result" style="border-left-color:var(--amber);background:#fffdf1"><div class="name">Warnings</div>${payload.warnings.map(w => `<div class="sub">${escapeHtml(w.filename)}: ${escapeHtml(w.status)}${w.fallback_policy ? ' · fallback: ' + escapeHtml(w.fallback_policy) : ''}</div>`).join('')}</div>` : ''}
+              ${pipelineItemsHtml}
             `;
             uploadState.files = [];
             renderUploadFileList();

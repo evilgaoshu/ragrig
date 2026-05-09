@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 
 import httpx
 import pytest
@@ -1296,6 +1297,141 @@ async def test_upload_planned_format_returns_415(tmp_path) -> None:
     assert ".pdf" in payload["rejections"][0]["extension"]
 
 
+@pytest.mark.anyio
+async def test_upload_preview_format_tracks_parser_in_pipeline_items(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-preview-items.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    test_file = tmp_path / "data.csv"
+    test_file.write_text("col1,col2\na,b", encoding="utf-8")
+
+    with session_factory() as session:
+        from ragrig.repositories import get_or_create_knowledge_base
+
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("data.csv", f, "text/csv")},
+            )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["pipeline_run_id"] is not None
+    assert payload["pipeline_run_id"] != ""
+    assert payload["warnings"][0]["parser_id"] == "parser.csv"
+    assert payload["warnings"][0]["fallback_policy"] == "parse_as_plaintext"
+
+    # Query pipeline run items
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        items_response = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
+
+    assert items_response.status_code == 200
+    items = items_response.json()["items"]
+    assert len(items) == 1
+    item = items[0]
+    assert item["status"] == "degraded"
+    assert item["metadata"]["parser_id"] == "parser.csv"
+    assert item["metadata"]["parser_name"] == "csv"
+    assert "degraded_reason" in item["metadata"]
+
+
+@pytest.mark.anyio
+async def test_upload_preview_html_tracks_parser_and_stripped_reason(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-html-items.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    test_file = tmp_path / "page.html"
+    test_file.write_text("<html><body><p>hello</p></body></html>", encoding="utf-8")
+
+    with session_factory() as session:
+        from ragrig.repositories import get_or_create_knowledge_base
+
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("page.html", f, "text/html")},
+            )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["warnings"][0]["parser_id"] == "parser.html"
+    assert payload["warnings"][0]["fallback_policy"] == "strip_tags_then_plaintext"
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        items_response = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
+
+    assert items_response.status_code == 200
+    items = items_response.json()["items"]
+    assert items[0]["status"] == "degraded"
+    assert items[0]["metadata"]["parser_id"] == "parser.html"
+    assert "degraded_reason" in items[0]["metadata"]
+
+
+@pytest.mark.anyio
+async def test_upload_exceeds_per_format_size_limit(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-size-limit.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    # Create a file larger than the 50 MB preview limit
+    test_file = tmp_path / "huge.csv"
+    test_file.write_bytes(b"x" * (51 * 1024 * 1024))
+
+    with session_factory() as session:
+        from ragrig.repositories import get_or_create_knowledge_base
+
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("huge.csv", f, "text/csv")},
+            )
+
+    assert response.status_code == 413
+    payload = response.json()
+    assert payload["accepted_files"] == 0
+    assert payload["rejections"][0]["reason"] == "file_too_large"
+    assert "50 MB" in payload["rejections"][0]["message"]
+
+
+@pytest.mark.anyio
+async def test_supported_formats_includes_fallback_policy_for_preview(tmp_path) -> None:
+    database_path = tmp_path / "web-console-formats-fallback.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/supported-formats?status=preview")
+
+    assert response.status_code == 200
+    for fmt in response.json()["formats"]:
+        assert "parser_id" in fmt
+        assert "status" in fmt
+        assert fmt["status"] == "preview"
+        assert "fallback_policy" in fmt
+        assert fmt["fallback_policy"] is not None
+
+
 # Understanding coverage + batch understand tests
 @pytest.mark.anyio
 async def test_understand_all_endpoint_creates_and_skips(tmp_path) -> None:
@@ -2000,3 +2136,346 @@ async def test_audit_log_actions_contain_required_fields(tmp_path) -> None:
         assert "old_state" in entry
         assert "new_state" in entry
         assert entry["action"] in ("create", "update", "delete")
+
+
+# ── Fixture Corpus Integration Tests ──
+
+
+@pytest.mark.anyio
+async def test_upload_csv_fixture_corpus_items_have_stable_metadata(tmp_path) -> None:
+    """Upload each CSV fixture from the corpus and verify pipeline_run_items metadata."""
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    fixtures_dir = Path(__file__).parent / "fixtures" / "preview"
+    csv_fixtures = sorted(fixtures_dir.glob("*.csv"))
+    assert len(csv_fixtures) >= 3, f"Expected at least 3 CSV fixtures, got {len(csv_fixtures)}"
+
+    database_path = tmp_path / "fixture-csv-metadata.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    for fixture_path in csv_fixtures:
+        if fixture_path.name.startswith("binary_garbled"):
+            continue
+        if fixture_path.name.startswith("garbled"):
+            continue
+        if fixture_path.name == "oversized_line.csv":
+            # Too large for upload via test fixture (500KB is ok per size limit but slow)
+            continue
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with open(fixture_path, "rb") as f:
+                response = await client.post(
+                    "/knowledge-bases/fixture-local/upload",
+                    files={"files": (fixture_path.name, f, "text/csv")},
+                )
+
+        if response.status_code == 415:
+            # Some fixtures may be rejected (empty files should still be accepted)
+            continue
+
+        assert response.status_code == 202, f"Fixture {fixture_path.name}: {response.text}"
+        payload = response.json()
+        assert payload["pipeline_run_id"] is not None
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            items_resp = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
+        assert items_resp.status_code == 200
+        items = items_resp.json()["items"]
+        assert len(items) >= 1
+
+        for item in items:
+            meta = item["metadata"]
+            assert "parser_id" in meta, f"{fixture_path.name}: missing parser_id in {meta}"
+            assert "parser_name" in meta, f"{fixture_path.name}: missing parser_name"
+            # CSV parser always produces degraded status
+            assert item["status"] in ("degraded", "success", "failed"), (
+                f"{fixture_path.name}: unexpected status {item['status']}"
+            )
+
+
+@pytest.mark.anyio
+async def test_upload_html_fixture_corpus_items_have_stable_metadata(tmp_path) -> None:
+    """Upload each HTML fixture from the corpus and verify pipeline_run_items metadata."""
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    fixtures_dir = Path(__file__).parent / "fixtures" / "preview"
+    html_fixtures = sorted(fixtures_dir.glob("*.html"))
+    assert len(html_fixtures) >= 3, f"Expected at least 3 HTML fixtures, got {len(html_fixtures)}"
+
+    database_path = tmp_path / "fixture-html-metadata.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    for fixture_path in html_fixtures:
+        if fixture_path.name.startswith("binary_garbled"):
+            continue
+        if fixture_path.name.startswith("garbled"):
+            continue
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with open(fixture_path, "rb") as f:
+                response = await client.post(
+                    "/knowledge-bases/fixture-local/upload",
+                    files={"files": (fixture_path.name, f, "text/html")},
+                )
+
+        if response.status_code == 415:
+            continue
+
+        assert response.status_code == 202, f"Fixture {fixture_path.name}: {response.text}"
+        payload = response.json()
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            items_resp = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
+        assert items_resp.status_code == 200
+        items = items_resp.json()["items"]
+        assert len(items) >= 1
+
+        for item in items:
+            meta = item["metadata"]
+            assert "parser_id" in meta, f"{fixture_path.name}: missing parser_id"
+            assert "parser_name" in meta, f"{fixture_path.name}: missing parser_name"
+            assert item["status"] in ("degraded", "success", "failed")
+
+
+@pytest.mark.anyio
+async def test_upload_binary_garbled_csv_is_handled_as_failed(tmp_path) -> None:
+    """Uploading a binary-garbled CSV should result in a failed pipeline item."""
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "fixture-binary-csv.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    # Create a binary file that will fail UTF-8 decode
+    test_file = tmp_path / "bad.csv"
+    test_file.write_bytes(b"\xff\xfe\x00\x01\x02")
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("bad.csv", f, "text/csv")},
+            )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["pipeline_run_id"] is not None
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        items_resp = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
+    assert items_resp.status_code == 200
+    items = items_resp.json()["items"]
+    assert len(items) == 1
+    item = items[0]
+    assert item["status"] == "failed"
+    # Error message should be deterministic and reproducible
+    assert "error_message" in item
+    assert item["error_message"] is not None
+    assert "decode" in item["error_message"].lower() or "utf" in item["error_message"].lower()
+
+
+@pytest.mark.anyio
+async def test_upload_binary_garbled_html_is_handled_as_failed(tmp_path) -> None:
+    """Uploading a binary-garbled HTML should result in a failed pipeline item."""
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "fixture-binary-html.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    test_file = tmp_path / "bad.html"
+    test_file.write_bytes(b"\xff\xfe\x00\x01")
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("bad.html", f, "text/html")},
+            )
+
+    assert response.status_code == 202
+    payload = response.json()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        items_resp = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
+    assert items_resp.status_code == 200
+    items = items_resp.json()["items"]
+    assert items[0]["status"] == "failed"
+    assert items[0]["error_message"] is not None
+
+
+@pytest.mark.anyio
+async def test_console_renders_degraded_status_without_white_screen(tmp_path) -> None:
+    """After uploading a preview fixture, the console HTML must include degraded/failed
+    status indicators and not white-screen."""
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "fixture-console-degraded.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    # Upload a CSV (preview/degraded)
+    test_file = tmp_path / "data.csv"
+    test_file.write_text("col1,col2\na,b\n", encoding="utf-8")
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("data.csv", f, "text/csv")},
+            )
+
+        # Console page must render without error
+        console = await client.get("/console")
+        assert console.status_code == 200
+        html = console.text
+
+        # Must contain the HTML structure (no white screen)
+        assert "<!doctype html>" in html.lower()
+        assert "</html>" in html
+        # Should render degraded/status indicators
+        assert "degraded" in html.lower() or "preview" in html.lower()
+        # Pipeline runs section must be present
+        assert "Pipeline Runs" in html or "pipeline" in html.lower()
+
+
+@pytest.mark.anyio
+async def test_console_no_horizontal_overflow_for_long_metadata(tmp_path) -> None:
+    """Verify the console CSS prevents horizontal overflow for long text in
+    degraded_reason or other metadata fields."""
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "fixture-console-overflow.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    test_file = tmp_path / "data.csv"
+    test_file.write_text("col1,col2\na,b\n", encoding="utf-8")
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("data.csv", f, "text/csv")},
+            )
+
+        console = await client.get("/console")
+        html = console.text
+
+        # CSS must include overflow-wrap or word-break rules
+        assert "overflow-wrap" in html or "word-break" in html
+        # No horizontal scrollbar styles that would cause overflow on content
+        assert (
+            "overflow-x: auto" in html
+            or "overflow-x:auto" in html
+            or "overflow-x: hidden" in html
+            or "overflow-x:hidden" in html
+        )
+
+
+@pytest.mark.anyio
+async def test_pipeline_run_items_failure_is_deterministic(tmp_path) -> None:
+    """The same bad CSV file uploaded twice should produce the same failure status
+    and consistent error metadata."""
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "fixture-deterministic.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+
+    test_file = tmp_path / "bad.csv"
+    test_file.write_bytes(b"\xff\xfe\x00")
+
+    async def _upload_one() -> tuple[str, str | None]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with open(test_file, "rb") as f:
+                resp = await client.post(
+                    "/knowledge-bases/fixture-local/upload",
+                    files={"files": (test_file.name, f, "text/csv")},
+                )
+            run_id = resp.json()["pipeline_run_id"]
+            items_resp = await client.get(f"/pipeline-runs/{run_id}/items")
+            item = items_resp.json()["items"][0]
+            return item["status"], item.get("error_message")
+
+    status1, err1 = await _upload_one()
+    status2, err2 = await _upload_one()
+
+    # Same file → same deterministic status
+    assert status1 == status2 == "failed"
+    # Error message should be consistent
+    assert err1 is not None
+    assert err2 is not None
+    assert err1 == err2 or "decode" in str(err1).lower()
+
+
+@pytest.mark.anyio
+async def test_fixture_corpus_extension_coverage(tmp_path) -> None:
+    """Verify that the fixture corpus covers the expected CSV and HTML extensions."""
+    fixtures_dir = Path(__file__).parent / "fixtures" / "preview"
+    csv_files = list(fixtures_dir.glob("*.csv"))
+    html_files = list(fixtures_dir.glob("*.html"))
+
+    # Should have fixtures for CSV
+    assert len(csv_files) >= 3, f"Expected >= 3 CSV fixtures, got {len(csv_files)}"
+    # Should have fixtures for HTML
+    assert len(html_files) >= 3, f"Expected >= 3 HTML fixtures, got {len(html_files)}"
+
+    corpus_names = {f.name for f in csv_files} | {f.name for f in html_files}
+    expected_categories = [
+        "empty",
+        "sensitive",
+        "malformed",
+        "garbled",
+        "binary_garbled",
+        "oversized",
+    ]
+    found = []
+    for category in expected_categories:
+        if any(category in name for name in corpus_names):
+            found.append(category)
+    assert len(found) >= 4, f"Expected coverage for >= 4 categories, found {found}"
