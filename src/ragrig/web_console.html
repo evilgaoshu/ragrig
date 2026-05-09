@@ -476,6 +476,97 @@
         margin-bottom: 8px;
       }
 
+      .runs-filter-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+
+      .runs-filter-bar select,
+      .runs-filter-bar input {
+        font-size: 12px;
+        padding: 0 6px;
+        height: 30px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: var(--panel-strong);
+        color: var(--ink);
+      }
+
+      .runs-filter-bar input[type="datetime-local"] {
+        max-width: 180px;
+      }
+
+      .runs-filter-bar select {
+        max-width: 140px;
+      }
+
+      .runs-export-btn {
+        margin-left: auto;
+        font-size: 11px;
+        padding: 0 10px;
+        height: 30px;
+        border-radius: 6px;
+        border: 1px solid var(--teal);
+        background: var(--teal-soft);
+        color: var(--teal);
+        font-weight: 700;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .runs-export-btn:hover {
+        background: var(--teal);
+        color: white;
+      }
+
+      .run-card-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 4px;
+      }
+
+      .run-card-actions button {
+        font-size: 11px;
+        padding: 0 8px;
+        height: 24px;
+        border-radius: 4px;
+        border: 1px solid var(--line);
+        background: var(--panel-strong);
+        color: var(--ink);
+        cursor: pointer;
+      }
+
+      .run-card-actions button:hover {
+        background: var(--teal-soft);
+        border-color: var(--teal);
+      }
+
+      .runs-diff-panel {
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-strong);
+        margin-top: 8px;
+      }
+
+      .runs-diff-panel table {
+        width: 100%;
+        font-size: 12px;
+        border-collapse: collapse;
+      }
+
+      .runs-diff-panel td {
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .runs-diff-panel .changed {
+        background: var(--amber-soft);
+      }
+
       .fileshare-validation-result {
         margin-top: 8px;
       }
@@ -852,8 +943,16 @@
               <div class="panel-body stack" id="understanding-coverage-body"></div>
             </section>
             <section class="panel" id="understanding-runs-panel">
-              <div class="panel-head"><div class="panel-title">Understanding Runs</div><div class="panel-meta">Batch execution history</div></div>
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">Understanding Runs</div>
+                  <div class="panel-meta">Batch execution history</div>
+                </div>
+                <button class="runs-export-btn" id="export-runs-list-btn" title="Export filtered runs as safe JSON" style="display:none">⬇ Export</button>
+              </div>
+              <div class="panel-body stack" id="understanding-runs-filter"></div>
               <div class="panel-body stack" id="understanding-runs-body"></div>
+              <div class="panel-body stack" id="understanding-runs-diff" style="display:none"></div>
               <div class="panel-foot actions" id="understanding-runs-actions" style="display:none"></div>
             </section>
 
@@ -1047,6 +1146,15 @@
           selectedPluginId: null,
           drafts: {},
           result: null,
+        },
+        runsFilter: {
+          provider: '',
+          model: '',
+          profile_id: '',
+          status: '',
+          started_after: '',
+          started_before: '',
+          limit: 10,
         },
       };
 
@@ -1348,6 +1456,7 @@
             body: JSON.stringify({ provider: 'deterministic-local', profile_id: '*.understand.default' }),
           });
           await renderUnderstandingCoverage();
+          renderRunsFilterBar();
           await renderUnderstandingRuns();
           await renderDocumentPreview();
         } catch (error) {
@@ -1356,86 +1465,240 @@
         }
       }
 
+      function renderRunsFilterBar() {
+        const filterRoot = document.getElementById('understanding-runs-filter');
+        if (!filterRoot) return;
+        const f = state.runsFilter;
+        filterRoot.innerHTML = `
+          <div class="runs-filter-bar">
+            <select id="runs-filter-provider" title="Provider">
+              <option value="">All providers</option>
+            </select>
+            <select id="runs-filter-profile" title="Profile">
+              <option value="">All profiles</option>
+            </select>
+            <select id="runs-filter-status" title="Status">
+              <option value="">All statuses</option>
+              <option value="success"${f.status === 'success' ? ' selected' : ''}>success</option>
+              <option value="partial_failure"${f.status === 'partial_failure' ? ' selected' : ''}>partial_failure</option>
+              <option value="all_failure"${f.status === 'all_failure' ? ' selected' : ''}>all_failure</option>
+              <option value="empty_kb"${f.status === 'empty_kb' ? ' selected' : ''}>empty_kb</option>
+            </select>
+            <input type="datetime-local" id="runs-filter-after" title="Started after" placeholder="After" value="${escapeHtml(f.started_after)}">
+            <input type="datetime-local" id="runs-filter-before" title="Started before" placeholder="Before" value="${escapeHtml(f.started_before)}">
+            <select id="runs-filter-limit" title="Limit">
+              <option value="5"${f.limit === 5 ? ' selected' : ''}>5</option>
+              <option value="10"${f.limit === 10 ? ' selected' : ''}>10</option>
+              <option value="20"${f.limit === 20 ? ' selected' : ''}>20</option>
+              <option value="50"${f.limit === 50 ? ' selected' : ''}>50</option>
+            </select>
+          </div>
+        `;
+
+        // Wire up filter change events
+        ['runs-filter-provider', 'runs-filter-profile', 'runs-filter-status', 'runs-filter-limit'].forEach(function(id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          el.addEventListener('change', function() {
+            if (id === 'runs-filter-provider') state.runsFilter.provider = el.value;
+            if (id === 'runs-filter-profile') state.runsFilter.profile_id = el.value;
+            if (id === 'runs-filter-status') state.runsFilter.status = el.value;
+            if (id === 'runs-filter-limit') state.runsFilter.limit = parseInt(el.value, 10) || 10;
+            renderUnderstandingRuns();
+          });
+        });
+
+        ['runs-filter-after', 'runs-filter-before'].forEach(function(id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          el.addEventListener('change', function() {
+            if (id === 'runs-filter-after') state.runsFilter.started_after = el.value;
+            if (id === 'runs-filter-before') state.runsFilter.started_before = el.value;
+            renderUnderstandingRuns();
+          });
+        });
+
+        // Populate provider/profile dropdowns from existing runs (lazy, single-pass)
+        populateFilterDropdowns();
+      }
+
+      async function populateFilterDropdowns() {
+        var kbItem = state.knowledgeBases[0];
+        if (!kbItem) return;
+        try {
+          var data = await getJson('/understanding-runs?knowledge_base_id=' + kbItem.id + '&limit=200');
+          var runs = data.items || [];
+          var providers = new Set();
+          var profiles = new Set();
+          runs.forEach(function(r) {
+            if (r.provider) providers.add(r.provider);
+            if (r.profile_id) profiles.add(r.profile_id);
+          });
+
+          var provEl = document.getElementById('runs-filter-provider');
+          if (provEl) {
+            var currentVal = provEl.value;
+            provEl.innerHTML = '<option value="">All providers</option>' +
+              Array.from(providers).sort().map(function(p) {
+                return '<option value="' + escapeHtml(p) + '"' + (p === currentVal ? ' selected' : '') + '>' + escapeHtml(p) + '</option>';
+              }).join('');
+          }
+
+          var profEl = document.getElementById('runs-filter-profile');
+          if (profEl) {
+            var currentProf = profEl.value;
+            profEl.innerHTML = '<option value="">All profiles</option>' +
+              Array.from(profiles).sort().map(function(p) {
+                return '<option value="' + escapeHtml(p) + '"' + (p === currentProf ? ' selected' : '') + '>' + escapeHtml(p) + '</option>';
+              }).join('');
+          }
+        } catch(e) {
+          // Silently ignore — dropdowns keep defaults
+        }
+      }
+
       async function renderUnderstandingRuns() {
-        const root = document.getElementById('understanding-runs-body');
-        const actions = document.getElementById('understanding-runs-actions');
-        const kbItem = state.knowledgeBases[0];
+        var root = document.getElementById('understanding-runs-body');
+        var actions = document.getElementById('understanding-runs-actions');
+        var exportBtn = document.getElementById('export-runs-list-btn');
+        var kbItem = state.knowledgeBases[0];
         if (!kbItem) {
           root.innerHTML = empty('No knowledge bases available.');
           if (actions) actions.style.display = 'none';
+          if (exportBtn) exportBtn.style.display = 'none';
           return;
         }
         try {
-          const data = await getJson(`/understanding-runs?knowledge_base_id=${kbItem.id}&limit=10`);
-          const runs = data.items || [];
+          var params = new URLSearchParams();
+          params.set('knowledge_base_id', kbItem.id);
+          params.set('limit', String(state.runsFilter.limit || 10));
+          if (state.runsFilter.provider) params.set('provider', state.runsFilter.provider);
+          if (state.runsFilter.profile_id) params.set('profile_id', state.runsFilter.profile_id);
+          if (state.runsFilter.status) params.set('status', state.runsFilter.status);
+          if (state.runsFilter.started_after) params.set('started_after', state.runsFilter.started_after);
+          if (state.runsFilter.started_before) params.set('started_before', state.runsFilter.started_before);
+
+          var data = await getJson('/understanding-runs?' + params.toString());
+          var runs = data.items || [];
           if (runs.length === 0) {
-            root.innerHTML = empty('No understanding runs yet. Click "Run All Understanding" to create one.');
+            root.innerHTML = empty('No understanding runs match the current filters.');
             if (actions) actions.style.display = 'none';
+            if (exportBtn) exportBtn.style.display = 'none';
             return;
           }
-          const items = runs.map((run) => {
-            const statusPill = run.status === 'success' ? 'pill'
+
+          // Build export URL for filtered list
+          var exportParams = new URLSearchParams();
+          exportParams.set('limit', '100');
+          if (state.runsFilter.provider) exportParams.set('provider', state.runsFilter.provider);
+          if (state.runsFilter.profile_id) exportParams.set('profile_id', state.runsFilter.profile_id);
+          if (state.runsFilter.status) exportParams.set('status', state.runsFilter.status);
+          if (state.runsFilter.started_after) exportParams.set('started_after', state.runsFilter.started_after);
+          if (state.runsFilter.started_before) exportParams.set('started_before', state.runsFilter.started_before);
+
+          if (exportBtn) {
+            exportBtn.style.display = '';
+            exportBtn.onclick = function() {
+              exportFilteredRuns(kbItem, exportParams.toString());
+            };
+          }
+
+          var items = runs.map(function(run) {
+            var statusPill = run.status === 'success' ? 'pill'
               : run.status === 'partial_failure' ? 'pill warn'
               : run.status === 'all_failure' ? 'pill error'
               : run.status === 'empty_kb' ? 'pill neutral'
               : 'pill';
-            const errorInfo = run.error_summary
-              ? `<div class="sub"><span class="pill error">errors</span> ${escapeHtml(run.error_summary.slice(0, 200))}</div>`
+            var errorInfo = run.error_summary
+              ? '<div class="sub"><span class="pill error">errors</span> ' + escapeHtml(run.error_summary.slice(0, 200)) + '</div>'
               : '';
-            const triggerInfo = `<div class="sub">trigger: ${escapeHtml(run.trigger_source)}${run.operator ? ' · operator: ' + escapeHtml(run.operator) : ''}</div>`;
-            const timeInfo = `<div class="sub">${escapeHtml(run.started_at || 'n/a')} → ${escapeHtml(run.finished_at || 'n/a')}</div>`;
-            return `
-              <div class="card" id="run-${escapeHtml(run.id.slice(0, 8))}">
-                <div class="name">Run <code>${escapeHtml(run.id.slice(0, 8))}…</code> <span class="${statusPill}">${escapeHtml(run.status)}</span></div>
-                <div class="sub">${escapeHtml(run.provider)} · model: ${escapeHtml(run.model || 'n/a')} · profile: ${escapeHtml(run.profile_id)}</div>
-                <div class="sub">total: ${run.total} · created: ${run.created} · skipped: ${run.skipped} · failed: ${run.failed}</div>
-                ${triggerInfo}
-                ${timeInfo}
-                ${errorInfo}
-              </div>
-            `;
+            var triggerInfo = '<div class="sub">trigger: ' + escapeHtml(run.trigger_source) + (run.operator ? ' · operator: ' + escapeHtml(run.operator) : '') + '</div>';
+            var timeInfo = '<div class="sub">' + escapeHtml(run.started_at || 'n/a') + ' → ' + escapeHtml(run.finished_at || 'n/a') + '</div>';
+            return '' +
+              '<div class="card" id="run-' + escapeHtml(run.id.slice(0, 8)) + '">' +
+                '<div class="name">Run <code>' + escapeHtml(run.id.slice(0, 8)) + '…</code> <span class="' + statusPill + '">' + escapeHtml(run.status) + '</span></div>' +
+                '<div class="sub">' + escapeHtml(run.provider) + ' · model: ' + escapeHtml(run.model || 'n/a') + ' · profile: ' + escapeHtml(run.profile_id) + '</div>' +
+                '<div class="sub">total: ' + run.total + ' · created: ' + run.created + ' · skipped: ' + run.skipped + ' · failed: ' + run.failed + '</div>' +
+                triggerInfo +
+                timeInfo +
+                errorInfo +
+                '<div class="run-card-actions">' +
+                  '<button onclick="exportSingleRun(\'' + run.id + '\', \'' + escapeHtml(run.knowledge_base || '') + '\')" title="Export this run as safe JSON">⬇ Export</button>' +
+                '</div>' +
+              '</div>';
           });
           root.innerHTML = items.join('');
 
-          // Show rerun button with historical params from the most recent run
-          const latestRun = runs[0];
+          var latestRun = runs[0];
           if (actions) {
             actions.style.display = '';
-            actions.innerHTML = `
-              <button class="button primary" id="rerun-understand-all" type="button">
-                Rerun (${escapeHtml(latestRun.provider)} · ${escapeHtml(latestRun.profile_id)})
-              </button>
-            `;
-            document.getElementById('rerun-understand-all').addEventListener('click', () => {
+            actions.innerHTML = '' +
+              '<button class="button primary" id="rerun-understand-all" type="button">' +
+                'Rerun (' + escapeHtml(latestRun.provider) + ' · ' + escapeHtml(latestRun.profile_id) + ')' +
+              '</button>';
+            document.getElementById('rerun-understand-all').addEventListener('click', function() {
               rerunUnderstandAll(latestRun.provider, latestRun.profile_id);
             });
           }
         } catch (error) {
-          root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+          root.innerHTML = '<div class="empty">' + escapeHtml(error.message) + '</div>';
           if (actions) actions.style.display = 'none';
+          if (exportBtn) exportBtn.style.display = 'none';
         }
       }
 
+      window.exportSingleRun = async function(runId, kbName) {
+        try {
+          var data = await getJson('/understanding-runs/' + runId + '/export');
+          downloadJson(data, 'ragrig-run-' + (kbName || 'unknown') + '-' + runId.slice(0, 8) + '.json');
+        } catch (error) {
+          alert('Export failed: ' + error.message);
+        }
+      };
+
+      async function exportFilteredRuns(kbItem, filterQuery) {
+        try {
+          var url = '/knowledge-bases/' + kbItem.id + '/understanding-runs/export?' + filterQuery;
+          var data = await getJson(url);
+          downloadJson(data, 'ragrig-runs-' + (kbItem.name || 'unknown') + '-' + new Date().toISOString().slice(0, 19).replace(/[:]/g, '-') + '.json');
+        } catch (error) {
+          alert('Export failed: ' + error.message);
+        }
+      }
+
+      function downloadJson(data, filename) {
+        var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+
       async function rerunUnderstandAll(provider, profile_id) {
-        const kbItem = state.knowledgeBases[0];
+        var kbItem = state.knowledgeBases[0];
         if (!kbItem) return;
-        const button = document.getElementById('rerun-understand-all');
+        var button = document.getElementById('rerun-understand-all');
         if (button) {
           button.disabled = true;
           button.textContent = 'Rerunning...';
         }
         try {
-          await getJson(`/knowledge-bases/${kbItem.id}/understand-all`, {
+          await getJson('/knowledge-bases/' + kbItem.id + '/understand-all', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider, profile_id }),
+            body: JSON.stringify({ provider: provider, profile_id: profile_id }),
           });
           await renderUnderstandingCoverage();
+          renderRunsFilterBar();
           await renderUnderstandingRuns();
           await renderDocumentPreview();
         } catch (error) {
-          const root = document.getElementById('understanding-runs-body');
-          root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+          var root = document.getElementById('understanding-runs-body');
+          root.innerHTML = '<div class="empty">' + escapeHtml(error.message) + '</div>';
         }
       }
 
@@ -2520,6 +2783,7 @@
           renderIngestionPanel();
           await renderPipelineRuns();
           await renderUnderstandingCoverage();
+          renderRunsFilterBar();
           await renderUnderstandingRuns();
           await renderDocumentPreview();
           renderModels();
