@@ -3,7 +3,8 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from ragrig.parsers.base import ParseResult, TextFileParser, _text_summary
+from ragrig.parsers.base import ParseResult, TextFileParser
+from ragrig.parsers.sanitizer import sanitize_text_summary
 
 
 class CsvParser(TextFileParser):
@@ -31,6 +32,7 @@ class CsvParser(TextFileParser):
         except Exception as exc:
             degraded_details = {"csv_parse_error": str(exc)}
 
+        summary, redactions = sanitize_text_summary(text)
         return ParseResult(
             extracted_text=text,
             content_hash=__import__("hashlib").sha256(raw_bytes).hexdigest(),
@@ -49,7 +51,8 @@ class CsvParser(TextFileParser):
                 "byte_count": len(raw_bytes),
                 "row_count": row_count,
                 "col_count": col_count,
-                "text_summary": _text_summary(text),
+                "text_summary": summary,
+                "redaction_count": redactions,
                 **(
                     {"csv_parse_error": degraded_details["csv_parse_error"]}
                     if degraded_details

@@ -6,6 +6,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from ragrig.parsers.sanitizer import sanitize_text_summary
+
 
 @dataclass(frozen=True)
 class ParseResult:
@@ -20,16 +22,6 @@ class ParserTimeoutError(TimeoutError):
     """Raised when a parser exceeds its allowed execution time."""
 
 
-def _text_summary(text: str, max_chars: int = 80) -> str:
-    """Return a short text summary, never the full content."""
-    if not text:
-        return ""
-    summary = text[:max_chars]
-    if len(text) > max_chars:
-        summary += "…"
-    return summary
-
-
 class TextFileParser:
     parser_name = "text"
     mime_type = "text/plain"
@@ -40,6 +32,7 @@ class TextFileParser:
         line_count = len(text.splitlines())
         if text == "":
             line_count = 0
+        summary, redactions = sanitize_text_summary(text)
         return ParseResult(
             extracted_text=text,
             content_hash=sha256(raw_bytes).hexdigest(),
@@ -53,7 +46,8 @@ class TextFileParser:
                 "line_count": line_count,
                 "char_count": len(text),
                 "byte_count": len(raw_bytes),
-                "text_summary": _text_summary(text),
+                "text_summary": summary,
+                "redaction_count": redactions,
             },
         )
 
