@@ -1873,6 +1873,7 @@
             if (!cell.is_default) {
               var statusAction = cell.status === 'disabled' ? 'Enable' : 'Disable';
               actions = '<div style="margin-top:4px; display:flex; gap:4px; flex-wrap:wrap;">' +
+                '<button class="button" style="height:24px; padding:0 6px; font-size:11px;" data-profile-action="edit" data-profile-id="' + escapeHtml(cell.profile_id) + '">Edit</button>' +
                 '<button class="button" style="height:24px; padding:0 6px; font-size:11px;" data-profile-action="toggle" data-profile-id="' + escapeHtml(cell.profile_id) + '" data-profile-status="' + escapeHtml(cell.status) + '">' + statusAction + '</button>' +
                 '<button class="button" style="height:24px; padding:0 6px; font-size:11px;" data-profile-action="delete" data-profile-id="' + escapeHtml(cell.profile_id) + '">Delete</button>' +
                 '</div>';
@@ -2744,8 +2745,15 @@
         var limit = parseInt(document.getElementById('audit-log-limit').value, 10) || 25;
         var body = document.getElementById('audit-log-body');
         var empty = document.getElementById('audit-log-empty');
+        var profileFilter = document.getElementById('audit-filter-profile').value.trim();
+        var providerFilter = document.getElementById('audit-filter-provider').value.trim();
+        var taskFilter = document.getElementById('audit-filter-task').value;
+        var url = '/processing-profiles/audit-log?limit=' + limit;
+        if (profileFilter) url += '&profile_id=' + encodeURIComponent(profileFilter);
+        if (providerFilter) url += '&provider=' + encodeURIComponent(providerFilter);
+        if (taskFilter) url += '&task_type=' + encodeURIComponent(taskFilter);
         try {
-          var response = await fetch('/processing-profiles/audit-log?limit=' + limit);
+          var response = await fetch(url);
           var data = await response.json();
           if (!data.entries || data.entries.length === 0) {
             empty.style.display = 'block';
@@ -2757,6 +2765,10 @@
             var actionClass = 'audit-action-' + entry.action;
             var oldStateStr = entry.old_state ? JSON.stringify(entry.old_state) : '—';
             var newStateStr = entry.new_state ? JSON.stringify(entry.new_state) : '—';
+            var rollbackBtn = '';
+            if (entry.action !== 'rollback' && entry.old_state && (entry.action === 'update' || entry.action === 'create')) {
+              rollbackBtn = '<button class="button rollback-btn" style="height:24px; padding:0 6px; font-size:11px;" data-rollback-id="' + escapeHtml(entry.id) + '" data-rollback-profile="' + escapeHtml(entry.profile_id) + '" title="Rollback to this state">↩ Rollback</button>';
+            }
             return '<tr>' +
               '<td>' + escapeHtml(entry.timestamp || '') + '</td>' +
               '<td>' + escapeHtml(entry.profile_id) + '</td>' +
@@ -2764,11 +2776,157 @@
               '<td>' + escapeHtml(entry.actor || '—') + '</td>' +
               '<td class="audit-state" title="' + escapeHtml(oldStateStr) + '">' + escapeHtml(oldStateStr.length > 80 ? oldStateStr.substring(0, 80) + '…' : oldStateStr) + '</td>' +
               '<td class="audit-state" title="' + escapeHtml(newStateStr) + '">' + escapeHtml(newStateStr.length > 80 ? newStateStr.substring(0, 80) + '…' : newStateStr) + '</td>' +
+              '<td>' + rollbackBtn + '</td>' +
               '</tr>';
           }).join('');
         } catch (error) {
           empty.style.display = 'block';
           empty.textContent = 'Failed to load audit log: ' + error.message;
+        }
+      }
+
+      // ── Utility ──
+
+      function debounce(fn, delay) {
+        var timer;
+        return function() {
+          var ctx = this;
+          var args = arguments;
+          clearTimeout(timer);
+          timer = setTimeout(function() { fn.apply(ctx, args); }, delay);
+        };
+      }
+
+      // ── Diff Preview & Inline Edit ──
+
+      var state = window.state || {};
+      state.editProfileId = null;
+
+      async function openEditForm(profileId) {
+        state.editProfileId = profileId;
+        document.getElementById('diff-preview-panel').style.display = 'block';
+        document.getElementById('diff-preview-profile-id').textContent = 'Editing: ' + profileId;
+        document.getElementById('diff-preview-result').style.display = 'none';
+        document.getElementById('diff-preview-error').textContent = '';
+        document.getElementById('diff-preview-loading').style.display = 'none';
+        // Reset form fields
+        document.getElementById('edit-display-name').value = '';
+        document.getElementById('edit-description').value = '';
+        document.getElementById('edit-provider').value = '';
+        document.getElementById('edit-model-id').value = '';
+        document.getElementById('edit-kind').value = '';
+        document.getElementById('edit-status').value = '';
+        // Scroll to panel
+        document.getElementById('diff-preview-panel').scrollIntoView({ behavior: 'smooth' });
+      }
+
+      function closeEditForm() {
+        state.editProfileId = null;
+        document.getElementById('diff-preview-panel').style.display = 'none';
+        document.getElementById('diff-preview-result').style.display = 'none';
+        document.getElementById('diff-preview-error').textContent = '';
+      }
+
+      async function previewDiff() {
+        if (!state.editProfileId) return;
+        var errorEl = document.getElementById('diff-preview-error');
+        var loadingEl = document.getElementById('diff-preview-loading');
+        var resultEl = document.getElementById('diff-preview-result');
+        errorEl.textContent = '';
+        resultEl.style.display = 'none';
+        loadingEl.style.display = 'block';
+
+        var kindVal = document.getElementById('edit-kind').value || null;
+        var statusVal = document.getElementById('edit-status').value || null;
+
+        try {
+          var response = await fetch('/processing-profiles/preview-diff', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              profile_id: state.editProfileId,
+              display_name: document.getElementById('edit-display-name').value.trim() || null,
+              description: document.getElementById('edit-description').value.trim() || null,
+              provider: document.getElementById('edit-provider').value.trim() || null,
+              model_id: document.getElementById('edit-model-id').value.trim() || null,
+              kind: kindVal,
+              status: statusVal,
+            }),
+          });
+          loadingEl.style.display = 'none';
+          if (!response.ok) {
+            var errData = await response.json().catch(function() { return {}; });
+            errorEl.textContent = 'Error: ' + (errData.error || response.statusText);
+            return;
+          }
+          var diff = await response.json();
+          document.getElementById('diff-old-state').textContent = JSON.stringify(diff.old, null, 2);
+          document.getElementById('diff-new-state').textContent = JSON.stringify(diff.new, null, 2);
+          document.getElementById('diff-changed-paths').textContent = diff.changed_paths.join(', ') || '(none)';
+          resultEl.style.display = 'block';
+        } catch (error) {
+          loadingEl.style.display = 'none';
+          errorEl.textContent = 'Network error: ' + error.message;
+        }
+      }
+
+      async function saveEdit() {
+        if (!state.editProfileId) return;
+        var errorEl = document.getElementById('diff-preview-error');
+        errorEl.textContent = '';
+
+        var kindVal = document.getElementById('edit-kind').value || null;
+        var statusVal = document.getElementById('edit-status').value || null;
+        var payload = {};
+        var dn = document.getElementById('edit-display-name').value.trim();
+        var desc = document.getElementById('edit-description').value.trim();
+        var prov = document.getElementById('edit-provider').value.trim();
+        var mid = document.getElementById('edit-model-id').value.trim();
+        if (dn) payload.display_name = dn;
+        if (desc) payload.description = desc;
+        if (prov) payload.provider = prov;
+        if (mid) payload.model_id = mid;
+        if (kindVal) payload.kind = kindVal;
+        if (statusVal) payload.status = statusVal;
+
+        try {
+          var response = await fetch('/processing-profiles/overrides/' + encodeURIComponent(state.editProfileId), {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!response.ok) {
+            var errData = await response.json().catch(function() { return {}; });
+            errorEl.textContent = 'Error: ' + (errData.error || response.statusText);
+            return;
+          }
+          closeEditForm();
+          await renderProfileMatrix();
+          await renderAuditLog();
+        } catch (error) {
+          errorEl.textContent = 'Network error: ' + error.message;
+        }
+      }
+
+      // ── Rollback ──
+
+      async function rollbackToAuditEntry(auditId, profileId) {
+        if (!confirm('Rollback "' + profileId + '" to the state recorded in audit entry ' + auditId + '?\n\nThis will create a new rollback audit entry.')) return;
+        try {
+          var response = await fetch('/processing-profiles/rollback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audit_id: auditId, actor: 'web-console' }),
+          });
+          if (!response.ok) {
+            var errData = await response.json().catch(function() { return {}; });
+            alert('Rollback failed: ' + (errData.error || response.statusText));
+            return;
+          }
+          await renderProfileMatrix();
+          await renderAuditLog();
+        } catch (error) {
+          alert('Network error: ' + error.message);
         }
       }
 
@@ -2835,9 +2993,21 @@
         document.getElementById('profile-create-btn').addEventListener('click', () => showProfileCreateForm(true));
         document.getElementById('audit-log-refresh').addEventListener('click', () => renderAuditLog());
         document.getElementById('audit-log-limit').addEventListener('change', () => renderAuditLog());
+        document.getElementById('audit-filter-provider').addEventListener('change', () => renderAuditLog());
+        document.getElementById('audit-filter-task').addEventListener('change', () => renderAuditLog());
+        document.getElementById('audit-filter-profile').addEventListener('input', debounce(function() { renderAuditLog(); }, 300));
+        document.getElementById('audit-filter-provider').addEventListener('input', debounce(function() { renderAuditLog(); }, 300));
         document.getElementById('profile-create-cancel').addEventListener('click', () => showProfileCreateForm(false));
         document.getElementById('profile-create-submit').addEventListener('click', submitProfileCreate);
+        document.getElementById('diff-preview-close').addEventListener('click', closeEditForm);
+        document.getElementById('diff-preview-submit').addEventListener('click', saveEdit);
+        document.getElementById('preview-diff-btn').addEventListener('click', previewDiff);
         document.getElementById('profile-matrix-body').addEventListener('click', (event) => {
+          const editBtn = event.target.closest('[data-profile-action="edit"]');
+          if (editBtn) {
+            openEditForm(editBtn.dataset.profileId);
+            return;
+          }
           const toggleBtn = event.target.closest('[data-profile-action="toggle"]');
           if (toggleBtn) {
             toggleProfileStatus(toggleBtn.dataset.profileId, toggleBtn.dataset.profileStatus);
@@ -2846,6 +3016,12 @@
           const deleteBtn = event.target.closest('[data-profile-action="delete"]');
           if (deleteBtn) {
             deleteProfile(deleteBtn.dataset.profileId);
+          }
+        });
+        document.getElementById('audit-log-body').addEventListener('click', (event) => {
+          const rollbackBtn = event.target.closest('[data-rollback-id]');
+          if (rollbackBtn) {
+            rollbackToAuditEntry(rollbackBtn.dataset.rollbackId, rollbackBtn.dataset.rollbackProfile);
           }
         });
         document.addEventListener('click', (event) => {
