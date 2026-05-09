@@ -20,6 +20,16 @@ class ParserTimeoutError(TimeoutError):
     """Raised when a parser exceeds its allowed execution time."""
 
 
+def _text_summary(text: str, max_chars: int = 80) -> str:
+    """Return a short text summary, never the full content."""
+    if not text:
+        return ""
+    summary = text[:max_chars]
+    if len(text) > max_chars:
+        summary += "…"
+    return summary
+
+
 class TextFileParser:
     parser_name = "text"
     mime_type = "text/plain"
@@ -36,10 +46,14 @@ class TextFileParser:
             mime_type=self.mime_type,
             parser_name=self.parser_name,
             metadata={
+                "parser_id": f"parser.{self.parser_name}",
+                "status": "success",
                 "encoding": "utf-8",
                 "extension": path.suffix.lower(),
                 "line_count": line_count,
                 "char_count": len(text),
+                "byte_count": len(raw_bytes),
+                "text_summary": _text_summary(text),
             },
         )
 
