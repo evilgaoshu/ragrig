@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from ragrig.processing_profile import (
     ProcessingKind,
     ProcessingProfile,
@@ -8,11 +10,17 @@ from ragrig.processing_profile import (
     TaskType,
     build_api_profile_list,
     build_matrix,
+    clear_overrides,
+    create_override,
+    delete_override,
     get_default_profiles,
     get_matrix_task_types,
+    get_override,
     get_registered_extensions,
+    list_overrides,
     resolve_profile,
     resolve_provider_availability,
+    update_override,
 )
 
 
@@ -245,3 +253,166 @@ def test_processing_profile_defaults_for_all_fields() -> None:
     assert p.source == ProfileSource.DEFAULT
     assert p.tags == []
     assert p.metadata == {}
+
+
+def test_create_override_stores_profile() -> None:
+    clear_overrides()
+    profile = create_override(
+        profile_id="pdf.chunk.custom",
+        extension=".pdf",
+        task_type=TaskType.CHUNK,
+        display_name="Custom PDF Chunk",
+        description="Custom chunking for PDFs.",
+        provider="model.ollama",
+        kind=ProcessingKind.LLM_ASSISTED,
+        created_by="test",
+    )
+    assert profile.profile_id == "pdf.chunk.custom"
+    assert profile.source == ProfileSource.OVERRIDE
+    assert profile.created_by == "test"
+    assert profile.updated_at is not None
+    assert list_overrides() == [profile]
+    clear_overrides()
+
+
+def test_create_override_rejects_duplicate() -> None:
+    clear_overrides()
+    create_override(
+        profile_id="pdf.chunk.custom",
+        extension=".pdf",
+        task_type=TaskType.CHUNK,
+        display_name="Custom PDF Chunk",
+        description="Custom chunking for PDFs.",
+        provider="model.ollama",
+    )
+    with pytest.raises(ValueError, match="already exists"):
+        create_override(
+            profile_id="pdf.chunk.custom",
+            extension=".pdf",
+            task_type=TaskType.CHUNK,
+            display_name="Duplicate",
+            description="Dup.",
+            provider="model.ollama",
+        )
+    clear_overrides()
+
+
+def test_create_override_rejects_default_profile_id() -> None:
+    clear_overrides()
+    with pytest.raises(ValueError, match="cannot override default"):
+        create_override(
+            profile_id="*.chunk.default",
+            extension=".pdf",
+            task_type=TaskType.CHUNK,
+            display_name="Bad",
+            description="Bad.",
+            provider="model.ollama",
+        )
+    clear_overrides()
+
+
+def test_get_override_returns_none_when_missing() -> None:
+    clear_overrides()
+    assert get_override("nonexistent") is None
+
+
+def test_update_override_patches_fields() -> None:
+    clear_overrides()
+    create_override(
+        profile_id="pdf.chunk.custom",
+        extension=".pdf",
+        task_type=TaskType.CHUNK,
+        display_name="Custom PDF Chunk",
+        description="Custom chunking for PDFs.",
+        provider="model.ollama",
+    )
+    updated = update_override(
+        "pdf.chunk.custom",
+        status=ProfileStatus.DISABLED,
+        display_name="Renamed",
+    )
+    assert updated.status == ProfileStatus.DISABLED
+    assert updated.display_name == "Renamed"
+    assert updated.description == "Custom chunking for PDFs."
+    assert updated.updated_at is not None
+    clear_overrides()
+
+
+def test_update_override_not_found() -> None:
+    clear_overrides()
+    with pytest.raises(ValueError, match="not found"):
+        update_override("nonexistent", status=ProfileStatus.DISABLED)
+    clear_overrides()
+
+
+def test_delete_override_removes_profile() -> None:
+    clear_overrides()
+    create_override(
+        profile_id="pdf.chunk.custom",
+        extension=".pdf",
+        task_type=TaskType.CHUNK,
+        display_name="Custom PDF Chunk",
+        description="Custom chunking for PDFs.",
+        provider="model.ollama",
+    )
+    assert delete_override("pdf.chunk.custom") is True
+    assert delete_override("pdf.chunk.custom") is False
+    clear_overrides()
+
+
+def test_resolve_profile_ignores_disabled_override() -> None:
+    clear_overrides()
+    create_override(
+        profile_id="pdf.chunk.custom",
+        extension=".pdf",
+        task_type=TaskType.CHUNK,
+        display_name="Custom PDF Chunk",
+        description="Custom chunking for PDFs.",
+        provider="model.ollama",
+        kind=ProcessingKind.LLM_ASSISTED,
+    )
+    # Active override is used
+    active = resolve_profile(".pdf", TaskType.CHUNK)
+    assert active.profile_id == "pdf.chunk.custom"
+    # Disable it
+    update_override("pdf.chunk.custom", status=ProfileStatus.DISABLED)
+    disabled = resolve_profile(".pdf", TaskType.CHUNK)
+    assert disabled.profile_id == "*.chunk.default"
+    clear_overrides()
+
+
+def test_build_matrix_with_override_shows_source_override() -> None:
+    clear_overrides()
+    create_override(
+        profile_id="pdf.chunk.custom",
+        extension=".pdf",
+        task_type=TaskType.CHUNK,
+        display_name="Custom PDF Chunk",
+        description="Custom chunking for PDFs.",
+        provider="model.ollama",
+        kind=ProcessingKind.LLM_ASSISTED,
+    )
+    matrix = build_matrix()
+    cell = matrix["cells"][".pdf.chunk"]
+    assert cell["source"] == "override"
+    assert cell["is_default"] is False
+    assert cell["kind"] == "LLM-assisted"
+    clear_overrides()
+
+
+def test_build_api_profile_list_includes_audit_fields() -> None:
+    clear_overrides()
+    create_override(
+        profile_id="pdf.chunk.custom",
+        extension=".pdf",
+        task_type=TaskType.CHUNK,
+        display_name="Custom PDF Chunk",
+        description="Custom chunking for PDFs.",
+        provider="model.ollama",
+        created_by="dev",
+    )
+    profiles = build_api_profile_list()
+    override = next(p for p in profiles if p["profile_id"] == "pdf.chunk.custom")
+    assert override["created_by"] == "dev"
+    assert override["updated_at"] is not None
+    clear_overrides()

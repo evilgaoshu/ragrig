@@ -504,6 +504,9 @@ async def test_system_status_reports_alembic_revision_when_revision_table_exists
 # Processing Profiles tests (from main)
 @pytest.mark.anyio
 async def test_processing_profiles_endpoint_returns_default_profiles(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
     database_path = tmp_path / "web-console-profiles.db"
     session_factory = _create_file_session_factory(database_path)
     app = create_app(check_database=lambda: None, session_factory=session_factory)
@@ -532,6 +535,7 @@ async def test_processing_profiles_endpoint_returns_default_profiles(tmp_path) -
         # Must not contain raw secrets
         assert "secret" not in str(p)
         assert "api_key" not in str(p)
+    clear_overrides()
 
 
 @pytest.mark.anyio
@@ -796,6 +800,498 @@ async def test_document_understanding_shown_in_console(tmp_path) -> None:
         assert "Document Understanding" in console_after.text
 
 
+# Override CRUD API tests
+@pytest.mark.anyio
+async def test_post_processing_profile_creates_override(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
+    database_path = tmp_path / "web-console-create-override.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        create_resp = await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.override",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk Override",
+                "description": "Custom chunking for PDFs.",
+                "provider": "model.fake_provider",
+                "kind": "LLM-assisted",
+            },
+        )
+    assert create_resp.status_code == 200
+    payload = create_resp.json()
+    assert payload["profile_id"] == "pdf.chunk.override"
+    assert payload["source"] == "override"
+    assert payload["provider_available"] is False
+    clear_overrides()
+
+
+@pytest.mark.anyio
+async def test_get_matrix_reflects_override_source(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
+    database_path = tmp_path / "web-console-override-matrix.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.override",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk Override",
+                "description": "Custom chunking for PDFs.",
+                "provider": "model.fake_provider",
+                "kind": "LLM-assisted",
+            },
+        )
+        matrix_resp = await client.get("/processing-profiles/matrix")
+
+    assert matrix_resp.status_code == 200
+    cell = matrix_resp.json()["cells"][".pdf.chunk"]
+    assert cell["source"] == "override"
+    assert cell["is_default"] is False
+    assert cell["profile_id"] == "pdf.chunk.override"
+    clear_overrides()
+
+
+@pytest.mark.anyio
+async def test_patch_disable_and_enable_override(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
+    database_path = tmp_path / "web-console-patch-override.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.override",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk Override",
+                "description": "Custom chunking for PDFs.",
+                "provider": "model.fake_provider",
+            },
+        )
+        patch_resp = await client.patch(
+            "/processing-profiles/overrides/pdf.chunk.override",
+            json={"status": "disabled"},
+        )
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["status"] == "disabled"
+
+        matrix_disabled = await client.get("/processing-profiles/matrix")
+        cell_disabled = matrix_disabled.json()["cells"][".pdf.chunk"]
+        assert cell_disabled["profile_id"] == "*.chunk.default"
+
+        await client.patch(
+            "/processing-profiles/overrides/pdf.chunk.override",
+            json={"status": "active"},
+        )
+        matrix_enabled = await client.get("/processing-profiles/matrix")
+        cell_enabled = matrix_enabled.json()["cells"][".pdf.chunk"]
+        assert cell_enabled["profile_id"] == "pdf.chunk.override"
+    clear_overrides()
+
+
+@pytest.mark.anyio
+async def test_delete_override_reverts_to_default(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
+    database_path = tmp_path / "web-console-delete-override.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.override",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk Override",
+                "description": "Custom chunking for PDFs.",
+                "provider": "model.fake_provider",
+            },
+        )
+        delete_resp = await client.delete("/processing-profiles/overrides/pdf.chunk.override")
+        assert delete_resp.status_code == 204
+
+        matrix_resp = await client.get("/processing-profiles/matrix")
+        cell = matrix_resp.json()["cells"][".pdf.chunk"]
+        assert cell["profile_id"] == "*.chunk.default"
+        assert cell["source"] == "default"
+    clear_overrides()
+
+
+@pytest.mark.anyio
+async def test_processing_profile_api_no_secret_leakage(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
+    database_path = tmp_path / "web-console-profile-secrets.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.override",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk Override",
+                "description": "Custom chunking for PDFs.",
+                "provider": "model.fake_provider",
+                "metadata": {"api_key": "should-not-appear", "secret": "hidden"},
+            },
+        )
+        profiles_resp = await client.get("/processing-profiles")
+        matrix_resp = await client.get("/processing-profiles/matrix")
+
+    for response in [profiles_resp, matrix_resp]:
+        text_body = response.text
+        assert "api_key" not in text_body.lower()
+        assert "should-not-appear" not in text_body.lower()
+        assert "hidden" not in text_body.lower()
+    clear_overrides()
+
+
+@pytest.mark.anyio
+async def test_unavailable_provider_not_faked_as_ready(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
+    database_path = tmp_path / "web-console-provider-ready.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.override",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk Override",
+                "description": "Custom chunking for PDFs.",
+                "provider": "model.fake_provider",
+            },
+        )
+        profiles_resp = await client.get("/processing-profiles")
+        profile = next(
+            p for p in profiles_resp.json()["profiles"] if p["profile_id"] == "pdf.chunk.override"
+        )
+        assert profile["provider_available"] is False
+
+        matrix_resp = await client.get("/processing-profiles/matrix")
+        cell = matrix_resp.json()["cells"][".pdf.chunk"]
+        assert cell["provider_available"] is False
+    clear_overrides()
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_override_ui(tmp_path) -> None:
+    database_path = tmp_path / "web-console-override-ui.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Create Override" in html
+    assert "profile-create-form" in html
+    assert "profile-create-btn" in html
+    assert "Save Override" in html
+    assert "Cancel" in html
+    assert "showProfileCreateForm" in html
+    assert "submitProfileCreate" in html
+    assert "toggleProfileStatus" in html
+    assert "deleteProfile" in html
+    assert "data-profile-action" in html
+    assert "Supported Formats" in html
+    assert "supported" in html.lower()
+    assert "preview" in html.lower()
+    assert "planned" in html.lower()
+
+
+# Supported formats tests
+@pytest.mark.anyio
+async def test_supported_formats_endpoint_returns_all_formats(tmp_path) -> None:
+    database_path = tmp_path / "web-console-formats.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/supported-formats")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["formats"]) >= 4  # .md, .markdown, .txt, .text = 4 supported
+    extensions = {fmt["extension"] for fmt in payload["formats"]}
+    assert ".md" in extensions
+    assert ".txt" in extensions
+    assert ".pdf" in extensions
+    assert ".docx" in extensions
+
+
+@pytest.mark.anyio
+async def test_supported_formats_filter_by_status(tmp_path) -> None:
+    database_path = tmp_path / "web-console-formats-filter.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        supported_resp = await client.get("/supported-formats?status=supported")
+        preview_resp = await client.get("/supported-formats?status=preview")
+        planned_resp = await client.get("/supported-formats?status=planned")
+
+    assert supported_resp.status_code == 200
+    supported = {fmt["extension"] for fmt in supported_resp.json()["formats"]}
+    assert ".md" in supported
+    assert ".txt" in supported
+    assert ".pdf" not in supported
+
+    assert preview_resp.status_code == 200
+    preview = {fmt["extension"] for fmt in preview_resp.json()["formats"]}
+    assert ".csv" in preview
+    assert ".html" in preview
+
+    assert planned_resp.status_code == 200
+    planned = {fmt["extension"] for fmt in planned_resp.json()["formats"]}
+    assert ".pdf" in planned
+    assert ".docx" in planned
+
+
+@pytest.mark.anyio
+async def test_supported_formats_check_returns_supported_for_md(tmp_path) -> None:
+    database_path = tmp_path / "web-console-format-check.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/supported-formats/check?extension=.md")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["supported"] is True
+    assert payload["status"] == "supported"
+    assert payload["extension"] == ".md"
+
+
+@pytest.mark.anyio
+async def test_supported_formats_check_returns_false_for_unknown(tmp_path) -> None:
+    database_path = tmp_path / "web-console-format-check-unknown.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/supported-formats/check?extension=.xyz")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["supported"] is False
+    assert payload["status"] == "unsupported"
+
+
+@pytest.mark.anyio
+async def test_supported_formats_check_requires_extension_param(tmp_path) -> None:
+    database_path = tmp_path / "web-console-format-check-noext.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/supported-formats/check")
+
+    assert response.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_console_shows_upload_section(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-ui.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Upload" in html
+    assert "Choose Files" in html
+    assert "drop" in html.lower()
+
+
+@pytest.mark.anyio
+async def test_upload_supported_md_file_to_kb(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-md.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    test_file = tmp_path / "test-upload.md"
+    test_file.write_text("# Test Upload\n\nThis is a test document.", encoding="utf-8")
+
+    with session_factory() as session:
+        from ragrig.repositories import get_or_create_knowledge_base
+
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("test-upload.md", f, "text/markdown")},
+            )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["accepted_files"] == 1
+    assert payload["pipeline_run_id"] is not None
+    assert payload["pipeline_run_id"] != ""
+    assert payload["rejected_files"] == 0
+
+
+@pytest.mark.anyio
+async def test_upload_unsupported_jpg_returns_415(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-jpg.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    test_file = tmp_path / "photo.jpg"
+    test_file.write_bytes(b"\xff\xd8\xff\xe0fake jpeg data")
+
+    with session_factory() as session:
+        from ragrig.repositories import get_or_create_knowledge_base
+
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("photo.jpg", f, "image/jpeg")},
+            )
+
+    assert response.status_code == 415
+    payload = response.json()
+    assert payload["accepted_files"] == 0
+    assert payload["rejections"][0]["reason"] == "unsupported_format"
+
+
+@pytest.mark.anyio
+async def test_upload_preview_format_produces_warning(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-preview.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    test_file = tmp_path / "data.csv"
+    test_file.write_text("col1,col2\na,b", encoding="utf-8")
+
+    with session_factory() as session:
+        from ragrig.repositories import get_or_create_knowledge_base
+
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("data.csv", f, "text/csv")},
+            )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["accepted_files"] == 1
+    assert len(payload["warnings"]) >= 1
+    assert payload["warnings"][0]["status"] == "preview"
+
+
+@pytest.mark.anyio
+async def test_upload_nonexistent_kb_returns_404(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-404.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    test_file = tmp_path / "test.md"
+    test_file.write_text("# test", encoding="utf-8")
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/nonexistent/upload",
+                files={"files": ("test.md", f, "text/markdown")},
+            )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_upload_planned_format_returns_415(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-planned.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    # Create a minimal PDF-like file
+    test_file = tmp_path / "document.pdf"
+    test_file.write_bytes(b"%PDF-1.4 fake pdf content")
+
+    with session_factory() as session:
+        from ragrig.repositories import get_or_create_knowledge_base
+
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("document.pdf", f, "application/pdf")},
+            )
+
+    assert response.status_code == 415
+    payload = response.json()
+    assert payload["rejections"][0]["reason"] == "unsupported_format"
+    assert ".pdf" in payload["rejections"][0]["extension"]
 # Understanding coverage + batch understand tests
 @pytest.mark.anyio
 async def test_understand_all_endpoint_creates_and_skips(tmp_path) -> None:

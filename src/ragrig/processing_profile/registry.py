@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from ragrig.processing_profile.models import (
@@ -120,9 +121,112 @@ DEFAULT_PROFILES: list[ProcessingProfile] = _build_default_profiles()
 
 _DEFAULT_MAP: dict[str, ProcessingProfile] = _unique_profile_map(DEFAULT_PROFILES)
 
+# In-memory override store (no DB persistence in MVP)
+_OVERRIDE_STORE: dict[str, ProcessingProfile] = {}
+
 
 def get_default_profiles() -> list[ProcessingProfile]:
     return DEFAULT_PROFILES
+
+
+def list_overrides() -> list[ProcessingProfile]:
+    """Return all stored override profiles."""
+    return list(_OVERRIDE_STORE.values())
+
+
+def get_override(profile_id: str) -> ProcessingProfile | None:
+    """Return a single override profile by ID."""
+    return _OVERRIDE_STORE.get(profile_id)
+
+
+def create_override(
+    *,
+    profile_id: str,
+    extension: str,
+    task_type: TaskType,
+    display_name: str,
+    description: str,
+    provider: str,
+    model_id: str | None = None,
+    kind: ProcessingKind = ProcessingKind.DETERMINISTIC,
+    tags: list[str] | None = None,
+    metadata: dict[str, object] | None = None,
+    created_by: str | None = None,
+) -> ProcessingProfile:
+    """Create and store an override profile."""
+    if profile_id in _OVERRIDE_STORE:
+        raise ValueError(f"override profile '{profile_id}' already exists")
+    if profile_id in _DEFAULT_MAP:
+        raise ValueError(f"cannot override default profile '{profile_id}'")
+    now = datetime.now(timezone.utc)
+    profile = ProcessingProfile(
+        profile_id=profile_id,
+        extension=extension,
+        task_type=task_type,
+        display_name=display_name,
+        description=description,
+        provider=provider,
+        model_id=model_id,
+        status=ProfileStatus.ACTIVE,
+        kind=kind,
+        source=ProfileSource.OVERRIDE,
+        tags=tags or [],
+        metadata=metadata or {},
+        created_by=created_by,
+        updated_at=now,
+    )
+    _OVERRIDE_STORE[profile_id] = profile
+    return profile
+
+
+def update_override(
+    profile_id: str,
+    *,
+    status: ProfileStatus | None = None,
+    display_name: str | None = None,
+    description: str | None = None,
+    provider: str | None = None,
+    model_id: str | None = None,
+    kind: ProcessingKind | None = None,
+    tags: list[str] | None = None,
+    metadata: dict[str, object] | None = None,
+) -> ProcessingProfile:
+    """Patch an existing override profile."""
+    existing = _OVERRIDE_STORE.get(profile_id)
+    if existing is None:
+        raise ValueError(f"override profile '{profile_id}' not found")
+    now = datetime.now(timezone.utc)
+    profile = ProcessingProfile(
+        profile_id=existing.profile_id,
+        extension=existing.extension,
+        task_type=existing.task_type,
+        display_name=display_name if display_name is not None else existing.display_name,
+        description=description if description is not None else existing.description,
+        provider=provider if provider is not None else existing.provider,
+        model_id=model_id if model_id is not None else existing.model_id,
+        status=status if status is not None else existing.status,
+        kind=kind if kind is not None else existing.kind,
+        source=ProfileSource.OVERRIDE,
+        tags=tags if tags is not None else existing.tags,
+        metadata=metadata if metadata is not None else existing.metadata,
+        created_by=existing.created_by,
+        updated_at=now,
+    )
+    _OVERRIDE_STORE[profile_id] = profile
+    return profile
+
+
+def delete_override(profile_id: str) -> bool:
+    """Delete an override profile. Returns True if deleted, False if not found."""
+    if profile_id in _OVERRIDE_STORE:
+        del _OVERRIDE_STORE[profile_id]
+        return True
+    return False
+
+
+def clear_overrides() -> None:
+    """Clear all override profiles. Intended for tests."""
+    _OVERRIDE_STORE.clear()
 
 
 def resolve_profile(
@@ -138,10 +242,14 @@ def resolve_profile(
     2. Wildcard match: *.{task_type} from defaults.
     3. Safe fallback: a no-op deterministic profile.
     """
-    if overrides:
-        for profile in overrides:
-            if profile.extension == extension and profile.task_type == task_type:
-                return profile
+    active_overrides = overrides if overrides is not None else list_overrides()
+    for profile in active_overrides:
+        if (
+            profile.extension == extension
+            and profile.task_type == task_type
+            and profile.status != ProfileStatus.DISABLED
+        ):
+            return profile
     wildcard_key = f"*.{task_type.value}.default"
     wildcard = _DEFAULT_MAP.get(wildcard_key)
     if wildcard is not None:
@@ -209,10 +317,11 @@ def build_matrix(
     """
     extensions = get_registered_extensions()
     task_types = get_matrix_task_types()
+    active_overrides = overrides if overrides is not None else list_overrides()
     cells: dict[str, dict[str, object]] = {}
     for ext in extensions:
         for tt in task_types:
-            profile = resolve_profile(ext, tt, overrides=overrides)
+            profile = resolve_profile(ext, tt, overrides=active_overrides)
             is_default = profile.source == ProfileSource.DEFAULT
             provider_available = resolve_provider_availability(profile.provider)
             cells[f"{ext}.{tt.value}"] = {
@@ -241,9 +350,9 @@ def build_api_profile_list(
 ) -> list[dict[str, object]]:
     """Build the API representation of all profiles (defaults + overrides)."""
     profiles: dict[str, ProcessingProfile] = dict(_DEFAULT_MAP)
-    if overrides:
-        for profile in overrides:
-            profiles[profile.profile_id] = profile
+    active_overrides = overrides if overrides is not None else list_overrides()
+    for profile in active_overrides:
+        profiles[profile.profile_id] = profile
 
     result: list[dict[str, object]] = []
     for profile_id in sorted(profiles):
@@ -259,9 +368,15 @@ __all__ = [
     "DEFAULT_PROFILES",
     "build_api_profile_list",
     "build_matrix",
+    "clear_overrides",
+    "create_override",
+    "delete_override",
     "get_default_profiles",
     "get_matrix_task_types",
+    "get_override",
     "get_registered_extensions",
+    "list_overrides",
     "resolve_profile",
     "resolve_provider_availability",
+    "update_override",
 ]
