@@ -93,6 +93,17 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "showFileshareFieldError" in response.text
     assert "root_path must not have trailing whitespace" in response.text
     assert "trailing whitespace" in response.text
+    assert "retrieval-mode" in response.text
+    assert "dense (vector-only)" in response.text
+    assert "hybrid (vector + lexical)" in response.text
+    assert "rerank (dense → reranker)" in response.text
+    assert "hybrid_rerank (hybrid → reranker)" in response.text
+    assert "retrieval-lexical-weight" in response.text
+    assert "retrieval-vector-weight" in response.text
+    assert "retrieval-candidate-k" in response.text
+    assert "retrieval-reranker-provider" in response.text
+    assert "retrieval-reranker-model" in response.text
+    assert "_renderRankStageTrace" in response.text
 
 
 @pytest.mark.anyio

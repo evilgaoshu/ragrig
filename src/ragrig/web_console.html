@@ -1035,10 +1035,31 @@
                 <div class="sub code" id="retrieval-backend-meta">Backend · metric · score semantics</div>
                 <label class="sub" for="retrieval-kb">Knowledge base</label>
                 <select id="retrieval-kb"></select>
+                <label class="sub" for="retrieval-mode">Mode</label>
+                <select id="retrieval-mode">
+                  <option value="dense" selected>dense (vector-only)</option>
+                  <option value="hybrid">hybrid (vector + lexical)</option>
+                  <option value="rerank">rerank (dense → reranker)</option>
+                  <option value="hybrid_rerank">hybrid_rerank (hybrid → reranker)</option>
+                </select>
+                <div id="retrieval-hybrid-opts" style="display:none">
+                  <label class="sub" for="retrieval-lexical-weight">Lexical Weight</label>
+                  <input id="retrieval-lexical-weight" type="number" value="0.3" min="0" max="1" step="0.05">
+                  <label class="sub" for="retrieval-vector-weight">Vector Weight</label>
+                  <input id="retrieval-vector-weight" type="number" value="0.7" min="0" max="1" step="0.05">
+                </div>
+                <div id="retrieval-rerank-opts" style="display:none">
+                  <label class="sub" for="retrieval-candidate-k">Candidate K (for rerank)</label>
+                  <input id="retrieval-candidate-k" type="number" value="20" min="1" max="200">
+                  <label class="sub" for="retrieval-reranker-provider">Reranker Provider (optional)</label>
+                  <input id="retrieval-reranker-provider" type="text" placeholder="reranker.bge">
+                  <label class="sub" for="retrieval-reranker-model">Reranker Model (optional)</label>
+                  <input id="retrieval-reranker-model" type="text" placeholder="BAAI/bge-reranker-base">
+                </div>
                 <label class="sub" for="retrieval-query">Query</label>
                 <textarea id="retrieval-query" rows="4">RAGRig Guide</textarea>
                 <label class="sub" for="retrieval-top-k">Top K</label>
-                <input id="retrieval-top-k" type="number" value="3" min="1" max="10">
+                <input id="retrieval-top-k" type="number" value="3" min="1" max="50">
                 <div class="actions"><button class="button primary" id="run-retrieval" type="button">Run Retrieval</button></div>
                 <div id="retrieval-results"></div>
               </div>
@@ -2660,11 +2681,25 @@
       }
 
       function buildRetrievalRequest() {
-        return {
+        const mode = document.getElementById('retrieval-mode').value;
+        const req = {
           knowledge_base: document.getElementById('retrieval-kb').value,
           query: document.getElementById('retrieval-query').value,
           top_k: Number(document.getElementById('retrieval-top-k').value || 3),
+          mode: mode,
         };
+        if (mode === 'hybrid' || mode === 'hybrid_rerank') {
+          req.lexical_weight = Number(document.getElementById('retrieval-lexical-weight').value || 0.3);
+          req.vector_weight = Number(document.getElementById('retrieval-vector-weight').value || 0.7);
+        }
+        if (mode === 'rerank' || mode === 'hybrid_rerank') {
+          req.candidate_k = Number(document.getElementById('retrieval-candidate-k').value || 20);
+          const rrp = document.getElementById('retrieval-reranker-provider').value.trim();
+          const rrm = document.getElementById('retrieval-reranker-model').value.trim();
+          if (rrp) req.reranker_provider = rrp;
+          if (rrm) req.reranker_model = rrm;
+        }
+        return req;
       }
 
       function renderRetrievalControls() {
@@ -2681,6 +2716,29 @@
         select.innerHTML = state.knowledgeBases.map((item) => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`).join('');
       }
 
+      function _renderRankStageTrace(trace) {
+        if (!trace || !trace.stages) return '';
+        return trace.stages.map((s) => {
+          let label = `<span class="pill neutral" style="font-size:10px">${escapeHtml(s.stage)}</span>`;
+          if (s.stage === 'vector') {
+            label += ` score=${typeof s.score === 'number' ? s.score.toFixed(4) : s.score}`;
+            if (s.distance !== undefined) label += ` dist=${typeof s.distance === 'number' ? s.distance.toFixed(4) : s.distance}`;
+          } else if (s.stage === 'lexical') {
+            label += ` score=${typeof s.score === 'number' ? s.score.toFixed(4) : s.score}`;
+            label += ` method=${escapeHtml(s.method || '')}`;
+          } else if (s.stage === 'rerank') {
+            if (s.status === 'degraded') {
+              label += ` <span class="pill warn" style="font-size:10px">degraded</span>`;
+              label += ` ${escapeHtml(s.reason || '')}`;
+            } else {
+              label += ` score=${typeof s.score === 'number' ? s.score.toFixed(4) : s.score}`;
+              label += ` orig_rank=${s.original_rank}→${s.new_rank}`;
+            }
+          }
+          return `<div style="margin-left:12px;font-size:11px;opacity:0.85">${label}</div>`;
+        }).join('');
+      }
+
       async function runRetrieval() {
         const resultRoot = document.getElementById('retrieval-results');
         const requestBody = buildRetrievalRequest();
@@ -2691,15 +2749,20 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(requestBody),
           });
-          if (!result.results.length) {
+          if (!result.results || !result.results.length) {
             resultRoot.innerHTML = empty('Retrieval returned zero results. This is a real API response.');
             return;
           }
-          resultRoot.innerHTML = result.results.map((item) => `
+          var degradedBanner = '';
+          if (result.degraded) {
+            degradedBanner = `<div class="empty" style="color:var(--warn);margin-bottom:8px">⚠ Degraded: ${escapeHtml(result.degraded_reason || 'reranker unavailable')}</div>`;
+          }
+          resultRoot.innerHTML = degradedBanner + result.results.map((item) => `
             <div class="result">
               <div class="name">${escapeHtml(item.document_uri)}</div>
               <div class="sub">chunk ${item.chunk_index} · score ${item.score} · distance ${item.distance}</div>
               <div class="sub">${escapeHtml(item.text_preview)}</div>
+              <div class="sub" style="margin-top:4px">${_renderRankStageTrace(item.rank_stage_trace)}</div>
             </div>
           `).join('');
         } catch (error) {
@@ -3134,6 +3197,13 @@
         }
 
         document.getElementById('run-retrieval').addEventListener('click', runRetrieval);
+        document.getElementById('retrieval-mode').addEventListener('change', function() {
+          const mode = this.value;
+          document.getElementById('retrieval-hybrid-opts').style.display =
+            (mode === 'hybrid' || mode === 'hybrid_rerank') ? '' : 'none';
+          document.getElementById('retrieval-rerank-opts').style.display =
+            (mode === 'rerank' || mode === 'hybrid_rerank') ? '' : 'none';
+        });
         document.getElementById('copy-retrieval-request').addEventListener('click', async () => {
           const payload = JSON.stringify(buildRetrievalRequest(), null, 2);
           await navigator.clipboard.writeText(payload);
