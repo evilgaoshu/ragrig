@@ -562,6 +562,70 @@
         color: var(--muted);
       }
 
+      .profile-matrix-cell .cell-meta {
+        font-size: 10px;
+        color: var(--muted);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        align-items: center;
+      }
+
+      .cell-meta .meta-tag {
+        background: #f0f0ed;
+        padding: 1px 4px;
+        border-radius: 2px;
+        white-space: nowrap;
+      }
+
+      .cell-meta .meta-tag.deleted {
+        background: #ffebee;
+        color: #c62828;
+      }
+
+      .cell-meta .meta-tag.disabled {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      /* Audit Log panel */
+      .audit-log-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      .audit-log-table th,
+      .audit-log-table td {
+        padding: 6px 10px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .audit-log-table th {
+        background: #f5f7f4;
+        font-weight: 800;
+        font-size: 11px;
+        text-transform: uppercase;
+        color: var(--muted);
+        position: sticky;
+        top: 0;
+      }
+
+      .audit-log-table td.audit-state {
+        max-width: 300px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-family: "SFMono-Regular", "Cascadia Code", monospace;
+        font-size: 10px;
+      }
+
+      .audit-action-create { color: #1b6e3a; font-weight: 700; }
+      .audit-action-update { color: #1565c0; font-weight: 700; }
+      .audit-action-delete { color: #c62828; font-weight: 700; }
+
       .upload-drop-zone {
         padding: 24px;
         border: 2px dashed #c7cdbf;
@@ -887,6 +951,43 @@
                   </table>
                 </div>
                 <div id="profile-matrix-empty" class="empty" style="display:none;">No processing profiles registered.</div>
+              </div>
+            </section>
+
+            <section class="panel" id="audit-log-panel">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">Audit Log</div>
+                  <div class="panel-meta">Override change history · sensitive fields redacted</div>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="actions" style="margin-bottom:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                  <label class="sub" style="font-size:12px;">Show last</label>
+                  <select id="audit-log-limit" class="fileshare-input" style="width:80px;">
+                    <option value="10">10</option>
+                    <option value="25" selected>25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                  <button class="button" id="audit-log-refresh" type="button">Refresh</button>
+                </div>
+                <div style="overflow-x:auto;">
+                  <table class="audit-log-table" id="audit-log-table">
+                    <thead>
+                      <tr>
+                        <th>Timestamp</th>
+                        <th>Profile ID</th>
+                        <th>Action</th>
+                        <th>Actor</th>
+                        <th>Old State</th>
+                        <th>New State</th>
+                      </tr>
+                    </thead>
+                    <tbody id="audit-log-body"></tbody>
+                  </table>
+                </div>
+                <div id="audit-log-empty" class="empty" style="display:none;">No audit log entries yet.</div>
               </div>
             </section>
 
@@ -1384,6 +1485,25 @@
               kindLabel = '⚠ unavail';
             }
             var sourceLabel = cell.is_default ? 'default' : 'override';
+            var metaHtml = '';
+            if (!cell.is_default) {
+              metaHtml = '<div class="cell-meta">' +
+                '<span class="cell-source">' + sourceLabel + '</span>';
+              if (cell.status === 'disabled') {
+                metaHtml += '<span class="meta-tag disabled">disabled</span>';
+              }
+              if (cell.created_by) {
+                metaHtml += '<span class="meta-tag" title="created by">by ' + escapeHtml(cell.created_by) + '</span>';
+              }
+              if (cell.updated_at) {
+                var updatedDate = new Date(cell.updated_at);
+                var updatedStr = updatedDate.toLocaleString();
+                metaHtml += '<span class="meta-tag" title="' + escapeHtml(cell.updated_at) + '">' + escapeHtml(updatedStr) + '</span>';
+              }
+              metaHtml += '</div>';
+            } else {
+              metaHtml = '<span class="cell-source">' + sourceLabel + '</span>';
+            }
             var actions = '';
             if (!cell.is_default) {
               var statusAction = cell.status === 'disabled' ? 'Enable' : 'Disable';
@@ -1396,7 +1516,7 @@
               '<div class="profile-matrix-cell">' +
                 '<span class="cell-name">' + escapeHtml(cell.display_name || cell.profile_id) + '</span>' +
                 '<span class="cell-kind ' + kindClass + '">' + kindLabel + '</span>' +
-                '<span class="cell-source">' + sourceLabel + (cell.status === 'disabled' ? ' · disabled' : '') + '</span>' +
+                metaHtml +
                 actions +
               '</div>' +
               '</td>';
@@ -2236,6 +2356,38 @@
         }
       }
 
+      async function renderAuditLog() {
+        var limit = parseInt(document.getElementById('audit-log-limit').value, 10) || 25;
+        var body = document.getElementById('audit-log-body');
+        var empty = document.getElementById('audit-log-empty');
+        try {
+          var response = await fetch('/processing-profiles/audit-log?limit=' + limit);
+          var data = await response.json();
+          if (!data.entries || data.entries.length === 0) {
+            empty.style.display = 'block';
+            body.innerHTML = '';
+            return;
+          }
+          empty.style.display = 'none';
+          body.innerHTML = data.entries.map(function(entry) {
+            var actionClass = 'audit-action-' + entry.action;
+            var oldStateStr = entry.old_state ? JSON.stringify(entry.old_state) : '—';
+            var newStateStr = entry.new_state ? JSON.stringify(entry.new_state) : '—';
+            return '<tr>' +
+              '<td>' + escapeHtml(entry.timestamp || '') + '</td>' +
+              '<td>' + escapeHtml(entry.profile_id) + '</td>' +
+              '<td><span class="' + actionClass + '">' + escapeHtml(entry.action) + '</span></td>' +
+              '<td>' + escapeHtml(entry.actor || '—') + '</td>' +
+              '<td class="audit-state" title="' + escapeHtml(oldStateStr) + '">' + escapeHtml(oldStateStr.length > 80 ? oldStateStr.substring(0, 80) + '…' : oldStateStr) + '</td>' +
+              '<td class="audit-state" title="' + escapeHtml(newStateStr) + '">' + escapeHtml(newStateStr.length > 80 ? newStateStr.substring(0, 80) + '…' : newStateStr) + '</td>' +
+              '</tr>';
+          }).join('');
+        } catch (error) {
+          empty.style.display = 'block';
+          empty.textContent = 'Failed to load audit log: ' + error.message;
+        }
+      }
+
       async function boot() {
         try {
           await loadInitialData();
@@ -2250,6 +2402,7 @@
           await renderDocumentPreview();
           renderModels();
           await renderProfileMatrix();
+          await renderAuditLog();
           renderPlugins();
           renderFilesharePanel();
           renderWizard();
@@ -2294,6 +2447,8 @@
           if (form) validateSingleFileshareField(form, input);
         }, true);
         document.getElementById('profile-create-btn').addEventListener('click', () => showProfileCreateForm(true));
+        document.getElementById('audit-log-refresh').addEventListener('click', () => renderAuditLog());
+        document.getElementById('audit-log-limit').addEventListener('change', () => renderAuditLog());
         document.getElementById('profile-create-cancel').addEventListener('click', () => showProfileCreateForm(false));
         document.getElementById('profile-create-submit').addEventListener('click', submitProfileCreate);
         document.getElementById('profile-matrix-body').addEventListener('click', (event) => {

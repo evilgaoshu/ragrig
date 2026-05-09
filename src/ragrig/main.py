@@ -725,16 +725,23 @@ def create_app(
         }
 
     @app.get("/processing-profiles", response_model=None)
-    def processing_profiles() -> dict[str, list[dict[str, Any]]]:
-        return {"profiles": build_api_profile_list()}
+    def processing_profiles(
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, list[dict[str, Any]]]:
+        return {"profiles": build_api_profile_list(session=session)}
 
     @app.get("/processing-profiles/overrides", response_model=None)
-    def processing_profile_overrides() -> dict[str, list[dict[str, Any]]]:
-        return {"overrides": [p.to_api_dict() for p in list_overrides()]}
+    def processing_profile_overrides(
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, list[dict[str, Any]]]:
+        return {"overrides": [p.to_api_dict() for p in list_overrides(session=session)]}
 
     @app.get("/processing-profiles/overrides/{profile_id}", response_model=None)
-    def processing_profile_override_detail(profile_id: str) -> dict[str, Any] | JSONResponse:
-        profile = get_override(profile_id)
+    def processing_profile_override_detail(
+        profile_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        profile = get_override(profile_id, session=session)
         if profile is None:
             return JSONResponse(status_code=404, content={"error": "override_not_found"})
         entry = profile.to_api_dict()
@@ -744,6 +751,7 @@ def create_app(
     @app.post("/processing-profiles", response_model=None)
     def create_processing_profile(
         request: CreateProcessingProfileRequest,
+        session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, Any] | JSONResponse:
         from ragrig.processing_profile.models import ProcessingKind
 
@@ -763,7 +771,9 @@ def create_app(
                 tags=request.tags,
                 metadata=request.metadata,
                 created_by=request.created_by,
+                session=session,
             )
+            session.commit()
         except ValueError as exc:
             return JSONResponse(status_code=409, content={"error": str(exc)})
         entry = profile.to_api_dict()
@@ -774,10 +784,11 @@ def create_app(
     def patch_processing_profile(
         profile_id: str,
         request: PatchProcessingProfileRequest,
+        session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, Any] | JSONResponse:
         from ragrig.processing_profile.models import ProcessingKind
 
-        if get_override(profile_id) is None:
+        if get_override(profile_id, session=session) is None:
             return JSONResponse(status_code=404, content={"error": "override_not_found"})
         kind = None
         if request.kind is not None:
@@ -797,7 +808,9 @@ def create_app(
                 kind=kind,
                 tags=request.tags,
                 metadata=request.metadata,
+                session=session,
             )
+            session.commit()
         except ValueError as exc:
             return JSONResponse(status_code=404, content={"error": str(exc)})
         entry = profile.to_api_dict()
@@ -805,15 +818,33 @@ def create_app(
         return entry
 
     @app.delete("/processing-profiles/overrides/{profile_id}", response_model=None)
-    def delete_processing_profile(profile_id: str) -> Response | JSONResponse:
-        deleted = delete_override(profile_id)
+    def delete_processing_profile(
+        profile_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> Response | JSONResponse:
+        deleted = delete_override(profile_id, session=session)
         if not deleted:
             return JSONResponse(status_code=404, content={"error": "override_not_found"})
+        session.commit()
         return Response(status_code=204)
 
     @app.get("/processing-profiles/matrix", response_model=None)
-    def processing_profiles_matrix() -> dict[str, Any]:
-        return build_matrix()
+    def processing_profiles_matrix(
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any]:
+        return build_matrix(session=session)
+
+    @app.get("/processing-profiles/audit-log", response_model=None)
+    def processing_profile_audit_log(
+        session: Annotated[Session, Depends(get_session)],
+        limit: int = 50,
+        profile_id: str | None = None,
+        action: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        from ragrig.repositories.processing_profile import list_audit_log as _db_audit
+
+        entries = _db_audit(session, limit=limit, profile_id=profile_id, action=action)
+        return {"entries": entries}
 
     return app
 

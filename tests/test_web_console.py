@@ -1616,3 +1616,387 @@ async def test_understanding_result_traceability(tmp_path) -> None:
         assert get_resp.status_code == 200
         assert len(get_resp.json().get("input_hash", "")) == 64
         assert get_resp.json()["profile_id"] == "*.understand.default"
+
+
+# ── Processing Profile Persistence & Audit Tests ──
+
+
+@pytest.mark.anyio
+async def test_audit_log_endpoint_returns_recent_entries(tmp_path) -> None:
+    database_path = tmp_path / "web-console-audit-log.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Create an override
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.audit-test",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "Audit Test Override",
+                "description": "Testing audit log.",
+                "provider": "deterministic-local",
+                "created_by": "test-user",
+            },
+        )
+        # Patch it
+        await client.patch(
+            "/processing-profiles/overrides/pdf.chunk.audit-test",
+            json={"display_name": "Audit Test Updated"},
+        )
+        # Delete it
+        await client.delete("/processing-profiles/overrides/pdf.chunk.audit-test")
+
+        # Query audit log
+        audit_resp = await client.get("/processing-profiles/audit-log?limit=10")
+
+    assert audit_resp.status_code == 200
+    entries = audit_resp.json()["entries"]
+    # Should have at least 3 entries: create, update, delete
+    assert len(entries) >= 3
+
+    actions = [e["action"] for e in entries]
+    assert "create" in actions
+    assert "update" in actions
+    assert "delete" in actions
+
+    profile_ids = {e["profile_id"] for e in entries}
+    assert "pdf.chunk.audit-test" in profile_ids
+
+    # Create entry should have an actor
+    create_entry = next(e for e in entries if e["action"] == "create")
+    assert create_entry["actor"] == "test-user"
+    assert create_entry["new_state"] is not None
+    assert create_entry["old_state"] is None
+
+    # Update entry should have old_state and new_state
+    update_entry = next(e for e in entries if e["action"] == "update")
+    assert update_entry["old_state"] is not None
+    assert update_entry["new_state"] is not None
+
+    # All entries must have a timestamp
+    for entry in entries:
+        assert entry["timestamp"] is not None
+
+
+@pytest.mark.anyio
+async def test_audit_log_sanitizes_secrets(tmp_path) -> None:
+    database_path = tmp_path / "web-console-audit-secrets.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.secret-test",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "Secret Test",
+                "description": "Testing secret redaction.",
+                "provider": "deterministic-local",
+                "metadata": {
+                    "api_key": "sk-12345-secret",
+                    "password": "my-password",
+                    "normal_field": "visible-value",
+                },
+            },
+        )
+        audit_resp = await client.get("/processing-profiles/audit-log?limit=5")
+
+    assert audit_resp.status_code == 200
+    entries = audit_resp.json()["entries"]
+    assert len(entries) >= 1
+
+    new_state_str = str(entries[0]["new_state"])
+    # Secrets must be redacted
+    assert "sk-12345-secret" not in new_state_str
+    assert "my-password" not in new_state_str
+    assert "[REDACTED]" in new_state_str
+    # Normal fields must be visible
+    assert "visible-value" in new_state_str
+
+
+@pytest.mark.anyio
+async def test_unique_constraint_extension_task_type_conflict(tmp_path) -> None:
+    database_path = tmp_path / "web-console-unique-constraint.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # First create should succeed
+        first = await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.v1",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk v1",
+                "description": "First override.",
+                "provider": "deterministic-local",
+            },
+        )
+        assert first.status_code == 200
+
+        # Second create with same extension/task_type should return 409
+        second = await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.v2",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk v2",
+                "description": "Conflicting override.",
+                "provider": "model.ollama",
+            },
+        )
+        assert second.status_code == 409
+        assert "already exists" in second.json()["error"]
+
+        # But a different extension/task_type combo should work
+        third = await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.summarize.v1",
+                "extension": ".pdf",
+                "task_type": "summarize",
+                "display_name": "PDF Summarize",
+                "description": "Different task type.",
+                "provider": "model.ollama",
+                "kind": "LLM-assisted",
+            },
+        )
+        assert third.status_code == 200
+
+        # After disabling the first, creating another for same ext/task should succeed
+        await client.patch(
+            "/processing-profiles/overrides/pdf.chunk.v1",
+            json={"status": "disabled"},
+        )
+        fourth = await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.v3",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk v3",
+                "description": "After disabling v1.",
+                "provider": "model.ollama",
+            },
+        )
+        assert fourth.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_persistence_survives_reinitialization(tmp_path) -> None:
+    """Verify that overrides persist across app restarts (new create_app call)."""
+    database_path = tmp_path / "web-console-persistence.db"
+
+    # App instance 1: create override
+    session_factory_1 = _create_file_session_factory(database_path)
+    app1 = create_app(check_database=lambda: None, session_factory=session_factory_1)
+    transport1 = httpx.ASGITransport(app=app1)
+
+    async with httpx.AsyncClient(transport=transport1, base_url="http://testserver") as client1:
+        create_resp = await client1.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.persist",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "Persisted Override",
+                "description": "Must survive restart.",
+                "provider": "deterministic-local",
+                "created_by": "persist-test",
+            },
+        )
+        assert create_resp.status_code == 200
+
+    # App instance 2: reinitialize with new session_factory (same DB file)
+    session_factory_2 = _create_file_session_factory(database_path)
+    app2 = create_app(check_database=lambda: None, session_factory=session_factory_2)
+    transport2 = httpx.ASGITransport(app=app2)
+
+    async with httpx.AsyncClient(transport=transport2, base_url="http://testserver") as client2:
+        matrix_resp = await client2.get("/processing-profiles/matrix")
+
+    assert matrix_resp.status_code == 200
+    cell = matrix_resp.json()["cells"][".pdf.chunk"]
+    assert cell["source"] == "override"
+    assert cell["profile_id"] == "pdf.chunk.persist"
+    assert cell["created_by"] == "persist-test"
+    assert cell["updated_at"] is not None
+
+
+@pytest.mark.anyio
+async def test_audit_log_filter_by_profile_id(tmp_path) -> None:
+    database_path = tmp_path / "web-console-audit-filter.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "profile.a.test",
+                "extension": ".md",
+                "task_type": "correct",
+                "display_name": "Profile A",
+                "description": "First profile.",
+                "provider": "deterministic-local",
+            },
+        )
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "profile.b.test",
+                "extension": ".txt",
+                "task_type": "correct",
+                "display_name": "Profile B",
+                "description": "Second profile.",
+                "provider": "deterministic-local",
+            },
+        )
+
+        # Filter by profile A
+        filter_a = await client.get(
+            "/processing-profiles/audit-log?limit=50&profile_id=profile.a.test"
+        )
+        # Filter by profile B
+        filter_b = await client.get(
+            "/processing-profiles/audit-log?limit=50&profile_id=profile.b.test"
+        )
+
+    assert filter_a.status_code == 200
+    assert filter_b.status_code == 200
+
+    a_entries = filter_a.json()["entries"]
+    b_entries = filter_b.json()["entries"]
+
+    assert len(a_entries) >= 1
+    assert len(b_entries) >= 1
+    for e in a_entries:
+        assert e["profile_id"] == "profile.a.test"
+    for e in b_entries:
+        assert e["profile_id"] == "profile.b.test"
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_audit_log_panel(tmp_path) -> None:
+    database_path = tmp_path / "web-console-audit-panel.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Audit Log" in html
+    assert "audit-log-panel" in html
+    assert "audit-log-table" in html
+    assert "audit-log-refresh" in html
+    assert "Override change history" in html
+    assert "sensitive fields redacted" in html
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_override_meta(tmp_path) -> None:
+    database_path = tmp_path / "web-console-override-meta.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "cell-meta" in html
+    assert "meta-tag" in html
+    assert "renderAuditLog" in html
+
+
+@pytest.mark.anyio
+async def test_audit_log_limit_parameter(tmp_path) -> None:
+    database_path = tmp_path / "web-console-audit-limit.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Create several overrides to populate audit log
+        for i in range(5):
+            await client.post(
+                "/processing-profiles",
+                json={
+                    "profile_id": f"limit.test.{i}",
+                    "extension": ".txt",
+                    "task_type": "correct" if i % 2 == 0 else "clean",
+                    "display_name": f"Limit Test {i}",
+                    "description": f"Entry {i}.",
+                    "provider": "deterministic-local",
+                },
+            )
+            # Delete previous ones to create more audit entries
+            if i > 0:
+                await client.delete(f"/processing-profiles/overrides/limit.test.{i - 1}")
+
+        resp_3 = await client.get("/processing-profiles/audit-log?limit=3")
+        resp_10 = await client.get("/processing-profiles/audit-log?limit=10")
+
+    assert resp_3.status_code == 200
+    assert resp_10.status_code == 200
+    assert len(resp_3.json()["entries"]) == 3
+    assert len(resp_10.json()["entries"]) >= 5  # at least create+delete for each
+
+
+@pytest.mark.anyio
+async def test_audit_log_actions_contain_required_fields(tmp_path) -> None:
+    database_path = tmp_path / "web-console-audit-fields.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "fields.test",
+                "extension": ".txt",
+                "task_type": "correct",
+                "display_name": "Fields Test",
+                "description": "Testing required fields.",
+                "provider": "deterministic-local",
+                "created_by": "fields-actor",
+            },
+        )
+        await client.patch(
+            "/processing-profiles/overrides/fields.test",
+            json={"status": "disabled"},
+        )
+        await client.delete("/processing-profiles/overrides/fields.test")
+
+        audit_resp = await client.get("/processing-profiles/audit-log?limit=10")
+
+    assert audit_resp.status_code == 200
+    entries = audit_resp.json()["entries"]
+    assert len(entries) >= 3
+
+    for entry in entries:
+        assert "id" in entry
+        assert "profile_id" in entry
+        assert "action" in entry
+        assert "actor" in entry
+        assert "timestamp" in entry
+        # old_state and new_state are present (may be null for create)
+        assert "old_state" in entry
+        assert "new_state" in entry
+        assert entry["action"] in ("create", "update", "delete")
