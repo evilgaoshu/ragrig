@@ -118,6 +118,23 @@ class PatchProcessingProfileRequest(BaseModel):
     metadata: dict[str, object] | None = None
 
 
+class DiffPreviewRequest(BaseModel):
+    profile_id: str
+    status: ProfileStatus | None = None
+    display_name: str | None = None
+    description: str | None = None
+    provider: str | None = None
+    model_id: str | None = None
+    kind: str | None = None
+    tags: list[str] | None = None
+    metadata: dict[str, object] | None = None
+
+
+class RollbackRequest(BaseModel):
+    audit_id: str
+    actor: str | None = None
+
+
 def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
     return {
         "error": {
@@ -1007,11 +1024,98 @@ def create_app(
         limit: int = 50,
         profile_id: str | None = None,
         action: str | None = None,
+        provider: str | None = None,
+        task_type: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         from ragrig.repositories.processing_profile import list_audit_log as _db_audit
 
-        entries = _db_audit(session, limit=limit, profile_id=profile_id, action=action)
+        entries = _db_audit(
+            session,
+            limit=limit,
+            profile_id=profile_id,
+            action=action,
+            provider=provider,
+            task_type=task_type,
+        )
         return {"entries": entries}
+
+    @app.get("/processing-profiles/audit-log/{audit_id}", response_model=None)
+    def processing_profile_audit_entry(
+        audit_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        from ragrig.repositories.processing_profile import get_audit_entry_by_id as _db_get_audit
+
+        entry = _db_get_audit(session, audit_id)
+        if entry is None:
+            return JSONResponse(status_code=404, content={"error": "audit_entry_not_found"})
+        return {
+            "id": str(entry.id),
+            "profile_id": entry.profile_id,
+            "action": entry.action,
+            "actor": entry.actor,
+            "timestamp": entry.timestamp.isoformat() if entry.timestamp else None,
+            "old_state": entry.old_state,
+            "new_state": entry.new_state,
+        }
+
+    @app.post("/processing-profiles/preview-diff", response_model=None)
+    def processing_profile_preview_diff(
+        request: DiffPreviewRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        from ragrig.repositories.processing_profile import compute_diff as _db_diff
+
+        metadata_json = (
+            {str(k): v for k, v in (request.metadata or {}).items()}
+            if request.metadata is not None
+            else None
+        )
+
+        diff = _db_diff(
+            session,
+            profile_id=request.profile_id,
+            status=request.status.value if request.status else None,
+            display_name=request.display_name,
+            description=request.description,
+            provider=request.provider,
+            model_id=request.model_id,
+            kind=request.kind,
+            tags=request.tags,
+            metadata_json=metadata_json,
+        )
+        if diff is None:
+            return JSONResponse(status_code=404, content={"error": "override_not_found"})
+        return diff
+
+    @app.post("/processing-profiles/rollback", response_model=None)
+    def processing_profile_rollback(
+        request: RollbackRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        from ragrig.processing_profile import resolve_provider_availability
+        from ragrig.processing_profile.registry import _db_override_to_dataclass
+        from ragrig.repositories.processing_profile import (
+            rollback_override as _db_rollback,
+        )
+
+        try:
+            override = _db_rollback(
+                session,
+                audit_id=request.audit_id,
+                actor=request.actor,
+            )
+            session.commit()
+        except ValueError as exc:
+            msg = str(exc)
+            if "not found" in msg:
+                return JSONResponse(status_code=404, content={"error": msg})
+            return JSONResponse(status_code=409, content={"error": msg})
+
+        profile = _db_override_to_dataclass(override)
+        entry = profile.to_api_dict()
+        entry["provider_available"] = resolve_provider_availability(profile.provider)
+        return entry
 
     return app
 

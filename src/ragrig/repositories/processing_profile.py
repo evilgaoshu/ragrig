@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -268,6 +269,190 @@ def delete_override_in_db(
     return True
 
 
+def get_audit_entry_by_id(session: Session, audit_id: str) -> ProcessingProfileAuditLog | None:
+    """Fetch a single audit log entry by its UUID."""
+    try:
+        entry_uuid = uuid.UUID(audit_id)
+    except (ValueError, AttributeError):
+        return None
+    return session.scalar(
+        select(ProcessingProfileAuditLog).where(ProcessingProfileAuditLog.id == entry_uuid)
+    )
+
+
+def compute_diff(
+    session: Session,
+    *,
+    profile_id: str,
+    status: str | None = None,
+    display_name: str | None = None,
+    description: str | None = None,
+    provider: str | None = None,
+    model_id: str | None = None,
+    kind: str | None = None,
+    tags: list[str] | None = None,
+    metadata_json: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Compute a diff between the current override state and proposed changes.
+
+    Returns a dict with old_state (sanitized), new_state (sanitized), and changed_paths.
+    Returns None if the override is not found.
+    """
+    override = get_override_by_id(session, profile_id)
+    if override is None:
+        return None
+
+    old_state = _override_to_state(override)
+
+    new_state = dict(old_state)
+    if status is not None:
+        new_state["status"] = status
+    if display_name is not None:
+        new_state["display_name"] = display_name
+    if description is not None:
+        new_state["description"] = description
+    if provider is not None:
+        new_state["provider"] = provider
+    if model_id is not None:
+        new_state["model_id"] = model_id
+    if kind is not None:
+        new_state["kind"] = kind
+    if tags is not None:
+        new_state["tags"] = tags
+    if metadata_json is not None:
+        new_state["metadata_json"] = metadata_json
+
+    changed_paths = _compute_changed_paths(old_state, new_state)
+
+    return {
+        "old": _sanitize_state(old_state),
+        "new": _sanitize_state(new_state),
+        "changed_paths": changed_paths,
+    }
+
+
+def _compute_changed_paths(old_state: dict[str, Any], new_state: dict[str, Any]) -> list[str]:
+    """Compute the list of top-level keys that differ between old and new state.
+
+    Order is stable: sorted alphabetically.
+    """
+    changed: list[str] = []
+    all_keys = sorted(set(old_state.keys()) | set(new_state.keys()))
+    for key in all_keys:
+        old_val = old_state.get(key)
+        new_val = new_state.get(key)
+        if isinstance(old_val, list) and isinstance(new_val, list):
+            if sorted(old_val) != sorted(new_val):
+                changed.append(key)
+        elif old_val != new_val:
+            changed.append(key)
+    return changed
+
+
+def rollback_override(
+    session: Session,
+    *,
+    audit_id: str,
+    actor: str | None = None,
+) -> ProcessingProfileOverride:
+    """Rollback an override to the state recorded in an audit log entry.
+
+    Returns the updated override.
+    Raises ValueError for: audit entry not found, profile deleted, profile disabled,
+    or the audit entry has no usable state.
+    """
+    audit_entry = get_audit_entry_by_id(session, audit_id)
+    if audit_entry is None:
+        raise ValueError(f"audit entry '{audit_id}' not found")
+
+    override = session.scalar(
+        select(ProcessingProfileOverride).where(
+            ProcessingProfileOverride.profile_id == audit_entry.profile_id
+        )
+    )
+    if override is None:
+        raise ValueError(
+            f"target override profile '{audit_entry.profile_id}' not found "
+            f"(may have been hard-deleted)"
+        )
+
+    if override.deleted_at is not None:
+        raise ValueError(f"target override profile '{audit_entry.profile_id}' is deleted")
+
+    if override.status == "disabled":
+        raise ValueError(
+            f"target override profile '{audit_entry.profile_id}' is disabled; "
+            f"re-enable it before rollback"
+        )
+
+    old_state_for_audit = _override_to_state(override)
+
+    rollback_state = audit_entry.old_state or audit_entry.new_state
+    if rollback_state is None:
+        raise ValueError(
+            f"audit entry '{audit_id}' has no restorable state "
+            f"(both old_state and new_state are null)"
+        )
+
+    rollback_state = {k: v for k, v in rollback_state.items() if k != "profile_id"}
+
+    if "display_name" in rollback_state:
+        override.display_name = rollback_state["display_name"]
+    if "description" in rollback_state:
+        override.description = rollback_state["description"]
+    if "provider" in rollback_state:
+        override.provider = rollback_state["provider"]
+    if "model_id" in rollback_state:
+        override.model_id = rollback_state["model_id"]
+    if "status" in rollback_state:
+        override.status = rollback_state["status"]
+    if "kind" in rollback_state:
+        override.kind = rollback_state["kind"]
+    if "tags" in rollback_state:
+        override.tags = rollback_state["tags"]
+    if "metadata_json" in rollback_state:
+        override.metadata_json = rollback_state["metadata_json"]
+
+    session.flush()
+
+    _write_rollback_audit_log(
+        session,
+        profile_id=override.profile_id,
+        actor=actor,
+        old_state=old_state_for_audit,
+        new_state=_override_to_state(override),
+        source_audit_id=audit_id,
+    )
+
+    return override
+
+
+def _write_rollback_audit_log(
+    session: Session,
+    *,
+    profile_id: str,
+    actor: str | None,
+    old_state: dict[str, Any],
+    new_state: dict[str, Any],
+    source_audit_id: str,
+) -> None:
+    entry = ProcessingProfileAuditLog(
+        profile_id=profile_id,
+        action="rollback",
+        actor=actor,
+        timestamp=datetime.now(timezone.utc),
+        old_state=_sanitize_state(old_state),
+        new_state=_sanitize_state(new_state),
+    )
+    # Store source_audit_id in a generic metadata-like field.
+    # The audit log table has no dedicated source_audit_id column,
+    # so we embed it as a key in new_state.
+    if entry.new_state is not None:
+        entry.new_state["source_audit_id"] = source_audit_id
+    session.add(entry)
+    session.flush()
+
+
 def list_audit_log(
     session: Session,
     *,
@@ -275,6 +460,7 @@ def list_audit_log(
     profile_id: str | None = None,
     action: str | None = None,
     provider: str | None = None,
+    task_type: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return recent audit log entries, optionally filtered."""
     stmt = select(ProcessingProfileAuditLog).order_by(ProcessingProfileAuditLog.timestamp.desc())
@@ -297,7 +483,10 @@ def list_audit_log(
             "old_state": entry.old_state,
             "new_state": entry.new_state,
         }
-        if provider and item.get("new_state", {}).get("provider") != provider:
+        new_state = item.get("new_state") or {}
+        if provider and new_state.get("provider") != provider:
+            continue
+        if task_type and new_state.get("task_type") != task_type:
             continue
         result.append(item)
 
