@@ -1418,9 +1418,19 @@ def test_list_runs_skips_corrupt_files(tmp_path) -> None:
     """list_runs_from_store skips invalid files."""
     # Create a valid run
     valid_run = EvaluationRun(
-        id="valid-1", created_at=now_iso(), golden_set_name="gs", knowledge_base="kb",
-        provider="p", model="m", dimensions=8, top_k=5, backend="pgvector",
-        distance_metric="cosine", total_questions=1, items=[], metrics=EvaluationMetrics(),
+        id="valid-1",
+        created_at=now_iso(),
+        golden_set_name="gs",
+        knowledge_base="kb",
+        provider="p",
+        model="m",
+        dimensions=8,
+        top_k=5,
+        backend="pgvector",
+        distance_metric="cosine",
+        total_questions=1,
+        items=[],
+        metrics=EvaluationMetrics(),
     )
     from ragrig.evaluation.engine import _persist_run
 
@@ -1440,9 +1450,19 @@ def test_list_runs_respects_limit(tmp_path) -> None:
 
     for i in range(5):
         run = EvaluationRun(
-            id=f"run-{i}", created_at=now_iso(), golden_set_name="gs", knowledge_base="kb",
-            provider="p", model="m", dimensions=8, top_k=5, backend="pgvector",
-            distance_metric="cosine", total_questions=1, items=[], metrics=EvaluationMetrics(),
+            id=f"run-{i}",
+            created_at=now_iso(),
+            golden_set_name="gs",
+            knowledge_base="kb",
+            provider="p",
+            model="m",
+            dimensions=8,
+            top_k=5,
+            backend="pgvector",
+            distance_metric="cosine",
+            total_questions=1,
+            items=[],
+            metrics=EvaluationMetrics(),
         )
         _persist_run(run, tmp_path)
 
@@ -1453,9 +1473,18 @@ def test_list_runs_respects_limit(tmp_path) -> None:
 def test_build_evaluation_run_report_summary_only() -> None:
     """Summary report excludes items."""
     run = EvaluationRun(
-        id="summary-test", created_at=now_iso(), golden_set_name="gs", knowledge_base="kb",
-        provider="p", model="m", dimensions=8, top_k=5, backend="pgvector",
-        distance_metric="cosine", total_questions=2, items=[
+        id="summary-test",
+        created_at=now_iso(),
+        golden_set_name="gs",
+        knowledge_base="kb",
+        provider="p",
+        model="m",
+        dimensions=8,
+        top_k=5,
+        backend="pgvector",
+        distance_metric="cosine",
+        total_questions=2,
+        items=[
             EvaluationRunItem(question_index=0, query="q1"),
         ],
         metrics=EvaluationMetrics(),
@@ -1503,9 +1532,19 @@ def test_persist_run_empty_store_dir(tmp_path) -> None:
     store_dir = tmp_path / "new_store"
     assert not store_dir.exists()
     run = EvaluationRun(
-        id="persist-test", created_at=now_iso(), golden_set_name="gs", knowledge_base="kb",
-        provider="p", model="m", dimensions=8, top_k=5, backend="pgvector",
-        distance_metric="cosine", total_questions=1, items=[], metrics=EvaluationMetrics(),
+        id="persist-test",
+        created_at=now_iso(),
+        golden_set_name="gs",
+        knowledge_base="kb",
+        provider="p",
+        model="m",
+        dimensions=8,
+        top_k=5,
+        backend="pgvector",
+        distance_metric="cosine",
+        total_questions=1,
+        items=[],
+        metrics=EvaluationMetrics(),
     )
     _persist_run(run, store_dir)
     assert store_dir.exists()
