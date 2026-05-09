@@ -2766,3 +2766,199 @@ class TestSanitizationCoverage:
             exported_str = str(exported)
             assert "sk-topsecret" not in exported_str
             assert "extracted_text" not in exported_str
+
+
+class TestBuildExportFilename:
+    """Tests for build_export_filename helper."""
+
+    def test_basic_filename_with_kb_name(self) -> None:
+        from ragrig.understanding.service import build_export_filename
+
+        name = build_export_filename(kb_name="my-kb")
+        assert name.startswith("ragrig-runs-my-kb_")
+        assert name.endswith(".json")
+        # No filter segments when no filters
+        assert "provider_" not in name
+        assert "model_" not in name
+        assert "profile_" not in name
+        assert "status_" not in name
+
+    def test_filename_with_all_filters(self) -> None:
+        from ragrig.understanding.service import build_export_filename
+
+        name = build_export_filename(
+            kb_name="my-kb",
+            provider="openai",
+            model="gpt-4",
+            profile_id="*.understand.default",
+            status="success",
+            started_after="2026-05-01T00:00:00Z",
+            started_before="2026-05-09T00:00:00Z",
+            limit=10,
+        )
+        assert "ragrig-runs-my-kb_" in name
+        assert "provider_openai" in name
+        assert "model_gpt-4" in name
+        # * is an illegal filename character, so it gets replaced with _
+        assert "profile__.understand.default" in name
+        assert "status_success" in name
+        assert "from_2026-05-01" in name
+        assert "to_2026-05-09" in name
+        assert "limit_10" in name
+        assert name.endswith(".json")
+
+    def test_single_run_filename(self) -> None:
+        from ragrig.understanding.service import build_export_filename
+
+        name = build_export_filename(
+            kb_name="test-kb",
+            provider="local",
+            single_run=True,
+        )
+        assert name.startswith("ragrig-run-test-kb_")
+        assert "provider_local" in name
+
+    def test_partial_filters_omit_unset(self) -> None:
+        from ragrig.understanding.service import build_export_filename
+
+        name = build_export_filename(
+            kb_name="kb",
+            provider="p1",
+            status="failed",
+            limit=5,
+        )
+        assert "provider_p1" in name
+        assert "status_failed" in name
+        assert "limit_5" in name
+        # model and profile_id not set, so they should be absent
+        assert "model_" not in name
+        assert "profile_" not in name
+
+    def test_special_characters_replaced(self) -> None:
+        from ragrig.understanding.service import build_export_filename
+
+        name = build_export_filename(
+            kb_name="test/kb",
+            provider="my:provider",
+            model='model"name',
+            profile_id="p<1>",
+            status="ok|done",
+        )
+        # All illegal chars should be replaced
+        assert "/" not in name
+        assert ":" not in name
+        assert '"' not in name
+        assert "<" not in name
+        assert ">" not in name
+        assert "|" not in name
+        # KB name should be sanitized
+        assert "test_kb" in name
+
+    def test_empty_strings_filtered_out(self) -> None:
+        from ragrig.understanding.service import build_export_filename
+
+        # Empty strings should be treated as unset
+        name = build_export_filename(
+            kb_name="kb",
+            provider="",
+            model="",
+            profile_id="",
+            status="",
+        )
+        assert "provider_" not in name
+        assert "model_" not in name
+        assert "profile_" not in name
+        assert "status_" not in name
+
+    def test_only_time_from_filter(self) -> None:
+        from ragrig.understanding.service import build_export_filename
+
+        name = build_export_filename(
+            kb_name="kb",
+            started_after="2026-05-01T00:00:00Z",
+        )
+        assert "from_2026-05-01" in name
+        assert "to_" not in name
+
+        name2 = build_export_filename(
+            kb_name="kb",
+            started_before="2026-05-31T23:59:59Z",
+        )
+        assert "to_2026-05-31" in name2
+        assert "from_" not in name2
+
+    def test_filename_in_export_single_run_response(self, sqlite_session: Session) -> None:
+        from ragrig.db.models import UnderstandingRun
+        from ragrig.understanding.service import (
+            export_understanding_run,
+            understand_all_versions,
+        )
+
+        texts = ["# Doc A\nContent."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="my-provider",
+            profile_id="my-profile",
+        )
+
+        run = sqlite_session.query(UnderstandingRun).first()
+        assert run is not None
+
+        result = export_understanding_run(sqlite_session, str(run.id))
+        assert result is not None
+        assert "_filename" in result
+        filename = result["_filename"]
+        assert isinstance(filename, str)
+        assert "ragrig-run-" in filename
+        assert "provider_my-provider" in filename
+        assert "profile_my-profile" in filename
+
+    def test_filename_in_export_list_response(self, sqlite_session: Session) -> None:
+        from ragrig.understanding.service import (
+            UnderstandingRunFilter,
+            export_understanding_runs,
+            understand_all_versions,
+        )
+
+        texts = ["# Doc A\nContent."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="test-prov",
+            profile_id="test-profile",
+        )
+
+        result = export_understanding_runs(
+            sqlite_session,
+            kb_id,
+            filters=UnderstandingRunFilter(provider="test-prov", status="success", limit=10),
+        )
+        assert result is not None
+        assert "_filename" in result
+        filename = result["_filename"]
+        assert isinstance(filename, str)
+        assert "provider_test-prov" in filename
+        assert "status_success" in filename
+        assert "limit_10" in filename
+
+    def test_unknown_kb_name_defaults(self) -> None:
+        from ragrig.understanding.service import build_export_filename
+
+        name = build_export_filename(kb_name=None)
+        assert name.startswith("ragrig-runs-unknown_")
+
+    def test_filename_safe_component_no_double_dots(self) -> None:
+        from ragrig.understanding.service import _safe_filename_component
+
+        # Dots are not illegal filename characters (except as leading dot on some systems,
+        # which is handled separately). _safe_filename_component only replaces
+        # / \ : * ? " < > |
+        assert _safe_filename_component("..") == ".."
+        assert _safe_filename_component("test..file") == "test..file"
+        assert _safe_filename_component("normal") == "normal"
+        assert _safe_filename_component("") == ""
