@@ -2135,3 +2135,535 @@ async def test_audit_log_actions_contain_required_fields(tmp_path) -> None:
         assert "old_state" in entry
         assert "new_state" in entry
         assert entry["action"] in ("create", "update", "delete")
+
+
+# ── Diff Preview & Rollback Tests ──
+
+
+@pytest.mark.anyio
+async def test_diff_preview_returns_old_new_changed_paths(tmp_path) -> None:
+    database_path = tmp_path / "web-console-diff.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Create an override
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "diff.test.override",
+                "extension": ".txt",
+                "task_type": "correct",
+                "display_name": "Diff Test Original",
+                "description": "Original description.",
+                "provider": "deterministic-local",
+            },
+        )
+        # Preview diff with changes
+        diff_resp = await client.post(
+            "/processing-profiles/preview-diff",
+            json={
+                "profile_id": "diff.test.override",
+                "display_name": "Diff Test Changed",
+                "provider": "model.ollama",
+            },
+        )
+
+    assert diff_resp.status_code == 200
+    payload = diff_resp.json()
+    assert "old" in payload
+    assert "new" in payload
+    assert "changed_paths" in payload
+    assert payload["old"]["display_name"] == "Diff Test Original"
+    assert payload["new"]["display_name"] == "Diff Test Changed"
+    assert payload["old"]["provider"] == "deterministic-local"
+    assert payload["new"]["provider"] == "model.ollama"
+    assert "display_name" in payload["changed_paths"]
+    assert "provider" in payload["changed_paths"]
+    # Unchanged fields should NOT be in changed_paths
+    assert "description" not in payload["changed_paths"]
+
+
+@pytest.mark.anyio
+async def test_diff_preview_no_secrets(tmp_path) -> None:
+    database_path = tmp_path / "web-console-diff-secrets.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "diff.secret.test",
+                "extension": ".txt",
+                "task_type": "correct",
+                "display_name": "Secret Diff Test",
+                "description": "Desc.",
+                "provider": "deterministic-local",
+                "metadata": {"api_key": "sk-top-secret", "normal": "visible"},
+            },
+        )
+        diff_resp = await client.post(
+            "/processing-profiles/preview-diff",
+            json={
+                "profile_id": "diff.secret.test",
+                "display_name": "Changed",
+            },
+        )
+
+    assert diff_resp.status_code == 200
+    payload = diff_resp.json()
+    payload_str = str(payload)
+    assert "sk-top-secret" not in payload_str
+    assert "[REDACTED]" in payload_str
+    assert "visible" in payload_str
+
+
+@pytest.mark.anyio
+async def test_diff_preview_returns_404_for_missing_override(tmp_path) -> None:
+    database_path = tmp_path / "web-console-diff-404.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        diff_resp = await client.post(
+            "/processing-profiles/preview-diff",
+            json={
+                "profile_id": "nonexistent.profile",
+                "display_name": "Changed",
+            },
+        )
+
+    assert diff_resp.status_code == 404
+    assert diff_resp.json()["error"] == "override_not_found"
+
+
+@pytest.mark.anyio
+async def test_diff_preview_changed_paths_stable_order(tmp_path) -> None:
+    database_path = tmp_path / "web-console-diff-order.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "diff.order.test",
+                "extension": ".txt",
+                "task_type": "correct",
+                "display_name": "Order Test",
+                "description": "Desc.",
+                "provider": "deterministic-local",
+            },
+        )
+        # Change multiple fields
+        diff_resp = await client.post(
+            "/processing-profiles/preview-diff",
+            json={
+                "profile_id": "diff.order.test",
+                "status": "disabled",
+                "display_name": "New Name",
+                "provider": "model.ollama",
+            },
+        )
+
+    assert diff_resp.status_code == 200
+    payload = diff_resp.json()
+    changed = payload["changed_paths"]
+    # Must be sorted alphabetically
+    assert changed == sorted(changed)
+    assert len(changed) == 3
+
+
+@pytest.mark.anyio
+async def test_rollback_restores_previous_version(tmp_path) -> None:
+    database_path = tmp_path / "web-console-rollback.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Create
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "rollback.test.override",
+                "extension": ".md",
+                "task_type": "summarize",
+                "display_name": "Rollback Test v1",
+                "description": "Original",
+                "provider": "deterministic-local",
+                "kind": "LLM-assisted",
+            },
+        )
+        # Update (this writes an audit entry with old_state = v1)
+        await client.patch(
+            "/processing-profiles/overrides/rollback.test.override",
+            json={"display_name": "Rollback Test v2"},
+        )
+
+        # Get the update audit entry (which has old_state as v1)
+        audit_resp = await client.get(
+            "/processing-profiles/audit-log?profile_id=rollback.test.override&action=update&limit=1"
+        )
+        update_entry = audit_resp.json()["entries"][0]
+        update_audit_id = update_entry["id"]
+
+        # Rollback to that audit entry
+        rollback_resp = await client.post(
+            "/processing-profiles/rollback",
+            json={"audit_id": update_audit_id, "actor": "rollback-actor"},
+        )
+
+    assert rollback_resp.status_code == 200
+    assert rollback_resp.json()["display_name"] == "Rollback Test v1"
+
+
+@pytest.mark.anyio
+async def test_rollback_writes_audit_log(tmp_path) -> None:
+    database_path = tmp_path / "web-console-rollback-audit.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "rollback.audit.test",
+                "extension": ".md",
+                "task_type": "understand",
+                "display_name": "Pre-Rollback",
+                "description": "Before rollback.",
+                "provider": "deterministic-local",
+                "kind": "LLM-assisted",
+            },
+        )
+        await client.patch(
+            "/processing-profiles/overrides/rollback.audit.test",
+            json={"display_name": "Post-Update"},
+        )
+
+        audit_resp = await client.get(
+            "/processing-profiles/audit-log?profile_id=rollback.audit.test&action=update&limit=1"
+        )
+        update_audit_id = audit_resp.json()["entries"][0]["id"]
+
+        await client.post(
+            "/processing-profiles/rollback",
+            json={"audit_id": update_audit_id, "actor": "rollback-user"},
+        )
+
+        # Check audit log for rollback entry
+        full_audit = await client.get(
+            "/processing-profiles/audit-log?profile_id=rollback.audit.test&limit=10"
+        )
+
+    entries = full_audit.json()["entries"]
+    actions = [e["action"] for e in entries]
+    assert "rollback" in actions
+    rollback_entry = next(e for e in entries if e["action"] == "rollback")
+    assert rollback_entry["actor"] == "rollback-user"
+    assert rollback_entry["timestamp"] is not None
+    assert rollback_entry["new_state"] is not None
+    assert "source_audit_id" in rollback_entry["new_state"]
+    assert rollback_entry["new_state"]["source_audit_id"] == update_audit_id
+
+
+@pytest.mark.anyio
+async def test_rollback_propagates_to_matrix(tmp_path) -> None:
+    database_path = tmp_path / "web-console-rollback-matrix.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "rollback.matrix.test",
+                "extension": ".md",
+                "task_type": "summarize",
+                "display_name": "Matrix v1",
+                "description": "Original matrix override.",
+                "provider": "deterministic-local",
+                "kind": "LLM-assisted",
+            },
+        )
+        await client.patch(
+            "/processing-profiles/overrides/rollback.matrix.test",
+            json={"display_name": "Matrix v2"},
+        )
+
+        audit_resp = await client.get(
+            "/processing-profiles/audit-log?profile_id=rollback.matrix.test&action=update&limit=1"
+        )
+        update_audit_id = audit_resp.json()["entries"][0]["id"]
+
+        await client.post(
+            "/processing-profiles/rollback",
+            json={"audit_id": update_audit_id},
+        )
+
+        matrix_resp = await client.get("/processing-profiles/matrix")
+
+    assert matrix_resp.status_code == 200
+    cell = matrix_resp.json()["cells"][".md.summarize"]
+    assert cell["display_name"] == "Matrix v1"
+    assert cell["source"] == "override"
+
+
+@pytest.mark.anyio
+async def test_rollback_nonexistent_audit_entry_returns_404(tmp_path) -> None:
+    database_path = tmp_path / "web-console-rollback-404.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        resp = await client.post(
+            "/processing-profiles/rollback",
+            json={"audit_id": "00000000-0000-0000-0000-000000000000"},
+        )
+
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["error"].lower()
+
+
+@pytest.mark.anyio
+async def test_rollback_disabled_override_returns_409(tmp_path) -> None:
+    database_path = tmp_path / "web-console-rollback-disabled.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "rollback.disabled.test",
+                "extension": ".txt",
+                "task_type": "correct",
+                "display_name": "Will Disable",
+                "description": "Test.",
+                "provider": "deterministic-local",
+            },
+        )
+        # Get the create audit entry
+        audit_resp = await client.get(
+            "/processing-profiles/audit-log?profile_id=rollback.disabled.test&action=create&limit=1"
+        )
+        audit_id = audit_resp.json()["entries"][0]["id"]
+
+        # Disable the override
+        await client.patch(
+            "/processing-profiles/overrides/rollback.disabled.test",
+            json={"status": "disabled"},
+        )
+
+        # Now try to rollback
+        resp = await client.post(
+            "/processing-profiles/rollback",
+            json={"audit_id": audit_id},
+        )
+
+    assert resp.status_code == 409
+    assert "disabled" in resp.json()["error"].lower()
+
+
+@pytest.mark.anyio
+async def test_rollback_deleted_override_returns_409(tmp_path) -> None:
+    database_path = tmp_path / "web-console-rollback-deleted.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "rollback.deleted.test",
+                "extension": ".txt",
+                "task_type": "correct",
+                "display_name": "Will Delete",
+                "description": "Test.",
+                "provider": "deterministic-local",
+            },
+        )
+        # Get the create audit entry
+        audit_resp = await client.get(
+            "/processing-profiles/audit-log?profile_id=rollback.deleted.test&action=create&limit=1"
+        )
+        audit_id = audit_resp.json()["entries"][0]["id"]
+
+        # Delete the override
+        await client.delete("/processing-profiles/overrides/rollback.deleted.test")
+
+        # Now try to rollback
+        resp = await client.post(
+            "/processing-profiles/rollback",
+            json={"audit_id": audit_id},
+        )
+
+    assert resp.status_code == 409
+    assert "deleted" in resp.json()["error"].lower()
+
+
+@pytest.mark.anyio
+async def test_audit_log_filter_by_provider(tmp_path) -> None:
+    database_path = tmp_path / "web-console-audit-provider-filter.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "filter.provider.a",
+                "extension": ".md",
+                "task_type": "correct",
+                "display_name": "Provider A",
+                "description": "Provider A desc.",
+                "provider": "deterministic-local",
+            },
+        )
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "filter.provider.b",
+                "extension": ".txt",
+                "task_type": "correct",
+                "display_name": "Provider B",
+                "description": "Provider B desc.",
+                "provider": "model.ollama",
+            },
+        )
+
+        resp_a = await client.get(
+            "/processing-profiles/audit-log?provider=deterministic-local&limit=50"
+        )
+        resp_b = await client.get("/processing-profiles/audit-log?provider=model.ollama&limit=50")
+
+    assert resp_a.status_code == 200
+    assert resp_b.status_code == 200
+    for e in resp_a.json()["entries"]:
+        assert e["new_state"]["provider"] == "deterministic-local"
+    for e in resp_b.json()["entries"]:
+        assert e["new_state"]["provider"] == "model.ollama"
+
+
+@pytest.mark.anyio
+async def test_audit_log_filter_by_task_type(tmp_path) -> None:
+    database_path = tmp_path / "web-console-audit-task-filter.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "filter.task.correct",
+                "extension": ".md",
+                "task_type": "correct",
+                "display_name": "Task Correct",
+                "description": "Correct task.",
+                "provider": "deterministic-local",
+            },
+        )
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "filter.task.chunk",
+                "extension": ".txt",
+                "task_type": "chunk",
+                "display_name": "Task Chunk",
+                "description": "Chunk task.",
+                "provider": "deterministic-local",
+            },
+        )
+
+        resp_correct = await client.get("/processing-profiles/audit-log?task_type=correct&limit=50")
+        resp_chunk = await client.get("/processing-profiles/audit-log?task_type=chunk&limit=50")
+
+    assert resp_correct.status_code == 200
+    assert resp_chunk.status_code == 200
+    for e in resp_correct.json()["entries"]:
+        assert e["new_state"]["task_type"] == "correct"
+    for e in resp_chunk.json()["entries"]:
+        assert e["new_state"]["task_type"] == "chunk"
+
+
+@pytest.mark.anyio
+async def test_audit_log_single_entry_endpoint(tmp_path) -> None:
+    database_path = tmp_path / "web-console-audit-entry.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "single.entry.test",
+                "extension": ".md",
+                "task_type": "correct",
+                "display_name": "Single Entry",
+                "description": "Single entry test.",
+                "provider": "deterministic-local",
+            },
+        )
+
+        audit_resp = await client.get("/processing-profiles/audit-log?limit=1")
+        audit_id = audit_resp.json()["entries"][0]["id"]
+
+        entry_resp = await client.get(f"/processing-profiles/audit-log/{audit_id}")
+
+    assert entry_resp.status_code == 200
+    entry = entry_resp.json()
+    assert entry["id"] == audit_id
+    assert entry["profile_id"] == "single.entry.test"
+    assert entry["action"] == "create"
+
+
+@pytest.mark.anyio
+async def test_audit_log_single_entry_returns_404(tmp_path) -> None:
+    database_path = tmp_path / "web-console-audit-entry-404.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        resp = await client.get(
+            "/processing-profiles/audit-log/00000000-0000-0000-0000-000000000000"
+        )
+
+    assert resp.status_code == 404
+    assert resp.json()["error"] == "audit_entry_not_found"
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_diff_and_rollback(tmp_path) -> None:
+    database_path = tmp_path / "web-console-diff-rollback-ui.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    # Diff preview UI
+    assert "Diff Preview" in html
+    assert "diff-preview-panel" in html
+    assert "preview-diff" in html
+    # Rollback UI
+    assert "Rollback" in html
+    assert "rollback-btn" in html
+    assert "data-rollback-id" in html
