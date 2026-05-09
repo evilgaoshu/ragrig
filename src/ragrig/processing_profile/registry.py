@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from ragrig.processing_profile.models import (
     ProcessingKind,
     ProcessingProfile,
@@ -121,21 +123,59 @@ DEFAULT_PROFILES: list[ProcessingProfile] = _build_default_profiles()
 
 _DEFAULT_MAP: dict[str, ProcessingProfile] = _unique_profile_map(DEFAULT_PROFILES)
 
-# In-memory override store (no DB persistence in MVP)
+# In-memory override store (fallback when no DB session available)
 _OVERRIDE_STORE: dict[str, ProcessingProfile] = {}
+
+
+def _db_override_to_dataclass(override: object) -> ProcessingProfile:
+    """Convert a ProcessingProfileOverride ORM object to a ProcessingProfile dataclass."""
+    return ProcessingProfile(
+        profile_id=override.profile_id,
+        extension=override.extension,
+        task_type=TaskType(override.task_type),
+        display_name=override.display_name,
+        description=override.description,
+        provider=override.provider,
+        model_id=override.model_id,
+        status=ProfileStatus(override.status),
+        kind=ProcessingKind(override.kind),
+        source=ProfileSource.OVERRIDE,
+        tags=list(override.tags) if override.tags else [],
+        metadata={str(k): v for k, v in (override.metadata_json or {}).items()},
+        created_by=override.created_by,
+        updated_at=override.updated_at,
+    )
 
 
 def get_default_profiles() -> list[ProcessingProfile]:
     return DEFAULT_PROFILES
 
 
-def list_overrides() -> list[ProcessingProfile]:
-    """Return all stored override profiles."""
+def list_overrides(
+    *,
+    session: Session | None = None,
+) -> list[ProcessingProfile]:
+    """Return all stored override profiles (DB-backed when session provided)."""
+    if session is not None:
+        from ragrig.repositories.processing_profile import get_all_overrides as _db_all
+
+        return [_db_override_to_dataclass(o) for o in _db_all(session)]
     return list(_OVERRIDE_STORE.values())
 
 
-def get_override(profile_id: str) -> ProcessingProfile | None:
-    """Return a single override profile by ID."""
+def get_override(
+    profile_id: str,
+    *,
+    session: Session | None = None,
+) -> ProcessingProfile | None:
+    """Return a single override profile by ID (DB-backed when session provided)."""
+    if session is not None:
+        from ragrig.repositories.processing_profile import get_override_by_id as _db_get
+
+        row = _db_get(session, profile_id)
+        if row is None:
+            return None
+        return _db_override_to_dataclass(row)
     return _OVERRIDE_STORE.get(profile_id)
 
 
@@ -152,8 +192,31 @@ def create_override(
     tags: list[str] | None = None,
     metadata: dict[str, object] | None = None,
     created_by: str | None = None,
+    session: Session | None = None,
 ) -> ProcessingProfile:
-    """Create and store an override profile."""
+    """Create and store an override profile (DB-backed when session provided)."""
+    if session is not None:
+        from ragrig.repositories.processing_profile import (
+            create_override_in_db as _db_create,
+        )
+
+        row = _db_create(
+            session,
+            profile_id=profile_id,
+            extension=extension,
+            task_type=task_type.value,
+            display_name=display_name,
+            description=description,
+            provider=provider,
+            model_id=model_id,
+            kind=kind.value,
+            tags=tags or [],
+            metadata_json={str(k): v for k, v in (metadata or {}).items()},
+            status=ProfileStatus.ACTIVE.value,
+            created_by=created_by,
+        )
+        return _db_override_to_dataclass(row)
+
     if profile_id in _OVERRIDE_STORE:
         raise ValueError(f"override profile '{profile_id}' already exists")
     if profile_id in _DEFAULT_MAP:
@@ -190,8 +253,31 @@ def update_override(
     kind: ProcessingKind | None = None,
     tags: list[str] | None = None,
     metadata: dict[str, object] | None = None,
+    session: Session | None = None,
 ) -> ProcessingProfile:
-    """Patch an existing override profile."""
+    """Patch an existing override profile (DB-backed when session provided)."""
+    if session is not None:
+        from ragrig.repositories.processing_profile import (
+            update_override_in_db as _db_update,
+        )
+
+        row = _db_update(
+            session,
+            profile_id,
+            status=status.value if status else None,
+            display_name=display_name,
+            description=description,
+            provider=provider,
+            model_id=model_id,
+            kind=kind.value if kind else None,
+            tags=tags,
+            metadata_json=(
+                {str(k): v for k, v in (metadata or {}).items()} if metadata is not None else None
+            ),
+            actor=None,
+        )
+        return _db_override_to_dataclass(row)
+
     existing = _OVERRIDE_STORE.get(profile_id)
     if existing is None:
         raise ValueError(f"override profile '{profile_id}' not found")
@@ -216,16 +302,37 @@ def update_override(
     return profile
 
 
-def delete_override(profile_id: str) -> bool:
+def delete_override(
+    profile_id: str,
+    *,
+    session: Session | None = None,
+) -> bool:
     """Delete an override profile. Returns True if deleted, False if not found."""
+    if session is not None:
+        from ragrig.repositories.processing_profile import (
+            delete_override_in_db as _db_delete,
+        )
+
+        return _db_delete(session, profile_id, soft=True)
+
     if profile_id in _OVERRIDE_STORE:
         del _OVERRIDE_STORE[profile_id]
         return True
     return False
 
 
-def clear_overrides() -> None:
+def clear_overrides(
+    *,
+    session: Session | None = None,
+) -> None:
     """Clear all override profiles. Intended for tests."""
+    if session is not None:
+        from ragrig.repositories.processing_profile import get_all_overrides as _db_all
+
+        for override in _db_all(session):
+            override.deleted_at = datetime.now(timezone.utc)
+        session.flush()
+        return
     _OVERRIDE_STORE.clear()
 
 
@@ -310,6 +417,8 @@ def get_matrix_task_types() -> list[TaskType]:
 
 def build_matrix(
     overrides: list[ProcessingProfile] | None = None,
+    *,
+    session: Session | None = None,
 ) -> dict[str, Any]:
     """Build a processing profile matrix for API/console rendering.
 
@@ -317,7 +426,7 @@ def build_matrix(
     """
     extensions = get_registered_extensions()
     task_types = get_matrix_task_types()
-    active_overrides = overrides if overrides is not None else list_overrides()
+    active_overrides = overrides if overrides is not None else list_overrides(session=session)
     cells: dict[str, dict[str, object]] = {}
     for ext in extensions:
         for tt in task_types:
@@ -337,6 +446,8 @@ def build_matrix(
                 "source": profile.source.value,
                 "is_default": is_default,
                 "provider_available": provider_available,
+                "created_by": profile.created_by,
+                "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
             }
     return {
         "extensions": extensions,
@@ -347,10 +458,12 @@ def build_matrix(
 
 def build_api_profile_list(
     overrides: list[ProcessingProfile] | None = None,
+    *,
+    session: Session | None = None,
 ) -> list[dict[str, object]]:
     """Build the API representation of all profiles (defaults + overrides)."""
     profiles: dict[str, ProcessingProfile] = dict(_DEFAULT_MAP)
-    active_overrides = overrides if overrides is not None else list_overrides()
+    active_overrides = overrides if overrides is not None else list_overrides(session=session)
     for profile in active_overrides:
         profiles[profile.profile_id] = profile
 

@@ -249,3 +249,34 @@ class DocumentUnderstanding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     error: Mapped[str | None] = mapped_column(Text)
 
     document_version: Mapped[DocumentVersion] = relationship(back_populates="understandings")
+
+
+class ProcessingProfileOverride(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "processing_profile_overrides"
+
+    profile_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    extension: Mapped[str] = mapped_column(String(32), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_id: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="deterministic")
+    tags: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(255))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ProcessingProfileAuditLog(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "processing_profile_audit_log"
+
+    profile_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str | None] = mapped_column(String(255))
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    old_state: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    new_state: Mapped[dict[str, Any] | None] = mapped_column(JSONB)

@@ -8,6 +8,8 @@ from ragrig.db.models.entities import (
     KnowledgeBase,
     PipelineRun,
     PipelineRunItem,
+    ProcessingProfileAuditLog,
+    ProcessingProfileOverride,
     Source,
 )
 
@@ -21,5 +23,7 @@ __all__ = [
     "KnowledgeBase",
     "PipelineRun",
     "PipelineRunItem",
+    "ProcessingProfileAuditLog",
+    "ProcessingProfileOverride",
     "Source",
 ]
