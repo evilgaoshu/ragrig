@@ -2668,6 +2668,8 @@ async def test_console_html_includes_diff_and_rollback(tmp_path) -> None:
     assert "Rollback" in html
     assert "rollback-btn" in html
     assert "data-rollback-id" in html
+
+
 # ── Fixture Corpus Integration Tests ──
 
 
