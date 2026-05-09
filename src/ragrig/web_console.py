@@ -746,7 +746,10 @@ def list_understanding_runs(
         query = query.where(UnderstandingRun.started_at >= started_after)
     if started_before is not None:
         query = query.where(UnderstandingRun.started_at <= started_before)
-    query = query.order_by(UnderstandingRun.started_at.desc()).limit(limit)
+    query = query.order_by(
+        UnderstandingRun.started_at.desc(),
+        UnderstandingRun.id.desc(),
+    ).limit(limit)
 
     items: list[dict[str, Any]] = []
     for run, kb in session.execute(query):

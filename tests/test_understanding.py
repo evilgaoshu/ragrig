@@ -1923,7 +1923,10 @@ class TestExportUnderstandingRun:
         assert result["id"] == str(run.id)
         assert result["provider"] == "deterministic-local"
         assert result["status"] == "success"
-        assert "exported_at" in result
+        assert "generated_at" in result
+        assert "filter" in result
+        assert "run_count" in result
+        assert "run_ids" in result
         # No sensitive keys should be present
         result_str = str(result)
         assert "api_key" not in result_str.lower()
@@ -1955,9 +1958,9 @@ class TestExportUnderstandingRun:
         result = export_understanding_runs(sqlite_session, kb_id)
         assert result is not None
         assert "runs" in result
-        assert result["total_runs"] == 1
-        assert "exported_at" in result
-        assert "filters_applied" in result
+        assert result["run_count"] == 1
+        assert "generated_at" in result
+        assert "filter" in result
         assert result["runs"][0]["provider"] == "deterministic-local"
 
     def test_export_list_empty_kb(self, sqlite_session: Session) -> None:
@@ -1968,7 +1971,7 @@ class TestExportUnderstandingRun:
 
         result = export_understanding_runs(sqlite_session, kb_id)
         assert result is not None
-        assert result["total_runs"] == 0
+        assert result["run_count"] == 0
         assert result["runs"] == []
 
     def test_export_sanitizes_nested_secrets(self, sqlite_session: Session) -> None:
@@ -2149,7 +2152,8 @@ class TestExportAndDiffAPI:
         assert export_resp.status_code == 200
         data = export_resp.json()
         assert data["id"] == run_id
-        assert "exported_at" in data
+        assert "generated_at" in data
+        assert "schema_version" in data
         assert data["status"] == "success"
 
     @pytest.mark.anyio
@@ -2219,9 +2223,11 @@ class TestExportAndDiffAPI:
             export_resp = await client.get(f"/knowledge-bases/{kb_id}/understanding-runs/export")
         assert export_resp.status_code == 200
         data = export_resp.json()
-        assert data["total_runs"] >= 1
+        assert data["run_count"] >= 1
         assert "runs" in data
-        assert "exported_at" in data
+        assert "generated_at" in data
+        assert "schema_version" in data
+        assert "filter" in data
 
     @pytest.mark.anyio
     async def test_diff_api(self, tmp_path) -> None:
@@ -2449,3 +2455,314 @@ class TestExportAndDiffAPI:
             )
         assert response2.status_code == 200
         assert response2.json()["items"] == []
+
+
+class TestExportSchemaContract:
+    """Tests for the export JSON schema contract
+    (schema_version, generated_at, filter, run_count, run_ids).
+    """
+
+    def test_batch_export_has_contract_fields(self, sqlite_session: Session) -> None:
+        from ragrig.understanding.service import (
+            UnderstandingRunFilter,
+            export_understanding_runs,
+            understand_all_versions,
+        )
+
+        texts = ["# Doc A\nContent.", "# Doc B\nMore."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="deterministic-local",
+            profile_id="*.understand.default",
+        )
+
+        result = export_understanding_runs(
+            sqlite_session,
+            kb_id,
+            filters=UnderstandingRunFilter(
+                provider="deterministic-local", status="success", limit=10
+            ),
+        )
+
+        assert "schema_version" in result
+        assert result["schema_version"] == "1.0"
+        assert "generated_at" in result
+        assert "filter" in result
+        assert result["filter"]["provider"] == "deterministic-local"
+        assert result["filter"]["status"] == "success"
+        assert result["filter"]["limit"] == 10
+        assert "run_count" in result
+        assert result["run_count"] == 1
+        assert "run_ids" in result
+        assert isinstance(result["run_ids"], list)
+        assert len(result["run_ids"]) == 1
+
+    def test_single_export_has_contract_fields(self, sqlite_session: Session) -> None:
+        from ragrig.db.models import UnderstandingRun
+        from ragrig.understanding.service import (
+            export_understanding_run,
+            understand_all_versions,
+        )
+
+        texts = ["# Doc A\nContent."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="deterministic-local",
+        )
+
+        run = sqlite_session.query(UnderstandingRun).first()
+        assert run is not None
+
+        result = export_understanding_run(sqlite_session, str(run.id))
+        assert result is not None
+        assert result["schema_version"] == "1.0"
+        assert "generated_at" in result
+        assert "filter" in result
+        assert result["run_count"] == 1
+        assert result["run_ids"] == [str(run.id)]
+
+    def test_batch_export_includes_run_ids(self, sqlite_session: Session) -> None:
+        from ragrig.db.models import UnderstandingRun
+        from ragrig.understanding.service import (
+            export_understanding_runs,
+            understand_all_versions,
+        )
+
+        texts = ["# Doc A\nContent."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="deterministic-local",
+            profile_id="p-1",
+        )
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="deterministic-local",
+            profile_id="p-2",
+        )
+
+        result = export_understanding_runs(sqlite_session, kb_id)
+        assert result["run_count"] == 2
+        assert len(result["run_ids"]) == 2
+        # run_ids should be in the same order as runs (most recent first)
+        runs = (
+            sqlite_session.query(UnderstandingRun)
+            .order_by(UnderstandingRun.started_at.desc(), UnderstandingRun.id.desc())
+            .all()
+        )
+        assert result["run_ids"] == [str(r.id) for r in runs]
+
+
+class TestDeterministicSortOrder:
+    """Tests for deterministic sort order — started_at DESC then id DESC."""
+
+    def test_same_timestamp_sorted_by_id_desc(self, sqlite_session: Session) -> None:
+        """When two runs share the same started_at, id DESC breaks the tie."""
+        import uuid as _uuid
+        from datetime import datetime, timezone
+
+        from ragrig.db.models import KnowledgeBase, UnderstandingRun
+
+        # Create a KB
+        kb = KnowledgeBase(
+            id=_uuid.uuid4(),
+            name="sort-test-kb",
+            metadata_json={},
+        )
+        sqlite_session.add(kb)
+
+        # Create two runs with the same started_at
+        same_time = datetime(2026, 5, 9, 12, 0, 0, tzinfo=timezone.utc)
+        id_a = _uuid.uuid4()
+        id_b = _uuid.uuid4()
+        # Make id_b > id_a (UUID comparison = string comparison for same format)
+        # We'll sort them and ensure id DESC works
+
+        run_a = UnderstandingRun(
+            id=id_a,
+            knowledge_base_id=kb.id,
+            provider="p-a",
+            model="",
+            profile_id="p",
+            trigger_source="test",
+            status="success",
+            total=1,
+            created=1,
+            skipped=0,
+            failed=0,
+            started_at=same_time,
+            finished_at=same_time,
+        )
+        run_b = UnderstandingRun(
+            id=id_b,
+            knowledge_base_id=kb.id,
+            provider="p-b",
+            model="",
+            profile_id="p",
+            trigger_source="test",
+            status="success",
+            total=1,
+            created=1,
+            skipped=0,
+            failed=0,
+            started_at=same_time,
+            finished_at=same_time,
+        )
+        sqlite_session.add_all([run_a, run_b])
+        sqlite_session.commit()
+
+        from ragrig.understanding.service import get_understanding_runs
+
+        runs = get_understanding_runs(sqlite_session, str(kb.id))
+        assert len(runs) == 2
+        # Both have the same started_at, so tie-break by id DESC
+        # Higher UUID string should come first
+        if str(id_a) > str(id_b):
+            assert runs[0].id == str(id_a)
+            assert runs[1].id == str(id_b)
+        else:
+            assert runs[0].id == str(id_b)
+            assert runs[1].id == str(id_a)
+
+    def test_different_timestamps_sort_by_time(self, sqlite_session: Session) -> None:
+        """Different timestamps — sorted by started_at DESC regardless of id."""
+        import uuid as _uuid
+        from datetime import datetime, timezone
+
+        from ragrig.db.models import KnowledgeBase, UnderstandingRun
+
+        kb = KnowledgeBase(
+            id=_uuid.uuid4(),
+            name="sort-time-kb",
+            metadata_json={},
+        )
+        sqlite_session.add(kb)
+
+        earlier = datetime(2026, 5, 9, 10, 0, 0, tzinfo=timezone.utc)
+        later = datetime(2026, 5, 9, 14, 0, 0, tzinfo=timezone.utc)
+
+        run_early = UnderstandingRun(
+            id=_uuid.uuid4(),
+            knowledge_base_id=kb.id,
+            provider="p-early",
+            model="",
+            profile_id="p",
+            trigger_source="test",
+            status="success",
+            total=1,
+            created=1,
+            skipped=0,
+            failed=0,
+            started_at=earlier,
+            finished_at=earlier,
+        )
+        run_late = UnderstandingRun(
+            id=_uuid.uuid4(),
+            knowledge_base_id=kb.id,
+            provider="p-late",
+            model="",
+            profile_id="p",
+            trigger_source="test",
+            status="success",
+            total=1,
+            created=1,
+            skipped=0,
+            failed=0,
+            started_at=later,
+            finished_at=later,
+        )
+        sqlite_session.add_all([run_early, run_late])
+        sqlite_session.commit()
+
+        from ragrig.understanding.service import get_understanding_runs
+
+        runs = get_understanding_runs(sqlite_session, str(kb.id))
+        assert len(runs) == 2
+        assert runs[0].provider == "p-late"  # Most recent first
+        assert runs[1].provider == "p-early"
+
+
+class TestSanitizationCoverage:
+    """Tests for export sanitization covering all sensitive paths."""
+
+    def test_export_does_not_leak_extracted_text(self, sqlite_session: Session) -> None:
+        from ragrig.understanding.service import (
+            export_understanding_runs,
+            understand_all_versions,
+        )
+
+        texts = ["# Doc with sensitive content.\nAPI key is secret123."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="deterministic-local",
+        )
+
+        result = export_understanding_runs(sqlite_session, kb_id)
+        result_str = str(result)
+        # No extracted_text or full prompts should leak
+        assert "secret123" not in result_str
+        assert "extracted_text" not in result_str
+        assert "full_prompt" not in result_str
+        assert "raw_response" not in result_str
+
+    def test_sanitize_redacts_in_nested_lists(self, sqlite_session: Session) -> None:
+        from ragrig.understanding.service import _sanitize_value
+
+        data = {
+            "runs": [
+                {"config": {"api_key": "sk-abc"}},
+                {"config": {"password": "12345"}},
+                {"config": {"normal": "ok"}},
+            ],
+            "system_prompt": "hidden",
+        }
+        sanitized = _sanitize_value(data)
+        assert isinstance(sanitized, dict)
+        runs = sanitized["runs"]
+        assert isinstance(runs, list)
+        assert runs[0]["config"]["api_key"] == "[REDACTED]"  # type: ignore[index]
+        assert runs[1]["config"]["password"] == "[REDACTED]"  # type: ignore[index]
+        assert runs[2]["config"]["normal"] == "ok"  # type: ignore[index]
+        assert sanitized["system_prompt"] == "[REDACTED]"  # type: ignore[index]
+
+    def test_export_full_suite_sanitized(self, sqlite_session: Session) -> None:
+        """Full export pipeline must not leak any sensitive data."""
+        from ragrig.db.models import UnderstandingRun
+        from ragrig.understanding.service import (
+            export_understanding_run,
+            export_understanding_runs,
+            understand_all_versions,
+        )
+
+        texts = ["# Doc\nSecret: sk-topsecret"]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="deterministic-local",
+        )
+
+        run = sqlite_session.query(UnderstandingRun).first()
+        assert run is not None
+
+        single = export_understanding_run(sqlite_session, str(run.id))
+        batch = export_understanding_runs(sqlite_session, kb_id)
+
+        for exported in [single, batch]:
+            assert exported is not None
+            exported_str = str(exported)
+            assert "sk-topsecret" not in exported_str
+            assert "extracted_text" not in exported_str

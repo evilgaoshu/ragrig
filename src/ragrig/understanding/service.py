@@ -438,7 +438,7 @@ def get_understanding_runs(
             query = query.filter(UnderstandingRun.started_at <= filters.started_before)
 
     rows = (
-        query.order_by(UnderstandingRun.started_at.desc())
+        query.order_by(UnderstandingRun.started_at.desc(), UnderstandingRun.id.desc())
         .limit(filters.limit if filters is not None else 50)
         .all()
     )
@@ -527,7 +527,13 @@ def export_understanding_run(session: Session, run_id: str) -> dict[str, object]
     if kb is not None:
         kb_name = kb.name
 
+    generated = datetime.now(timezone.utc)
     exported: dict[str, object] = {
+        "schema_version": "1.0",
+        "generated_at": generated.isoformat(),
+        "filter": {},
+        "run_count": 1,
+        "run_ids": [str(row.id)],
         "id": str(row.id),
         "knowledge_base_id": str(row.knowledge_base_id),
         "knowledge_base": kb_name,
@@ -544,7 +550,6 @@ def export_understanding_run(session: Session, run_id: str) -> dict[str, object]
         "error_summary": row.error_summary,
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
-        "exported_at": datetime.now(timezone.utc).isoformat(),
     }
     return _sanitize_value(exported)  # type: ignore[return-value]
 
@@ -587,19 +592,24 @@ def export_understanding_runs(
         }
         items.append(_sanitize_value(item))  # type: ignore[arg-type]
 
+    filter_info: dict[str, object] = {
+        "provider": filters.provider if filters else None,
+        "model": filters.model if filters else None,
+        "profile_id": filters.profile_id if filters else None,
+        "status": filters.status if filters else None,
+        "started_after": filters.started_after if filters else None,
+        "started_before": filters.started_before if filters else None,
+        "limit": filters.limit if filters else None,
+    }
+    run_ids = [item["id"] for item in items]
     result: dict[str, object] = {
+        "schema_version": "1.0",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "filter": filter_info,
+        "run_count": len(items),
+        "run_ids": run_ids,
         "knowledge_base": kb_name,
         "knowledge_base_id": knowledge_base_id,
-        "total_runs": len(items),
-        "exported_at": datetime.now(timezone.utc).isoformat(),
-        "filters_applied": {
-            "provider": filters.provider if filters else None,
-            "model": filters.model if filters else None,
-            "profile_id": filters.profile_id if filters else None,
-            "status": filters.status if filters else None,
-            "started_after": filters.started_after if filters else None,
-            "started_before": filters.started_before if filters else None,
-        },
         "runs": items,
     }
     return _sanitize_value(result)  # type: ignore[return-value]
