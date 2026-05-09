@@ -4,8 +4,52 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    labels:
+      - "dependencies"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
+    labels:
+      - "dependencies"
+    groups:
+      python-runtime:
+        patterns:
+          - "alembic"
+          - "fastapi"
+          - "pgvector"
+          - "pydantic-settings"
+          - "psycopg*"
+          - "sqlalchemy"
+          - "uvicorn*"
+          - "python-multipart"
+          - "pyyaml"
+      python-dev:
+        patterns:
+          - "cyclonedx-bom"
+          - "httpx"
+          - "lxml"
+          - "pip-audit"
+          - "pip-licenses"
+          - "pytest*"
+          - "ruff"
+      python-extras:
+        patterns:
+          - "boto3"
+          - "cohere"
+          - "google-cloud-aiplatform"
+          - "openai"
+          - "voyageai"
+          - "FlagEmbedding"
+          - "ollama"
+          - "sentence-transformers"
+          - "torch"
+          - "pyarrow"
+          - "paramiko"
+          - "smbprotocol"
+          - "qdrant-client"
