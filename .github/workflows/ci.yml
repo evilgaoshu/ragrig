@@ -75,7 +75,7 @@ jobs:
         run: make coverage
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-json
           path: coverage.json
@@ -166,7 +166,7 @@ jobs:
         run: make licenses
 
       - name: Upload pip-audit artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pip-audit-json
           path: docs/operations/artifacts/pip-audit.json
