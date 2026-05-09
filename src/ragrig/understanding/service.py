@@ -183,9 +183,7 @@ def _get_kb_document_versions(session: Session, kb_id: str) -> list[DocumentVers
     )
 
 
-def _run_status_from_result(
-    total: int, failed: int
-) -> str:
+def _run_status_from_result(total: int, failed: int) -> str:
     """Derive deterministic run status from batch counts."""
     if total == 0:
         return "empty_kb"
@@ -423,10 +421,7 @@ def get_understanding_runs(
 ) -> list[UnderstandingRunRecord]:
     """Return understanding runs for a knowledge base, most recent first."""
     kb_uuid = uuid.UUID(knowledge_base_id)
-    query = (
-        session.query(UnderstandingRun)
-        .filter(UnderstandingRun.knowledge_base_id == kb_uuid)
-    )
+    query = session.query(UnderstandingRun).filter(UnderstandingRun.knowledge_base_id == kb_uuid)
 
     if filters is not None:
         if filters.provider is not None:
@@ -439,17 +434,14 @@ def get_understanding_runs(
             query = query.filter(UnderstandingRun.status == filters.status)
 
     rows = (
-        query
-        .order_by(UnderstandingRun.started_at.desc())
+        query.order_by(UnderstandingRun.started_at.desc())
         .limit(filters.limit if filters is not None else 50)
         .all()
     )
     return [_to_run_record(r) for r in rows]
 
 
-def get_understanding_run(
-    session: Session, run_id: str
-) -> UnderstandingRunRecord | None:
+def get_understanding_run(session: Session, run_id: str) -> UnderstandingRunRecord | None:
     """Return a single understanding run by ID."""
     run_uuid = uuid.UUID(run_id)
     row = session.get(UnderstandingRun, run_uuid)

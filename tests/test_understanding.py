@@ -1260,9 +1260,7 @@ class TestUnderstandAllPersistsRun:
         assert len(runs) == 1
         assert runs[0].status == "empty_kb"
 
-    def test_partial_failure_creates_run_with_error_summary(
-        self, sqlite_session: Session
-    ) -> None:
+    def test_partial_failure_creates_run_with_error_summary(self, sqlite_session: Session) -> None:
         from ragrig.db.models import UnderstandingRun
         from ragrig.understanding.service import understand_all_versions
 
@@ -1472,25 +1470,32 @@ class TestUnderstandAllAPIWithRun:
         session = session_factory()
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
+
             kb = KnowledgeBase(name="kb-run-test", metadata_json={})
             session.add(kb)
             session.flush()
             source = Source(
-                knowledge_base_id=kb.id, kind="local", uri="file:///test",
-                config_json={}
+                knowledge_base_id=kb.id, kind="local", uri="file:///test", config_json={}
             )
             session.add(source)
             session.flush()
             doc = Document(
-                knowledge_base_id=kb.id, source_id=source.id,
-                uri="doc.md", content_hash="abc", metadata_json={}
+                knowledge_base_id=kb.id,
+                source_id=source.id,
+                uri="doc.md",
+                content_hash="abc",
+                metadata_json={},
             )
             session.add(doc)
             session.flush()
             version = DocumentVersion(
-                document_id=doc.id, version_number=1, content_hash="abc",
-                parser_name="markdown", parser_config_json={},
-                extracted_text="# Hello\nContent.", metadata_json={}
+                document_id=doc.id,
+                version_number=1,
+                content_hash="abc",
+                parser_name="markdown",
+                parser_config_json={},
+                extracted_text="# Hello\nContent.",
+                metadata_json={},
             )
             session.add(version)
             session.commit()
@@ -1504,9 +1509,7 @@ class TestUnderstandAllAPIWithRun:
         )
         transport = httpx.ASGITransport(app=app)
 
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://testserver"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             response = await client.post(
                 f"/knowledge-bases/{kb_id}/understand-all",
                 json={
@@ -1543,25 +1546,32 @@ class TestUnderstandAllAPIWithRun:
         session = session_factory()
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
+
             kb = KnowledgeBase(name="kb-run-api", metadata_json={})
             session.add(kb)
             session.flush()
             source = Source(
-                knowledge_base_id=kb.id, kind="local", uri="file:///test",
-                config_json={}
+                knowledge_base_id=kb.id, kind="local", uri="file:///test", config_json={}
             )
             session.add(source)
             session.flush()
             doc = Document(
-                knowledge_base_id=kb.id, source_id=source.id,
-                uri="doc.md", content_hash="abc", metadata_json={}
+                knowledge_base_id=kb.id,
+                source_id=source.id,
+                uri="doc.md",
+                content_hash="abc",
+                metadata_json={},
             )
             session.add(doc)
             session.flush()
             version = DocumentVersion(
-                document_id=doc.id, version_number=1, content_hash="abc",
-                parser_name="markdown", parser_config_json={},
-                extracted_text="# Hello\nContent.", metadata_json={}
+                document_id=doc.id,
+                version_number=1,
+                content_hash="abc",
+                parser_name="markdown",
+                parser_config_json={},
+                extracted_text="# Hello\nContent.",
+                metadata_json={},
             )
             session.add(version)
             session.commit()
@@ -1575,9 +1585,7 @@ class TestUnderstandAllAPIWithRun:
         )
         transport = httpx.ASGITransport(app=app)
 
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://testserver"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             # First, trigger a run
             await client.post(
                 f"/knowledge-bases/{kb_id}/understand-all",
@@ -1588,9 +1596,7 @@ class TestUnderstandAllAPIWithRun:
             )
 
             # Then fetch runs
-            response = await client.get(
-                f"/knowledge-bases/{kb_id}/understanding-runs"
-            )
+            response = await client.get(f"/knowledge-bases/{kb_id}/understanding-runs")
         assert response.status_code == 200
         data = response.json()
         assert "runs" in data
@@ -1620,25 +1626,32 @@ class TestUnderstandAllAPIWithRun:
         session = session_factory()
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
+
             kb = KnowledgeBase(name="kb-run-detail", metadata_json={})
             session.add(kb)
             session.flush()
             source = Source(
-                knowledge_base_id=kb.id, kind="local", uri="file:///test",
-                config_json={}
+                knowledge_base_id=kb.id, kind="local", uri="file:///test", config_json={}
             )
             session.add(source)
             session.flush()
             doc = Document(
-                knowledge_base_id=kb.id, source_id=source.id,
-                uri="doc.md", content_hash="abc", metadata_json={}
+                knowledge_base_id=kb.id,
+                source_id=source.id,
+                uri="doc.md",
+                content_hash="abc",
+                metadata_json={},
             )
             session.add(doc)
             session.flush()
             version = DocumentVersion(
-                document_id=doc.id, version_number=1, content_hash="abc",
-                parser_name="markdown", parser_config_json={},
-                extracted_text="# Hello\nContent.", metadata_json={}
+                document_id=doc.id,
+                version_number=1,
+                content_hash="abc",
+                parser_name="markdown",
+                parser_config_json={},
+                extracted_text="# Hello\nContent.",
+                metadata_json={},
             )
             session.add(version)
             session.commit()
@@ -1652,9 +1665,7 @@ class TestUnderstandAllAPIWithRun:
         )
         transport = httpx.ASGITransport(app=app)
 
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://testserver"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             # Trigger a run
             post_resp = await client.post(
                 f"/knowledge-bases/{kb_id}/understand-all",
@@ -1666,16 +1677,12 @@ class TestUnderstandAllAPIWithRun:
             run_id = post_resp.json()["run_id"]
 
             # Fetch run detail via raw API (/knowledge-bases prefix)
-            response = await client.get(
-                f"/knowledge-bases/{kb_id}/understanding-runs"
-            )
+            response = await client.get(f"/knowledge-bases/{kb_id}/understanding-runs")
             items = response.json()["runs"]
             assert len(items) >= 1
 
             # Fetch detail via web console endpoint
-            detail_resp = await client.get(
-                f"/understanding-runs/{run_id}"
-            )
+            detail_resp = await client.get(f"/understanding-runs/{run_id}")
         assert detail_resp.status_code == 200
         detail = detail_resp.json()
         assert detail["id"] == run_id
@@ -1704,12 +1711,8 @@ class TestUnderstandAllAPIWithRun:
         )
         transport = httpx.ASGITransport(app=app)
 
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://testserver"
-        ) as client:
-            response = await client.get(
-                f"/understanding-runs/{uuid.uuid4()}"
-            )
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get(f"/understanding-runs/{uuid.uuid4()}")
         assert response.status_code == 404
 
     @pytest.mark.anyio
@@ -1732,25 +1735,32 @@ class TestUnderstandAllAPIWithRun:
         session = session_factory()
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
+
             kb = KnowledgeBase(name="kb-web-runs", metadata_json={})
             session.add(kb)
             session.flush()
             source = Source(
-                knowledge_base_id=kb.id, kind="local", uri="file:///test",
-                config_json={}
+                knowledge_base_id=kb.id, kind="local", uri="file:///test", config_json={}
             )
             session.add(source)
             session.flush()
             doc = Document(
-                knowledge_base_id=kb.id, source_id=source.id,
-                uri="doc.md", content_hash="abc", metadata_json={}
+                knowledge_base_id=kb.id,
+                source_id=source.id,
+                uri="doc.md",
+                content_hash="abc",
+                metadata_json={},
             )
             session.add(doc)
             session.flush()
             version = DocumentVersion(
-                document_id=doc.id, version_number=1, content_hash="abc",
-                parser_name="markdown", parser_config_json={},
-                extracted_text="# Hello", metadata_json={}
+                document_id=doc.id,
+                version_number=1,
+                content_hash="abc",
+                parser_name="markdown",
+                parser_config_json={},
+                extracted_text="# Hello",
+                metadata_json={},
             )
             session.add(version)
             session.commit()
@@ -1764,9 +1774,7 @@ class TestUnderstandAllAPIWithRun:
         )
         transport = httpx.ASGITransport(app=app)
 
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://testserver"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             # Trigger a run first
             await client.post(
                 f"/knowledge-bases/{kb_id}/understand-all",

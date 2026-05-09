@@ -738,9 +738,7 @@ def list_understanding_runs(
     return items
 
 
-def get_understanding_run_detail(
-    session: Session, run_id: str
-) -> dict[str, Any] | None:
+def get_understanding_run_detail(session: Session, run_id: str) -> dict[str, Any] | None:
     """Return single understanding run detail with KB name."""
     run_uuid = uuid.UUID(run_id)
     row = session.execute(
