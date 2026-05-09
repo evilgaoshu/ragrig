@@ -11,6 +11,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from starlette.responses import Response
 
 from ragrig import __version__
+from ragrig.answer import (
+    NoEvidenceError,
+    generate_answer,
+)
+from ragrig.answer import (
+    ProviderUnavailableError as AnswerProviderUnavailableError,
+)
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
 from ragrig.evaluation import (
@@ -119,6 +126,17 @@ class RetrievalSearchRequest(BaseModel):
     candidate_k: int = Field(default=20, ge=1, le=200)
     reranker_provider: str | None = None
     reranker_model: str | None = None
+
+
+class AnswerRequest(BaseModel):
+    knowledge_base: str
+    query: str
+    top_k: int = Field(default=5, ge=1, le=50)
+    provider: str = "deterministic-local"
+    model: str | None = None
+    dimensions: int | None = Field(default=None, gt=0)
+    principal_ids: list[str] | None = None
+    enforce_acl: bool = True
 
 
 class CreateProcessingProfileRequest(BaseModel):
@@ -1017,6 +1035,88 @@ def create_app(
         store_path = Path(store_dir) if store_dir else Path("evaluation_runs")
         runs = list_runs_from_store(store_dir=store_path)
         return build_evaluation_list_report(runs)
+
+    @app.post("/retrieval/answer", response_model=None)
+    def retrieval_answer(
+        request: AnswerRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            vector_backend = resolve_vector_backend()
+            report = generate_answer(
+                session=session,
+                knowledge_base_name=request.knowledge_base,
+                query=request.query,
+                top_k=request.top_k,
+                provider=request.provider,
+                model=request.model,
+                dimensions=request.dimensions,
+                vector_backend=vector_backend,
+                principal_ids=request.principal_ids,
+                enforce_acl=request.enforce_acl,
+            )
+        except NoEvidenceError as exc:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "answer": "",
+                    "citations": [],
+                    "evidence_chunks": [],
+                    "model": exc.details.get("model", ""),
+                    "provider": exc.details.get("provider", ""),
+                    "retrieval_trace": exc.details,
+                    "grounding_status": "refused",
+                    "refusal_reason": str(exc),
+                },
+            )
+        except KnowledgeBaseNotFoundError as exc:
+            return JSONResponse(status_code=404, content=_serialize_error(exc))
+        except (EmptyQueryError, EmbeddingProfileMismatchError, InvalidTopKError) as exc:
+            return JSONResponse(status_code=400, content=_serialize_error(exc))
+        except AnswerProviderUnavailableError as exc:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": {
+                        "code": exc.code,
+                        "message": str(exc),
+                        "details": exc.details,
+                    }
+                },
+            )
+
+        return {
+            "answer": report.answer,
+            "citations": [
+                {
+                    "citation_id": c.citation_id,
+                    "document_uri": c.document_uri,
+                    "chunk_id": c.chunk_id,
+                    "chunk_index": c.chunk_index,
+                    "text_preview": c.text_preview,
+                    "score": c.score,
+                    "metadata_summary": c.metadata_summary,
+                }
+                for c in report.citations
+            ],
+            "evidence_chunks": [
+                {
+                    "citation_id": ec.citation_id,
+                    "document_uri": ec.document_uri,
+                    "chunk_id": ec.chunk_id,
+                    "chunk_index": ec.chunk_index,
+                    "text": ec.text,
+                    "score": ec.score,
+                    "distance": ec.distance,
+                }
+                for ec in report.evidence_chunks
+            ],
+            "model": report.model,
+            "provider": report.provider,
+            "retrieval_trace": report.retrieval_trace,
+            "grounding_status": report.grounding_status,
+            "refusal_reason": report.refusal_reason,
+        }
 
     @app.get("/processing-profiles", response_model=None)
     def processing_profiles(

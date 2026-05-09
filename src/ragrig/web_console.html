@@ -874,6 +874,7 @@
         <div class="nav-item">Documents</div>
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
+        <div class="nav-item">Answer Gen</div>
         <div class="nav-item">Models</div>
         <div class="nav-item">Profile Matrix</div>
         <div class="nav-item">Plugins</div>
@@ -1090,6 +1091,23 @@
                   <div class="name">Evaluation failed</div>
                   <div class="sub" id="eval-error-message"></div>
                 </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head"><div class="panel-title">Answer Generation</div><div class="panel-meta">POST /retrieval/answer · citation-grounded</div></div>
+              <div class="panel-body stack">
+                <div class="sub" id="answer-provider-meta">Provider · model · grounding status</div>
+                <label class="sub" for="answer-kb">Knowledge base</label>
+                <select id="answer-kb"></select>
+                <label class="sub" for="answer-query">Question</label>
+                <textarea id="answer-query" rows="4">What does the guide say about RAGRig?</textarea>
+                <label class="sub" for="answer-top-k">Top K evidence chunks</label>
+                <input id="answer-top-k" type="number" value="3" min="1" max="10">
+                <div class="actions">
+                  <button class="button primary" id="run-answer" type="button">Generate Answer</button>
+                </div>
+                <div id="answer-results"></div>
               </div>
             </section>
 
@@ -2960,6 +2978,101 @@
         }
       }
 
+      // ── Answer Generation ──────────────────────────────────────────────
+
+      function renderAnswerControls() {
+        const select = document.getElementById('answer-kb');
+        const providerMeta = document.getElementById('answer-provider-meta');
+        if (!state.knowledgeBases.length) {
+          select.innerHTML = '<option value="">No knowledge bases</option>';
+          select.disabled = true;
+          document.getElementById('run-answer').disabled = true;
+          document.getElementById('answer-results').innerHTML = empty('Answer generation is disabled until a real indexed knowledge base exists.');
+          providerMeta.textContent = 'disabled · No knowledge bases available';
+          return;
+        }
+        select.innerHTML = state.knowledgeBases.map((item) => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`).join('');
+        select.disabled = false;
+        document.getElementById('run-answer').disabled = false;
+        providerMeta.textContent = 'ready · deterministic-local · citation-grounded';
+      }
+
+      async function runAnswer() {
+        const resultRoot = document.getElementById('answer-results');
+        const requestBody = {
+          knowledge_base: document.getElementById('answer-kb').value,
+          query: document.getElementById('answer-query').value,
+          top_k: Number(document.getElementById('answer-top-k').value || 3),
+        };
+        if (!requestBody.query.trim()) {
+          resultRoot.innerHTML = empty('Please enter a question.');
+          return;
+        }
+        resultRoot.innerHTML = '<div class="sub">Generating answer...</div>';
+        try {
+          const result = await getJson('/retrieval/answer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody),
+          });
+          renderAnswerResult(result);
+        } catch (error) {
+          resultRoot.innerHTML = `<div class="empty error">Error: ${escapeHtml(error.message)}</div>`;
+        }
+      }
+
+      function renderAnswerResult(result) {
+        const root = document.getElementById('answer-results');
+        const statusBadge = result.grounding_status === 'grounded'
+          ? '<span class="pill" style="background:var(--accent);color:#fff">grounded</span>'
+          : result.grounding_status === 'refused'
+            ? '<span class="pill warn">refused</span>'
+            : result.grounding_status === 'degraded'
+              ? '<span class="pill warn">degraded</span>'
+              : '<span class="pill error">error</span>';
+
+        let html = `<div class="result">`;
+        html += `<div class="name">Answer ${statusBadge}</div>`;
+
+        if (result.grounding_status === 'refused') {
+          html += `<div class="sub">${escapeHtml(result.refusal_reason || 'No evidence available.')}</div>`;
+          html += `</div>`;
+          root.innerHTML = html;
+          document.getElementById('answer-provider-meta').textContent = `refused · ${escapeHtml(result.provider)} · ${escapeHtml(result.model)}`;
+          return;
+        }
+
+        if (result.grounding_status === 'error') {
+          html += `<div class="sub error">${escapeHtml(result.refusal_reason || 'Unknown error')}</div>`;
+          html += `</div>`;
+          root.innerHTML = html;
+          return;
+        }
+
+        html += `<div class="sub">${escapeHtml(result.answer).replace(/\\n/g, '<br>')}</div>`;
+        html += `<div class="sub code" style="margin-top:8px;">Provider: ${escapeHtml(result.provider)} · Model: ${escapeHtml(result.model)}</div>`;
+
+        if (result.citations && result.citations.length) {
+          html += `<div class="sub" style="margin-top:8px;">Citations (${result.citations.length}):</div>`;
+          for (const c of result.citations) {
+            html += `<div class="result" style="margin-top:4px; padding:4px 8px;">`;
+            html += `<span class="pill neutral" style="font-size:10px;">${escapeHtml(c.citation_id)}</span> `;
+            html += `<span class="sub">${escapeHtml(c.document_uri)} · chunk ${c.chunk_index} · score ${c.score}</span>`;
+            html += `<div class="sub">${escapeHtml(c.text_preview)}</div>`;
+            html += `</div>`;
+          }
+        }
+
+        if (result.refusal_reason) {
+          html += `<div class="sub warn" style="margin-top:8px;">Degraded: ${escapeHtml(result.refusal_reason)}</div>`;
+        }
+
+        html += `</div>`;
+        root.innerHTML = html;
+
+        document.getElementById('answer-provider-meta').textContent = `${escapeHtml(result.grounding_status)} · ${escapeHtml(result.provider)} · ${escapeHtml(result.model)}`;
+      }
+
 
       async function loadFormats() {
         try {
@@ -3380,6 +3493,7 @@
           renderRetrievalControls();
           await loadEvaluation();
           renderEvaluation();
+          renderAnswerControls();
           renderFormats();
           renderSanitizerCoverage();
           renderUploadKBSelect();
@@ -3397,6 +3511,7 @@
           document.getElementById('retrieval-rerank-opts').style.display =
             (mode === 'rerank' || mode === 'hybrid_rerank') ? '' : 'none';
         });
+        document.getElementById('run-answer').addEventListener('click', runAnswer);
         document.getElementById('copy-retrieval-request').addEventListener('click', async () => {
           const payload = JSON.stringify(buildRetrievalRequest(), null, 2);
           await navigator.clipboard.writeText(payload);
