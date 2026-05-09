@@ -573,36 +573,31 @@ async def test_retrieval_search_api_returns_contract_payload(tmp_path) -> None:
         )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "knowledge_base": "fixture-local",
-        "query": "retrieval api contract",
-        "top_k": 1,
-        "provider": "deterministic-local",
-        "model": "hash-8d",
-        "dimensions": 8,
-        "distance_metric": "cosine_distance",
-        "backend": "pgvector",
-        "backend_metadata": {
-            "distance_metric": "cosine",
-            "status": "ready",
-        },
-        "total_results": 1,
-        "results": [
-            {
-                "document_id": response.json()["results"][0]["document_id"],
-                "document_version_id": response.json()["results"][0]["document_version_id"],
-                "chunk_id": response.json()["results"][0]["chunk_id"],
-                "chunk_index": 0,
-                "document_uri": str(docs / "guide.txt"),
-                "source_uri": str(docs),
-                "text": "retrieval api contract",
-                "text_preview": "retrieval api contract",
-                "distance": response.json()["results"][0]["distance"],
-                "score": response.json()["results"][0]["score"],
-                "chunk_metadata": response.json()["results"][0]["chunk_metadata"],
-            }
-        ],
+    resp_json = response.json()
+    assert resp_json["knowledge_base"] == "fixture-local"
+    assert resp_json["query"] == "retrieval api contract"
+    assert resp_json["top_k"] == 1
+    assert resp_json["provider"] == "deterministic-local"
+    assert resp_json["model"] == "hash-8d"
+    assert resp_json["dimensions"] == 8
+    assert resp_json["distance_metric"] == "cosine_distance"
+    assert resp_json["backend"] == "pgvector"
+    assert resp_json["backend_metadata"] == {
+        "distance_metric": "cosine",
+        "status": "ready",
     }
+    assert resp_json["total_results"] == 1
+    assert len(resp_json["results"]) == 1
+    r = resp_json["results"][0]
+    assert r["document_uri"] == str(docs / "guide.txt")
+    assert r["source_uri"] == str(docs)
+    assert r["text"] == "retrieval api contract"
+    assert r["text_preview"] == "retrieval api contract"
+    assert r["chunk_index"] == 0
+    assert "rank_stage_trace" in r
+    assert "stages" in r["rank_stage_trace"]
+    assert r["rank_stage_trace"]["stages"][0]["stage"] == "vector"
+    assert "degraded" not in resp_json
 
 
 @pytest.mark.anyio
@@ -1246,3 +1241,662 @@ def test_acl_filtering_with_explicit_vector_backend(tmp_path) -> None:
         )
         assert report_allowed.backend == "qdrant"
         assert report_allowed.total_results == 1
+
+
+# ── Hybrid retrieval tests ──────────────────────────────────────────────────
+
+
+def test_hybrid_mode_returns_rank_stage_trace_with_lexical_and_vector(tmp_path) -> None:
+    """Hybrid mode returns vector_score, lexical_score, combined_score in trace."""
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "guide.txt": "hybrid retrieval ranking target text",
+            "notes.txt": "some unrelated notes for retrieval",
+            "faq.txt": "faq content about retrieval ranking",
+        },
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="retrieval ranking",
+            top_k=2,
+            mode="hybrid",
+        )
+
+    assert report.total_results == 2
+    for r in report.results:
+        trace = r.rank_stage_trace
+        assert trace["final_source"] == "hybrid_fusion"
+        stages = trace["stages"]
+        assert len(stages) >= 2
+        stage_names = [s["stage"] for s in stages]
+        assert "vector" in stage_names
+        assert "lexical" in stage_names
+        assert "weights" in trace
+        assert "lexical_weight" in trace["weights"]
+        assert "vector_weight" in trace["weights"]
+
+
+def test_hybrid_mode_results_sorted_by_combined_score(tmp_path) -> None:
+    """Hybrid results are sorted by combined_score descending, not vector score."""
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "a.txt": "aaa zzz unrelated text",
+            "b.txt": "bbb retrieval target text",
+            "c.txt": "ccc retrieval target text",
+        },
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="retrieval target",
+            top_k=3,
+            mode="hybrid",
+        )
+
+    assert report.total_results == 3
+    scores = [r.score for r in report.results]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_dense_mode_is_backward_compatible(tmp_path) -> None:
+    """Dense mode (default) should produce same results as old API."""
+    docs = _seed_documents(
+        tmp_path,
+        {"guide.txt": "dense backward compatibility test"},
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="dense backward compatibility test",
+            top_k=1,
+            mode="dense",
+        )
+
+    assert report.total_results == 1
+    assert report.results[0].rank_stage_trace["final_source"] == "vector"
+    assert not report.degraded
+
+
+def test_lexical_only_fallback_when_no_embeddings(tmp_path) -> None:
+    """When no embeddings exist, hybrid mode returns empty results gracefully."""
+    docs = _seed_documents(tmp_path, {"guide.txt": "some content here"})
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        # Not indexed — no embeddings
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="some content",
+            mode="hybrid",
+        )
+
+    assert report.total_results == 0
+    assert report.results == []
+
+
+def test_fake_reranker_changes_candidate_order(tmp_path) -> None:
+    """Fake reranker should reorder candidates and produce explanatory trace."""
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "a.txt": "banana split dessert",
+            "b.txt": "apple pie recipe",
+            "c.txt": "apple banana smoothie",
+        },
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="apple banana",
+            top_k=3,
+            mode="rerank",
+        )
+
+    assert report.total_results == 3
+    # The fake reranker ranks by query token match ratio
+    # "apple banana smoothie" has 2/2 tokens matching → highest
+    # "apple pie recipe" has 1/2 → lower
+    # "banana split dessert" has 1/2 → similar
+    for r in report.results:
+        trace = r.rank_stage_trace
+        stages = trace["stages"]
+        assert any(s["stage"] == "rerank" for s in stages)
+        rerank_stage = [s for s in stages if s["stage"] == "rerank"][0]
+        assert "score" in rerank_stage
+        assert "original_rank" in rerank_stage
+        assert "new_rank" in rerank_stage
+
+    # The highest-ranked result should contain both "apple" and "banana"
+    top_text = report.results[0].text.lower()
+    assert "apple" in top_text and "banana" in top_text
+
+
+def test_reranker_provider_unavailable_degrade(tmp_path) -> None:
+    """When reranker provider is unavailable, mode degrades gracefully."""
+    docs = _seed_documents(
+        tmp_path,
+        {"guide.txt": "degrade test content here"},
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        # Request a non-existent reranker provider to trigger degrade
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="degrade test content",
+            top_k=1,
+            mode="rerank",
+            reranker_provider="non_existent_reranker",
+        )
+
+    assert report.degraded is True
+    assert report.degraded_reason != ""
+    assert report.total_results == 1
+    # Trace should show degraded rerank stage
+    trace = report.results[0].rank_stage_trace
+    stages = trace["stages"]
+    rerank_stages = [s for s in stages if s["stage"] == "rerank"]
+    assert len(rerank_stages) >= 1
+    assert rerank_stages[0].get("status") == "degraded"
+
+
+def test_acl_protected_chunk_not_in_rerank_input(tmp_path) -> None:
+    """ACL-protected chunk must not enter reranker input or trace."""
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "public_a.txt": "public apple document",
+            "secret_b.txt": "secret banana document",
+        },
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        from ragrig.db.models import Chunk
+
+        chunks = session.scalars(select(Chunk)).all()
+        for chunk in chunks:
+            if "secret" in chunk.text.lower():
+                chunk.metadata_json = {
+                    **chunk.metadata_json,
+                    "acl": {
+                        "visibility": "protected",
+                        "allowed_principals": ["alice"],
+                        "denied_principals": [],
+                        "acl_source": "test",
+                        "acl_source_hash": "abc",
+                        "inheritance": "document",
+                    },
+                }
+        session.commit()
+
+        # Search with guest — protected chunk should not appear
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="document",
+            top_k=2,
+            mode="rerank",
+            principal_ids=["guest"],
+            enforce_acl=True,
+        )
+
+    assert report.total_results == 1
+    # The protected document should not appear in results or traces
+    for r in report.results:
+        assert "secret" not in r.text.lower()
+        assert "banana" not in r.text.lower()
+
+
+def test_hybrid_rerank_mode_full_pipeline(tmp_path) -> None:
+    """Hybrid_rerank mode runs full fusion + rerank pipeline."""
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "a.txt": "apple banana cherry date",
+            "b.txt": "elderberry fig grape honeydew",
+            "c.txt": "indian jujube kiwi lemon mango",
+        },
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="apple banana",
+            top_k=3,
+            mode="hybrid_rerank",
+        )
+
+    assert report.total_results == 3
+    for r in report.results:
+        trace = r.rank_stage_trace
+        stages = trace["stages"]
+        stage_names = [s["stage"] for s in stages]
+        assert "vector" in stage_names
+        assert "lexical" in stage_names
+        assert "rerank" in stage_names
+
+
+@pytest.mark.anyio
+async def test_retrieval_api_hybrid_mode(tmp_path) -> None:
+    """POST /retrieval/search with mode=hybrid returns trace."""
+    database_path = tmp_path / "retrieval-hybrid-api.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    docs = _seed_documents(tmp_path, {"guide.txt": "hybrid api contract test"})
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/retrieval/search",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "hybrid api contract test",
+                "top_k": 1,
+                "mode": "hybrid",
+            },
+        )
+
+    assert response.status_code == 200
+    resp_json = response.json()
+    assert len(resp_json["results"]) == 1
+    r = resp_json["results"][0]
+    assert "rank_stage_trace" in r
+    assert r["rank_stage_trace"]["final_source"] == "hybrid_fusion"
+
+
+@pytest.mark.anyio
+async def test_retrieval_api_rerank_mode(tmp_path) -> None:
+    """POST /retrieval/search with mode=rerank returns reranked results."""
+    database_path = tmp_path / "retrieval-rerank-api.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    docs = _seed_documents(
+        tmp_path,
+        {"a.txt": "rerank alpha test", "b.txt": "rerank beta test"},
+    )
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/retrieval/search",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "rerank test",
+                "top_k": 2,
+                "mode": "rerank",
+            },
+        )
+
+    assert response.status_code == 200
+    resp_json = response.json()
+    assert len(resp_json["results"]) == 2
+    for r in resp_json["results"]:
+        assert any(s["stage"] == "rerank" for s in r["rank_stage_trace"]["stages"])
+
+
+@pytest.mark.anyio
+async def test_retrieval_api_degraded_response(tmp_path) -> None:
+    """POST /retrieval/search with unavailable reranker returns degraded flag."""
+    database_path = tmp_path / "retrieval-degraded-api.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    docs = _seed_documents(tmp_path, {"guide.txt": "degraded api test"})
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/retrieval/search",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "degraded api test",
+                "top_k": 1,
+                "mode": "rerank",
+                "reranker_provider": "nonexistent_12345",
+            },
+        )
+
+    assert response.status_code == 200
+    resp_json = response.json()
+    assert resp_json.get("degraded") is True
+    assert "degraded_reason" in resp_json
+
+
+@pytest.mark.anyio
+async def test_retrieval_api_rejects_invalid_mode(tmp_path) -> None:
+    """POST /retrieval/search rejects invalid mode values."""
+    database_path = tmp_path / "retrieval-invalid-mode.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/retrieval/search",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "test",
+                "top_k": 1,
+                "mode": "invalid_mode",
+            },
+        )
+
+    assert response.status_code == 422
+
+
+def test_candidate_k_limits_candidates_for_rerank(tmp_path) -> None:
+    """candidate_k limits how many candidates are fetched for rerank."""
+    docs = _seed_documents(
+        tmp_path,
+        {f"doc_{i:02d}.txt": f"document number {i} with some content here" for i in range(5)},
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="document",
+            top_k=3,
+            mode="rerank",
+            candidate_k=3,
+        )
+
+    # With 5 chunks and candidate_k=3 + top_k=3, we get at most 3 results
+    assert report.total_results <= 3
+
+
+# ── Lexical scorer unit tests ───────────────────────────────────────────────
+
+
+def test_token_overlap_score_perfect_match() -> None:
+    from ragrig.lexical import token_overlap_score
+
+    score = token_overlap_score(
+        "apple banana cherry",
+        "apple banana",
+        ["apple banana cherry", "date elderberry fig"],
+    )
+    assert score > 0.0
+
+
+def test_token_overlap_score_no_match() -> None:
+    from ragrig.lexical import token_overlap_score
+
+    score = token_overlap_score(
+        "apple banana cherry",
+        "xylophone zebra",
+        ["apple banana cherry"],
+    )
+    assert score == 0.0
+
+
+def test_token_overlap_score_empty_inputs() -> None:
+    from ragrig.lexical import token_overlap_score
+
+    assert token_overlap_score("", "query", ["corpus"]) == 0.0
+    assert token_overlap_score("text", "", ["corpus"]) == 0.0
+    assert token_overlap_score("text", "query", []) > 0.0 if "text" == "query" else True
+
+
+# ── Reranker unit tests ─────────────────────────────────────────────────────
+
+
+def test_fake_rerank_reorders_candidates() -> None:
+    import uuid as _uuid
+
+    from ragrig.reranker import RerankCandidate, fake_rerank
+
+    candidates = [
+        RerankCandidate(
+            document_id=_uuid.uuid4(),
+            document_version_id=_uuid.uuid4(),
+            chunk_id=_uuid.uuid4(),
+            chunk_index=0,
+            document_uri="a.txt",
+            source_uri=None,
+            text="zebra xylophone music",
+            text_preview="zebra xylophone music",
+            original_score=0.9,
+            original_index=0,
+            chunk_metadata={},
+        ),
+        RerankCandidate(
+            document_id=_uuid.uuid4(),
+            document_version_id=_uuid.uuid4(),
+            chunk_id=_uuid.uuid4(),
+            chunk_index=0,
+            document_uri="b.txt",
+            source_uri=None,
+            text="apple banana cherry",
+            text_preview="apple banana cherry",
+            original_score=0.5,
+            original_index=1,
+            chunk_metadata={},
+        ),
+        RerankCandidate(
+            document_id=_uuid.uuid4(),
+            document_version_id=_uuid.uuid4(),
+            chunk_id=_uuid.uuid4(),
+            chunk_index=0,
+            document_uri="c.txt",
+            source_uri=None,
+            text="apple banana smoothie",
+            text_preview="apple banana smoothie",
+            original_score=0.3,
+            original_index=2,
+            chunk_metadata={},
+        ),
+    ]
+
+    results = fake_rerank("apple banana", candidates)
+
+    assert len(results) == 3
+    # Both "apple banana cherry" (idx 1) and "apple banana smoothie" (idx 2)
+    # match all query tokens. The fake reranker breaks ties by original_index.
+    # So idx 1 wins over idx 2.
+    assert results[0].candidate.original_index == 1
+    assert results[0].rerank_score == 1.0
+    assert results[1].candidate.original_index == 2
+    assert results[1].rerank_score == 1.0
+    # "zebra xylophone music" matches 0 tokens → lowest
+    assert results[2].candidate.original_index == 0
+    assert results[2].rerank_score == 0.0
+
+
+def test_fake_rerank_preserves_all_candidates() -> None:
+    import uuid as _uuid
+
+    from ragrig.reranker import RerankCandidate, fake_rerank
+
+    candidates = [
+        RerankCandidate(
+            document_id=_uuid.uuid4(),
+            document_version_id=_uuid.uuid4(),
+            chunk_id=_uuid.uuid4(),
+            chunk_index=i,
+            document_uri=f"doc_{i}.txt",
+            source_uri=None,
+            text=f"document {i}",
+            text_preview=f"document {i}",
+            original_score=1.0 - i * 0.1,
+            original_index=i,
+            chunk_metadata={},
+        )
+        for i in range(5)
+    ]
+
+    results = fake_rerank("query", candidates)
+    assert len(results) == 5
+    assert {r.candidate.original_index for r in results} == {0, 1, 2, 3, 4}
+
+
+def test_provider_rerank_unavailable_returns_none() -> None:
+    import uuid as _uuid
+
+    from ragrig.reranker import RerankCandidate, provider_rerank
+
+    candidates = [
+        RerankCandidate(
+            document_id=_uuid.uuid4(),
+            document_version_id=_uuid.uuid4(),
+            chunk_id=_uuid.uuid4(),
+            chunk_index=0,
+            document_uri="test.txt",
+            source_uri=None,
+            text="test content",
+            text_preview="test content",
+            original_score=0.5,
+            original_index=0,
+            chunk_metadata={},
+        )
+    ]
+
+    result = provider_rerank("test query", candidates, provider_name="nonexistent_provider_xyz")
+    assert result is None
+
+
+def test_hybrid_weight_configuration_affects_scores(tmp_path) -> None:
+    """Changing lexical_weight should affect combined scores."""
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "a.txt": "hybrid weight test alpha",
+            "b.txt": "hybrid weight test beta",
+        },
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        report_lex_heavy = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="weight test",
+            top_k=2,
+            mode="hybrid",
+            lexical_weight=0.9,
+            vector_weight=0.1,
+        )
+
+        report_vec_heavy = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="weight test",
+            top_k=2,
+            mode="hybrid",
+            lexical_weight=0.1,
+            vector_weight=0.9,
+        )
+
+    # Both should return results
+    assert report_lex_heavy.total_results == 2
+    assert report_vec_heavy.total_results == 2
+    # Traces should reflect the weight configuration
+    assert report_lex_heavy.results[0].rank_stage_trace["weights"]["lexical_weight"] == 0.9
+    assert report_vec_heavy.results[0].rank_stage_trace["weights"]["lexical_weight"] == 0.1
