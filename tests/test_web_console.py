@@ -1294,3 +1294,325 @@ async def test_upload_planned_format_returns_415(tmp_path) -> None:
     payload = response.json()
     assert payload["rejections"][0]["reason"] == "unsupported_format"
     assert ".pdf" in payload["rejections"][0]["extension"]
+
+
+# Understanding coverage + batch understand tests
+@pytest.mark.anyio
+async def test_understand_all_endpoint_creates_and_skips(tmp_path) -> None:
+    from ragrig.indexing.pipeline import index_knowledge_base
+    from ragrig.ingestion.pipeline import ingest_local_directory
+
+    database_path = tmp_path / "web-console-batch.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "guide.md": "# Guide\n\nA test guide for understanding.",
+            "notes.txt": "ops notes for the console",
+            "extra.md": "# Extra\n\nThird document for batch.",
+        },
+    )
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        kb_resp = await client.get("/knowledge-bases")
+        kb_id = kb_resp.json()["items"][0]["id"]
+
+        # First batch run: should create for all 3 documents
+        r1 = await client.post(
+            f"/knowledge-bases/{kb_id}/understand-all",
+            json={"provider": "deterministic-local", "profile_id": "*.understand.default"},
+        )
+        assert r1.status_code == 200
+        assert r1.json()["total"] == 3
+        assert r1.json()["created"] == 3
+        assert r1.json()["skipped"] == 0
+        assert r1.json()["failed"] == 0
+
+        # Second batch run: all should be skipped (fresh)
+        r2 = await client.post(
+            f"/knowledge-bases/{kb_id}/understand-all",
+            json={"provider": "deterministic-local", "profile_id": "*.understand.default"},
+        )
+        assert r2.status_code == 200
+        assert r2.json()["total"] == 3
+        assert r2.json()["created"] == 0
+        assert r2.json()["skipped"] == 3
+        assert r2.json()["failed"] == 0
+
+
+@pytest.mark.anyio
+async def test_understand_all_with_invalid_provider(tmp_path) -> None:
+    from ragrig.indexing.pipeline import index_knowledge_base
+    from ragrig.ingestion.pipeline import ingest_local_directory
+
+    database_path = tmp_path / "web-console-batch-fail.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"guide.md": "# Guide\n\nContent."})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        kb_resp = await client.get("/knowledge-bases")
+        kb_id = kb_resp.json()["items"][0]["id"]
+
+        r = await client.post(
+            f"/knowledge-bases/{kb_id}/understand-all",
+            json={"provider": "nonexistent-provider", "profile_id": "*.understand.default"},
+        )
+        assert r.status_code == 200
+        payload = r.json()
+        assert payload["total"] == 1
+        assert payload["created"] == 0
+        assert payload["failed"] == 1
+        assert len(payload["errors"]) == 1
+        assert "provider" in payload["errors"][0]["error"].lower()
+
+
+@pytest.mark.anyio
+async def test_understanding_coverage_endpoint(tmp_path) -> None:
+    from ragrig.indexing.pipeline import index_knowledge_base
+    from ragrig.ingestion.pipeline import ingest_local_directory
+
+    database_path = tmp_path / "web-console-coverage.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "guide.md": "# Guide\n\nA test guide for understanding.",
+            "notes.txt": "ops notes for the console",
+            "extra.md": "# Extra\n\nThird document for batch.",
+        },
+    )
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        kb_resp = await client.get("/knowledge-bases")
+        kb_id = kb_resp.json()["items"][0]["id"]
+
+        # Before any understanding: all missing
+        cov1 = await client.get(f"/knowledge-bases/{kb_id}/understanding-coverage")
+        assert cov1.status_code == 200
+        assert cov1.json()["total_versions"] == 3
+        assert cov1.json()["completed"] == 0
+        assert cov1.json()["missing"] == 3
+        assert cov1.json()["stale"] == 0
+        assert cov1.json()["failed"] == 0
+        assert cov1.json()["completeness_score"] == 0.0
+        assert cov1.json()["recent_errors"] == []
+
+        # Run batch understanding
+        await client.post(
+            f"/knowledge-bases/{kb_id}/understand-all",
+            json={"provider": "deterministic-local", "profile_id": "*.understand.default"},
+        )
+
+        # After understanding: all completed
+        cov2 = await client.get(f"/knowledge-bases/{kb_id}/understanding-coverage")
+        assert cov2.status_code == 200
+        assert cov2.json()["total_versions"] == 3
+        assert cov2.json()["completed"] == 3
+        assert cov2.json()["missing"] == 0
+        assert cov2.json()["stale"] == 0
+        assert cov2.json()["failed"] == 0
+        assert cov2.json()["completeness_score"] == 1.0
+
+
+@pytest.mark.anyio
+async def test_console_includes_understanding_coverage_section(tmp_path) -> None:
+    database_path = tmp_path / "web-console-coverage-ui.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Understanding Coverage" in html
+    assert "understanding-coverage-panel" in html
+    assert "understanding-coverage-body" in html
+    assert "Run All Understanding" in html
+    assert "run-understand-all" in html
+    assert "renderUnderstandingCoverage" in html
+    assert "runUnderstandAll" in html
+    assert "completeness_score" in html
+    assert "Recent Errors" in html
+    assert "recent_errors" in html
+    assert "missing" in html.lower()
+    assert "stale" in html.lower()
+    assert "completed" in html
+    assert "failed" in html
+
+
+@pytest.mark.anyio
+async def test_console_coverage_shows_real_data(tmp_path) -> None:
+    from ragrig.indexing.pipeline import index_knowledge_base
+    from ragrig.ingestion.pipeline import ingest_local_directory
+
+    database_path = tmp_path / "web-console-coverage-data.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "guide.md": "# Guide\n\nA test guide.",
+            "notes.txt": "ops notes",
+            "extra.md": "# Extra\n\nThird doc.",
+        },
+    )
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Console page loads and includes coverage section with real data
+        console = await client.get("/console")
+        assert console.status_code == 200
+        assert "Understanding Coverage" in console.text
+
+        # Coverage endpoint returns real data
+        kb_resp = await client.get("/knowledge-bases")
+        kb_id = kb_resp.json()["items"][0]["id"]
+
+        coverage = await client.get(f"/knowledge-bases/{kb_id}/understanding-coverage")
+        assert coverage.status_code == 200
+        payload = coverage.json()
+        assert payload["total_versions"] == 3
+        assert payload["missing"] == 3
+        assert payload["completeness_score"] == 0.0
+        assert payload["recent_errors"] == []
+
+        # Run batch understanding
+        await client.post(
+            f"/knowledge-bases/{kb_id}/understand-all",
+            json={"provider": "deterministic-local", "profile_id": "*.understand.default"},
+        )
+
+        # Coverage updates
+        coverage2 = await client.get(f"/knowledge-bases/{kb_id}/understanding-coverage")
+        assert coverage2.json()["completed"] == 3
+        assert coverage2.json()["completeness_score"] == 1.0
+
+
+@pytest.mark.anyio
+async def test_console_no_secrets_in_understanding_endpoints(tmp_path) -> None:
+    from ragrig.indexing.pipeline import index_knowledge_base
+    from ragrig.ingestion.pipeline import ingest_local_directory
+
+    database_path = tmp_path / "web-console-no-secrets-understanding.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"guide.md": "# Guide\n\nContent."})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        kb_resp = await client.get("/knowledge-bases")
+        kb_id = kb_resp.json()["items"][0]["id"]
+
+        # Coverage endpoint
+        coverage = await client.get(f"/knowledge-bases/{kb_id}/understanding-coverage")
+        text_body = coverage.text
+        assert "secret" not in text_body.lower()
+        assert "api_key" not in text_body.lower()
+
+        # Batch endpoint
+        batch = await client.post(
+            f"/knowledge-bases/{kb_id}/understand-all",
+            json={"provider": "deterministic-local", "profile_id": "*.understand.default"},
+        )
+        text_body = batch.text
+        assert "secret" not in text_body.lower()
+        assert "api_key" not in text_body.lower()
+
+
+@pytest.mark.anyio
+async def test_understanding_result_traceability(tmp_path) -> None:
+    """Verify each result has document_version_id, profile_id, provider, model, input_hash."""
+    from ragrig.indexing.pipeline import index_knowledge_base
+    from ragrig.ingestion.pipeline import ingest_local_directory
+
+    database_path = tmp_path / "web-console-traceability.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"guide.md": "# Guide\n\nA test guide for understanding."})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Get a document version
+        docs_resp = await client.get("/documents")
+        version_id = docs_resp.json()["items"][0]["latest_version"]["id"]
+
+        # Generate understanding
+        gen_resp = await client.post(
+            f"/document-versions/{version_id}/understand",
+            json={"provider": "deterministic-local", "profile_id": "*.understand.default"},
+        )
+        assert gen_resp.status_code == 200
+        payload = gen_resp.json()
+        assert payload["document_version_id"] == version_id
+        assert payload["profile_id"] == "*.understand.default"
+        assert payload["provider"] == "deterministic-local"
+        assert "model" in payload
+        assert len(payload.get("input_hash", "")) == 64
+
+        # Get understanding
+        get_resp = await client.get(f"/document-versions/{version_id}/understanding")
+        assert get_resp.status_code == 200
+        assert len(get_resp.json().get("input_hash", "")) == 64
+        assert get_resp.json()["profile_id"] == "*.understand.default"

@@ -47,9 +47,12 @@ from ragrig.retrieval import (
 from ragrig.understanding import (
     DocumentVersionNotFoundError,
     ProviderUnavailableError,
+    UnderstandAllRequest,
     UnderstandingRequest,
     generate_document_understanding,
     get_understanding_by_version,
+    get_understanding_coverage,
+    understand_all_versions,
 )
 from ragrig.vectorstore import get_vector_backend, get_vector_backend_health
 from ragrig.web_console import (
@@ -300,6 +303,7 @@ def create_app(
             "profile_id": record.profile_id,
             "provider": record.provider,
             "model": record.model,
+            "input_hash": record.input_hash,
             "status": record.status,
             "result": record.result,
             "error": record.error,
@@ -329,11 +333,60 @@ def create_app(
             "profile_id": record.profile_id,
             "provider": record.provider,
             "model": record.model,
+            "input_hash": record.input_hash,
             "status": record.status,
             "result": record.result,
             "error": record.error,
             "created_at": record.created_at,
             "updated_at": record.updated_at,
+        }
+
+    @app.post("/knowledge-bases/{kb_id}/understand-all", response_model=None)
+    def understand_all(
+        kb_id: str,
+        request: UnderstandAllRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            result = understand_all_versions(
+                session,
+                knowledge_base_id=kb_id,
+                provider=request.provider,
+                model=request.model,
+                profile_id=request.profile_id,
+            )
+        except ProviderUnavailableError as exc:
+            return JSONResponse(status_code=503, content={"error": exc.code, "message": str(exc)})
+        return {
+            "total": result.total,
+            "created": result.created,
+            "skipped": result.skipped,
+            "failed": result.failed,
+            "errors": [{"version_id": e.version_id, "error": e.error} for e in result.errors],
+        }
+
+    @app.get("/knowledge-bases/{kb_id}/understanding-coverage", response_model=None)
+    def understanding_coverage(
+        kb_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any]:
+        coverage = get_understanding_coverage(session, kb_id)
+        return {
+            "total_versions": coverage.total_versions,
+            "completed": coverage.completed,
+            "missing": coverage.missing,
+            "stale": coverage.stale,
+            "failed": coverage.failed,
+            "completeness_score": coverage.completeness_score,
+            "recent_errors": [
+                {
+                    "document_version_id": e.document_version_id,
+                    "profile_id": e.profile_id,
+                    "provider": e.provider,
+                    "error": e.error,
+                }
+                for e in coverage.recent_errors
+            ],
         }
 
     @app.get("/models", response_model=None)

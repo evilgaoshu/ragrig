@@ -63,3 +63,39 @@ class UnderstandingRecord(BaseModel):
     error: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+
+
+class UnderstandAllRequest(BaseModel):
+    provider: str = "deterministic-local"
+    model: str | None = None
+    profile_id: str = "*.understand.default"
+
+
+class BatchUnderstandingError(BaseModel):
+    version_id: str
+    error: str
+
+
+class BatchUnderstandingResult(BaseModel):
+    total: int
+    created: int
+    skipped: int
+    failed: int
+    errors: list[BatchUnderstandingError] = Field(default_factory=list)
+
+
+class CoverageErrorEntry(BaseModel):
+    document_version_id: str
+    profile_id: str
+    provider: str
+    error: str
+
+
+class UnderstandingCoverage(BaseModel):
+    total_versions: int
+    completed: int
+    missing: int
+    stale: int
+    failed: int
+    completeness_score: float | None = None
+    recent_errors: list[CoverageErrorEntry] = Field(default_factory=list)
