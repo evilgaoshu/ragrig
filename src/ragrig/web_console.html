@@ -1044,6 +1044,34 @@
               </div>
             </section>
 
+            <section class="panel" id="evaluation-panel">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">Golden Question Evaluation</div>
+                  <div class="panel-meta">RAG regression quality gate · latest run &amp; report</div>
+                </div>
+                <button class="button primary" id="run-evaluation-btn" type="button">Run Evaluation</button>
+              </div>
+              <div class="panel-body stack" id="evaluation-body">
+                <div class="sub muted">No evaluation run yet. Load a golden fixture to begin.</div>
+              </div>
+              <div class="panel-body stack" id="evaluation-report" style="display:none">
+                <div class="card">
+                  <div class="name" id="eval-run-id">—</div>
+                  <div class="sub">
+                    <span id="eval-metrics-summary"></span>
+                  </div>
+                  <div class="stack" style="margin-top:8px; gap:6px;" id="eval-failure-list"></div>
+                </div>
+              </div>
+              <div class="panel-body stack" id="evaluation-error" style="display:none">
+                <div class="card" style="border-color:var(--red);">
+                  <div class="name">Evaluation failed</div>
+                  <div class="sub" id="eval-error-message"></div>
+                </div>
+              </div>
+            </section>
+
             <section class="panel">
               <div class="panel-head"><div class="panel-title">Model Configuration</div><div class="panel-meta">Real profiles + degraded shells</div></div>
               <div class="panel-body stack" id="models-panel"></div>
@@ -1208,6 +1236,12 @@
         plugins: [],
         models: null,
         system: null,
+        evaluation: {
+          runs: [],
+          latest: null,
+          loading: false,
+          error: null,
+        },
         wizard: {
           filter: 'source',
           search: '',
@@ -2617,6 +2651,147 @@
         `;
       }
 
+      // ── Evaluation Panel ────────────────────────────────────────────────
+
+      async function loadEvaluation() {
+        try {
+          state.evaluation = await getJson('/evaluations');
+        } catch {
+          state.evaluation = { runs: [], latest_id: null, latest_metrics: null };
+        }
+      }
+
+      function renderEvaluation() {
+        const bodyEl = document.getElementById('evaluation-body');
+        const reportEl = document.getElementById('evaluation-report');
+        const errorEl = document.getElementById('evaluation-error');
+        const metricsEl = document.getElementById('eval-metrics-summary');
+        const failureEl = document.getElementById('eval-failure-list');
+        const runIdEl = document.getElementById('eval-run-id');
+        const btnEl = document.getElementById('run-evaluation-btn');
+
+        var ev = state.evaluation || {};
+        var runs = ev.runs || [];
+        var latest = runs[0];
+
+        // Empty state
+        if (!latest) {
+          bodyEl.style.display = 'block';
+          reportEl.style.display = 'none';
+          errorEl.style.display = 'none';
+          bodyEl.innerHTML = '<div class="sub muted">No evaluation run yet. Click "Run Evaluation" to start a golden question quality gate.</div>';
+          btnEl.disabled = false;
+          btnEl.textContent = 'Run Evaluation';
+          return;
+        }
+
+        bodyEl.style.display = 'none';
+        reportEl.style.display = 'block';
+        errorEl.style.display = 'none';
+
+        var metrics = latest.metrics || {};
+        runIdEl.textContent = 'Run: ' + (latest.id || '—').substring(0, 12) + '…';
+
+        // Scores
+        var ht = [
+          'hit@1: ' + (metrics.hit_at_1 != null ? (metrics.hit_at_1 * 100).toFixed(1) + '%' : '—'),
+          'hit@3: ' + (metrics.hit_at_3 != null ? (metrics.hit_at_3 * 100).toFixed(1) + '%' : '—'),
+          'hit@5: ' + (metrics.hit_at_5 != null ? (metrics.hit_at_5 * 100).toFixed(1) + '%' : '—'),
+        ].join(' · ');
+        var meta = [
+          'MRR: ' + (metrics.mrr != null ? (metrics.mrr * 100).toFixed(1) + '%' : '—'),
+          'Zero results: ' + (metrics.zero_result_count || 0) + '/' + (metrics.total_questions || 0),
+          'Mean latency: ' + (metrics.latency_ms_mean || '—') + ' ms',
+          'Answer: ' + (metrics.answer_skipped ? 'skipped' : 'available'),
+        ].join(' · ');
+        metricsEl.innerHTML = '<span class="pill">' + escapeHtml(ht) + '</span><br>' + escapeHtml(meta);
+
+        // Failure list: show items with errors or no hit
+        var items = latest.items || [];
+        var failures = items.filter(function(item) { return item.error || !item.hit; });
+        if (failures.length > 0) {
+          var listHtml = '<div class="name" style="margin-top:8px;">Failed / Missed Questions (' + failures.length + ')</div>';
+          for (var i = 0; i < Math.min(failures.length, 10); i++) {
+            var f = failures[i];
+            var reason = f.error ? 'Error: ' + f.error : 'No expected doc in top results';
+            listHtml += '<div class="sub">' + escapeHtml('Q' + (f.question_index + 1) + ': ' + f.query.substring(0, 80)) + ' — ' + escapeHtml(reason) + '</div>';
+          }
+          if (failures.length > 10) {
+            listHtml += '<div class="sub">…and ' + (failures.length - 10) + ' more</div>';
+          }
+          failureEl.innerHTML = listHtml;
+        } else {
+          failureEl.innerHTML = '<div class="sub">All questions passed ✓</div>';
+        }
+
+        // Regression delta
+        var delta = metrics.regression_delta_vs_baseline;
+        if (delta && delta.mrr != null) {
+          var deltaHtml = ['<div class="name" style="margin-top:8px;">Regression Delta vs Baseline</div>'];
+          var keys = ['hit_at_1', 'hit_at_3', 'mrr', 'zero_result_rate'];
+          for (var k = 0; k < keys.length; k++) {
+            var key = keys[k];
+            var val = delta[key];
+            if (val != null) {
+              var sign = val >= 0 ? '+' : '';
+              var cls = val < 0 ? 'pill error' : 'pill';
+              deltaHtml.push('<span class="' + cls + '">' + key + ': ' + sign + (val * 100).toFixed(1) + '%</span> ');
+            }
+          }
+          failureEl.innerHTML += deltaHtml.join('');
+        }
+
+        btnEl.disabled = false;
+        btnEl.textContent = 'Run Evaluation';
+      }
+
+      async function runEvaluationFromConsole() {
+        var btnEl = document.getElementById('run-evaluation-btn');
+        btnEl.disabled = true;
+        btnEl.textContent = 'Running…';
+
+        var kbSelect = document.getElementById('retrieval-kb');
+        var kbName = kbSelect ? kbSelect.value : 'fixture-local';
+
+        try {
+          var response = await fetch('/evaluations/runs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              golden_path: 'tests/fixtures/evaluation_golden.yaml',
+              knowledge_base: kbName,
+              top_k: 5,
+            }),
+          });
+          if (!response.ok) {
+            var errData = await response.json().catch(function() { return {}; });
+            state.evaluation.error = errData.error || 'Evaluation failed';
+            var errorEl = document.getElementById('evaluation-error');
+            var errorMsg = document.getElementById('eval-error-message');
+            document.getElementById('evaluation-body').style.display = 'none';
+            document.getElementById('evaluation-report').style.display = 'none';
+            errorEl.style.display = 'block';
+            errorMsg.textContent = state.evaluation.error;
+          } else {
+            await loadEvaluation();
+          }
+        } catch (error) {
+          state.evaluation.error = 'Network error: ' + error.message;
+          var errorEl2 = document.getElementById('evaluation-error');
+          var errorMsg2 = document.getElementById('eval-error-message');
+          document.getElementById('evaluation-body').style.display = 'none';
+          document.getElementById('evaluation-report').style.display = 'none';
+          errorEl2.style.display = 'block';
+          errorMsg2.textContent = state.evaluation.error;
+        }
+
+        renderEvaluation();
+        btnEl.disabled = false;
+        btnEl.textContent = 'Run Evaluation';
+      }
+
+      // ── End Evaluation Panel ────────────────────────────────────────────
+
       async function loadSanitizerCoverage() {
         try {
           state.sanitizerCoverage = await getJson('/sanitizer-coverage');
@@ -3125,6 +3300,8 @@
           renderHealthPanel();
           renderVectorPanel();
           renderRetrievalControls();
+          await loadEvaluation();
+          renderEvaluation();
           renderFormats();
           renderSanitizerCoverage();
           renderUploadKBSelect();
@@ -3133,6 +3310,7 @@
           return;
         }
 
+        document.getElementById('run-evaluation-btn').addEventListener('click', runEvaluationFromConsole);
         document.getElementById('run-retrieval').addEventListener('click', runRetrieval);
         document.getElementById('copy-retrieval-request').addEventListener('click', async () => {
           const payload = JSON.stringify(buildRetrievalRequest(), null, 2);

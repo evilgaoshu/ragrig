@@ -150,5 +150,8 @@ fileshare-live-down:
 sanitizer-coverage-summary:
 	$(UV) run python -m scripts.sanitizer_coverage
 
+eval-local:
+	$(UV) run python -m scripts.eval_local
+
 export-object-storage-check:
 	$(UV) run python -m scripts.export_object_storage

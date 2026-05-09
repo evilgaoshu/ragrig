@@ -1,0 +1,56 @@
+golden_question_set:
+  name: "default"
+  description: "Example golden question set for RAGRig evaluation. Covers retrieval accuracy, ranking, and edge cases with the local fixture knowledge base."
+  version: "1.0.0"
+  questions:
+    - query: "retrieval ready guide"
+      expected_doc_uri: "guide.md"
+      expected_citation: "retrieval ready guide"
+      expected_answer_keywords:
+        - "retrieval"
+        - "guide"
+      tags:
+        - smoke
+        - hit
+
+    - query: "ops notes for the console"
+      expected_doc_uri: "notes.txt"
+      expected_citation: "ops notes for the console"
+      expected_answer_keywords:
+        - "ops"
+        - "console"
+      tags:
+        - smoke
+        - hit
+
+    - query: "deeply nested content"
+      expected_doc_uri: "nested/deep.md"
+      expected_citation: "deeply nested document"
+      expected_answer_keywords:
+        - "nested"
+        - "deep"
+      tags:
+        - smoke
+
+    - query: "nonexistent query xyzzy"
+      expected_chunk_text: ""
+      expected_answer_keywords: []
+      tags:
+        - miss
+        - zero-results
+
+    - query: "empty file content"
+      expected_doc_uri: "empty.txt"
+      expected_citation: ""
+      expected_answer_keywords:
+        - "empty"
+      tags:
+        - edge-case
+
+    - query: "binary file content"
+      expected_doc_uri: "binary.bin"
+      expected_citation: ""
+      expected_answer_keywords:
+        - "binary"
+      tags:
+        - edge-case
