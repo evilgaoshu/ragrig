@@ -851,6 +851,11 @@
               <div class="panel-head"><div class="panel-title">Understanding Coverage</div><div class="panel-meta">KB-level understand status</div></div>
               <div class="panel-body stack" id="understanding-coverage-body"></div>
             </section>
+            <section class="panel" id="understanding-runs-panel">
+              <div class="panel-head"><div class="panel-title">Understanding Runs</div><div class="panel-meta">Batch execution history</div></div>
+              <div class="panel-body stack" id="understanding-runs-body"></div>
+              <div class="panel-foot actions" id="understanding-runs-actions" style="display:none"></div>
+            </section>
 
             <section class="panel">
               <div class="panel-head"><div class="panel-title">Document / Chunk Preview</div><div class="panel-meta">Latest version and provenance</div></div>
@@ -1343,9 +1348,93 @@
             body: JSON.stringify({ provider: 'deterministic-local', profile_id: '*.understand.default' }),
           });
           await renderUnderstandingCoverage();
+          await renderUnderstandingRuns();
           await renderDocumentPreview();
         } catch (error) {
           const root = document.getElementById('understanding-coverage-body');
+          root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
+      async function renderUnderstandingRuns() {
+        const root = document.getElementById('understanding-runs-body');
+        const actions = document.getElementById('understanding-runs-actions');
+        const kbItem = state.knowledgeBases[0];
+        if (!kbItem) {
+          root.innerHTML = empty('No knowledge bases available.');
+          if (actions) actions.style.display = 'none';
+          return;
+        }
+        try {
+          const data = await getJson(`/understanding-runs?knowledge_base_id=${kbItem.id}&limit=10`);
+          const runs = data.items || [];
+          if (runs.length === 0) {
+            root.innerHTML = empty('No understanding runs yet. Click "Run All Understanding" to create one.');
+            if (actions) actions.style.display = 'none';
+            return;
+          }
+          const items = runs.map((run) => {
+            const statusPill = run.status === 'success' ? 'pill'
+              : run.status === 'partial_failure' ? 'pill warn'
+              : run.status === 'all_failure' ? 'pill error'
+              : run.status === 'empty_kb' ? 'pill neutral'
+              : 'pill';
+            const errorInfo = run.error_summary
+              ? `<div class="sub"><span class="pill error">errors</span> ${escapeHtml(run.error_summary.slice(0, 200))}</div>`
+              : '';
+            const triggerInfo = `<div class="sub">trigger: ${escapeHtml(run.trigger_source)}${run.operator ? ' · operator: ' + escapeHtml(run.operator) : ''}</div>`;
+            const timeInfo = `<div class="sub">${escapeHtml(run.started_at || 'n/a')} → ${escapeHtml(run.finished_at || 'n/a')}</div>`;
+            return `
+              <div class="card" id="run-${escapeHtml(run.id.slice(0, 8))}">
+                <div class="name">Run <code>${escapeHtml(run.id.slice(0, 8))}…</code> <span class="${statusPill}">${escapeHtml(run.status)}</span></div>
+                <div class="sub">${escapeHtml(run.provider)} · model: ${escapeHtml(run.model || 'n/a')} · profile: ${escapeHtml(run.profile_id)}</div>
+                <div class="sub">total: ${run.total} · created: ${run.created} · skipped: ${run.skipped} · failed: ${run.failed}</div>
+                ${triggerInfo}
+                ${timeInfo}
+                ${errorInfo}
+              </div>
+            `;
+          });
+          root.innerHTML = items.join('');
+
+          // Show rerun button with historical params from the most recent run
+          const latestRun = runs[0];
+          if (actions) {
+            actions.style.display = '';
+            actions.innerHTML = `
+              <button class="button primary" id="rerun-understand-all" type="button">
+                Rerun (${escapeHtml(latestRun.provider)} · ${escapeHtml(latestRun.profile_id)})
+              </button>
+            `;
+            document.getElementById('rerun-understand-all').addEventListener('click', () => {
+              rerunUnderstandAll(latestRun.provider, latestRun.profile_id);
+            });
+          }
+        } catch (error) {
+          root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+          if (actions) actions.style.display = 'none';
+        }
+      }
+
+      async function rerunUnderstandAll(provider, profile_id) {
+        const kbItem = state.knowledgeBases[0];
+        if (!kbItem) return;
+        const button = document.getElementById('rerun-understand-all');
+        if (button) {
+          button.disabled = true;
+          button.textContent = 'Rerunning...';
+        }
+        try {
+          await getJson(`/knowledge-bases/${kbItem.id}/understand-all`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, profile_id }),
+          });
+          await renderUnderstandingCoverage();
+          await renderUnderstandingRuns();
+          await renderDocumentPreview();
+        } catch (error) {
+          const root = document.getElementById('understanding-runs-body');
           root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
         }
       }
@@ -2431,6 +2520,7 @@
           renderIngestionPanel();
           await renderPipelineRuns();
           await renderUnderstandingCoverage();
+          await renderUnderstandingRuns();
           await renderDocumentPreview();
           renderModels();
           await renderProfileMatrix();

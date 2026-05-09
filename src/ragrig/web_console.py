@@ -21,6 +21,7 @@ from ragrig.db.models import (
     PipelineRun,
     PipelineRunItem,
     Source,
+    UnderstandingRun,
 )
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
@@ -693,6 +694,65 @@ def _plugin_next_steps(discovery: dict[str, Any]) -> list[str]:
     return [
         "Review the docs reference and keep this plugin unavailable until runtime support lands."
     ]
+
+
+def _serialize_understanding_run(run: UnderstandingRun) -> dict[str, Any]:
+    return {
+        "id": str(run.id),
+        "knowledge_base_id": str(run.knowledge_base_id),
+        "provider": run.provider,
+        "model": run.model,
+        "profile_id": run.profile_id,
+        "trigger_source": run.trigger_source,
+        "operator": run.operator,
+        "status": run.status,
+        "total": run.total,
+        "created": run.created,
+        "skipped": run.skipped,
+        "failed": run.failed,
+        "error_summary": run.error_summary,
+        "started_at": _isoformat(run.started_at),
+        "finished_at": _isoformat(run.finished_at),
+    }
+
+
+def list_understanding_runs(
+    session: Session,
+    knowledge_base_id: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """List recent understanding runs, optionally filtered by KB."""
+    query = select(UnderstandingRun, KnowledgeBase).join(
+        KnowledgeBase, KnowledgeBase.id == UnderstandingRun.knowledge_base_id
+    )
+    if knowledge_base_id is not None:
+        kb_uuid = uuid.UUID(knowledge_base_id)
+        query = query.where(UnderstandingRun.knowledge_base_id == kb_uuid)
+    query = query.order_by(UnderstandingRun.started_at.desc()).limit(limit)
+
+    items: list[dict[str, Any]] = []
+    for run, kb in session.execute(query):
+        item = _serialize_understanding_run(run)
+        item["knowledge_base"] = kb.name
+        items.append(item)
+    return items
+
+
+def get_understanding_run_detail(session: Session, run_id: str) -> dict[str, Any] | None:
+    """Return single understanding run detail with KB name."""
+    run_uuid = uuid.UUID(run_id)
+    row = session.execute(
+        select(UnderstandingRun, KnowledgeBase)
+        .join(KnowledgeBase, KnowledgeBase.id == UnderstandingRun.knowledge_base_id)
+        .where(UnderstandingRun.id == run_uuid)
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    run, kb = row
+    item = _serialize_understanding_run(run)
+    item["knowledge_base"] = kb.name
+    return item
 
 
 def list_supported_formats(status: str | None = None) -> dict[str, list[dict[str, Any]]]:
