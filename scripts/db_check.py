@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import psycopg
 
 from ragrig.config import get_settings
-
-HEAD_REVISION = "20260503_0001"
 
 REQUIRED_TABLES = [
     "knowledge_bases",
@@ -20,10 +19,26 @@ REQUIRED_TABLES = [
 ]
 
 
+def _get_head_revision() -> str:
+    """Read the latest alembic revision from the versions directory."""
+    versions_dir = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    if not versions_dir.exists():
+        return ""
+    files = sorted(versions_dir.glob("*.py"))
+    for f in reversed(files):
+        name = f.stem
+        parts = name.split("_")
+        if len(parts) >= 2:
+            return f"{parts[0]}_{parts[1]}"
+    return ""
+
+
 def evaluate_database_state(
     cursor: psycopg.Cursor[tuple[object, ...]],
-    expected_revision: str = HEAD_REVISION,
+    expected_revision: str | None = None,
 ) -> dict[str, object]:
+    if expected_revision is None:
+        expected_revision = _get_head_revision()
     cursor.execute("SELECT extname FROM pg_extension WHERE extname = 'vector';")
     extension_row = cursor.fetchone()
 

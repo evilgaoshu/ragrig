@@ -63,6 +63,7 @@ vectorstores = [
 dev = [
   "cyclonedx-bom>=7.3.0",
   "httpx>=0.27.0,<1.0.0",
+  "lxml>=6.1.0",
   "pip-audit>=2.10.0",
   "pip-licenses>=5.5.5",
   "pytest>=9.0.3,<10.0.0",
