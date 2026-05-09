@@ -1296,7 +1296,6 @@ async def test_upload_planned_format_returns_415(tmp_path) -> None:
     assert ".pdf" in payload["rejections"][0]["extension"]
 
 
-
 @pytest.mark.anyio
 async def test_upload_preview_format_tracks_parser_in_pipeline_items(tmp_path) -> None:
     database_path = tmp_path / "web-console-upload-preview-items.db"
@@ -1430,7 +1429,6 @@ async def test_supported_formats_includes_fallback_policy_for_preview(tmp_path) 
         assert fmt["status"] == "preview"
         assert "fallback_policy" in fmt
         assert fmt["fallback_policy"] is not None
-
 
 
 # Understanding coverage + batch understand tests
