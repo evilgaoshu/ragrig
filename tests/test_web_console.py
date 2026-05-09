@@ -504,6 +504,9 @@ async def test_system_status_reports_alembic_revision_when_revision_table_exists
 # Processing Profiles tests (from main)
 @pytest.mark.anyio
 async def test_processing_profiles_endpoint_returns_default_profiles(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
     database_path = tmp_path / "web-console-profiles.db"
     session_factory = _create_file_session_factory(database_path)
     app = create_app(check_database=lambda: None, session_factory=session_factory)
@@ -532,6 +535,7 @@ async def test_processing_profiles_endpoint_returns_default_profiles(tmp_path) -
         # Must not contain raw secrets
         assert "secret" not in str(p)
         assert "api_key" not in str(p)
+    clear_overrides()
 
 
 @pytest.mark.anyio
@@ -796,6 +800,243 @@ async def test_document_understanding_shown_in_console(tmp_path) -> None:
         assert "Document Understanding" in console_after.text
 
 
+# Override CRUD API tests
+@pytest.mark.anyio
+async def test_post_processing_profile_creates_override(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
+    database_path = tmp_path / "web-console-create-override.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        create_resp = await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.override",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk Override",
+                "description": "Custom chunking for PDFs.",
+                "provider": "model.fake_provider",
+                "kind": "LLM-assisted",
+            },
+        )
+    assert create_resp.status_code == 200
+    payload = create_resp.json()
+    assert payload["profile_id"] == "pdf.chunk.override"
+    assert payload["source"] == "override"
+    assert payload["provider_available"] is False
+    clear_overrides()
+
+
+@pytest.mark.anyio
+async def test_get_matrix_reflects_override_source(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
+    database_path = tmp_path / "web-console-override-matrix.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.override",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk Override",
+                "description": "Custom chunking for PDFs.",
+                "provider": "model.fake_provider",
+                "kind": "LLM-assisted",
+            },
+        )
+        matrix_resp = await client.get("/processing-profiles/matrix")
+
+    assert matrix_resp.status_code == 200
+    cell = matrix_resp.json()["cells"][".pdf.chunk"]
+    assert cell["source"] == "override"
+    assert cell["is_default"] is False
+    assert cell["profile_id"] == "pdf.chunk.override"
+    clear_overrides()
+
+
+@pytest.mark.anyio
+async def test_patch_disable_and_enable_override(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
+    database_path = tmp_path / "web-console-patch-override.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.override",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk Override",
+                "description": "Custom chunking for PDFs.",
+                "provider": "model.fake_provider",
+            },
+        )
+        patch_resp = await client.patch(
+            "/processing-profiles/overrides/pdf.chunk.override",
+            json={"status": "disabled"},
+        )
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["status"] == "disabled"
+
+        matrix_disabled = await client.get("/processing-profiles/matrix")
+        cell_disabled = matrix_disabled.json()["cells"][".pdf.chunk"]
+        assert cell_disabled["profile_id"] == "*.chunk.default"
+
+        await client.patch(
+            "/processing-profiles/overrides/pdf.chunk.override",
+            json={"status": "active"},
+        )
+        matrix_enabled = await client.get("/processing-profiles/matrix")
+        cell_enabled = matrix_enabled.json()["cells"][".pdf.chunk"]
+        assert cell_enabled["profile_id"] == "pdf.chunk.override"
+    clear_overrides()
+
+
+@pytest.mark.anyio
+async def test_delete_override_reverts_to_default(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
+    database_path = tmp_path / "web-console-delete-override.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.override",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk Override",
+                "description": "Custom chunking for PDFs.",
+                "provider": "model.fake_provider",
+            },
+        )
+        delete_resp = await client.delete("/processing-profiles/overrides/pdf.chunk.override")
+        assert delete_resp.status_code == 204
+
+        matrix_resp = await client.get("/processing-profiles/matrix")
+        cell = matrix_resp.json()["cells"][".pdf.chunk"]
+        assert cell["profile_id"] == "*.chunk.default"
+        assert cell["source"] == "default"
+    clear_overrides()
+
+
+@pytest.mark.anyio
+async def test_processing_profile_api_no_secret_leakage(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
+    database_path = tmp_path / "web-console-profile-secrets.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.override",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk Override",
+                "description": "Custom chunking for PDFs.",
+                "provider": "model.fake_provider",
+                "metadata": {"api_key": "should-not-appear", "secret": "hidden"},
+            },
+        )
+        profiles_resp = await client.get("/processing-profiles")
+        matrix_resp = await client.get("/processing-profiles/matrix")
+
+    for response in [profiles_resp, matrix_resp]:
+        text_body = response.text
+        assert "api_key" not in text_body.lower()
+        assert "should-not-appear" not in text_body.lower()
+        assert "hidden" not in text_body.lower()
+    clear_overrides()
+
+
+@pytest.mark.anyio
+async def test_unavailable_provider_not_faked_as_ready(tmp_path) -> None:
+    from ragrig.processing_profile import clear_overrides
+
+    clear_overrides()
+    database_path = tmp_path / "web-console-provider-ready.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await client.post(
+            "/processing-profiles",
+            json={
+                "profile_id": "pdf.chunk.override",
+                "extension": ".pdf",
+                "task_type": "chunk",
+                "display_name": "PDF Chunk Override",
+                "description": "Custom chunking for PDFs.",
+                "provider": "model.fake_provider",
+            },
+        )
+        profiles_resp = await client.get("/processing-profiles")
+        profile = next(
+            p for p in profiles_resp.json()["profiles"] if p["profile_id"] == "pdf.chunk.override"
+        )
+        assert profile["provider_available"] is False
+
+        matrix_resp = await client.get("/processing-profiles/matrix")
+        cell = matrix_resp.json()["cells"][".pdf.chunk"]
+        assert cell["provider_available"] is False
+    clear_overrides()
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_override_ui(tmp_path) -> None:
+    database_path = tmp_path / "web-console-override-ui.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Create Override" in html
+    assert "profile-create-form" in html
+    assert "profile-create-btn" in html
+    assert "Save Override" in html
+    assert "Cancel" in html
+    assert "showProfileCreateForm" in html
+    assert "submitProfileCreate" in html
+    assert "toggleProfileStatus" in html
+    assert "deleteProfile" in html
+    assert "data-profile-action" in html
+    assert "Supported Formats" in html
+    assert "supported" in html.lower()
+    assert "preview" in html.lower()
+    assert "planned" in html.lower()
+
+
+# Supported formats tests
 @pytest.mark.anyio
 async def test_supported_formats_endpoint_returns_all_formats(tmp_path) -> None:
     database_path = tmp_path / "web-console-formats.db"
@@ -889,24 +1130,6 @@ async def test_supported_formats_check_requires_extension_param(tmp_path) -> Non
         response = await client.get("/supported-formats/check")
 
     assert response.status_code == 422
-
-
-@pytest.mark.anyio
-async def test_console_shows_supported_formats_section(tmp_path) -> None:
-    database_path = tmp_path / "web-console-formats-ui.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "Supported Formats" in html
-    assert "supported" in html.lower()
-    assert "preview" in html.lower()
-    assert "planned" in html.lower()
 
 
 @pytest.mark.anyio

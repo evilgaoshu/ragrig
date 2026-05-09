@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 
 
@@ -17,6 +18,7 @@ class ProfileStatus(StrEnum):
     ACTIVE = "active"
     DEPRECATED = "deprecated"
     EXPERIMENTAL = "experimental"
+    DISABLED = "disabled"
 
 
 class ProfileSource(StrEnum):
@@ -43,6 +45,8 @@ class ProcessingProfile:
     source: ProfileSource = ProfileSource.DEFAULT
     tags: list[str] = field(default_factory=list)
     metadata: dict[str, object] = field(default_factory=dict)
+    created_by: str | None = None
+    updated_at: datetime | None = None
 
     def to_api_dict(self) -> dict[str, object]:
         return {
@@ -57,8 +61,29 @@ class ProcessingProfile:
             "kind": self.kind.value,
             "source": self.source.value,
             "tags": self.tags,
-            "metadata": self.metadata,
+            "metadata": _sanitize_metadata(self.metadata),
+            "created_by": self.created_by,
+            "updated_at": self.updated_at.isoformat() if self.updated_at is not None else None,
         }
+
+
+def _sanitize_metadata(metadata: dict[str, object]) -> dict[str, object]:
+    """Remove keys that look like secrets from metadata for API responses."""
+    secret_parts = (
+        "api_key",
+        "access_key",
+        "secret",
+        "session_token",
+        "token",
+        "password",
+        "private_key",
+        "credential",
+        "dsn",
+        "service_account",
+    )
+    return {
+        k: v for k, v in metadata.items() if not any(part in k.lower() for part in secret_parts)
+    }
 
 
 __all__ = [
