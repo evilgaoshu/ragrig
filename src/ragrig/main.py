@@ -92,6 +92,16 @@ class RetrievalSearchRequest(BaseModel):
     dimensions: int | None = Field(default=None, gt=0)
     principal_ids: list[str] | None = None
     enforce_acl: bool = True
+    # ── Hybrid / rerank fields (backward-compatible) ──
+    mode: str = Field(
+        default="dense",
+        pattern=r"^(dense|hybrid|rerank|hybrid_rerank)$",
+    )
+    lexical_weight: float = Field(default=0.3, ge=0.0, le=1.0)
+    vector_weight: float = Field(default=0.7, ge=0.0, le=1.0)
+    candidate_k: int = Field(default=20, ge=1, le=200)
+    reranker_provider: str | None = None
+    reranker_model: str | None = None
 
 
 class CreateProcessingProfileRequest(BaseModel):
@@ -886,13 +896,19 @@ def create_app(
                 vector_backend=vector_backend,
                 principal_ids=request.principal_ids,
                 enforce_acl=request.enforce_acl,
+                mode=request.mode,
+                lexical_weight=request.lexical_weight,
+                vector_weight=request.vector_weight,
+                candidate_k=request.candidate_k,
+                reranker_provider=request.reranker_provider,
+                reranker_model=request.reranker_model,
             )
         except KnowledgeBaseNotFoundError as exc:
             return JSONResponse(status_code=404, content=_serialize_error(exc))
         except (EmptyQueryError, EmbeddingProfileMismatchError, InvalidTopKError) as exc:
             return JSONResponse(status_code=400, content=_serialize_error(exc))
 
-        return {
+        response: dict[str, Any] = {
             "knowledge_base": report.knowledge_base,
             "query": report.query,
             "top_k": report.top_k,
@@ -916,10 +932,15 @@ def create_app(
                     "distance": result.distance,
                     "score": result.score,
                     "chunk_metadata": result.chunk_metadata,
+                    "rank_stage_trace": result.rank_stage_trace,
                 }
                 for result in report.results
             ],
         }
+        if report.degraded:
+            response["degraded"] = True
+            response["degraded_reason"] = report.degraded_reason
+        return response
 
     @app.get("/processing-profiles", response_model=None)
     def processing_profiles(
