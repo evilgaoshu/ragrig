@@ -5,6 +5,8 @@ import pytest
 
 from ragrig.main import create_app
 
+pytestmark = pytest.mark.smoke
+
 
 @pytest.fixture
 def make_client() -> Callable[[Callable[[], None]], httpx.AsyncClient]:

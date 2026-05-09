@@ -25,6 +25,8 @@ from ragrig.plugins.contract import _is_valid_docs_reference, assert_registry_co
 from ragrig.plugins.guards import is_dependency_available
 from ragrig.providers.cloud import CLOUD_MODEL_METADATA
 
+pytestmark = pytest.mark.integration
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 

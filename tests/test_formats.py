@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
 from ragrig.formats.model import FormatStatus, SupportedFormat
 from ragrig.formats.registry import SupportedFormatRegistry
+
+pytestmark = pytest.mark.unit
 
 
 def test_registry_with_explicit_format_list() -> None:

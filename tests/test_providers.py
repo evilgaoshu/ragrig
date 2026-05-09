@@ -17,6 +17,8 @@ from ragrig.providers import (
     get_provider_registry,
 )
 
+pytestmark = pytest.mark.unit
+
 
 @dataclass
 class FakeEmbeddingProvider(BaseProvider):

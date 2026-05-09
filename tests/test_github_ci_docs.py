@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -13,8 +17,13 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     workflow = workflow_path.read_text(encoding="utf-8")
 
     assert "name: RAGRig CI" in workflow
-    assert "baseline:" in workflow
-    assert "name: RAGRig CI / baseline" in workflow
+    assert "lint:" in workflow
+    assert "test:" in workflow
+    assert "coverage:" in workflow
+    assert "db-smoke:" in workflow
+    assert "web-smoke:" in workflow
+    assert "docker-build:" in workflow
+    assert "supply-chain:" in workflow
     assert "pull_request:" in workflow
     assert "push:" in workflow
     assert "branches: [main]" in workflow
@@ -22,40 +31,29 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "uv sync --dev --frozen" in workflow
     assert "uv run ruff format --check ." in workflow
     assert "make lint" in workflow
-    assert "make test" in workflow
+    assert "make test-fast" in workflow
     assert "make coverage" in workflow
     assert "make web-check" in workflow
+    assert "make migrate" in workflow
+    assert "make db-check" in workflow
+    assert "docker build -t ragrig:ci ." in workflow
 
 
 def test_github_ci_spec_exists_and_documents_required_scope() -> None:
-    spec_path = REPO_ROOT / "docs" / "specs" / "ragrig-github-ci-checks-spec.md"
+    spec_path = REPO_ROOT / "docs" / "specs" / "evi-60-cicd-optimization.md"
 
     assert spec_path.exists(), "expected GitHub CI spec document"
 
     spec = spec_path.read_text(encoding="utf-8")
 
-    assert "# RAGRig GitHub CI Checks Spec" in spec
-    assert "Python 3.11 and 3.12 matrix" in spec
-    assert "uv sync --dev --frozen" in spec
-    assert "uv run ruff format --check ." in spec
-    assert "uv run ruff check ." in spec
-    assert "make test" in spec
-    assert "make coverage" in spec
-    assert "make web-check" in spec
-    assert "192.168.3.100" in spec
-    assert "EVI-35" in spec
-
-
-def test_readme_documents_github_ci_scope_and_validation_boundary() -> None:
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-
-    assert "## GitHub CI" in readme
-    assert "RAGRig CI" in readme
-    assert "3.11` and `3.12" in readme
-    assert "make coverage" in readme
-    assert "make web-check" in readme
-    assert "192.168.3.100" in readme
-    assert "branch protection" in readme
+    assert "# EVI-60 — ragrig CI/CD 优化" in spec
+    assert "pytest markers" in spec
+    assert "unit" in spec
+    assert "integration" in spec
+    assert "smoke" in spec
+    assert "live" in spec
+    assert "slow" in spec
+    assert "optional" in spec
 
 
 def test_docker_compose_uses_existing_qdrant_image_tag() -> None:

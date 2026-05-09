@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from ragrig.ingestion.scanner import scan_paths
+
+pytestmark = pytest.mark.unit
 
 
 def test_scan_paths_discovers_supported_text_files_and_reports_skips(tmp_path) -> None:

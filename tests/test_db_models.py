@@ -1,6 +1,9 @@
+import pytest
 from sqlalchemy import MetaData
 
 from ragrig.db.models import Base
+
+pytestmark = pytest.mark.unit
 
 
 def test_phase_1a_metadata_defines_core_tables() -> None:

@@ -1,4 +1,8 @@
+import pytest
+
 from ragrig.config import Settings, get_settings
+
+pytestmark = pytest.mark.unit
 
 
 def test_settings_exposes_sqlalchemy_database_url_for_psycopg() -> None:

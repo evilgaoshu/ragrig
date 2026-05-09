@@ -6,9 +6,16 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  baseline:
-    name: RAGRig CI / baseline
+  lint:
+    name: RAGRig CI / lint
     runs-on: ubuntu-latest
 
     steps:
@@ -16,7 +23,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           enable-cache: true
 
       - name: Sync dependencies
@@ -28,16 +35,8 @@ jobs:
       - name: Lint
         run: make lint
 
-      - name: Test
-        run: make test
-
-      - name: Coverage
-        run: make coverage
-
-      - name: Web check
-        run: make web-check
-
-  checks:
+  test:
+    name: RAGRig CI / test
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -54,17 +53,120 @@ jobs:
       - name: Sync dependencies
         run: uv sync --dev --frozen
 
-      - name: Check formatting
-        run: uv run ruff format --check .
+      - name: Test fast
+        run: make test-fast
 
-      - name: Lint
-        run: make lint
+  coverage:
+    name: RAGRig CI / coverage
+    runs-on: ubuntu-latest
 
-      - name: Test
-        run: make test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --dev --frozen
 
       - name: Coverage
         run: make coverage
 
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-json
+          path: coverage.json
+
+  db-smoke:
+    name: RAGRig CI / db-smoke
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ragrig
+          POSTGRES_PASSWORD: ragrig_dev
+          POSTGRES_DB: ragrig
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --dev --frozen
+
+      - name: Migrate up, check, down, up, check
+        run: |
+          make migrate && make db-check && make migrate-down && make migrate && make db-check
+        env:
+          DATABASE_URL: postgresql://ragrig:ragrig_dev@localhost:5432/ragrig
+
+  web-smoke:
+    name: RAGRig CI / web-smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --dev --frozen
+
       - name: Web check
         run: make web-check
+
+  docker-build:
+    name: RAGRig CI / docker-build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t ragrig:ci .
+
+  supply-chain:
+    name: RAGRig CI / supply-chain
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --dev --frozen
+
+      - name: Audit
+        run: make audit
+
+      - name: Licenses
+        run: make licenses
+
+      - name: Upload pip-audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-json
+          path: docs/operations/artifacts/pip-audit.json
