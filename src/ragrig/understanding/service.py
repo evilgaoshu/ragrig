@@ -458,15 +458,17 @@ def get_understanding_run(session: Session, run_id: str) -> UnderstandingRunReco
 # Safe JSON export
 # ---------------------------------------------------------------------------
 
-_EXPORT_SENSITIVE_KEYS = frozenset({
-    "extracted_text",
-    "prompt",
-    "full_prompt",
-    "system_prompt",
-    "user_prompt",
-    "messages",
-    "raw_response",
-})
+_EXPORT_SENSITIVE_KEYS = frozenset(
+    {
+        "extracted_text",
+        "prompt",
+        "full_prompt",
+        "system_prompt",
+        "user_prompt",
+        "messages",
+        "raw_response",
+    }
+)
 
 _EXPORT_SECRET_PATTERNS = (
     "api_key",

@@ -2025,9 +2025,7 @@ class TestCompareUnderstandingRuns:
         from ragrig.db.models import UnderstandingRun
 
         runs = (
-            sqlite_session.query(UnderstandingRun)
-            .order_by(UnderstandingRun.started_at.asc())
-            .all()
+            sqlite_session.query(UnderstandingRun).order_by(UnderstandingRun.started_at.asc()).all()
         )
         assert len(runs) == 2
 
