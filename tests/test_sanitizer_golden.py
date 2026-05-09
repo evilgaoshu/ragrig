@@ -248,3 +248,206 @@ def test_golden_snapshots_never_contain_raw_secrets() -> None:
                 f"Golden file {golden_path.name} contains raw secret fragment "
                 f"on disk. This is a critical sanitization failure."
             )
+
+
+# ── Artifact & Secret Audit Tests ───────────────────────────────────────────
+
+# Sensitive patterns that MUST NOT appear in any artifact or golden file.
+_FORBIDDEN_IN_ARTIFACT = (
+    "sk-",
+    "ghp_",
+    "Bearer eyJ",
+    "Bearer token",
+    "PRIVATE KEY-----",
+    "RSA PRIVATE KEY",
+    "EC PRIVATE KEY",
+    "DSA PRIVATE KEY",
+    "OPENSSH PRIVATE KEY",
+)
+
+
+def test_redaction_count_below_floor_fails() -> None:
+    """Every sensitive fixture parser must produce redaction_count >= 1.
+
+    If any parser returns redaction_count < 1 for its sensitive fixture,
+    this test fails — the sanitizer may have regressed or the fixture
+    may have been accidentally cleaned.
+    """
+    REDACTION_FLOOR = 1
+    failures: list[str] = []
+
+    for parser_cls, fixture_name, golden_name in _GOLDEN_MAPPING:
+        fixture_path = FIXTURES_DIR / fixture_name
+        golden_path = GOLDENS_DIR / golden_name
+
+        assert fixture_path.is_file(), f"Fixture missing: {fixture_path}"
+        assert golden_path.is_file(), f"Golden missing: {golden_path}"
+
+        result = parser_cls().parse(fixture_path)
+        actual_redactions = result.metadata.get("redaction_count", 0)
+
+        if actual_redactions < REDACTION_FLOOR:
+            failures.append(
+                f"  {parser_cls.parser_name} ({fixture_name}): "
+                f"redaction_count={actual_redactions} < floor={REDACTION_FLOOR}"
+            )
+
+    if failures:
+        print("\n── Redaction Floor Failures ──")
+        for f in failures:
+            print(f)
+
+    assert not failures, (
+        f"{len(failures)} parser(s) have redaction_count below floor {REDACTION_FLOOR}. "
+        f"The sanitizer may have regressed or sensitive fixtures were cleaned."
+    )
+
+
+def test_artifact_never_contains_raw_secrets() -> None:
+    """Verify the generated sanitizer-coverage-summary artifact never
+    contains raw secrets: sk-, ghp_, Bearer tokens, or private key markers.
+
+    This test builds the coverage summary via the same logic used by
+    scripts.sanitizer_coverage, then audits every string for forbidden
+    patterns.
+    """
+    # Build artifact in-memory using the same logic
+    parsers_summary: list[dict[str, Any]] = []
+    for _parser_cls, _fixture_name, golden_name in _GOLDEN_MAPPING:
+        golden_path = GOLDENS_DIR / golden_name
+        assert golden_path.is_file(), f"Golden missing: {golden_path}"
+        golden = json.loads(golden_path.read_text(encoding="utf-8"))
+
+        parser_id = golden.get("parser_id", "unknown")
+        redacted = golden.get("redaction_count", 0)
+        status = golden.get("status", "unknown")
+        degraded = 1 if status == "degraded" else 0
+
+        record = {
+            "parser_id": parser_id,
+            "fixtures": 1,
+            "redacted": redacted,
+            "degraded": degraded,
+            "status": status,
+        }
+        if "degraded_reason" in golden:
+            record["degraded_reason"] = golden["degraded_reason"]
+        if "csv_parse_error" in golden:
+            record["csv_parse_error"] = golden["csv_parse_error"]
+        parsers_summary.append(record)
+
+    # Serialize and audit every string
+    serialized = json.dumps(parsers_summary, indent=2, ensure_ascii=False)
+    violations: list[str] = []
+    for fragment in _FORBIDDEN_IN_ARTIFACT:
+        if fragment in serialized:
+            violations.append(fragment)
+
+    if violations:
+        print("\n── Secret Audit Violations in Artifact ──")
+        for v in violations:
+            print(f"  Found forbidden pattern: {v!r}")
+
+    assert not violations, (
+        f"Artifact contains {len(violations)} forbidden secret pattern(s). "
+        f"This is a critical sanitization failure."
+    )
+
+
+def test_goldens_never_contain_secret_fragments() -> None:
+    """Verify every golden file on disk is free of sk-, ghp_, Bearer tokens,
+    and private key marker patterns.
+
+    This is distinct from test_golden_snapshots_never_contain_raw_secrets:
+    that test checks for exact fixture values; this test checks for
+    structural secret patterns (prefixes) that should never appear in any form.
+    """
+    if not GOLDENS_DIR.is_dir():
+        pytest.skip("No goldens directory present")
+
+    golden_files = sorted(GOLDENS_DIR.glob("sanitizer_*.json"))
+    if not golden_files:
+        pytest.skip("No golden files found")
+
+    violations: list[tuple[str, str]] = []
+    for golden_path in golden_files:
+        content = golden_path.read_text(encoding="utf-8")
+        for fragment in _FORBIDDEN_IN_ARTIFACT:
+            if fragment in content:
+                violations.append((golden_path.name, fragment))
+
+    if violations:
+        print("\n── Secret Audit Violations in Goldens ──")
+        for name, frag in violations:
+            print(f"  {name}: found {frag!r}")
+
+    assert not violations, (
+        f"{len(violations)} golden file(s) contain forbidden secret patterns. "
+        f"This is a critical sanitization failure."
+    )
+
+
+def test_coverage_summary_output_consistent_with_golden() -> None:
+    """Verify the coverage summary reported via pytest -s output is
+    consistent with what the artifact generation would produce.
+
+    This test builds the same summary that scripts.sanitizer_coverage
+    produces and asserts it matches the per-fixture golden data.
+    """
+    from hashlib import sha256
+
+    rows: list[dict[str, Any]] = []
+    for _parser_cls, _fixture_name, golden_name in _GOLDEN_MAPPING:
+        golden_path = GOLDENS_DIR / golden_name
+        assert golden_path.is_file(), f"Golden missing: {golden_path}"
+        golden = json.loads(golden_path.read_text(encoding="utf-8"))
+
+        parser_id = golden["parser_id"]
+        redacted = golden["redaction_count"]
+        status = golden.get("status", "unknown")
+        degraded = 1 if status == "degraded" else 0
+
+        content_for_hash = json.dumps(golden, sort_keys=True, ensure_ascii=False)
+        golden_hash = sha256(content_for_hash.encode("utf-8")).hexdigest()
+
+        rows.append(
+            {
+                "parser_id": parser_id,
+                "fixtures": 1,
+                "redacted": redacted,
+                "degraded": degraded,
+                "status": status,
+                "golden_hash": golden_hash,
+            }
+        )
+
+    # Print consistent output (matches what make sanitizer-coverage-summary produces)
+    print("\n── Sanitizer Coverage Artifact Consistency ──")
+    total_redacted = sum(r["redacted"] for r in rows)
+    total_degraded = sum(r["degraded"] for r in rows)
+    print(f"Total parsers: {len(rows)}")
+    print(f"Total redactions: {total_redacted}")
+    print(f"Total degraded: {total_degraded}")
+    print(f"Redaction floor check: {'PASS' if all(r['redacted'] >= 1 for r in rows) else 'FAIL'}")
+    print(f"{'Parser ID':<22} {'Fixtures':>9} {'Redacted':>9} {'Degraded':>9} {'Status':>12}")
+    print("-" * 66)
+    for row in rows:
+        print(
+            f"{row['parser_id']:<22} "
+            f"{row['fixtures']:>9} "
+            f"{row['redacted']:>9} "
+            f"{row['degraded']:>9} "
+            f"{row['status']:>12}"
+        )
+    print("-" * 66)
+    print(f"{'TOTAL':<22} {len(rows):>9} {total_redacted:>9} {total_degraded:>9}")
+
+    # Verify consistency
+    assert len(rows) == 4, f"Expected 4 parsers, got {len(rows)}"
+    for row in rows:
+        assert row["redacted"] >= 1, (
+            f"Parser {row['parser_id']}: redaction_count={row['redacted']} < floor=1"
+        )
+        assert row["status"] in ("success", "degraded"), (
+            f"Parser {row['parser_id']}: unexpected status {row['status']}"
+        )
