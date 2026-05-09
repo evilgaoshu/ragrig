@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -509,6 +510,71 @@ def _looks_like_secret(key: str, value: object) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Export filename summary
+# ---------------------------------------------------------------------------
+
+_FILENAME_UNSAFE_RE = re.compile(r'[/\\:*?"<>|]')
+
+
+def _safe_filename_component(value: str) -> str:
+    """Replace illegal filename characters with underscores."""
+    if not value:
+        return ""
+    return _FILENAME_UNSAFE_RE.sub("_", value)
+
+
+def build_export_filename(
+    *,
+    kb_name: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    profile_id: str | None = None,
+    status: str | None = None,
+    started_after: str | None = None,
+    started_before: str | None = None,
+    limit: int | None = None,
+    single_run: bool = False,
+) -> str:
+    """Build a stable, human-readable export filename with active filter summary.
+
+    Only non-None/non-empty filter values appear in the filename.
+    Illegal filename characters are replaced with underscores.
+
+    Returns a filename like:
+        ragrig-runs_fixture-local_provider_deterministic-local_2026-05-09.json
+    """
+    prefix = "ragrig-run-" if single_run else "ragrig-runs-"
+    base = kb_name or "unknown"
+    base_safe = _safe_filename_component(base)
+
+    segments: list[str] = [prefix + base_safe]
+
+    if provider:
+        segments.append("provider_" + _safe_filename_component(provider))
+    if model:
+        segments.append("model_" + _safe_filename_component(model))
+    if profile_id:
+        segments.append("profile_" + _safe_filename_component(profile_id))
+    if status:
+        segments.append("status_" + _safe_filename_component(status))
+    if started_after or started_before:
+        time_parts: list[str] = []
+        if started_after:
+            time_parts.append("from_" + _safe_filename_component(started_after[:10]))
+        if started_before:
+            time_parts.append("to_" + _safe_filename_component(started_before[:10]))
+        segments.append("_".join(time_parts))
+    if limit is not None:
+        segments.append(f"limit_{limit}")
+
+    # Append an ISO date for uniqueness (just the date part)
+    date_part = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    segments.append(date_part)
+
+    return "_".join(segments) + ".json"
+
+
 def export_understanding_run(session: Session, run_id: str) -> dict[str, object] | None:
     """Export a single understanding run with safe JSON sanitisation.
 
@@ -531,7 +597,15 @@ def export_understanding_run(session: Session, run_id: str) -> dict[str, object]
     exported: dict[str, object] = {
         "schema_version": "1.0",
         "generated_at": generated.isoformat(),
-        "filter": {},
+        "filter": {
+            "provider": row.provider or None,
+            "model": row.model or None,
+            "profile_id": row.profile_id or None,
+            "status": row.status or None,
+            "started_after": None,
+            "started_before": None,
+            "limit": None,
+        },
         "run_count": 1,
         "run_ids": [str(row.id)],
         "id": str(row.id),
@@ -551,6 +625,15 @@ def export_understanding_run(session: Session, run_id: str) -> dict[str, object]
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
     }
+    filename = build_export_filename(
+        kb_name=kb_name,
+        provider=row.provider,
+        model=row.model,
+        profile_id=row.profile_id,
+        status=row.status,
+        single_run=True,
+    )
+    exported["_filename"] = filename
     return _sanitize_value(exported)  # type: ignore[return-value]
 
 
@@ -612,6 +695,17 @@ def export_understanding_runs(
         "knowledge_base_id": knowledge_base_id,
         "runs": items,
     }
+    filename = build_export_filename(
+        kb_name=kb_name,
+        provider=filters.provider if filters else None,
+        model=filters.model if filters else None,
+        profile_id=filters.profile_id if filters else None,
+        status=filters.status if filters else None,
+        started_after=filters.started_after if filters else None,
+        started_before=filters.started_before if filters else None,
+        limit=filters.limit if filters else None,
+    )
+    result["_filename"] = filename
     return _sanitize_value(result)  # type: ignore[return-value]
 
 
