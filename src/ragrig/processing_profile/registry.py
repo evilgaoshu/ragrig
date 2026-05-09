@@ -109,6 +109,21 @@ def _build_default_profiles() -> list[ProcessingProfile]:
         )
     )
 
+    profiles.append(
+        ProcessingProfile(
+            profile_id="*.answer.default",
+            extension="*",
+            task_type=TaskType.ANSWER,
+            display_name="Default Answer (LLM-assisted)",
+            description="LLM-assisted answer generation with citation grounding.",
+            provider="deterministic-local",
+            status=ProfileStatus.ACTIVE,
+            kind=ProcessingKind.DETERMINISTIC,
+            source=ProfileSource.DEFAULT,
+            tags=base_tags + ["citation-required"],
+        )
+    )
+
     return profiles
 
 
@@ -412,6 +427,7 @@ def get_matrix_task_types() -> list[TaskType]:
         TaskType.SUMMARIZE,
         TaskType.UNDERSTAND,
         TaskType.EMBED,
+        TaskType.ANSWER,
     ]
 
 

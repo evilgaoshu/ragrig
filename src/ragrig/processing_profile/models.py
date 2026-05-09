@@ -4,8 +4,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
-from ragrig.processing_profile.sanitizer import remove_metadata as _shared_remove_metadata
-
 
 class TaskType(StrEnum):
     CORRECT = "correct"
@@ -14,6 +12,7 @@ class TaskType(StrEnum):
     SUMMARIZE = "summarize"
     UNDERSTAND = "understand"
     EMBED = "embed"
+    ANSWER = "answer"
 
 
 class ProfileStatus(StrEnum):
@@ -69,16 +68,66 @@ class ProcessingProfile:
         }
 
 
-# ── Backward-compatible wrappers for tests that import private helpers ──
-# All logic lives in ragrig.processing_profile.sanitizer (single source of truth).
+_SECRET_KEY_PARTS = (
+    "api_key",
+    "access_key",
+    "secret",
+    "session_token",
+    "token",
+    "password",
+    "private_key",
+    "credential",
+    "dsn",
+    "service_account",
+)
+
+_SENSITIVE_VALUE_PREFIXES: tuple[str, ...] = (
+    "bearer ",
+    "-----begin",
+)
+
+
+def _is_sensitive_key(key: str) -> bool:
+    key_lower = key.lower()
+    return any(part in key_lower for part in _SECRET_KEY_PARTS)
+
+
+def _is_sensitive_value(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    value_lower = value.lower()
+    return any(pattern in value_lower for pattern in _SENSITIVE_VALUE_PREFIXES)
 
 
 def _sanitize_metadata(metadata: dict[str, object]) -> dict[str, object]:
-    """Recursively remove sensitive keys/values from metadata for API responses.
+    """Recursively redact sensitive keys/values from metadata for API responses."""
+    sanitized: dict[str, object] = {}
+    for key, value in metadata.items():
+        if _is_sensitive_key(key):
+            continue
+        if isinstance(value, dict):
+            sanitized[key] = _sanitize_metadata(value)
+        elif isinstance(value, list):
+            sanitized[key] = _sanitize_metadata_list(value)
+        elif _is_sensitive_value(value):
+            continue
+        else:
+            sanitized[key] = value
+    return sanitized
 
-    This is a thin wrapper around the shared ``remove_metadata`` helper.
-    """
-    return _shared_remove_metadata(metadata)
+
+def _sanitize_metadata_list(items: list[object]) -> list[object]:
+    sanitized: list[object] = []
+    for item in items:
+        if isinstance(item, dict):
+            sanitized.append(_sanitize_metadata(item))
+        elif isinstance(item, list):
+            sanitized.append(_sanitize_metadata_list(item))
+        elif _is_sensitive_value(item):
+            continue
+        else:
+            sanitized.append(item)
+    return sanitized
 
 
 __all__ = [

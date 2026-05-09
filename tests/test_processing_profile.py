@@ -36,6 +36,7 @@ def test_default_profiles_cover_all_task_types() -> None:
         TaskType.SUMMARIZE,
         TaskType.UNDERSTAND,
         TaskType.EMBED,
+        TaskType.ANSWER,
     }
 
 
@@ -115,8 +116,8 @@ def test_get_matrix_task_types() -> None:
     assert TaskType.CHUNK in task_types
     assert TaskType.SUMMARIZE in task_types
     assert TaskType.UNDERSTAND in task_types
-    assert TaskType.EMBED in task_types
-    assert len(task_types) == 6
+    assert TaskType.ANSWER in task_types
+    assert len(task_types) == 7
 
 
 def test_build_matrix_has_expected_structure() -> None:
@@ -161,7 +162,7 @@ def test_build_matrix_provider_available_flag() -> None:
 
 def test_build_api_profile_list_returns_sorted_list() -> None:
     profiles = build_api_profile_list()
-    assert len(profiles) >= 6
+    assert len(profiles) >= 7
     profile_ids = [p["profile_id"] for p in profiles]
     assert profile_ids == sorted(profile_ids)
     for p in profiles:

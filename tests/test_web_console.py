@@ -3188,3 +3188,232 @@ async def test_console_html_includes_export_filename_js(tmp_path) -> None:
     assert "_filename" in html
     assert "exportSingleRun" in html
     assert "exportFilteredRuns" in html
+
+
+# ── Answer Generation Web Console Tests ──────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_console_includes_answer_generation_panel(tmp_path) -> None:
+    """Answer generation panel must be present in the web console HTML."""
+    database_path = tmp_path / "web-console-answer-panel.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Answer Generation" in html
+    assert "POST /retrieval/answer" in html
+    assert "answer-kb" in html
+    assert "answer-query" in html
+    assert "answer-top-k" in html
+    assert "run-answer" in html
+    assert "answer-results" in html
+    assert "answer-provider-meta" in html
+    assert "Answer Gen" in html or "answer" in html.lower()
+
+
+@pytest.mark.anyio
+async def test_answer_panel_shows_disabled_state_without_data(tmp_path) -> None:
+    """Answer panel should show disabled state when no knowledge bases exist."""
+    database_path = tmp_path / "web-console-answer-disabled.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    assert "renderAnswerControls" in response.text
+
+
+@pytest.mark.anyio
+async def test_answer_panel_shows_ready_state_with_data(tmp_path) -> None:
+    """Answer panel should be ready when knowledge bases with indexed data exist."""
+    database_path = tmp_path / "web-console-answer-ready.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"guide.txt": "Answer panel ready state test content."})
+
+    with session_factory() as session:
+        ingest_local_directory(session=session, knowledge_base_name="fixture-local", root_path=docs)
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    # Console should serve without errors (answer panel rendered)
+    assert "Answer Generation" in response.text
+
+
+@pytest.mark.anyio
+async def test_answer_api_with_data_returns_valid_payload(tmp_path) -> None:
+    """Full flow: ingest + index → answer API returns grounded answer."""
+    database_path = tmp_path / "web-console-answer-flow.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(
+        tmp_path,
+        {"guide.txt": "RAGRig is a retrieval-augmented generation platform for knowledge bases."},
+    )
+
+    with session_factory() as session:
+        ingest_local_directory(session=session, knowledge_base_name="fixture-local", root_path=docs)
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/retrieval/answer",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "What is RAGRig?",
+                "top_k": 3,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["grounding_status"] == "grounded"
+    assert len(payload["answer"]) > 0
+    assert len(payload["citations"]) >= 1
+    assert len(payload["evidence_chunks"]) >= 1
+    assert payload["retrieval_trace"]["total_results"] >= 1
+    assert "model" in payload
+    assert "provider" in payload
+
+
+@pytest.mark.anyio
+async def test_answer_api_empty_knowledge_base_returns_refusal(tmp_path) -> None:
+    """Answer API should refuse when knowledge base has no indexed data."""
+    database_path = tmp_path / "web-console-answer-empty-kb.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"notes.txt": "unindexed content"})
+
+    with session_factory() as session:
+        ingest_local_directory(session=session, knowledge_base_name="fixture-local", root_path=docs)
+        # Do NOT index → zero retrieval results
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/retrieval/answer",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "what is this?",
+                "top_k": 3,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["grounding_status"] == "refused"
+    assert payload["answer"] == ""
+    assert payload["citations"] == []
+    assert payload["evidence_chunks"] == []
+    assert payload["refusal_reason"] is not None
+
+
+@pytest.mark.anyio
+async def test_answer_api_no_secrets_in_response(tmp_path) -> None:
+    """Answer API payload must not leak secrets in any field."""
+    database_path = tmp_path / "web-console-answer-nosecrets.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(
+        tmp_path,
+        {"guide.txt": "RAGRig platform documentation and usage guide."},
+    )
+
+    with session_factory() as session:
+        ingest_local_directory(session=session, knowledge_base_name="fixture-local", root_path=docs)
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/retrieval/answer",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "RAGRig documentation",
+                "top_k": 3,
+            },
+        )
+
+    assert response.status_code == 200
+    text = response.text.lower()
+    # The response should not contain secret-like terms from provider/config leaks
+    for secret_term in ["api_key", "password", "token"]:
+        assert secret_term not in text, f"Secret term '{secret_term}' found in answer response"
+
+
+@pytest.mark.anyio
+async def test_answer_api_acl_filters_protected_content(tmp_path) -> None:
+    """Answer API must not expose ACL-protected evidence to unauthorized users."""
+    database_path = tmp_path / "web-console-answer-acl.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "public.txt": "public information about the system",
+            "secret.txt": "top secret internal operations details",
+        },
+    )
+
+    with session_factory() as session:
+        ingest_local_directory(session=session, knowledge_base_name="fixture-local", root_path=docs)
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        from ragrig.db.models import Chunk
+
+        chunks = session.scalars(select(Chunk)).all()
+        for chunk in chunks:
+            if "top secret" in chunk.text:
+                chunk.metadata_json = {
+                    **chunk.metadata_json,
+                    "acl": {
+                        "visibility": "protected",
+                        "allowed_principals": ["alice"],
+                        "denied_principals": [],
+                        "acl_source": "test",
+                        "acl_source_hash": "abc",
+                        "inheritance": "document",
+                    },
+                }
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Guest should not see protected content
+        response = await client.post(
+            "/retrieval/answer",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "information about the system",
+                "top_k": 10,
+                "principal_ids": ["guest"],
+                "enforce_acl": True,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    # No protected content in answer or evidence
+    response_text = str(payload).lower()
+    assert "top secret" not in response_text
+    # But public content should be there
+    assert payload["grounding_status"] == "grounded"
