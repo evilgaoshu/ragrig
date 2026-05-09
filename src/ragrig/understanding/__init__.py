@@ -5,10 +5,15 @@ from ragrig.understanding.provider import (
     get_understanding_provider,
 )
 from ragrig.understanding.schema import (
+    BatchUnderstandingError,
+    BatchUnderstandingResult,
+    CoverageErrorEntry,
     Entity,
     KeyClaim,
     SourceSpan,
     TocEntry,
+    UnderstandAllRequest,
+    UnderstandingCoverage,
     UnderstandingRecord,
     UnderstandingRequest,
     UnderstandingResult,
@@ -20,9 +25,14 @@ from ragrig.understanding.service import (
     delete_document_understanding,
     generate_document_understanding,
     get_understanding_by_version,
+    get_understanding_coverage,
+    understand_all_versions,
 )
 
 __all__ = [
+    "BatchUnderstandingError",
+    "BatchUnderstandingResult",
+    "CoverageErrorEntry",
     "DeterministicUnderstandingProvider",
     "DocumentVersionNotFoundError",
     "Entity",
@@ -31,6 +41,8 @@ __all__ = [
     "ProviderUnavailableError",
     "SourceSpan",
     "TocEntry",
+    "UnderstandAllRequest",
+    "UnderstandingCoverage",
     "UnderstandingRecord",
     "UnderstandingRequest",
     "UnderstandingResult",
@@ -39,5 +51,7 @@ __all__ = [
     "delete_document_understanding",
     "generate_document_understanding",
     "get_understanding_by_version",
+    "get_understanding_coverage",
     "get_understanding_provider",
+    "understand_all_versions",
 ]
