@@ -9,6 +9,7 @@ from ragrig.parsers.csv import CsvParser
 from ragrig.parsers.html import HtmlParser
 from ragrig.parsers.markdown import MarkdownParser
 from ragrig.parsers.plaintext import PlainTextParser
+from ragrig.parsers.sanitizer import sanitize_text_summary
 
 pytestmark = pytest.mark.unit
 
@@ -237,7 +238,7 @@ def test_csv_parser_oversized_line_is_handled(tmp_path) -> None:
 
 def test_csv_parser_sensitive_fields_not_leaked_in_metadata(tmp_path) -> None:
     path = tmp_path / "sensitive.csv"
-    raw_text = "name,api_key,password\nadmin,sk-secret-12345,super_pass\n"
+    raw_text = "name,api_key,password\nadmin,sk-secret-12345,sk-pass-abcdefghij\n"
     path.write_text(raw_text, encoding="utf-8")
 
     result = CsvParser().parse(path)
@@ -245,9 +246,13 @@ def test_csv_parser_sensitive_fields_not_leaked_in_metadata(tmp_path) -> None:
     # No secret-like KEYS in metadata
     for key in ("api_key", "password", "secret", "token", "credential"):
         assert key not in result.metadata, f"metadata should not have key '{key}'"
-    # text_summary is truncated to 80 chars; if the file is shorter than 80
-    # chars, it may contain the full text. This is a known limitation.
+    # text_summary is truncated to 80 chars
     assert len(result.metadata["text_summary"]) <= 81
+    # Sensitive values must not appear in text_summary
+    summary = result.metadata["text_summary"]
+    assert "sk-secret-12345" not in summary
+    assert "sk-pass-abcdefghij" not in summary
+    assert result.metadata["redaction_count"] >= 2
     # Non-summary metadata fields must never contain the full text
     for key, value in result.metadata.items():
         if key == "text_summary":
@@ -371,13 +376,14 @@ def test_html_parser_sensitive_fields_not_leaked_in_metadata(tmp_path) -> None:
 
     # Metadata should not leak extracted secret patterns
     metadata_str = str(result.metadata)
-    # The metadata (text_summary) may contain stripped text content which
-    # could include the secret text since it's stripped from HTML.
-    # But it should not contain the full original text.
     assert raw_text not in metadata_str
-    # The metadata JSON must not contain api_key or password field values
+    # The text_summary must not contain raw secret values
+    summary = result.metadata["text_summary"]
+    assert "sk-abc-123" not in summary
+    assert "admin123" not in summary
     assert result.metadata["parser_id"] == "parser.html"
     assert result.metadata["status"] == "degraded"
+    assert result.metadata["redaction_count"] >= 1
 
 
 def test_html_parser_large_document_is_handled(tmp_path) -> None:
@@ -427,7 +433,10 @@ def _assert_stable_metadata(metadata: dict, expected_parser_id: str, expected_st
     assert "char_count" in metadata
     assert "byte_count" in metadata
     assert "text_summary" in metadata
+    assert "redaction_count" in metadata
     assert isinstance(metadata["text_summary"], str)
+    assert isinstance(metadata["redaction_count"], int)
+    assert metadata["redaction_count"] >= 0
     # text_summary is at most 81 chars (80 + optional ellipsis)
     assert len(metadata["text_summary"]) <= 81
     # metadata must not contain secret-like keys
@@ -481,11 +490,9 @@ def test_all_parsers_metadata_never_contains_full_text(tmp_path) -> None:
 
 
 def test_parser_text_summary_no_secrets_in_summary(tmp_path) -> None:
-    """If the first 80 chars of a CSV contain sensitive fields, the summary
-    would contain them. This is acceptable since text_summary is a best-effort
-    content preview. But parser_id/status must never leak secrets."""
-    # Create a file where the first line IS sensitive
-    raw_text = "api_key,secret\nsk-abc123,pass456\n"
+    """The summary sanitizer must redact sensitive key=value patterns and
+    standalone API key values so they never appear in text_summary."""
+    raw_text = "api_key,secret\nsk-abc12345,sk-xyz98765\n"
     path = tmp_path / "sensitive.csv"
     path.write_text(raw_text, encoding="utf-8")
 
@@ -494,8 +501,16 @@ def test_parser_text_summary_no_secrets_in_summary(tmp_path) -> None:
     # parser_id and status fields themselves never contain secrets
     assert "sk-" not in result.metadata["parser_id"]
     assert "sk-" not in result.metadata["status"]
-    assert "pass" not in result.metadata["parser_id"]
-    assert "pass" not in result.metadata["status"]
+
+    # The text_summary must never contain raw secret values
+    summary = result.metadata["text_summary"]
+    assert "sk-abc12345" not in summary
+    assert "sk-xyz98765" not in summary
+    # parser fields themselves must be pristine
+    assert "sk-" not in str(result.metadata["parser_id"])
+
+    # redaction_count must reflect the detected secrets
+    assert result.metadata["redaction_count"] >= 2
 
 
 def test_csv_parser_malformed_csv_sets_csv_parse_error_in_metadata(tmp_path, monkeypatch) -> None:
@@ -513,3 +528,246 @@ def test_csv_parser_malformed_csv_sets_csv_parse_error_in_metadata(tmp_path, mon
     assert "csv_parse_error" in result.metadata
     assert result.metadata["csv_parse_error"] == "NUL byte in CSV"
     assert result.metadata["status"] == "degraded"
+
+
+# ── Summary Sanitizer Tests ──
+
+
+class TestSanitizeTextSummary:
+    def test_empty_text_returns_empty(self):
+        summary, redactions = sanitize_text_summary("")
+        assert summary == ""
+        assert redactions == 0
+
+    def test_clean_text_passes_through(self):
+        summary, redactions = sanitize_text_summary("Hello world")
+        assert summary == "Hello world"
+        assert redactions == 0
+
+    def test_truncates_long_text(self):
+        long_text = "x" * 200
+        summary, redactions = sanitize_text_summary(long_text)
+        assert len(summary) == 81  # 80 + "…"
+        assert summary.endswith("…")
+        assert redactions == 0
+
+    def test_redacts_api_key_env_var(self):
+        summary, redactions = sanitize_text_summary("api_key=sk-abc123secretkey")
+        assert "sk-abc123secretkey" not in summary
+        assert "api_key=[REDACTED]" in summary
+        assert redactions == 1
+
+    def test_redacts_api_key_with_colon(self):
+        summary, redactions = sanitize_text_summary("export API_KEY: my-secret-token")
+        assert "my-secret-token" not in summary
+        assert "[REDACTED]" in summary
+        assert redactions == 1
+
+    def test_redacts_password_assignment(self):
+        summary, redactions = sanitize_text_summary("password=super_secret_pass123")
+        assert "super_secret_pass123" not in summary
+        assert "password=[REDACTED]" in summary
+        assert redactions == 1
+
+    def test_redacts_token_assignment(self):
+        summary, redactions = sanitize_text_summary(
+            "token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"
+        )
+        assert "eyJhbGciOiJIUzI1NiJ9" not in summary
+        assert "token=[REDACTED]" in summary
+        assert redactions == 1
+
+    def test_redacts_secret_assignment(self):
+        summary, redactions = sanitize_text_summary("secret=my-super-secret-key")
+        assert "my-super-secret-key" not in summary
+        assert "secret=[REDACTED]" in summary
+        assert redactions == 1
+
+    def test_redacts_bearer_token(self):
+        summary, redactions = sanitize_text_summary(
+            "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.abc.def"
+        )
+        assert "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9" not in summary
+        assert "Bearer [REDACTED]" in summary
+        assert redactions >= 1
+
+    def test_redacts_private_key_block(self):
+        summary, redactions = sanitize_text_summary(
+            """-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEA...
+-----END RSA PRIVATE KEY-----"""
+        )
+        assert "MIIEpA" not in summary
+        assert "[PRIVATE KEY REDACTED]" in summary
+        assert redactions >= 1
+
+    def test_redacts_multiple_patterns(self):
+        text = "api_key=sk-abc123\npassword=pass456\nBearer token789\n"
+        summary, redactions = sanitize_text_summary(text)
+        assert "sk-abc123" not in summary
+        assert "pass456" not in summary
+        assert "token789" not in summary
+        assert redactions >= 3
+
+    def test_redacts_access_token_variant(self):
+        summary, redactions = sanitize_text_summary("access_token=ghp_1234567890abcdef")
+        assert "ghp_1234567890abcdef" not in summary
+        assert "token=[REDACTED]" in summary
+        assert redactions == 1
+
+    def test_sk_api_key_standalone_redacted(self):
+        """Standalone sk- prefixed keys are redacted even without key= prefix."""
+        summary, redactions = sanitize_text_summary(
+            "Using key sk-proj-abcdefghijklmnopqrstuvwxyz123456 for auth"
+        )
+        assert "sk-proj-abcdefghijklmnopqrstuvwxyz123456" not in summary
+        assert "[API KEY REDACTED]" in summary
+        assert redactions >= 1
+
+    def test_redaction_count_zero_for_clean_text(self):
+        summary, redactions = sanitize_text_summary(
+            "# Project Documentation\n\nThis is a clean markdown file."
+        )
+        assert redactions == 0
+        assert "[REDACTED]" not in summary
+
+    def test_case_insensitive_key_matching(self):
+        summary, redactions = sanitize_text_summary("API_KEY=prod-secret")
+        assert "prod-secret" not in summary
+        assert "[REDACTED]" in summary
+        assert redactions >= 1
+
+    def test_case_insensitive_bearer(self):
+        summary, redactions = sanitize_text_summary("bearer mytoken123")
+        assert "mytoken123" not in summary
+        assert "Bearer [REDACTED]" in summary
+        assert redactions >= 1
+
+
+# ── Sensitive Fixture Corpus Tests ──
+
+SENSITIVE_FIXTURES = {
+    "api_key_env": ("API_KEY=sk-live-1234567890abcdefghij", CsvParser),
+    "bearer_token": ("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc.def", PlainTextParser),
+    "password_config": ("db_password=super_secure_db_pass_123", PlainTextParser),
+    "token_header": ('{"token": "ghp_abcdef1234567890"}', PlainTextParser),
+    "secret_yaml": ("secret: prod-api-secret-key-2024", MarkdownParser),
+    "private_key": (
+        """-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEI...
+-----END EC PRIVATE KEY-----""",
+        PlainTextParser,
+    ),
+    "multiple_creds": (
+        "api_key=sk-abc\npassword=pass123\ntoken=secret456",
+        CsvParser,
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "fixture_name,text,parser_cls",
+    [(name, text, parser_cls) for name, (text, parser_cls) in SENSITIVE_FIXTURES.items()],
+)
+def test_sensitive_fixture_no_secret_in_summary(tmp_path, fixture_name, text, parser_cls) -> None:
+    ext_map = {
+        CsvParser: ".csv",
+        HtmlParser: ".html",
+        PlainTextParser: ".txt",
+        MarkdownParser: ".md",
+    }
+    ext = ext_map[parser_cls]
+    path = tmp_path / f"{fixture_name}{ext}"
+    path.write_text(text, encoding="utf-8")
+
+    result = parser_cls().parse(path)
+    summary = result.metadata["text_summary"]
+    assert result.metadata["redaction_count"] >= 1, (
+        f"Fixture '{fixture_name}': redaction_count must be >= 1"
+    )
+    # Raw secret fragments must not appear in summary
+    for fragment in (
+        "sk-live",
+        "eyJhbGciOiJIUzI1NiJ9",
+        "super_secure_db_pass_123",
+        "ghp_abcdef",
+        "prod-api-secret-key-2024",
+        "MHcCAQEEI",
+    ):
+        assert fragment not in summary, (
+            f"Fixture '{fixture_name}': secret fragment '{fragment}' leaked in summary"
+        )
+
+
+def test_all_parsers_share_same_sanitizer(tmp_path) -> None:
+    """CSV/HTML/plaintext/markdown all produce redacted summaries for the same
+    sensitive content."""
+    sensitive_text = "api_key=sk-top-secret-1234567890"
+    parsers = [
+        (CsvParser(), "data.csv"),
+        (HtmlParser(), "page.html"),
+        (PlainTextParser(), "notes.txt"),
+        (MarkdownParser(), "guide.md"),
+    ]
+
+    for parser, filename in parsers:
+        path = tmp_path / filename
+        path.write_text(sensitive_text, encoding="utf-8")
+        result = parser.parse(path)
+        summary = result.metadata["text_summary"]
+        assert "sk-top-secret-1234567890" not in summary, (
+            f"Parser '{parser.parser_name}' leaked secret in summary"
+        )
+        assert "[REDACTED]" in summary, f"Parser '{parser.parser_name}' did not redact summary"
+        assert result.metadata["redaction_count"] >= 1, (
+            f"Parser '{parser.parser_name}' redaction_count is 0"
+        )
+
+
+def test_sensitive_fixture_pipeline_run_items_queryable(tmp_path) -> None:
+    """Verify that when a sensitive fixture is parsed, the resulting metadata
+    (key/value/summary) can be queried without leaking raw secret values."""
+    sensitive_text = "api_key=sk-secret-12345\npassword=admin_pass\n"
+    path = tmp_path / "creds.csv"
+    path.write_text(sensitive_text, encoding="utf-8")
+
+    result = CsvParser().parse(path)
+    metadata = result.metadata
+
+    # All metadata string values must not contain raw secret fragments
+    for key, value in metadata.items():
+        if isinstance(value, str):
+            assert "sk-secret-12345" not in value, f"metadata['{key}'] contains API key value"
+            assert "admin_pass" not in value, f"metadata['{key}'] contains password value"
+
+    # Redaction markers present
+    assert "[REDACTED]" in metadata["text_summary"]
+    assert metadata["redaction_count"] >= 2
+
+
+def test_empty_and_edge_case_files_preserve_diagnostics(tmp_path) -> None:
+    """Empty files, garbled text, and oversized lines must still produce
+    valid status/degraded_reason and bounded summary length."""
+    # Empty file
+    empty_path = tmp_path / "empty.csv"
+    empty_path.write_text("", encoding="utf-8")
+    empty_result = CsvParser().parse(empty_path)
+    assert empty_result.metadata["text_summary"] == ""
+    assert empty_result.metadata["redaction_count"] == 0
+    assert empty_result.metadata["status"] == "degraded"
+    assert "degraded_reason" in empty_result.metadata
+
+    # Oversized line
+    big_path = tmp_path / "big.csv"
+    big_path.write_text(f"id,data\n1,{'x' * 500_000}\n", encoding="utf-8")
+    big_result = CsvParser().parse(big_path)
+    assert len(big_result.metadata["text_summary"]) <= 81
+    assert big_result.metadata["redaction_count"] == 0
+
+    # Malformed HTML
+    html_path = tmp_path / "bad.html"
+    html_path.write_text("<html><body><h1>Title<p>unclosed<script>alert(1)", encoding="utf-8")
+    html_result = HtmlParser().parse(html_path)
+    assert html_result.metadata["status"] == "degraded"
+    assert "degraded_reason" in html_result.metadata
+    assert len(html_result.metadata["text_summary"]) <= 81

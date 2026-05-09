@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ragrig.parsers.base import ParseResult, TextFileParser, _text_summary
+from ragrig.parsers.base import ParseResult, TextFileParser
+from ragrig.parsers.sanitizer import sanitize_text_summary
 
 
 class HtmlParser(TextFileParser):
@@ -21,6 +22,7 @@ class HtmlParser(TextFileParser):
         stripped = re.sub(r"<[^>]+>", "", text)
         stripped = re.sub(r"\s+", " ", stripped).strip()
 
+        summary, redactions = sanitize_text_summary(stripped)
         return ParseResult(
             extracted_text=stripped,
             content_hash=__import__("hashlib").sha256(raw_bytes).hexdigest(),
@@ -36,6 +38,7 @@ class HtmlParser(TextFileParser):
                 "char_count": len(text),
                 "byte_count": len(raw_bytes),
                 "stripped_char_count": len(stripped),
-                "text_summary": _text_summary(stripped),
+                "text_summary": summary,
+                "redaction_count": redactions,
             },
         )
