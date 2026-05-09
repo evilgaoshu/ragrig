@@ -11,6 +11,7 @@ from ragrig.db.models.entities import (
     ProcessingProfileAuditLog,
     ProcessingProfileOverride,
     Source,
+    UnderstandingRun,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "ProcessingProfileAuditLog",
     "ProcessingProfileOverride",
     "Source",
+    "UnderstandingRun",
 ]

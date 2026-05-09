@@ -29,6 +29,9 @@ class KnowledgeBase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     sources: Mapped[list["Source"]] = relationship(back_populates="knowledge_base")
     documents: Mapped[list["Document"]] = relationship(back_populates="knowledge_base")
     pipeline_runs: Mapped[list["PipelineRun"]] = relationship(back_populates="knowledge_base")
+    understanding_runs: Mapped[list["UnderstandingRun"]] = relationship(
+        back_populates="knowledge_base"
+    )
 
 
 class Source(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -280,3 +283,30 @@ class ProcessingProfileAuditLog(UUIDPrimaryKeyMixin, Base):
     )
     old_state: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     new_state: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+
+class UnderstandingRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "understanding_runs"
+
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(String(128), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    profile_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    trigger_source: Mapped[str] = mapped_column(String(128), nullable=False)
+    operator: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    total: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    skipped: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="understanding_runs")
