@@ -1,7 +1,7 @@
 """Add understanding_runs table.
 
-Revision ID: 20260509_0003
-Revises: 20260508_0002
+Revision ID: 20260509_0004
+Revises: 20260509_0003
 Create Date: 2026-05-09 12:00:00.000000
 """
 
@@ -11,8 +11,8 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "20260509_0003"
-down_revision = "20260508_0002"
+revision = "20260509_0004"
+down_revision = "20260509_0003"
 branch_labels = None
 depends_on = None
 
