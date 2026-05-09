@@ -1,0 +1,7 @@
+{
+  "parser_id": "parser.csv",
+  "status": "degraded",
+  "text_summary": "name,api_key,password,email\nadmin,[API KEY REDACTED],super_secret_pass,admin@exa…",
+  "redaction_count": 3,
+  "degraded_reason": "Parsed as plain text; CSV structure awareness not implemented."
+}

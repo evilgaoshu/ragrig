@@ -1,0 +1,7 @@
+{
+  "parser_id": "parser.html",
+  "status": "degraded",
+  "text_summary": "Config const API_KEY = \"[REDACTED]\"; AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE AWS…",
+  "redaction_count": 1,
+  "degraded_reason": "HTML tags stripped; structure and links are lost."
+}
