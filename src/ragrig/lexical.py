@@ -28,9 +28,7 @@ def _compute_tf(chunk_tokens: list[str]) -> dict[str, float]:
     return {term: count / total for term, count in counts.items()}
 
 
-def _compute_idf(
-    corpus_tokens: list[list[str]], query_terms: set[str]
-) -> dict[str, float]:
+def _compute_idf(corpus_tokens: list[list[str]], query_terms: set[str]) -> dict[str, float]:
     """Inverse document frequency for a set of query terms across a corpus."""
     num_docs = len(corpus_tokens)
     if num_docs == 0:
@@ -81,9 +79,7 @@ def bm25_score_tokens(
     return score
 
 
-def token_overlap_score(
-    chunk_text: str, query: str, corpus_texts: list[str]
-) -> float:
+def token_overlap_score(chunk_text: str, query: str, corpus_texts: list[str]) -> float:
     """Deterministic token overlap scorer backed by BM25-lite.
 
     Tokenizes both chunk_text and query, then builds a corpus view from all

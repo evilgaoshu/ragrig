@@ -1682,10 +1682,7 @@ def test_candidate_k_limits_candidates_for_rerank(tmp_path) -> None:
     """candidate_k limits how many candidates are fetched for rerank."""
     docs = _seed_documents(
         tmp_path,
-        {
-            f"doc_{i:02d}.txt": f"document number {i} with some content here"
-            for i in range(5)
-        },
+        {f"doc_{i:02d}.txt": f"document number {i} with some content here" for i in range(5)},
     )
 
     with _create_session() as session:
@@ -1855,9 +1852,7 @@ def test_provider_rerank_unavailable_returns_none() -> None:
         )
     ]
 
-    result = provider_rerank(
-        "test query", candidates, provider_name="nonexistent_provider_xyz"
-    )
+    result = provider_rerank("test query", candidates, provider_name="nonexistent_provider_xyz")
     assert result is None
 
 

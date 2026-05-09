@@ -38,9 +38,7 @@ class RerankResult:
     new_rank: int
 
 
-def fake_rerank(
-    query: str, candidates: list[RerankCandidate]
-) -> list[RerankResult]:
+def fake_rerank(query: str, candidates: list[RerankCandidate]) -> list[RerankResult]:
     """Deterministic fake reranker for CI and testing.
 
     Ranks candidates by a simple heuristic: documents whose text contains

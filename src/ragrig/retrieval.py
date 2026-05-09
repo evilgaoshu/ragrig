@@ -104,8 +104,7 @@ def _available_profiles(session: Session, *, knowledge_base_id) -> list[dict[str
         .order_by(Embedding.provider, Embedding.model, Embedding.dimensions)
     ).all()
     return [
-        {"provider": row.provider, "model": row.model, "dimensions": row.dimensions}
-        for row in rows
+        {"provider": row.provider, "model": row.model, "dimensions": row.dimensions} for row in rows
     ]
 
 
@@ -363,23 +362,25 @@ def _apply_hybrid_fusion(
                 "vector_weight": vector_weight,
             },
         }
-        fused.append((
-            combined,
-            RetrievalResult(
-                document_id=r.document_id,
-                document_version_id=r.document_version_id,
-                chunk_id=r.chunk_id,
-                chunk_index=r.chunk_index,
-                document_uri=r.document_uri,
-                source_uri=r.source_uri,
-                text=r.text,
-                text_preview=r.text_preview,
-                distance=r.distance,
-                score=round(combined, 6),
-                chunk_metadata=r.chunk_metadata,
-                rank_stage_trace=trace,
-            ),
-        ))
+        fused.append(
+            (
+                combined,
+                RetrievalResult(
+                    document_id=r.document_id,
+                    document_version_id=r.document_version_id,
+                    chunk_id=r.chunk_id,
+                    chunk_index=r.chunk_index,
+                    document_uri=r.document_uri,
+                    source_uri=r.source_uri,
+                    text=r.text,
+                    text_preview=r.text_preview,
+                    distance=r.distance,
+                    score=round(combined, 6),
+                    chunk_metadata=r.chunk_metadata,
+                    rank_stage_trace=trace,
+                ),
+            )
+        )
 
     fused.sort(key=lambda x: -x[0])
     return [r for _, r in fused]
@@ -481,7 +482,8 @@ def _apply_rerank(
         cand = rr_item.candidate
         original_trace = candidates[rr_item.candidate.original_index].rank_stage_trace
         trace = {
-            "stages": original_trace.get("stages", []) + [
+            "stages": original_trace.get("stages", [])
+            + [
                 {
                     "stage": "rerank",
                     "score": rr_item.rerank_score,
