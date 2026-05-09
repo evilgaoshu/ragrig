@@ -141,9 +141,7 @@ def _db_override_to_dataclass(override: object) -> ProcessingProfile:
         kind=ProcessingKind(override.kind),
         source=ProfileSource.OVERRIDE,
         tags=list(override.tags) if override.tags else [],
-        metadata={
-            str(k): v for k, v in (override.metadata_json or {}).items()
-        },
+        metadata={str(k): v for k, v in (override.metadata_json or {}).items()},
         created_by=override.created_by,
         updated_at=override.updated_at,
     )
@@ -274,9 +272,7 @@ def update_override(
             kind=kind.value if kind else None,
             tags=tags,
             metadata_json=(
-                {str(k): v for k, v in (metadata or {}).items()}
-                if metadata is not None
-                else None
+                {str(k): v for k, v in (metadata or {}).items()} if metadata is not None else None
             ),
             actor=None,
         )
@@ -430,9 +426,7 @@ def build_matrix(
     """
     extensions = get_registered_extensions()
     task_types = get_matrix_task_types()
-    active_overrides = (
-        overrides if overrides is not None else list_overrides(session=session)
-    )
+    active_overrides = overrides if overrides is not None else list_overrides(session=session)
     cells: dict[str, dict[str, object]] = {}
     for ext in extensions:
         for tt in task_types:
@@ -469,9 +463,7 @@ def build_api_profile_list(
 ) -> list[dict[str, object]]:
     """Build the API representation of all profiles (defaults + overrides)."""
     profiles: dict[str, ProcessingProfile] = dict(_DEFAULT_MAP)
-    active_overrides = (
-        overrides if overrides is not None else list_overrides(session=session)
-    )
+    active_overrides = overrides if overrides is not None else list_overrides(session=session)
     for profile in active_overrides:
         profiles[profile.profile_id] = profile
 

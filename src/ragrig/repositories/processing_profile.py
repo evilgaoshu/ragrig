@@ -100,16 +100,12 @@ def get_active_overrides(session: Session) -> list[ProcessingProfileOverride]:
 def get_all_overrides(session: Session) -> list[ProcessingProfileOverride]:
     return list(
         session.scalars(
-            select(ProcessingProfileOverride).where(
-                ProcessingProfileOverride.deleted_at.is_(None)
-            )
+            select(ProcessingProfileOverride).where(ProcessingProfileOverride.deleted_at.is_(None))
         )
     )
 
 
-def get_override_by_id(
-    session: Session, profile_id: str
-) -> ProcessingProfileOverride | None:
+def get_override_by_id(session: Session, profile_id: str) -> ProcessingProfileOverride | None:
     return session.scalar(
         select(ProcessingProfileOverride).where(
             ProcessingProfileOverride.profile_id == profile_id,
@@ -281,9 +277,7 @@ def list_audit_log(
     provider: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return recent audit log entries, optionally filtered."""
-    stmt = select(ProcessingProfileAuditLog).order_by(
-        ProcessingProfileAuditLog.timestamp.desc()
-    )
+    stmt = select(ProcessingProfileAuditLog).order_by(ProcessingProfileAuditLog.timestamp.desc())
     if profile_id:
         stmt = stmt.where(ProcessingProfileAuditLog.profile_id == profile_id)
     if action:
