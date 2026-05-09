@@ -148,9 +148,7 @@ def _sanitize_metadata_impl(
             count += sub_count
             paths.extend(sub_paths)
         elif isinstance(value, list):
-            sub, sub_count, sub_paths = _sanitize_list_impl(
-                value, mode=mode, prefix=current_path
-            )
+            sub, sub_count, sub_paths = _sanitize_list_impl(value, mode=mode, prefix=current_path)
             sanitized[key] = sub
             count += sub_count
             paths.extend(sub_paths)

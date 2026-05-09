@@ -546,16 +546,12 @@ def test_drift_detection_classifies_caller_sites() -> None:
 
     # Redact paths must match between shared and wrapper (accounting for prefix)
     shared_paths_stripped = [
-        p[len("metadata_json."):] if p.startswith("metadata_json.") else p
+        p[len("metadata_json.") :] if p.startswith("metadata_json.") else p
         for p in redact_metadata(meta, prefix="metadata_json")[2]
     ]
     assert shared_paths_stripped == [
-        p[len("metadata_json."):] if p.startswith("metadata_json.") else p
-        for p in repo_paths
-    ], (
-        f"Path drift: shared_with_prefix={shared_paths_stripped}"
-        f" vs repo_wrapper={repo_paths}"
-    )
+        p[len("metadata_json.") :] if p.startswith("metadata_json.") else p for p in repo_paths
+    ], f"Path drift: shared_with_prefix={shared_paths_stripped} vs repo_wrapper={repo_paths}"
     assert redact_count == repo_count, (
         f"Count drift: shared={redact_count} vs repo_wrapper={repo_count}"
     )
@@ -584,9 +580,7 @@ def test_drift_detection_classifies_caller_sites() -> None:
                 f"Remove mode leaked '{path}' (redact mode redacted it)"
             )
         else:
-            assert leaf_key not in current, (
-                f"Remove mode leaked '{path}' (redact mode redacted it)"
-            )
+            assert leaf_key not in current, f"Remove mode leaked '{path}' (redact mode redacted it)"
 
 
 def test_drift_additional_sensitive_key_propagates_to_all_callers() -> None:
@@ -600,17 +594,17 @@ def test_drift_additional_sensitive_key_propagates_to_all_callers() -> None:
     # "license_key" does not match any SENSITIVE_KEY_PARTS entry (substring).
     # So "license_key" is not currently sensitive.
 
-    # Let's verify the property: if we were to add "license" to SENSITIVE_KEY_PARTS, 
+    # Let's verify the property: if we were to add "license" to SENSITIVE_KEY_PARTS,
     # both modes would need to pick it up. This is a structural test of the design.
     # We can't mutate the tuple at runtime, but we can verify the architecture:
-    # both redact_metadata and remove_metadata use is_sensitive_key() which reads 
+    # both redact_metadata and remove_metadata use is_sensitive_key() which reads
     # SENSITIVE_KEY_PARTS. So changing SENSITIVE_KEY_PARTS changes both.
     assert is_sensitive_key("api_key") is True
     assert is_sensitive_key("license_key") is False  # Not a sensitive part
 
     # Verify architectural consistency: both modes use the same predicate
     assert is_sensitive_key("api_key") is True
-    
+
     redacted_val = redact_metadata({"api_key": "v", "normal": "ok"})[0]
     assert redacted_val["api_key"] == REDACTED
     assert redacted_val["normal"] == "ok"
@@ -642,17 +636,13 @@ def test_drift_repository_model_api_same_output_for_redacted_keys() -> None:
                 dict_key, idx_str = part.split("[", 1)
                 idx = int(idx_str.rstrip("]"))
                 pre = ".".join(parts[:i])
-                assert isinstance(current, dict), (
-                    f"Expected dict at {pre}, got {type(current)}"
-                )
+                assert isinstance(current, dict), f"Expected dict at {pre}, got {type(current)}"
                 current = current[dict_key][idx]  # type: ignore[index]
             else:
                 if i == len(parts) - 1:
                     # Last part — it should NOT exist in model output
                     assert isinstance(current, dict), f"Expected dict at {'.'.join(parts[:i])}"
-                    assert part not in current, (
-                        f"Model API leaked '{path}' which repo redacted"
-                    )
+                    assert part not in current, f"Model API leaked '{path}' which repo redacted"
                 else:
                     assert isinstance(current, dict), f"Expected dict at {'.'.join(parts[:i])}"
                     current = current[part]  # type: ignore[index]
@@ -681,13 +671,12 @@ def test_drift_state_sanitizer_agrees_with_metadata_sanitizer() -> None:
         assert state_sanitized["_redaction"]["count"] == meta_count
         # Paths from _sanitize_state are relative to metadata_json
         state_paths = [
-            p[len("metadata_json."):] if p.startswith("metadata_json.") else p
+            p[len("metadata_json.") :] if p.startswith("metadata_json.") else p
             for p in state_sanitized["_redaction"]["paths"]
         ]
         # meta_paths already include "metadata_json." prefix
         meta_relative = [
-            p[len("metadata_json."):] if p.startswith("metadata_json.") else p
-            for p in meta_paths
+            p[len("metadata_json.") :] if p.startswith("metadata_json.") else p for p in meta_paths
         ]
         assert sorted(state_paths) == sorted(meta_relative)
 
@@ -697,7 +686,7 @@ def test_drift_no_plaintext_secrets_in_output() -> None:
     # These are values that should trigger is_sensitive_value or is_sensitive_key
     plaintext_secrets = [
         "sk-proj-deadbeef",  # would be in api_key value
-        "ghp_secret_token_123",  # would be in token value  
+        "ghp_secret_token_123",  # would be in token value
         "Bearer eyJhbGciOiJIUzI1NiJ9",  # bearer token
         "-----BEGIN RSA PRIVATE KEY-----",  # PEM header
         "super_secret_db_pass",  # password value
@@ -710,17 +699,13 @@ def test_drift_no_plaintext_secrets_in_output() -> None:
     redacted, _, _ = redact_metadata(meta)
     redacted_str = str(redacted)
     for secret in plaintext_secrets:
-        assert secret not in redacted_str, (
-            f"Redact mode leaked plaintext: '{secret}'"
-        )
+        assert secret not in redacted_str, f"Redact mode leaked plaintext: '{secret}'"
 
     # Removal mode
     removed = remove_metadata(meta)
     removed_str = str(removed)
     for secret in plaintext_secrets:
-        assert secret not in removed_str, (
-            f"Remove mode leaked plaintext: '{secret}'"
-        )
+        assert secret not in removed_str, f"Remove mode leaked plaintext: '{secret}'"
 
 
 def test_drift_verify_output_has_no_plain_secret_in_str_representation() -> None:
@@ -748,9 +733,11 @@ def test_drift_verify_output_has_no_plain_secret_in_str_representation() -> None
 
 def test_REDACTED_marker_is_consistent() -> None:
     from ragrig.repositories.processing_profile import REDACTED as REPO_REDACTED
+
     assert REDACTED == REPO_REDACTED == "[REDACTED]"
 
 
 def test_sensitive_key_parts_are_consistent() -> None:
     from ragrig.repositories.processing_profile import SENSITIVE_KEY_PARTS as REPO_PARTS
+
     assert set(SENSITIVE_KEY_PARTS) == REPO_PARTS
