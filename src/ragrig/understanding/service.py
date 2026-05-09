@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -11,6 +12,7 @@ from ragrig.db.models import (
     DocumentUnderstanding,
     DocumentVersion,
     Source,
+    UnderstandingRun,
 )
 from ragrig.understanding.provider import (
     compute_input_hash,
@@ -22,6 +24,8 @@ from ragrig.understanding.schema import (
     CoverageErrorEntry,
     UnderstandingCoverage,
     UnderstandingRecord,
+    UnderstandingRunFilter,
+    UnderstandingRunRecord,
 )
 
 
@@ -179,6 +183,36 @@ def _get_kb_document_versions(session: Session, kb_id: str) -> list[DocumentVers
     )
 
 
+def _run_status_from_result(
+    total: int, failed: int
+) -> str:
+    """Derive deterministic run status from batch counts."""
+    if total == 0:
+        return "empty_kb"
+    if failed == 0:
+        return "success"
+    if failed == total:
+        return "all_failure"
+    return "partial_failure"
+
+
+def _safe_error_summary(errors: list[BatchUnderstandingError]) -> str | None:
+    """Build a safe error summary without leaking secrets, full prompts, or full text."""
+    if not errors:
+        return None
+    parts: list[str] = []
+    for e in errors:
+        msg = str(e.error)
+        # Truncate long messages
+        if len(msg) > 200:
+            msg = msg[:197] + "..."
+        parts.append(f"[{e.version_id[:8]}]: {msg}")
+    merged = "; ".join(parts)
+    if len(merged) > 2000:
+        merged = merged[:1997] + "..."
+    return merged
+
+
 def understand_all_versions(
     session: Session,
     *,
@@ -186,6 +220,8 @@ def understand_all_versions(
     provider: str = "deterministic-local",
     model: str | None = None,
     profile_id: str = "*.understand.default",
+    trigger_source: str = "api",
+    operator: str | None = None,
 ) -> BatchUnderstandingResult:
     """Batch-understand all document versions in a knowledge base.
 
@@ -193,15 +229,36 @@ def understand_all_versions(
     - fresh (input_hash matches and status=completed) → skip
     - stale (input_hash mismatch) → regenerate
     - failed → regenerate
+
+    Persists an UnderstandingRun record for audit trail.
     """
+    kb_uuid = uuid.UUID(knowledge_base_id)
+    effective_model = model or ""
+
+    # Create the run record (started = now)
+    run = UnderstandingRun(
+        knowledge_base_id=kb_uuid,
+        provider=provider,
+        model=effective_model,
+        profile_id=profile_id,
+        trigger_source=trigger_source,
+        operator=operator,
+        status="processing",
+        total=0,
+        created=0,
+        skipped=0,
+        failed=0,
+        started_at=datetime.now(timezone.utc),
+    )
+    session.add(run)
+    session.flush()
+
     versions = _get_kb_document_versions(session, knowledge_base_id)
     total = len(versions)
     created = 0
     skipped = 0
     failed = 0
     errors: list[BatchUnderstandingError] = []
-
-    effective_model = model or ""
 
     for version in versions:
         version_id = str(version.id)
@@ -240,13 +297,25 @@ def understand_all_versions(
             failed += 1
             errors.append(BatchUnderstandingError(version_id=version_id, error=str(exc)))
 
-    return BatchUnderstandingResult(
+    # Finalise run record
+    run.total = total
+    run.created = created
+    run.skipped = skipped
+    run.failed = failed
+    run.status = _run_status_from_result(total, failed)
+    run.error_summary = _safe_error_summary(errors)
+    run.finished_at = datetime.now(timezone.utc)
+    session.flush()
+    session.commit()
+
+    result = BatchUnderstandingResult(
         total=total,
         created=created,
         skipped=skipped,
         failed=failed,
         errors=errors,
     )
+    return result
 
 
 def get_understanding_coverage(
@@ -324,3 +393,66 @@ def get_understanding_coverage(
         completeness_score=round(completeness_score, 4),
         recent_errors=recent_errors,
     )
+
+
+def _to_run_record(row: UnderstandingRun) -> UnderstandingRunRecord:
+    return UnderstandingRunRecord(
+        id=str(row.id),
+        knowledge_base_id=str(row.knowledge_base_id),
+        provider=row.provider,
+        model=row.model,
+        profile_id=row.profile_id,
+        trigger_source=row.trigger_source,
+        operator=row.operator,
+        status=row.status,
+        total=row.total,
+        created=row.created,
+        skipped=row.skipped,
+        failed=row.failed,
+        error_summary=row.error_summary,
+        started_at=row.started_at.isoformat() if row.started_at else None,
+        finished_at=row.finished_at.isoformat() if row.finished_at else None,
+    )
+
+
+def get_understanding_runs(
+    session: Session,
+    knowledge_base_id: str,
+    *,
+    filters: UnderstandingRunFilter | None = None,
+) -> list[UnderstandingRunRecord]:
+    """Return understanding runs for a knowledge base, most recent first."""
+    kb_uuid = uuid.UUID(knowledge_base_id)
+    query = (
+        session.query(UnderstandingRun)
+        .filter(UnderstandingRun.knowledge_base_id == kb_uuid)
+    )
+
+    if filters is not None:
+        if filters.provider is not None:
+            query = query.filter(UnderstandingRun.provider == filters.provider)
+        if filters.model is not None:
+            query = query.filter(UnderstandingRun.model == filters.model)
+        if filters.profile_id is not None:
+            query = query.filter(UnderstandingRun.profile_id == filters.profile_id)
+        if filters.status is not None:
+            query = query.filter(UnderstandingRun.status == filters.status)
+
+    rows = (
+        query
+        .order_by(UnderstandingRun.started_at.desc())
+        .limit(filters.limit if filters is not None else 50)
+        .all()
+    )
+    return [_to_run_record(r) for r in rows]
+
+
+def get_understanding_run(
+    session: Session, run_id: str
+) -> UnderstandingRunRecord | None:
+    """Return a single understanding run by ID."""
+    run_uuid = uuid.UUID(run_id)
+    row = session.get(UnderstandingRun, run_uuid)
+    if row is None:
+        return None
+    return _to_run_record(row)

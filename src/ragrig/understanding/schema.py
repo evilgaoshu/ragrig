@@ -99,3 +99,29 @@ class UnderstandingCoverage(BaseModel):
     failed: int
     completeness_score: float | None = None
     recent_errors: list[CoverageErrorEntry] = Field(default_factory=list)
+
+
+class UnderstandingRunRecord(BaseModel):
+    id: str
+    knowledge_base_id: str
+    provider: str
+    model: str
+    profile_id: str
+    trigger_source: str
+    operator: str | None = None
+    status: str
+    total: int
+    created: int
+    skipped: int
+    failed: int
+    error_summary: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+class UnderstandingRunFilter(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    profile_id: str | None = None
+    status: str | None = None
+    limit: int = Field(default=50, ge=1, le=200)

@@ -1128,3 +1128,660 @@ class TestUnderstandingCoverage:
         assert coverage.completed == 2
         assert coverage.missing == 1
         assert coverage.completeness_score == pytest.approx(2 / 3, rel=1e-2)
+
+
+class TestRunStatusFromResult:
+    def test_all_four_statuses(self) -> None:
+        from ragrig.understanding.service import _run_status_from_result
+
+        assert _run_status_from_result(0, 0) == "empty_kb"
+        assert _run_status_from_result(3, 0) == "success"
+        assert _run_status_from_result(3, 3) == "all_failure"
+        assert _run_status_from_result(5, 2) == "partial_failure"
+
+    def test_success_when_total_nonzero(self) -> None:
+        from ragrig.understanding.service import _run_status_from_result
+
+        assert _run_status_from_result(1, 0) == "success"
+        assert _run_status_from_result(10, 0) == "success"
+
+
+class TestSafeErrorSummary:
+    def test_returns_none_for_empty_errors(self) -> None:
+        from ragrig.understanding.service import _safe_error_summary
+
+        assert _safe_error_summary([]) is None
+
+    def test_formats_multiple_errors(self) -> None:
+        from ragrig.understanding.schema import BatchUnderstandingError
+        from ragrig.understanding.service import _safe_error_summary
+
+        errors = [
+            BatchUnderstandingError(
+                version_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                error="connection refused",
+            ),
+            BatchUnderstandingError(
+                version_id="ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj",
+                error="timeout after 30s",
+            ),
+        ]
+        summary = _safe_error_summary(errors)
+        assert summary is not None
+        assert "aaaaaaaa" in summary
+        assert "connection refused" in summary
+        assert "ffffffff" in summary
+        assert "timeout after 30s" in summary
+
+    def test_truncates_long_messages(self) -> None:
+        from ragrig.understanding.schema import BatchUnderstandingError
+        from ragrig.understanding.service import _safe_error_summary
+
+        long_msg = "x" * 500
+        errors = [
+            BatchUnderstandingError(
+                version_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                error=long_msg,
+            ),
+        ]
+        summary = _safe_error_summary(errors)
+        assert summary is not None
+        assert len(summary) < 300  # Should be truncated
+        assert summary.endswith("...")
+
+    def test_truncates_overall_summary(self) -> None:
+        from ragrig.understanding.schema import BatchUnderstandingError
+        from ragrig.understanding.service import _safe_error_summary
+
+        errors = [
+            BatchUnderstandingError(
+                version_id=f"{str(i).zfill(8)}-bbbb-cccc-dddd-eeeeeeeeeeee",
+                error="error message that is not too long itself",
+            )
+            for i in range(20)
+        ]
+        summary = _safe_error_summary(errors)
+        assert summary is not None
+        if len(summary) > 2000:
+            assert summary.endswith("...")
+
+
+class TestUnderstandAllPersistsRun:
+    def test_creates_run_record_on_success(self, sqlite_session: Session) -> None:
+        from ragrig.db.models import UnderstandingRun
+        from ragrig.understanding.service import understand_all_versions
+
+        texts = ["# Doc A\nContent.", "# Doc B\nMore."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        result = understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="deterministic-local",
+            profile_id="*.understand.default",
+            trigger_source="api",
+            operator="test-user",
+        )
+        assert result.total == 2
+        assert result.created == 2
+
+        runs = sqlite_session.query(UnderstandingRun).all()
+        assert len(runs) == 1
+        run = runs[0]
+        assert str(run.knowledge_base_id) == kb_id
+        assert run.provider == "deterministic-local"
+        assert run.profile_id == "*.understand.default"
+        assert run.trigger_source == "api"
+        assert run.operator == "test-user"
+        assert run.status == "success"
+        assert run.total == 2
+        assert run.created == 2
+        assert run.skipped == 0
+        assert run.failed == 0
+        assert run.error_summary is None
+        assert run.started_at is not None
+        assert run.finished_at is not None
+
+    def test_empty_kb_creates_empty_kb_run(self, sqlite_session: Session) -> None:
+        from ragrig.db.models import UnderstandingRun
+        from ragrig.understanding.service import understand_all_versions
+
+        texts: list[str] = []
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        result = understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="deterministic-local",
+        )
+        assert result.total == 0
+
+        runs = sqlite_session.query(UnderstandingRun).all()
+        assert len(runs) == 1
+        assert runs[0].status == "empty_kb"
+
+    def test_partial_failure_creates_run_with_error_summary(
+        self, sqlite_session: Session
+    ) -> None:
+        from ragrig.db.models import UnderstandingRun
+        from ragrig.understanding.service import understand_all_versions
+
+        texts = ["# Doc A\nContent.", "# Doc B\nMore."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        result = understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="nonexistent-provider",
+            profile_id="*.understand.default",
+        )
+        assert result.failed == 2
+
+        runs = sqlite_session.query(UnderstandingRun).all()
+        assert len(runs) == 1
+        assert runs[0].status == "all_failure"
+        assert runs[0].error_summary is not None
+
+    def test_duplicate_run_creates_separate_record(self, sqlite_session: Session) -> None:
+        from ragrig.db.models import UnderstandingRun
+        from ragrig.understanding.service import understand_all_versions
+
+        texts = ["# Doc A\nContent."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        # First run
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="deterministic-local",
+        )
+        # Second run (all skipped)
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="deterministic-local",
+        )
+
+        runs = sqlite_session.query(UnderstandingRun).all()
+        assert len(runs) == 2
+        # First run created docs
+        assert runs[0].status == "success"
+        assert runs[0].created == 1
+        # Second run skipped all
+        assert runs[1].status == "success"
+        assert runs[1].skipped == 1
+
+
+class TestGetUnderstandingRuns:
+    def test_returns_runs_latest_first(self, sqlite_session: Session) -> None:
+        from ragrig.understanding.service import (
+            get_understanding_runs,
+            understand_all_versions,
+        )
+
+        texts = ["# Doc A\nContent."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="provider-a",
+            profile_id="profile-1",
+        )
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="provider-b",
+            profile_id="profile-2",
+        )
+
+        runs = get_understanding_runs(sqlite_session, kb_id)
+        assert len(runs) == 2
+        # Most recent first
+        assert runs[0].provider == "provider-b"
+        assert runs[0].profile_id == "profile-2"
+        assert runs[1].provider == "provider-a"
+        assert runs[1].profile_id == "profile-1"
+
+    def test_filter_by_provider(self, sqlite_session: Session) -> None:
+        from ragrig.understanding.schema import UnderstandingRunFilter
+        from ragrig.understanding.service import (
+            get_understanding_runs,
+            understand_all_versions,
+        )
+
+        texts = ["# Doc A\nContent."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="provider-a",
+        )
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="provider-b",
+        )
+
+        runs = get_understanding_runs(
+            sqlite_session,
+            kb_id,
+            filters=UnderstandingRunFilter(provider="provider-a"),
+        )
+        assert len(runs) == 1
+        assert runs[0].provider == "provider-a"
+
+    def test_filter_by_status(self, sqlite_session: Session) -> None:
+        from ragrig.understanding.schema import UnderstandingRunFilter
+        from ragrig.understanding.service import (
+            get_understanding_runs,
+            understand_all_versions,
+        )
+
+        texts: list[str] = []
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="deterministic-local",
+        )
+
+        runs = get_understanding_runs(
+            sqlite_session,
+            kb_id,
+            filters=UnderstandingRunFilter(status="empty_kb"),
+        )
+        assert len(runs) == 1
+        assert runs[0].status == "empty_kb"
+
+        runs = get_understanding_runs(
+            sqlite_session,
+            kb_id,
+            filters=UnderstandingRunFilter(status="success"),
+        )
+        assert len(runs) == 0
+
+    def test_empty_kb_returns_empty_list(self, sqlite_session: Session) -> None:
+        from ragrig.understanding.service import get_understanding_runs
+
+        texts = ["# Doc A\nContent."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        runs = get_understanding_runs(sqlite_session, kb_id)
+        assert runs == []
+
+
+class TestGetUnderstandingRun:
+    def test_returns_none_for_missing(self, sqlite_session: Session) -> None:
+        from ragrig.understanding.service import get_understanding_run
+
+        result = get_understanding_run(sqlite_session, str(uuid.uuid4()))
+        assert result is None
+
+    def test_returns_record_when_exists(self, sqlite_session: Session) -> None:
+        from ragrig.db.models import UnderstandingRun
+        from ragrig.understanding.service import (
+            get_understanding_run,
+            understand_all_versions,
+        )
+
+        texts = ["# Doc A\nContent."]
+        version_ids, kb_id = _seed_kb_with_versions(sqlite_session, text_contents=texts)
+
+        understand_all_versions(
+            sqlite_session,
+            knowledge_base_id=kb_id,
+            provider="deterministic-local",
+            profile_id="*.understand.default",
+            trigger_source="test",
+        )
+
+        run_row = sqlite_session.query(UnderstandingRun).first()
+        assert run_row is not None
+
+        record = get_understanding_run(sqlite_session, str(run_row.id))
+        assert record is not None
+        assert record.provider == "deterministic-local"
+        assert record.profile_id == "*.understand.default"
+        assert record.trigger_source == "test"
+        assert record.status == "success"
+        assert record.total == 1
+
+
+class TestUnderstandAllAPIWithRun:
+    @pytest.mark.anyio
+    async def test_post_returns_run_id(self, tmp_path) -> None:
+
+        import httpx
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        from ragrig.db.models import Base
+        from ragrig.main import create_app
+
+        db_path = tmp_path / "test_understand_run_api.db"
+        engine = create_engine(f"sqlite+pysqlite:///{db_path}", future=True)
+        Base.metadata.create_all(engine)
+
+        def session_factory() -> Session:
+            return Session(engine, expire_on_commit=False)
+
+        # Seed data
+        session = session_factory()
+        try:
+            from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
+            kb = KnowledgeBase(name="kb-run-test", metadata_json={})
+            session.add(kb)
+            session.flush()
+            source = Source(
+                knowledge_base_id=kb.id, kind="local", uri="file:///test",
+                config_json={}
+            )
+            session.add(source)
+            session.flush()
+            doc = Document(
+                knowledge_base_id=kb.id, source_id=source.id,
+                uri="doc.md", content_hash="abc", metadata_json={}
+            )
+            session.add(doc)
+            session.flush()
+            version = DocumentVersion(
+                document_id=doc.id, version_number=1, content_hash="abc",
+                parser_name="markdown", parser_config_json={},
+                extracted_text="# Hello\nContent.", metadata_json={}
+            )
+            session.add(version)
+            session.commit()
+            kb_id = str(kb.id)
+        finally:
+            session.close()
+
+        app = create_app(
+            check_database=lambda: None,
+            session_factory=session_factory,
+        )
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            response = await client.post(
+                f"/knowledge-bases/{kb_id}/understand-all",
+                json={
+                    "provider": "deterministic-local",
+                    "profile_id": "*.understand.default",
+                },
+                headers={"x-operator": "api-caller"},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert data["created"] == 1
+        assert data["skipped"] == 0
+        assert data["failed"] == 0
+        assert data["run_id"] is not None
+
+    @pytest.mark.anyio
+    async def test_get_understanding_runs_api(self, tmp_path) -> None:
+        import httpx
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        from ragrig.db.models import Base
+        from ragrig.main import create_app
+
+        db_path = tmp_path / "test_understand_runs_api.db"
+        engine = create_engine(f"sqlite+pysqlite:///{db_path}", future=True)
+        Base.metadata.create_all(engine)
+
+        def session_factory() -> Session:
+            return Session(engine, expire_on_commit=False)
+
+        # Seed and run
+        session = session_factory()
+        try:
+            from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
+            kb = KnowledgeBase(name="kb-run-api", metadata_json={})
+            session.add(kb)
+            session.flush()
+            source = Source(
+                knowledge_base_id=kb.id, kind="local", uri="file:///test",
+                config_json={}
+            )
+            session.add(source)
+            session.flush()
+            doc = Document(
+                knowledge_base_id=kb.id, source_id=source.id,
+                uri="doc.md", content_hash="abc", metadata_json={}
+            )
+            session.add(doc)
+            session.flush()
+            version = DocumentVersion(
+                document_id=doc.id, version_number=1, content_hash="abc",
+                parser_name="markdown", parser_config_json={},
+                extracted_text="# Hello\nContent.", metadata_json={}
+            )
+            session.add(version)
+            session.commit()
+            kb_id = str(kb.id)
+        finally:
+            session.close()
+
+        app = create_app(
+            check_database=lambda: None,
+            session_factory=session_factory,
+        )
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            # First, trigger a run
+            await client.post(
+                f"/knowledge-bases/{kb_id}/understand-all",
+                json={
+                    "provider": "deterministic-local",
+                    "profile_id": "*.understand.default",
+                },
+            )
+
+            # Then fetch runs
+            response = await client.get(
+                f"/knowledge-bases/{kb_id}/understanding-runs"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert "runs" in data
+        assert len(data["runs"]) >= 1
+        run = data["runs"][0]
+        assert run["provider"] == "deterministic-local"
+        assert run["profile_id"] == "*.understand.default"
+        assert run["status"] == "success"
+
+    @pytest.mark.anyio
+    async def test_get_understanding_run_detail_api(self, tmp_path) -> None:
+        import httpx
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        from ragrig.db.models import Base
+        from ragrig.main import create_app
+
+        db_path = tmp_path / "test_understand_run_detail.db"
+        engine = create_engine(f"sqlite+pysqlite:///{db_path}", future=True)
+        Base.metadata.create_all(engine)
+
+        def session_factory() -> Session:
+            return Session(engine, expire_on_commit=False)
+
+        # Seed and run
+        session = session_factory()
+        try:
+            from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
+            kb = KnowledgeBase(name="kb-run-detail", metadata_json={})
+            session.add(kb)
+            session.flush()
+            source = Source(
+                knowledge_base_id=kb.id, kind="local", uri="file:///test",
+                config_json={}
+            )
+            session.add(source)
+            session.flush()
+            doc = Document(
+                knowledge_base_id=kb.id, source_id=source.id,
+                uri="doc.md", content_hash="abc", metadata_json={}
+            )
+            session.add(doc)
+            session.flush()
+            version = DocumentVersion(
+                document_id=doc.id, version_number=1, content_hash="abc",
+                parser_name="markdown", parser_config_json={},
+                extracted_text="# Hello\nContent.", metadata_json={}
+            )
+            session.add(version)
+            session.commit()
+            kb_id = str(kb.id)
+        finally:
+            session.close()
+
+        app = create_app(
+            check_database=lambda: None,
+            session_factory=session_factory,
+        )
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            # Trigger a run
+            post_resp = await client.post(
+                f"/knowledge-bases/{kb_id}/understand-all",
+                json={
+                    "provider": "deterministic-local",
+                    "profile_id": "*.understand.default",
+                },
+            )
+            run_id = post_resp.json()["run_id"]
+
+            # Fetch run detail via raw API (/knowledge-bases prefix)
+            response = await client.get(
+                f"/knowledge-bases/{kb_id}/understanding-runs"
+            )
+            items = response.json()["runs"]
+            assert len(items) >= 1
+
+            # Fetch detail via web console endpoint
+            detail_resp = await client.get(
+                f"/understanding-runs/{run_id}"
+            )
+        assert detail_resp.status_code == 200
+        detail = detail_resp.json()
+        assert detail["id"] == run_id
+        assert detail["provider"] == "deterministic-local"
+        assert detail["knowledge_base"] == "kb-run-detail"
+
+    @pytest.mark.anyio
+    async def test_understanding_run_not_found_returns_404(self, tmp_path) -> None:
+        import httpx
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        from ragrig.db.models import Base
+        from ragrig.main import create_app
+
+        db_path = tmp_path / "test_404.db"
+        engine = create_engine(f"sqlite+pysqlite:///{db_path}", future=True)
+        Base.metadata.create_all(engine)
+
+        def session_factory() -> Session:
+            return Session(engine, expire_on_commit=False)
+
+        app = create_app(
+            check_database=lambda: None,
+            session_factory=session_factory,
+        )
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            response = await client.get(
+                f"/understanding-runs/{uuid.uuid4()}"
+            )
+        assert response.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_web_console_understanding_runs_list(self, tmp_path) -> None:
+        import httpx
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        from ragrig.db.models import Base
+        from ragrig.main import create_app
+
+        db_path = tmp_path / "test_web_runs.db"
+        engine = create_engine(f"sqlite+pysqlite:///{db_path}", future=True)
+        Base.metadata.create_all(engine)
+
+        def session_factory() -> Session:
+            return Session(engine, expire_on_commit=False)
+
+        # Seed and run
+        session = session_factory()
+        try:
+            from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
+            kb = KnowledgeBase(name="kb-web-runs", metadata_json={})
+            session.add(kb)
+            session.flush()
+            source = Source(
+                knowledge_base_id=kb.id, kind="local", uri="file:///test",
+                config_json={}
+            )
+            session.add(source)
+            session.flush()
+            doc = Document(
+                knowledge_base_id=kb.id, source_id=source.id,
+                uri="doc.md", content_hash="abc", metadata_json={}
+            )
+            session.add(doc)
+            session.flush()
+            version = DocumentVersion(
+                document_id=doc.id, version_number=1, content_hash="abc",
+                parser_name="markdown", parser_config_json={},
+                extracted_text="# Hello", metadata_json={}
+            )
+            session.add(version)
+            session.commit()
+            kb_id = str(kb.id)
+        finally:
+            session.close()
+
+        app = create_app(
+            check_database=lambda: None,
+            session_factory=session_factory,
+        )
+        transport = httpx.ASGITransport(app=app)
+
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            # Trigger a run first
+            await client.post(
+                f"/knowledge-bases/{kb_id}/understand-all",
+                json={"provider": "deterministic-local", "profile_id": "*.understand.default"},
+            )
+
+            # Fetch via web console endpoint
+            response = await client.get(
+                "/understanding-runs",
+                params={"knowledge_base_id": kb_id, "limit": 5},
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert "items" in data
+        assert len(data["items"]) >= 1
+        item = data["items"][0]
+        assert item["knowledge_base"] == "kb-web-runs"
+        assert item["status"] == "success"

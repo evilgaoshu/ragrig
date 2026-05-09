@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, File, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
@@ -49,9 +49,11 @@ from ragrig.understanding import (
     ProviderUnavailableError,
     UnderstandAllRequest,
     UnderstandingRequest,
+    UnderstandingRunFilter,
     generate_document_understanding,
     get_understanding_by_version,
     get_understanding_coverage,
+    get_understanding_runs,
     understand_all_versions,
 )
 from ragrig.vectorstore import get_vector_backend, get_vector_backend_health
@@ -60,6 +62,7 @@ from ragrig.web_console import (
     build_system_status,
     check_format,
     get_pipeline_run_detail,
+    get_understanding_run_detail,
     list_document_version_chunks,
     list_documents,
     list_knowledge_bases,
@@ -69,6 +72,7 @@ from ragrig.web_console import (
     list_plugins,
     list_sources,
     list_supported_formats,
+    list_understanding_runs,
     load_console_html,
     validate_plugin_config_for_wizard,
 )
@@ -272,6 +276,28 @@ def create_app(
     ) -> dict[str, list[dict[str, Any]]]:
         return {"items": list_documents(session)}
 
+    @app.get("/understanding-runs", response_model=None)
+    def web_understanding_runs(
+        session: Annotated[Session, Depends(get_session)],
+        knowledge_base_id: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, list[dict[str, Any]]]:
+        return {
+            "items": list_understanding_runs(
+                session, knowledge_base_id=knowledge_base_id, limit=limit
+            ),
+        }
+
+    @app.get("/understanding-runs/{run_id}", response_model=None)
+    def web_understanding_run_detail(
+        run_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        detail = get_understanding_run_detail(session, run_id)
+        if detail is None:
+            return JSONResponse(status_code=404, content={"error": "understanding_run_not_found"})
+        return detail
+
     @app.get("/document-versions/{document_version_id}/chunks", response_model=None)
     def document_version_chunks(
         document_version_id: str,
@@ -346,7 +372,9 @@ def create_app(
         kb_id: str,
         request: UnderstandAllRequest,
         session: Annotated[Session, Depends(get_session)],
+        x_operator: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any] | JSONResponse:
+        operator = x_operator
         try:
             result = understand_all_versions(
                 session,
@@ -354,10 +382,26 @@ def create_app(
                 provider=request.provider,
                 model=request.model,
                 profile_id=request.profile_id,
+                trigger_source="api",
+                operator=operator,
             )
         except ProviderUnavailableError as exc:
             return JSONResponse(status_code=503, content={"error": exc.code, "message": str(exc)})
+
+        # Look up the most recent run for this KB to include run_id
+        import uuid as _uuid
+
+        from ragrig.db.models import UnderstandingRun
+
+        kb_uuid = _uuid.UUID(kb_id)
+        latest_run = (
+            session.query(UnderstandingRun)
+            .filter(UnderstandingRun.knowledge_base_id == kb_uuid)
+            .order_by(UnderstandingRun.started_at.desc())
+            .first()
+        )
         return {
+            "run_id": str(latest_run.id) if latest_run else None,
             "total": result.total,
             "created": result.created,
             "skipped": result.skipped,
@@ -387,6 +431,28 @@ def create_app(
                 }
                 for e in coverage.recent_errors
             ],
+        }
+
+    @app.get("/knowledge-bases/{kb_id}/understanding-runs", response_model=None)
+    def understanding_runs(
+        kb_id: str,
+        session: Annotated[Session, Depends(get_session)],
+        provider: str | None = None,
+        model: str | None = None,
+        profile_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        filters = UnderstandingRunFilter(
+            provider=provider,
+            model=model,
+            profile_id=profile_id,
+            status=status,
+            limit=limit,
+        )
+        runs = get_understanding_runs(session, kb_id, filters=filters)
+        return {
+            "runs": [r.model_dump() for r in runs],
         }
 
     @app.get("/models", response_model=None)

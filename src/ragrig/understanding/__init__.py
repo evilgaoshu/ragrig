@@ -17,6 +17,8 @@ from ragrig.understanding.schema import (
     UnderstandingRecord,
     UnderstandingRequest,
     UnderstandingResult,
+    UnderstandingRunFilter,
+    UnderstandingRunRecord,
 )
 from ragrig.understanding.service import (
     DocumentVersionNotFoundError,
@@ -26,6 +28,8 @@ from ragrig.understanding.service import (
     generate_document_understanding,
     get_understanding_by_version,
     get_understanding_coverage,
+    get_understanding_run,
+    get_understanding_runs,
     understand_all_versions,
 )
 
@@ -46,6 +50,8 @@ __all__ = [
     "UnderstandingRecord",
     "UnderstandingRequest",
     "UnderstandingResult",
+    "UnderstandingRunFilter",
+    "UnderstandingRunRecord",
     "UnderstandingServiceError",
     "compute_input_hash",
     "delete_document_understanding",
@@ -53,5 +59,7 @@ __all__ = [
     "get_understanding_by_version",
     "get_understanding_coverage",
     "get_understanding_provider",
+    "get_understanding_run",
+    "get_understanding_runs",
     "understand_all_versions",
 ]
