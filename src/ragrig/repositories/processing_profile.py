@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ragrig.db.models import ProcessingProfileAuditLog, ProcessingProfileOverride
 
-SENSITIVE_FIELDS = {
+SENSITIVE_KEY_PARTS = {
     "api_key",
     "access_key",
     "secret",
@@ -22,27 +22,141 @@ SENSITIVE_FIELDS = {
     "service_account",
 }
 
+# Legacy alias for backward compatibility with callers that used the old name.
+SENSITIVE_FIELDS = SENSITIVE_KEY_PARTS
+
+REDACTED = "[REDACTED]"
+
+# Patterns for sensitive string values (case-insensitive match).
+_SENSITIVE_VALUE_PATTERNS: tuple[str, ...] = (
+    "bearer ",  # Bearer tokens
+    "-----begin",  # PEM private key headers
+)
+
+
+def _is_sensitive_key(key: str) -> bool:
+    """Check whether a key looks like a sensitive field name."""
+    key_lower = key.lower()
+    return any(part in key_lower for part in SENSITIVE_KEY_PARTS)
+
+
+def _is_sensitive_value(value: object) -> bool:
+    """Check whether a scalar value looks like a secret (Bearer token, PEM, etc.)."""
+    if not isinstance(value, str):
+        return False
+    value_lower = value.lower()
+    return any(pattern in value_lower for pattern in _SENSITIVE_VALUE_PATTERNS)
+
+
+def _sanitize_metadata_json(
+    metadata: dict[str, Any],
+    prefix: str = "metadata_json",
+) -> tuple[dict[str, Any], int, list[str]]:
+    """Recursively redact sensitive fields from a metadata dict.
+
+    Returns (sanitized_dict, redaction_count, redacted_paths).
+    """
+    sanitized: dict[str, Any] = {}
+    count = 0
+    paths: list[str] = []
+
+    for key, value in metadata.items():
+        current_path = f"{prefix}.{key}"
+        if _is_sensitive_key(key):
+            sanitized[key] = REDACTED
+            count += 1
+            paths.append(current_path)
+        elif isinstance(value, dict):
+            sub_sanitized, sub_count, sub_paths = _sanitize_metadata_json(
+                value,
+                prefix=current_path,
+            )
+            sanitized[key] = sub_sanitized
+            count += sub_count
+            paths.extend(sub_paths)
+        elif isinstance(value, list):
+            sub_list, sub_count, sub_paths = _sanitize_list(
+                value,
+                prefix=current_path,
+            )
+            sanitized[key] = sub_list
+            count += sub_count
+            paths.extend(sub_paths)
+        elif _is_sensitive_value(value):
+            sanitized[key] = REDACTED
+            count += 1
+            paths.append(current_path)
+        else:
+            sanitized[key] = value
+
+    return sanitized, count, paths
+
+
+def _sanitize_list(
+    items: list[Any],
+    prefix: str = "",
+) -> tuple[list[Any], int, list[str]]:
+    """Recursively redact sensitive values inside a list."""
+    sanitized: list[Any] = []
+    count = 0
+    paths: list[str] = []
+
+    for idx, item in enumerate(items):
+        item_path = f"{prefix}[{idx}]"
+        if isinstance(item, dict):
+            sub_sanitized, sub_count, sub_paths = _sanitize_metadata_json(
+                item,
+                prefix=item_path,
+            )
+            sanitized.append(sub_sanitized)
+            count += sub_count
+            paths.extend(sub_paths)
+        elif isinstance(item, list):
+            sub_list, sub_count, sub_paths = _sanitize_list(
+                item,
+                prefix=item_path,
+            )
+            sanitized.append(sub_list)
+            count += sub_count
+            paths.extend(sub_paths)
+        elif _is_sensitive_value(item):
+            sanitized.append(REDACTED)
+            count += 1
+            paths.append(item_path)
+        else:
+            sanitized.append(item)
+
+    return sanitized, count, paths
+
 
 def _sanitize_state(state: dict[str, Any]) -> dict[str, Any]:
-    """Redact sensitive fields from a state dict for audit logging."""
+    """Redact sensitive fields from a state dict for audit logging.
+
+    Also records redaction metadata under the ``_redaction`` key.
+    """
     sanitized: dict[str, Any] = {}
+    redaction_count = 0
+    redacted_paths: list[str] = []
+
     for key, value in state.items():
-        if any(part in key.lower() for part in SENSITIVE_FIELDS):
-            sanitized[key] = "[REDACTED]"
+        if _is_sensitive_key(key):
+            sanitized[key] = REDACTED
+            redaction_count += 1
+            redacted_paths.append(key)
         elif key == "metadata_json" and isinstance(value, dict):
-            sanitized[key] = _sanitize_metadata_json(value)
+            sub_sanitized, sub_count, sub_paths = _sanitize_metadata_json(value)
+            sanitized[key] = sub_sanitized
+            redaction_count += sub_count
+            redacted_paths.extend(sub_paths)
         else:
             sanitized[key] = value
-    return sanitized
 
+    if redaction_count > 0:
+        sanitized["_redaction"] = {
+            "count": redaction_count,
+            "paths": redacted_paths,
+        }
 
-def _sanitize_metadata_json(metadata: dict[str, Any]) -> dict[str, Any]:
-    sanitized: dict[str, Any] = {}
-    for key, value in metadata.items():
-        if any(part in key.lower() for part in SENSITIVE_FIELDS):
-            sanitized[key] = "[REDACTED]"
-        else:
-            sanitized[key] = value
     return sanitized
 
 
@@ -295,8 +409,8 @@ def compute_diff(
 ) -> dict[str, Any] | None:
     """Compute a diff between the current override state and proposed changes.
 
-    Returns a dict with old_state (sanitized), new_state (sanitized), and changed_paths.
-    Returns None if the override is not found.
+    Returns a dict with old (sanitized), new (sanitized), changed_paths,
+    and redaction metadata.  Returns None if the override is not found.
     """
     override = get_override_by_id(session, profile_id)
     if override is None:
@@ -324,29 +438,59 @@ def compute_diff(
 
     changed_paths = _compute_changed_paths(old_state, new_state)
 
-    return {
-        "old": _sanitize_state(old_state),
-        "new": _sanitize_state(new_state),
+    # Sanitize both states, collecting redaction info from old.
+    old_sanitized = _sanitize_state(old_state)
+    new_sanitized = _sanitize_state(new_state)
+    redaction_meta = old_sanitized.pop("_redaction", None) or new_sanitized.pop("_redaction", None)
+
+    result: dict[str, Any] = {
+        "old": old_sanitized,
+        "new": new_sanitized,
         "changed_paths": changed_paths,
     }
+    if redaction_meta:
+        result["redaction_count"] = redaction_meta["count"]
+        result["redacted_paths"] = redaction_meta["paths"]
+
+    return result
 
 
 def _compute_changed_paths(old_state: dict[str, Any], new_state: dict[str, Any]) -> list[str]:
-    """Compute the list of top-level keys that differ between old and new state.
+    """Compute the list of keys (including nested dot-paths) that differ.
 
     Order is stable: sorted alphabetically.
     """
     changed: list[str] = []
-    all_keys = sorted(set(old_state.keys()) | set(new_state.keys()))
-    for key in all_keys:
-        old_val = old_state.get(key)
-        new_val = new_state.get(key)
-        if isinstance(old_val, list) and isinstance(new_val, list):
-            if sorted(old_val) != sorted(new_val):
-                changed.append(key)
-        elif old_val != new_val:
-            changed.append(key)
-    return changed
+    _compute_changed_paths_recursive(old_state, new_state, "", changed)
+    return sorted(changed)
+
+
+def _compute_changed_paths_recursive(
+    old_obj: object,
+    new_obj: object,
+    prefix: str,
+    changed: list[str],
+) -> None:
+    if isinstance(old_obj, dict) and isinstance(new_obj, dict):
+        all_keys = set(old_obj.keys()) | set(new_obj.keys())
+        for key in sorted(all_keys):
+            path = f"{prefix}.{key}" if prefix else key
+            old_val = old_obj.get(key)
+            new_val = new_obj.get(key)
+            if isinstance(old_val, (dict, list)) or isinstance(new_val, (dict, list)):
+                _compute_changed_paths_recursive(old_val, new_val, path, changed)
+            elif old_val != new_val:
+                changed.append(path)
+    elif isinstance(old_obj, list) and isinstance(new_obj, list):
+        if len(old_obj) != len(new_obj):
+            changed.append(prefix)
+            return
+        for idx in range(len(old_obj)):
+            path = f"{prefix}[{idx}]"
+            _compute_changed_paths_recursive(old_obj[idx], new_obj[idx], path, changed)
+    elif old_obj != new_obj:
+        if prefix:
+            changed.append(prefix)
 
 
 def rollback_override(
