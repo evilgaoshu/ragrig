@@ -1492,6 +1492,7 @@
               <option value="20"${f.limit === 20 ? ' selected' : ''}>20</option>
               <option value="50"${f.limit === 50 ? ' selected' : ''}>50</option>
             </select>
+            <button id="runs-filter-copy-link" title="Copy shareable link with current filters" style="display:none;white-space:nowrap">📋 Copy Link</button>
           </div>
         `;
 
@@ -1504,6 +1505,7 @@
             if (id === 'runs-filter-profile') state.runsFilter.profile_id = el.value;
             if (id === 'runs-filter-status') state.runsFilter.status = el.value;
             if (id === 'runs-filter-limit') state.runsFilter.limit = parseInt(el.value, 10) || 10;
+            syncFilterToUrl();
             renderUnderstandingRuns();
           });
         });
@@ -1514,12 +1516,43 @@
           el.addEventListener('change', function() {
             if (id === 'runs-filter-after') state.runsFilter.started_after = el.value;
             if (id === 'runs-filter-before') state.runsFilter.started_before = el.value;
+            syncFilterToUrl();
             renderUnderstandingRuns();
           });
         });
 
+        // Wire up copy link button
+        var copyBtn = document.getElementById('runs-filter-copy-link');
+        if (copyBtn) {
+          copyBtn.style.display = '';
+          copyBtn.addEventListener('click', function() {
+            var url = window.location.href;
+            navigator.clipboard.writeText(url).then(function() {
+              copyBtn.textContent = '📋 Copied!';
+              setTimeout(function() { copyBtn.textContent = '📋 Copy Link'; }, 2000);
+            }).catch(function() {
+              alert('Copy failed. URL: ' + url);
+            });
+          });
+        }
+
         // Populate provider/profile dropdowns from existing runs (lazy, single-pass)
         populateFilterDropdowns();
+      }
+
+      function syncFilterToUrl() {
+        var params = new URLSearchParams();
+        var f = state.runsFilter;
+        if (f.provider) params.set('provider', f.provider);
+        if (f.model) params.set('model', f.model);
+        if (f.profile_id) params.set('profile_id', f.profile_id);
+        if (f.status) params.set('status', f.status);
+        if (f.started_after) params.set('started_after', f.started_after);
+        if (f.started_before) params.set('started_before', f.started_before);
+        if (f.limit && f.limit !== 10) params.set('limit', String(f.limit));
+        var qs = params.toString();
+        var newUrl = window.location.pathname + (qs ? '?' + qs : '');
+        window.history.pushState(null, '', newUrl);
       }
 
       async function populateFilterDropdowns() {
@@ -2774,6 +2807,30 @@
 
       async function boot() {
         try {
+          // Restore filter state from URL query params
+          var urlParams = new URLSearchParams(window.location.search);
+          if (urlParams.has('provider')) state.runsFilter.provider = urlParams.get('provider');
+          if (urlParams.has('model')) state.runsFilter.model = urlParams.get('model');
+          if (urlParams.has('profile_id')) state.runsFilter.profile_id = urlParams.get('profile_id');
+          if (urlParams.has('status')) state.runsFilter.status = urlParams.get('status');
+          if (urlParams.has('started_after')) state.runsFilter.started_after = urlParams.get('started_after');
+          if (urlParams.has('started_before')) state.runsFilter.started_before = urlParams.get('started_before');
+          if (urlParams.has('limit')) state.runsFilter.limit = parseInt(urlParams.get('limit'), 10) || 10;
+
+          // Listen for browser back/forward to re-apply URL filters
+          window.addEventListener('popstate', function() {
+            var p = new URLSearchParams(window.location.search);
+            state.runsFilter.provider = p.get('provider') || '';
+            state.runsFilter.model = p.get('model') || '';
+            state.runsFilter.profile_id = p.get('profile_id') || '';
+            state.runsFilter.status = p.get('status') || '';
+            state.runsFilter.started_after = p.get('started_after') || '';
+            state.runsFilter.started_before = p.get('started_before') || '';
+            if (p.has('limit')) state.runsFilter.limit = parseInt(p.get('limit'), 10) || 10;
+            renderRunsFilterBar();
+            renderUnderstandingRuns();
+          });
+
           await loadInitialData();
           await loadFormats();
           await loadFormats();
