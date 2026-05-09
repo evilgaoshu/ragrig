@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Understanding Runs Export Contract",
+  "description": "Stable contract fixture for Understanding Runs export. Matches schema_version 1.0.",
+  "schema_version": "1.0",
+  "generated_at": "2026-05-09T12:00:00+00:00",
+  "filter": {
+    "provider": "deterministic-local",
+    "model": null,
+    "profile_id": "*.understand.default",
+    "status": "success",
+    "started_after": null,
+    "started_before": null,
+    "limit": 50
+  },
+  "run_count": 2,
+  "run_ids": [
+    "00000000-0000-0000-0000-000000000001",
+    "00000000-0000-0000-0000-000000000002"
+  ],
+  "knowledge_base": "fixture-local",
+  "knowledge_base_id": "00000000-0000-0000-0000-000000000003",
+  "runs": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "knowledge_base_id": "00000000-0000-0000-0000-000000000003",
+      "provider": "deterministic-local",
+      "model": "",
+      "profile_id": "*.understand.default",
+      "trigger_source": "api",
+      "operator": "test-user",
+      "status": "success",
+      "total": 3,
+      "created": 2,
+      "skipped": 1,
+      "failed": 0,
+      "error_summary": null,
+      "started_at": "2026-05-09T11:00:00+00:00",
+      "finished_at": "2026-05-09T11:00:05+00:00"
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "knowledge_base_id": "00000000-0000-0000-0000-000000000003",
+      "provider": "deterministic-local",
+      "model": "",
+      "profile_id": "*.understand.default",
+      "trigger_source": "api",
+      "operator": "test-user",
+      "status": "partial_failure",
+      "total": 5,
+      "created": 3,
+      "skipped": 1,
+      "failed": 1,
+      "error_summary": "[00000000]: simulated failure for testing",
+      "started_at": "2026-05-09T12:00:00+00:00",
+      "finished_at": "2026-05-09T12:00:10+00:00"
+    }
+  ]
+}

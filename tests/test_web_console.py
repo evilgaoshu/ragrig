@@ -3022,3 +3022,169 @@ async def test_fixture_corpus_extension_coverage(tmp_path) -> None:
         if any(category in name for name in corpus_names):
             found.append(category)
     assert len(found) >= 4, f"Expected coverage for >= 4 categories, found {found}"
+
+
+# Export filename tests
+
+
+@pytest.mark.anyio
+async def test_export_single_run_response_includes_filename(tmp_path) -> None:
+    from ragrig.db.models import DocumentVersion
+    from ragrig.indexing.pipeline import index_knowledge_base
+    from ragrig.ingestion.pipeline import ingest_local_directory
+
+    database_path = tmp_path / "export-filename-single.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"guide.md": "# Guide\n\nA test guide for understanding."})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
+        version = session.scalars(
+            select(DocumentVersion).order_by(DocumentVersion.version_number.desc())
+        ).first()
+
+    assert version is not None
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        kb_resp = await client.get("/knowledge-bases")
+        kb_id = kb_resp.json()["items"][0]["id"]
+
+        # Create a run
+        batch_resp = await client.post(
+            f"/knowledge-bases/{kb_id}/understand-all",
+            json={"provider": "test-provider", "profile_id": "test-profile"},
+        )
+        run_id = batch_resp.json()["run_id"]
+
+        # Export single run
+        export_resp = await client.get(f"/understanding-runs/{run_id}/export")
+
+    assert export_resp.status_code == 200
+    data = export_resp.json()
+    assert "_filename" in data
+    filename = data["_filename"]
+    assert isinstance(filename, str)
+    assert filename.startswith("ragrig-run-")
+    assert filename.endswith(".json")
+    assert "provider_test-provider" in filename
+    assert "profile_test-profile" in filename
+
+
+@pytest.mark.anyio
+async def test_export_list_response_includes_filename_with_filters(tmp_path) -> None:
+    from ragrig.indexing.pipeline import index_knowledge_base
+    from ragrig.ingestion.pipeline import ingest_local_directory
+
+    database_path = tmp_path / "export-filename-list.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"guide.md": "# Guide\n\nContent."})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        kb_resp = await client.get("/knowledge-bases")
+        kb_id = kb_resp.json()["items"][0]["id"]
+
+        # Create a run
+        await client.post(
+            f"/knowledge-bases/{kb_id}/understand-all",
+            json={"provider": "my-prov", "profile_id": "my-profile"},
+        )
+
+        # Export with filters
+        export_resp = await client.get(
+            f"/knowledge-bases/{kb_id}/understanding-runs/export",
+            params={
+                "provider": "my-prov",
+                "status": "success",
+                "limit": 10,
+            },
+        )
+
+    assert export_resp.status_code == 200
+    data = export_resp.json()
+    assert "_filename" in data
+    filename = data["_filename"]
+    assert isinstance(filename, str)
+    assert "provider_my-prov" in filename
+    assert "status_success" in filename
+    assert "limit_10" in filename
+    # model not filtered, should not appear
+    assert "model_" not in filename
+
+
+@pytest.mark.anyio
+async def test_export_filename_hides_unset_filters(tmp_path) -> None:
+    from ragrig.indexing.pipeline import index_knowledge_base
+    from ragrig.ingestion.pipeline import ingest_local_directory
+
+    database_path = tmp_path / "export-filename-unset.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"guide.md": "# Guide\n\nContent."})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        kb_resp = await client.get("/knowledge-bases")
+        kb_id = kb_resp.json()["items"][0]["id"]
+
+        await client.post(
+            f"/knowledge-bases/{kb_id}/understand-all",
+            json={"provider": "deterministic-local"},
+        )
+
+        # Export with NO filters
+        export_resp = await client.get(f"/knowledge-bases/{kb_id}/understanding-runs/export")
+
+    assert export_resp.status_code == 200
+    data = export_resp.json()
+    filename = data["_filename"]
+    # When no filters are explicitly set, only KB name and implicit defaults appear
+    assert "provider_" not in filename
+    assert "model_" not in filename
+    assert "profile_" not in filename
+    assert "status_" not in filename
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_export_filename_js(tmp_path) -> None:
+    database_path = tmp_path / "web-console-export-filename.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    # The export functions should use _filename from response
+    assert "_filename" in html
+    assert "exportSingleRun" in html
+    assert "exportFilteredRuns" in html

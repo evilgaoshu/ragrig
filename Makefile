@@ -152,3 +152,6 @@ sanitizer-coverage-summary:
 
 export-object-storage-check:
 	$(UV) run python -m scripts.export_object_storage
+
+verify-export-fixture:
+	$(UV) run python -m scripts.verify_export_fixture

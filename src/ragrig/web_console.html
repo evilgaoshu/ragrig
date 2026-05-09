@@ -1617,7 +1617,20 @@
         if (copyBtn) {
           copyBtn.style.display = '';
           copyBtn.addEventListener('click', function() {
-            var url = window.location.href;
+            // Build a shareable URL with active filter parameters
+            var baseUrl = window.location.origin + window.location.pathname;
+            var params = new URLSearchParams();
+            var f = state.runsFilter;
+            if (f && f.kbId) params.set('kb', f.kbId);
+            if (f && f.provider) params.set('provider', f.provider);
+            if (f && f.model) params.set('model', f.model);
+            if (f && f.profile_id) params.set('profile_id', f.profile_id);
+            if (f && f.status) params.set('status', f.status);
+            if (f && f.started_after) params.set('started_after', f.started_after);
+            if (f && f.started_before) params.set('started_before', f.started_before);
+            if (f && f.limit && f.limit !== 20) params.set('limit', f.limit);
+            var url = params.toString() ? baseUrl + '?' + params.toString() : baseUrl;
+            var copyText = baseUrl + '#' + JSON.stringify(f);
             navigator.clipboard.writeText(url).then(function() {
               copyBtn.textContent = '📋 Copied!';
               setTimeout(function() { copyBtn.textContent = '📋 Copy Link'; }, 2000);
@@ -1774,7 +1787,8 @@
       window.exportSingleRun = async function(runId, kbName) {
         try {
           var data = await getJson('/understanding-runs/' + runId + '/export');
-          downloadJson(data, 'ragrig-run-' + (kbName || 'unknown') + '-' + runId.slice(0, 8) + '.json');
+          var filename = data._filename || ('ragrig-run-' + (kbName || 'unknown') + '-' + runId.slice(0, 8) + '.json');
+          downloadJson(data, filename);
         } catch (error) {
           alert('Export failed: ' + error.message);
         }
@@ -1784,7 +1798,8 @@
         try {
           var url = '/knowledge-bases/' + kbItem.id + '/understanding-runs/export?' + filterQuery;
           var data = await getJson(url);
-          downloadJson(data, 'ragrig-runs-' + (kbItem.name || 'unknown') + '-' + new Date().toISOString().slice(0, 19).replace(/[:]/g, '-') + '.json');
+          var filename = data._filename || ('ragrig-runs-' + (kbItem.name || 'unknown') + '-' + new Date().toISOString().slice(0, 19).replace(/[:]/g, '-') + '.json');
+          downloadJson(data, filename);
         } catch (error) {
           alert('Export failed: ' + error.message);
         }
