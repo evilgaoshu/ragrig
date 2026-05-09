@@ -1,0 +1,5 @@
+SECRET ENV VARS:
+api_key=sk-live-9876543210abcdef
+ACCESS_TOKEN=ghp_abcdefghijklmno12345
+password = super_secret_db_pass
+Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.abc.def

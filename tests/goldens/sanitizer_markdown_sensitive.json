@@ -1,0 +1,6 @@
+{
+  "parser_id": "parser.markdown",
+  "status": "success",
+  "text_summary": "# Service Config\n\n```yaml\nsecret: [REDACTED]\ndatabase_password: [REDACTED]\n```\n\n…",
+  "redaction_count": 5
+}

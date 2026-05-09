@@ -1,0 +1,6 @@
+{
+  "parser_id": "parser.text",
+  "status": "success",
+  "text_summary": "SECRET ENV VARS:\napi_key=[REDACTED]\nACCESS_TOKEN=[REDACTED]\npassword = [REDACTED…",
+  "redaction_count": 4
+}

@@ -803,6 +803,33 @@
         color: #4f5b6b;
       }
 
+      .meta-redact-pill {
+        display: inline-block;
+        background: #fef0e6;
+        color: #b85c1a;
+        border: 1px solid #f5d6b8;
+        border-radius: 4px;
+        padding: 1px 6px;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+
+      .meta-redact-pill.zero {
+        background: #ebf5eb;
+        color: #2d6a2d;
+        border-color: #c3e6c3;
+      }
+
+      .meta-summary-cell {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
       @media (max-width: 1100px) {
         .shell { grid-template-columns: 1fr; }
         .rail { display: none; }
@@ -1374,11 +1401,13 @@
             const meta = firstItem.metadata || {};
             const parserInfo = meta.parser_id ? `parser: ${escapeHtml(meta.parser_id)}` : '';
             const degraded = meta.degraded_reason ? `degraded: ${escapeHtml(meta.degraded_reason)}` : '';
+            const redactionInfo = meta.redaction_count != null ? `redactions: ${meta.redaction_count}` : '';
             const err = firstItem.error_message ? `error: ${escapeHtml(firstItem.error_message)}` : '';
             itemDetail = [
               `item: ${escapeHtml(firstItem.document_uri)} · ${escapeHtml(firstItem.status)}`,
               parserInfo,
               degraded,
+              redactionInfo,
               err,
             ].filter(Boolean).join(' · ');
           }
@@ -1762,6 +1791,7 @@
             <div class="name">${escapeHtml(documentItem.uri)} ${aclBadge}</div>
             <div class="sub">source: ${escapeHtml(documentItem.source_uri)} · parser: ${escapeHtml(documentItem.latest_version.parser_name)} · version ${documentItem.latest_version.version_number}</div>
             <div class="sub">mime: ${escapeHtml(documentItem.mime_type || 'unknown')} · hash: ${escapeHtml(documentItem.content_hash)}</div>
+            ${(() => { const meta = documentItem.latest_version.metadata || {}; const rc = meta.redaction_count; const summary = meta.text_summary || ''; return rc != null ? `<div class="sub"><span class="meta-redact-pill${rc === 0 ? ' zero' : ''}">redactions: ${rc}</span><span class="meta-summary-cell" title="${escapeHtml(summary)}">${escapeHtml(summary)}</span></div>` : ''; })()}
           </div>
           <div class="card">
             <div class="name">Extracted Preview</div>
@@ -2702,8 +2732,9 @@
                     const meta = it.metadata || {};
                     const parser = meta.parser_id ? ` · parser: ${escapeHtml(meta.parser_id)}` : '';
                     const degraded = meta.degraded_reason ? ` · degraded: ${escapeHtml(meta.degraded_reason)}` : '';
+                    const redactionInfo = meta.redaction_count != null ? ` · redactions: ${meta.redaction_count}` : '';
                     const err = it.error_message ? ` · error: ${escapeHtml(it.error_message)}` : '';
-                    return `<div class="sub">${escapeHtml(meta.file_name || it.document_uri)} · ${escapeHtml(it.status)}${parser}${degraded}${err}</div>`;
+                    return `<div class="sub">${escapeHtml(meta.file_name || it.document_uri)} · ${escapeHtml(it.status)}${parser}${degraded}${redactionInfo}${err}</div>`;
                   }).join('') + '</div>';
                 }
               } catch {
