@@ -1,0 +1,4 @@
+name,api_key,password,email
+admin,sk-1234567890abcdefghij,super_secret_pass,admin@example.com
+user1,sk-0987654321zyxwvutsrq,n0t_s0_s3cur3,user1@example.com
+service,sk-deadbeef0123456789ab,prod-db-password,svc@internal.local

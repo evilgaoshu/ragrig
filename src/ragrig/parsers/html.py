@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ragrig.parsers.base import ParseResult, TextFileParser
+from ragrig.parsers.base import ParseResult, TextFileParser, _text_summary
 
 
 class HtmlParser(TextFileParser):
@@ -27,11 +27,15 @@ class HtmlParser(TextFileParser):
             mime_type=self.mime_type,
             parser_name=self.parser_name,
             metadata={
+                "parser_id": "parser.html",
+                "status": "degraded",
+                "degraded_reason": ("HTML tags stripped; structure and links are lost."),
                 "encoding": "utf-8",
                 "extension": path.suffix.lower(),
                 "line_count": line_count,
                 "char_count": len(text),
+                "byte_count": len(raw_bytes),
                 "stripped_char_count": len(stripped),
-                "degraded_reason": ("HTML tags stripped; structure and links are lost."),
+                "text_summary": _text_summary(stripped),
             },
         )
