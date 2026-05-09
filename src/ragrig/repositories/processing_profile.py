@@ -8,6 +8,24 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ragrig.db.models import ProcessingProfileAuditLog, ProcessingProfileOverride
+from ragrig.processing_profile.sanitizer import (
+    REDACTED as _sanitizer_REDACTED,
+)
+from ragrig.processing_profile.sanitizer import (
+    is_sensitive_key as _shared_is_sensitive_key,
+)
+from ragrig.processing_profile.sanitizer import (
+    is_sensitive_value as _shared_is_sensitive_value,
+)
+from ragrig.processing_profile.sanitizer import (
+    redact_metadata as _shared_redact_metadata,
+)
+from ragrig.processing_profile.sanitizer import (
+    redact_state as _shared_redact_state,
+)
+
+# ── Backward-compatible re-exports and wrappers ──
+# All logic lives in ragrig.processing_profile.sanitizer (single source of truth).
 
 SENSITIVE_KEY_PARTS = {
     "api_key",
@@ -22,30 +40,26 @@ SENSITIVE_KEY_PARTS = {
     "service_account",
 }
 
-# Legacy alias for backward compatibility with callers that used the old name.
+# Legacy alias for backward compatibility.
 SENSITIVE_FIELDS = SENSITIVE_KEY_PARTS
 
-REDACTED = "[REDACTED]"
-
-# Patterns for sensitive string values (case-insensitive match).
-_SENSITIVE_VALUE_PATTERNS: tuple[str, ...] = (
-    "bearer ",  # Bearer tokens
-    "-----begin",  # PEM private key headers
-)
+REDACTED = _sanitizer_REDACTED  # re-export from shared module
 
 
 def _is_sensitive_key(key: str) -> bool:
-    """Check whether a key looks like a sensitive field name."""
-    key_lower = key.lower()
-    return any(part in key_lower for part in SENSITIVE_KEY_PARTS)
+    """Check whether a key looks like a sensitive field name.
+
+    Thin wrapper around the shared helper in ``processing_profile.sanitizer``.
+    """
+    return _shared_is_sensitive_key(key)
 
 
 def _is_sensitive_value(value: object) -> bool:
-    """Check whether a scalar value looks like a secret (Bearer token, PEM, etc.)."""
-    if not isinstance(value, str):
-        return False
-    value_lower = value.lower()
-    return any(pattern in value_lower for pattern in _SENSITIVE_VALUE_PATTERNS)
+    """Check whether a scalar value looks like a secret (Bearer token, PEM, etc.).
+
+    Thin wrapper around the shared helper in ``processing_profile.sanitizer``.
+    """
+    return _shared_is_sensitive_value(value)
 
 
 def _sanitize_metadata_json(
@@ -54,110 +68,17 @@ def _sanitize_metadata_json(
 ) -> tuple[dict[str, Any], int, list[str]]:
     """Recursively redact sensitive fields from a metadata dict.
 
-    Returns (sanitized_dict, redaction_count, redacted_paths).
+    Thin wrapper around the shared ``redact_metadata`` helper.
     """
-    sanitized: dict[str, Any] = {}
-    count = 0
-    paths: list[str] = []
-
-    for key, value in metadata.items():
-        current_path = f"{prefix}.{key}"
-        if _is_sensitive_key(key):
-            sanitized[key] = REDACTED
-            count += 1
-            paths.append(current_path)
-        elif isinstance(value, dict):
-            sub_sanitized, sub_count, sub_paths = _sanitize_metadata_json(
-                value,
-                prefix=current_path,
-            )
-            sanitized[key] = sub_sanitized
-            count += sub_count
-            paths.extend(sub_paths)
-        elif isinstance(value, list):
-            sub_list, sub_count, sub_paths = _sanitize_list(
-                value,
-                prefix=current_path,
-            )
-            sanitized[key] = sub_list
-            count += sub_count
-            paths.extend(sub_paths)
-        elif _is_sensitive_value(value):
-            sanitized[key] = REDACTED
-            count += 1
-            paths.append(current_path)
-        else:
-            sanitized[key] = value
-
-    return sanitized, count, paths
-
-
-def _sanitize_list(
-    items: list[Any],
-    prefix: str = "",
-) -> tuple[list[Any], int, list[str]]:
-    """Recursively redact sensitive values inside a list."""
-    sanitized: list[Any] = []
-    count = 0
-    paths: list[str] = []
-
-    for idx, item in enumerate(items):
-        item_path = f"{prefix}[{idx}]"
-        if isinstance(item, dict):
-            sub_sanitized, sub_count, sub_paths = _sanitize_metadata_json(
-                item,
-                prefix=item_path,
-            )
-            sanitized.append(sub_sanitized)
-            count += sub_count
-            paths.extend(sub_paths)
-        elif isinstance(item, list):
-            sub_list, sub_count, sub_paths = _sanitize_list(
-                item,
-                prefix=item_path,
-            )
-            sanitized.append(sub_list)
-            count += sub_count
-            paths.extend(sub_paths)
-        elif _is_sensitive_value(item):
-            sanitized.append(REDACTED)
-            count += 1
-            paths.append(item_path)
-        else:
-            sanitized.append(item)
-
-    return sanitized, count, paths
+    return _shared_redact_metadata(metadata, prefix=prefix)
 
 
 def _sanitize_state(state: dict[str, Any]) -> dict[str, Any]:
     """Redact sensitive fields from a state dict for audit logging.
 
-    Also records redaction metadata under the ``_redaction`` key.
+    Thin wrapper around the shared ``redact_state`` helper.
     """
-    sanitized: dict[str, Any] = {}
-    redaction_count = 0
-    redacted_paths: list[str] = []
-
-    for key, value in state.items():
-        if _is_sensitive_key(key):
-            sanitized[key] = REDACTED
-            redaction_count += 1
-            redacted_paths.append(key)
-        elif key == "metadata_json" and isinstance(value, dict):
-            sub_sanitized, sub_count, sub_paths = _sanitize_metadata_json(value)
-            sanitized[key] = sub_sanitized
-            redaction_count += sub_count
-            redacted_paths.extend(sub_paths)
-        else:
-            sanitized[key] = value
-
-    if redaction_count > 0:
-        sanitized["_redaction"] = {
-            "count": redaction_count,
-            "paths": redacted_paths,
-        }
-
-    return sanitized
+    return _shared_redact_state(state)
 
 
 def _override_to_state(override: ProcessingProfileOverride) -> dict[str, Any]:
