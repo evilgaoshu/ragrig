@@ -2431,9 +2431,7 @@ async def test_pipeline_run_items_failure_is_deterministic(tmp_path) -> None:
 
     async def _upload_one() -> tuple[str, str | None]:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://testserver"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             with open(test_file, "rb") as f:
                 resp = await client.post(
                     "/knowledge-bases/fixture-local/upload",
@@ -2469,8 +2467,12 @@ async def test_fixture_corpus_extension_coverage(tmp_path) -> None:
 
     corpus_names = {f.name for f in csv_files} | {f.name for f in html_files}
     expected_categories = [
-        "empty", "sensitive", "malformed", "garbled",
-        "binary_garbled", "oversized",
+        "empty",
+        "sensitive",
+        "malformed",
+        "garbled",
+        "binary_garbled",
+        "oversized",
     ]
     found = []
     for category in expected_categories:

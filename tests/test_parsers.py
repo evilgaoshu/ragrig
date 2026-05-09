@@ -209,7 +209,7 @@ def test_csv_parser_empty_file_metadata_is_stable(tmp_path) -> None:
 def test_csv_parser_garbled_utf8_encoding_raises(tmp_path) -> None:
     path = tmp_path / "garbled.csv"
     # Write raw bytes that are not valid UTF-8
-    path.write_bytes(b"col1,col2\n" + b"\x80\x81\xFE\xFF\n")
+    path.write_bytes(b"col1,col2\n" + b"\x80\x81\xfe\xff\n")
 
     with pytest.raises(UnicodeDecodeError):
         CsvParser().parse(path)
@@ -237,10 +237,7 @@ def test_csv_parser_oversized_line_is_handled(tmp_path) -> None:
 
 def test_csv_parser_sensitive_fields_not_leaked_in_metadata(tmp_path) -> None:
     path = tmp_path / "sensitive.csv"
-    raw_text = (
-        "name,api_key,password\n"
-        "admin,sk-secret-12345,super_pass\n"
-    )
+    raw_text = "name,api_key,password\nadmin,sk-secret-12345,super_pass\n"
     path.write_text(raw_text, encoding="utf-8")
 
     result = CsvParser().parse(path)
@@ -256,9 +253,7 @@ def test_csv_parser_sensitive_fields_not_leaked_in_metadata(tmp_path) -> None:
         if key == "text_summary":
             continue
         if isinstance(value, str):
-            assert raw_text not in value, (
-                f"metadata key '{key}' contains full raw text"
-            )
+            assert raw_text not in value, f"metadata key '{key}' contains full raw text"
 
 
 def test_csv_parser_handles_single_column(tmp_path) -> None:
@@ -316,7 +311,7 @@ def test_html_parser_empty_file_metadata_is_stable(tmp_path) -> None:
 
 def test_html_parser_garbled_encoding_raises(tmp_path) -> None:
     path = tmp_path / "garbled.html"
-    path.write_bytes(b"<html><body>" + b"\xFF\xFE\x00" + b"</body></html>")
+    path.write_bytes(b"<html><body>" + b"\xff\xfe\x00" + b"</body></html>")
 
     with pytest.raises(UnicodeDecodeError):
         HtmlParser().parse(path)
@@ -350,10 +345,7 @@ def test_html_parser_malformed_html_is_handled_gracefully(tmp_path) -> None:
 def test_html_parser_xss_script_tags_are_stripped(tmp_path) -> None:
     path = tmp_path / "xss.html"
     raw_text = (
-        '<html><body>'
-        '<script>alert("XSS")</script>'
-        '<p onclick="evil()">Clickable</p>'
-        '</body></html>'
+        '<html><body><script>alert("XSS")</script><p onclick="evil()">Clickable</p></body></html>'
     )
     path.write_text(raw_text, encoding="utf-8")
 
@@ -368,10 +360,10 @@ def test_html_parser_xss_script_tags_are_stripped(tmp_path) -> None:
 def test_html_parser_sensitive_fields_not_leaked_in_metadata(tmp_path) -> None:
     path = tmp_path / "sensitive.html"
     raw_text = (
-        '<html><body>'
+        "<html><body>"
         '<script>const SECRET="sk-abc-123";</script>'
-        '<pre>password: admin123</pre>'
-        '</body></html>'
+        "<pre>password: admin123</pre>"
+        "</body></html>"
     )
     path.write_text(raw_text, encoding="utf-8")
 
@@ -408,19 +400,23 @@ def test_html_parser_large_document_is_handled(tmp_path) -> None:
 
 # ── Parser Metadata Schema Tests ──
 
-STABLE_METADATA_FIELDS = frozenset({
-    "parser_id",
-    "status",
-    "degraded_reason",
-})
+STABLE_METADATA_FIELDS = frozenset(
+    {
+        "parser_id",
+        "status",
+        "degraded_reason",
+    }
+)
 
-METADATA_NO_SECRET_PATTERNS = frozenset({
-    "api_key",
-    "password",
-    "secret",
-    "token",
-    "credential",
-})
+METADATA_NO_SECRET_PATTERNS = frozenset(
+    {
+        "api_key",
+        "password",
+        "secret",
+        "token",
+        "credential",
+    }
+)
 
 
 def _assert_stable_metadata(metadata: dict, expected_parser_id: str, expected_status: str) -> None:
