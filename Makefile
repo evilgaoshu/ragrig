@@ -147,6 +147,9 @@ fileshare-live-up:
 fileshare-live-down:
 	docker compose --profile fileshare-live down --remove-orphans
 
+sanitizer-coverage-summary:
+	$(UV) run python -m scripts.sanitizer_coverage
+
 export-object-storage-check:
 	$(UV) run python -m scripts.export_object_storage
 

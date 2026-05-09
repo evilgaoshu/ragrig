@@ -836,6 +836,26 @@
         .status-strip, .grid { grid-template-columns: 1fr; }
         .vector-layout, .wizard-layout, .fact-grid { grid-template-columns: 1fr; }
       }
+
+      /* Sanitizer coverage table overflow prevention */
+      #sanitizer-coverage-panel table {
+        table-layout: fixed;
+        width: 100%;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+      }
+      #sanitizer-coverage-panel th,
+      #sanitizer-coverage-panel td {
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        max-width: 1px; /* force text wrapping in table-layout:fixed */
+      }
+      #sanitizer-coverage-panel code {
+        display: block;
+        max-width: 100%;
+        overflow-wrap: break-word;
+        word-break: break-all;
+      }
     </style>
   </head>
   <body>
@@ -850,6 +870,7 @@
         <div class="nav-item">Pipelines</div>
         <div class="nav-item" data-section="upload">Upload</div>
         <div class="nav-item" data-section="formats">Formats</div>
+        <div class="nav-item" data-section="sanitizer-coverage">Sanitizer Coverage</div>
         <div class="nav-item">Documents</div>
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
@@ -886,6 +907,26 @@
           <div class="panel-body vector-layout">
             <div class="facts stack" id="vector-summary"></div>
             <div class="stack" id="vector-collections"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="sanitizer-coverage-panel">
+          <div class="panel-head"><div class="panel-title">Sanitizer Coverage Summary</div><div class="panel-meta">Golden-based audit · GET /sanitizer-coverage · no raw secrets</div></div>
+          <div class="panel-body stack">
+            <div id="sanitizer-coverage-status" style="margin-bottom:12px"></div>
+            <div style="overflow-x:auto;max-width:100%">
+              <table style="min-width:600px;table-layout:fixed;width:100%">
+                <thead><tr>
+                  <th style="width:25%;word-wrap:break-word;overflow-wrap:break-word">Parser ID</th>
+                  <th style="width:10%">Fixtures</th>
+                  <th style="width:10%">Redacted</th>
+                  <th style="width:10%">Degraded</th>
+                  <th style="width:10%">Status</th>
+                  <th style="width:35%;word-wrap:break-word;overflow-wrap:break-word">Golden Hash</th>
+                </tr></thead>
+                <tbody id="sanitizer-coverage-body"></tbody>
+              </table>
+            </div>
           </div>
         </section>
 
@@ -2591,6 +2632,48 @@
         `;
       }
 
+      async function loadSanitizerCoverage() {
+        try {
+          state.sanitizerCoverage = await getJson('/sanitizer-coverage');
+        } catch {
+          state.sanitizerCoverage = null;
+        }
+      }
+
+      function renderSanitizerCoverage() {
+        const statusEl = document.getElementById('sanitizer-coverage-status');
+        const bodyEl = document.getElementById('sanitizer-coverage-body');
+        const data = state.sanitizerCoverage;
+
+        if (!data || !data.parsers || !data.parsers.length) {
+          statusEl.innerHTML = '<span class="pill neutral">No golden data</span>';
+          bodyEl.innerHTML = '<tr><td colspan="6">' + empty('No sanitizer golden files found. Run make sanitizer-coverage-summary to generate them.') + '</td></tr>';
+          return;
+        }
+
+        var floorOK = data.redaction_floor_check === true;
+        statusEl.innerHTML = [
+          '<span class="pill ' + (floorOK ? 'good' : 'error') + '">' + (floorOK ? '✓ Floor check passed' : '✗ Floor check FAILED') + '</span>',
+          '<span class="pill neutral">' + escapeHtml(data.totals.fixtures) + ' parsers</span>',
+          '<span class="pill neutral">' + escapeHtml(data.totals.redacted) + ' redactions</span>',
+          '<span class="pill neutral">' + escapeHtml(data.totals.degraded) + ' degraded</span>',
+          '<span class="pill neutral">Redaction floor: ≥' + escapeHtml(data.redaction_floor) + '</span>',
+        ].join('');
+
+        bodyEl.innerHTML = data.parsers.map(function(p) {
+          var statusClass = p.status === 'degraded' ? 'warn' : 'good';
+          var redactedClass = p.redacted < 1 ? 'error' : 'good';
+          return '<tr>' +
+            '<td style="word-wrap:break-word;overflow-wrap:break-word"><div class="name">' + escapeHtml(p.parser_id) + '</div></td>' +
+            '<td>' + escapeHtml(p.fixtures) + '</td>' +
+            '<td><span class="pill ' + redactedClass + '">' + escapeHtml(p.redacted) + '</span></td>' +
+            '<td>' + escapeHtml(p.degraded) + '</td>' +
+            '<td><span class="pill ' + statusClass + '">' + escapeHtml(p.status) + '</span></td>' +
+            '<td style="word-wrap:break-word;overflow-wrap:break-word"><code style="font-size:11px;display:block;max-width:100%;overflow-wrap:break-word;word-break:break-all">' + escapeHtml(p.golden_hash || '—') + '</code></td>' +
+          '</tr>';
+        }).join('');
+      }
+
       function buildRetrievalRequest() {
         return {
           knowledge_base: document.getElementById('retrieval-kb').value,
@@ -3038,6 +3121,7 @@
           await loadInitialData();
           await loadFormats();
           await loadFormats();
+          await loadSanitizerCoverage();
           renderStatusStrip();
           renderKnowledgeBases();
           renderSources();
@@ -3057,6 +3141,7 @@
           renderVectorPanel();
           renderRetrievalControls();
           renderFormats();
+          renderSanitizerCoverage();
           renderUploadKBSelect();
         } catch (error) {
           document.body.innerHTML = `<main class="main">${empty(error.message)}</main>`;

@@ -802,3 +802,63 @@ def list_supported_formats(status: str | None = None) -> dict[str, list[dict[str
 def check_format(extension: str) -> dict[str, Any]:
     registry = get_format_registry()
     return registry.check(extension)
+
+
+# ── Sanitizer Coverage Summary ──────────────────────────────────────────────
+
+_SANITIZER_GOLDENS_DIR = Path(__file__).resolve().parents[2] / "tests" / "goldens"
+
+
+def get_sanitizer_coverage() -> dict[str, Any] | None:
+    """Build sanitizer coverage summary from goldens for Web Console display.
+
+    Returns a lightweight summary safe for browser rendering — never
+    includes raw secret fragments.  Returns None when no golden files exist.
+    """
+    import json as _json
+    from hashlib import sha256
+
+    golden_files = sorted(_SANITIZER_GOLDENS_DIR.glob("sanitizer_*.json"))
+    if not golden_files:
+        return None
+
+    parsers: list[dict[str, Any]] = []
+    total_fixtures = 0
+    total_redacted = 0
+    total_degraded = 0
+
+    for golden_path in golden_files:
+        golden = _json.loads(golden_path.read_text(encoding="utf-8"))
+        parser_id: str = golden.get("parser_id", "unknown")
+        redacted: int = golden.get("redaction_count", 0)
+        status: str = golden.get("status", "unknown")
+        degraded: int = 1 if status == "degraded" else 0
+
+        content_for_hash = _json.dumps(golden, sort_keys=True, ensure_ascii=False)
+        golden_hash = sha256(content_for_hash.encode("utf-8")).hexdigest()
+
+        record = {
+            "parser_id": parser_id,
+            "fixtures": 1,
+            "redacted": redacted,
+            "degraded": degraded,
+            "golden_hash": golden_hash[:12],
+            "status": status,
+        }
+        if "degraded_reason" in golden:
+            record["degraded_reason"] = golden["degraded_reason"]
+        parsers.append(record)
+        total_fixtures += 1
+        total_redacted += redacted
+        total_degraded += degraded
+
+    return {
+        "parsers": parsers,
+        "totals": {
+            "fixtures": total_fixtures,
+            "redacted": total_redacted,
+            "degraded": total_degraded,
+        },
+        "redaction_floor": 1,
+        "redaction_floor_check": all(p["redacted"] >= 1 for p in parsers),
+    }

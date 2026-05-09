@@ -66,6 +66,7 @@ from ragrig.web_console import (
     build_system_status,
     check_format,
     get_pipeline_run_detail,
+    get_sanitizer_coverage,
     get_understanding_run_detail,
     list_document_version_chunks,
     list_documents,
@@ -593,6 +594,18 @@ def create_app(
             )
         result = check_format(extension)
         return result
+
+    @app.get("/sanitizer-coverage", response_model=None)
+    def sanitizer_coverage() -> dict[str, Any] | None:
+        """Return the sanitizer coverage summary for Web Console display.
+
+        Reads golden snapshots from tests/goldens/ and returns a
+        structured summary with parser-level redaction counts,
+        degradation status, and golden hashes.
+
+        Never includes raw secret fragments.
+        """
+        return get_sanitizer_coverage()
 
     @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
     async def knowledge_base_upload(
