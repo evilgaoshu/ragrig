@@ -1094,6 +1094,9 @@ class TestUnderstandingCoverage:
         assert coverage.completed == 0
         assert coverage.missing == 0
         assert coverage.stale == 0
+        assert len(coverage.recent_errors) == 1
+        assert coverage.recent_errors[0].error == "some error"
+        assert coverage.recent_errors[0].profile_id == "*.understand.default"
 
     def test_completeness_score(self, sqlite_session: Session) -> None:
         texts = ["# C1\nDone.", "# C2\nDone.", "# C3\nDone."]

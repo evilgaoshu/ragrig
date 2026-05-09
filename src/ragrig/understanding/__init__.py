@@ -7,6 +7,7 @@ from ragrig.understanding.provider import (
 from ragrig.understanding.schema import (
     BatchUnderstandingError,
     BatchUnderstandingResult,
+    CoverageErrorEntry,
     Entity,
     KeyClaim,
     SourceSpan,
@@ -31,6 +32,7 @@ from ragrig.understanding.service import (
 __all__ = [
     "BatchUnderstandingError",
     "BatchUnderstandingResult",
+    "CoverageErrorEntry",
     "DeterministicUnderstandingProvider",
     "DocumentVersionNotFoundError",
     "Entity",

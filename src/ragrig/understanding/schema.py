@@ -84,6 +84,13 @@ class BatchUnderstandingResult(BaseModel):
     errors: list[BatchUnderstandingError] = Field(default_factory=list)
 
 
+class CoverageErrorEntry(BaseModel):
+    document_version_id: str
+    profile_id: str
+    provider: str
+    error: str
+
+
 class UnderstandingCoverage(BaseModel):
     total_versions: int
     completed: int
@@ -91,3 +98,4 @@ class UnderstandingCoverage(BaseModel):
     stale: int
     failed: int
     completeness_score: float | None = None
+    recent_errors: list[CoverageErrorEntry] = Field(default_factory=list)

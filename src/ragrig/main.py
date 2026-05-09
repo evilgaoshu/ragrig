@@ -315,6 +315,15 @@ def create_app(
             "stale": coverage.stale,
             "failed": coverage.failed,
             "completeness_score": coverage.completeness_score,
+            "recent_errors": [
+                {
+                    "document_version_id": e.document_version_id,
+                    "profile_id": e.profile_id,
+                    "provider": e.provider,
+                    "error": e.error,
+                }
+                for e in coverage.recent_errors
+            ],
         }
 
     @app.get("/models", response_model=None)

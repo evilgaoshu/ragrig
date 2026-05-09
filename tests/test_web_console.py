@@ -928,6 +928,7 @@ async def test_understanding_coverage_endpoint(tmp_path) -> None:
         assert cov1.json()["stale"] == 0
         assert cov1.json()["failed"] == 0
         assert cov1.json()["completeness_score"] == 0.0
+        assert cov1.json()["recent_errors"] == []
 
         # Run batch understanding
         await client.post(
@@ -966,6 +967,8 @@ async def test_console_includes_understanding_coverage_section(tmp_path) -> None
     assert "renderUnderstandingCoverage" in html
     assert "runUnderstandAll" in html
     assert "completeness_score" in html
+    assert "Recent Errors" in html
+    assert "recent_errors" in html
     assert "missing" in html.lower()
     assert "stale" in html.lower()
     assert "completed" in html
@@ -1015,6 +1018,7 @@ async def test_console_coverage_shows_real_data(tmp_path) -> None:
         assert payload["total_versions"] == 3
         assert payload["missing"] == 3
         assert payload["completeness_score"] == 0.0
+        assert payload["recent_errors"] == []
 
         # Run batch understanding
         await client.post(

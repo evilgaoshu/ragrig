@@ -19,6 +19,7 @@ from ragrig.understanding.provider import (
 from ragrig.understanding.schema import (
     BatchUnderstandingError,
     BatchUnderstandingResult,
+    CoverageErrorEntry,
     UnderstandingCoverage,
     UnderstandingRecord,
 )
@@ -293,6 +294,29 @@ def get_understanding_coverage(
 
     completeness_score = completed / total_versions if total_versions > 0 else 0.0
 
+    # Collect recent errors (up to 10 most recent failed understanding records)
+    failed_rows = (
+        session.query(DocumentUnderstanding)
+        .filter(
+            DocumentUnderstanding.document_version_id.in_(
+                [v.id for v in versions]
+            ),
+            DocumentUnderstanding.status == "failed",
+        )
+        .order_by(DocumentUnderstanding.updated_at.desc())
+        .limit(10)
+        .all()
+    )
+    recent_errors = [
+        CoverageErrorEntry(
+            document_version_id=str(row.document_version_id),
+            profile_id=row.profile_id,
+            provider=row.provider,
+            error=row.error or "unknown error",
+        )
+        for row in failed_rows
+    ]
+
     return UnderstandingCoverage(
         total_versions=total_versions,
         completed=completed,
@@ -300,4 +324,5 @@ def get_understanding_coverage(
         stale=stale,
         failed=failed,
         completeness_score=round(completeness_score, 4),
+        recent_errors=recent_errors,
     )
