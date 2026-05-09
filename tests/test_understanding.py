@@ -2554,9 +2554,11 @@ class TestExportSchemaContract:
         assert result["run_count"] == 2
         assert len(result["run_ids"]) == 2
         # run_ids should be in the same order as runs (most recent first)
-        runs = sqlite_session.query(UnderstandingRun).order_by(
-            UnderstandingRun.started_at.desc(), UnderstandingRun.id.desc()
-        ).all()
+        runs = (
+            sqlite_session.query(UnderstandingRun)
+            .order_by(UnderstandingRun.started_at.desc(), UnderstandingRun.id.desc())
+            .all()
+        )
         assert result["run_ids"] == [str(r.id) for r in runs]
 
 
@@ -2593,7 +2595,10 @@ class TestDeterministicSortOrder:
             profile_id="p",
             trigger_source="test",
             status="success",
-            total=1, created=1, skipped=0, failed=0,
+            total=1,
+            created=1,
+            skipped=0,
+            failed=0,
             started_at=same_time,
             finished_at=same_time,
         )
@@ -2605,7 +2610,10 @@ class TestDeterministicSortOrder:
             profile_id="p",
             trigger_source="test",
             status="success",
-            total=1, created=1, skipped=0, failed=0,
+            total=1,
+            created=1,
+            skipped=0,
+            failed=0,
             started_at=same_time,
             finished_at=same_time,
         )
@@ -2650,7 +2658,10 @@ class TestDeterministicSortOrder:
             profile_id="p",
             trigger_source="test",
             status="success",
-            total=1, created=1, skipped=0, failed=0,
+            total=1,
+            created=1,
+            skipped=0,
+            failed=0,
             started_at=earlier,
             finished_at=earlier,
         )
@@ -2662,7 +2673,10 @@ class TestDeterministicSortOrder:
             profile_id="p",
             trigger_source="test",
             status="success",
-            total=1, created=1, skipped=0, failed=0,
+            total=1,
+            created=1,
+            skipped=0,
+            failed=0,
             started_at=later,
             finished_at=later,
         )
