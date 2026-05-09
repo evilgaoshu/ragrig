@@ -51,6 +51,9 @@ from ragrig.understanding import (
     UnderstandAllRequest,
     UnderstandingRequest,
     UnderstandingRunFilter,
+    compare_understanding_runs,
+    export_understanding_run,
+    export_understanding_runs,
     generate_document_understanding,
     get_understanding_by_version,
     get_understanding_coverage,
@@ -282,10 +285,24 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
         knowledge_base_id: str | None = None,
         limit: int = 20,
+        provider: str | None = None,
+        model: str | None = None,
+        profile_id: str | None = None,
+        status: str | None = None,
+        started_after: str | None = None,
+        started_before: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         return {
             "items": list_understanding_runs(
-                session, knowledge_base_id=knowledge_base_id, limit=limit
+                session,
+                knowledge_base_id=knowledge_base_id,
+                limit=limit,
+                provider=provider,
+                model=model,
+                profile_id=profile_id,
+                status=status,
+                started_after=started_after,
+                started_before=started_before,
             ),
         }
 
@@ -298,6 +315,50 @@ def create_app(
         if detail is None:
             return JSONResponse(status_code=404, content={"error": "understanding_run_not_found"})
         return detail
+
+    @app.get("/understanding-runs/{run_id}/export", response_model=None)
+    def export_understanding_run_endpoint(
+        run_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        result = export_understanding_run(session, run_id)
+        if result is None:
+            return JSONResponse(status_code=404, content={"error": "understanding_run_not_found"})
+        return result
+
+    @app.get("/knowledge-bases/{kb_id}/understanding-runs/export", response_model=None)
+    def export_understanding_runs_endpoint(
+        kb_id: str,
+        session: Annotated[Session, Depends(get_session)],
+        provider: str | None = None,
+        model: str | None = None,
+        profile_id: str | None = None,
+        status: str | None = None,
+        started_after: str | None = None,
+        started_before: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        filters = UnderstandingRunFilter(
+            provider=provider,
+            model=model,
+            profile_id=profile_id,
+            status=status,
+            started_after=started_after,
+            started_before=started_before,
+            limit=limit,
+        )
+        return export_understanding_runs(session, kb_id, filters=filters)
+
+    @app.get("/understanding-runs/{run_id}/diff", response_model=None)
+    def diff_understanding_runs_endpoint(
+        run_id: str,
+        session: Annotated[Session, Depends(get_session)],
+        against: str,
+    ) -> dict[str, Any] | JSONResponse:
+        result = compare_understanding_runs(session, run_id, against)
+        if result is None:
+            return JSONResponse(status_code=404, content={"error": "understanding_run_not_found"})
+        return result
 
     @app.get("/document-versions/{document_version_id}/chunks", response_model=None)
     def document_version_chunks(
@@ -442,6 +503,8 @@ def create_app(
         model: str | None = None,
         profile_id: str | None = None,
         status: str | None = None,
+        started_after: str | None = None,
+        started_before: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
         filters = UnderstandingRunFilter(
@@ -449,6 +512,8 @@ def create_app(
             model=model,
             profile_id=profile_id,
             status=status,
+            started_after=started_after,
+            started_before=started_before,
             limit=limit,
         )
         runs = get_understanding_runs(session, kb_id, filters=filters)

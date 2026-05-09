@@ -432,6 +432,10 @@ def get_understanding_runs(
             query = query.filter(UnderstandingRun.profile_id == filters.profile_id)
         if filters.status is not None:
             query = query.filter(UnderstandingRun.status == filters.status)
+        if filters.started_after is not None:
+            query = query.filter(UnderstandingRun.started_at >= filters.started_after)
+        if filters.started_before is not None:
+            query = query.filter(UnderstandingRun.started_at <= filters.started_before)
 
     rows = (
         query.order_by(UnderstandingRun.started_at.desc())
@@ -448,3 +452,208 @@ def get_understanding_run(session: Session, run_id: str) -> UnderstandingRunReco
     if row is None:
         return None
     return _to_run_record(row)
+
+
+# ---------------------------------------------------------------------------
+# Safe JSON export
+# ---------------------------------------------------------------------------
+
+_EXPORT_SENSITIVE_KEYS = frozenset(
+    {
+        "extracted_text",
+        "prompt",
+        "full_prompt",
+        "system_prompt",
+        "user_prompt",
+        "messages",
+        "raw_response",
+    }
+)
+
+_EXPORT_SECRET_PATTERNS = (
+    "api_key",
+    "access_key",
+    "secret",
+    "session_token",
+    "token",
+    "password",
+    "private_key",
+    "credential",
+)
+
+
+def _sanitize_value(value: object) -> object:
+    """Recursively remove sensitive keys and secret-like values."""
+    if isinstance(value, dict):
+        result: dict[str, object] = {}
+        for k, v in value.items():
+            if k.lower() in _EXPORT_SENSITIVE_KEYS:
+                result[k] = "[REDACTED]"
+                continue
+            if _looks_like_secret(k, v):
+                result[k] = "[REDACTED]"
+                continue
+            result[k] = _sanitize_value(v)
+        return result
+    if isinstance(value, list):
+        return [_sanitize_value(item) for item in value]
+    return value
+
+
+def _looks_like_secret(key: str, value: object) -> bool:
+    """Check if a key/value pair looks like a secret."""
+    key_lower = key.lower()
+    if any(pattern in key_lower for pattern in _EXPORT_SECRET_PATTERNS):
+        if isinstance(value, (str, int, float)) and value:
+            return True
+    return False
+
+
+def export_understanding_run(session: Session, run_id: str) -> dict[str, object] | None:
+    """Export a single understanding run with safe JSON sanitisation.
+
+    Strips secret-like values and redacts sensitive fields (extracted_text,
+    full prompts, raw responses) from any nested metadata or config.
+    """
+    run_uuid = uuid.UUID(run_id)
+    row = session.get(UnderstandingRun, run_uuid)
+    if row is None:
+        return None
+
+    kb_name = None
+    from ragrig.db.models import KnowledgeBase
+
+    kb = session.get(KnowledgeBase, row.knowledge_base_id)
+    if kb is not None:
+        kb_name = kb.name
+
+    exported: dict[str, object] = {
+        "id": str(row.id),
+        "knowledge_base_id": str(row.knowledge_base_id),
+        "knowledge_base": kb_name,
+        "provider": row.provider,
+        "model": row.model,
+        "profile_id": row.profile_id,
+        "trigger_source": row.trigger_source,
+        "operator": row.operator,
+        "status": row.status,
+        "total": row.total,
+        "created": row.created,
+        "skipped": row.skipped,
+        "failed": row.failed,
+        "error_summary": row.error_summary,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "finished_at": row.finished_at.isoformat() if row.finished_at else None,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return _sanitize_value(exported)  # type: ignore[return-value]
+
+
+def export_understanding_runs(
+    session: Session,
+    knowledge_base_id: str,
+    *,
+    filters: UnderstandingRunFilter | None = None,
+) -> dict[str, object]:
+    """Export a filtered list of understanding runs with safe JSON sanitisation."""
+    records = get_understanding_runs(session, knowledge_base_id, filters=filters)
+
+    kb_name = None
+    from ragrig.db.models import KnowledgeBase
+
+    kb_uuid = uuid.UUID(knowledge_base_id)
+    kb = session.get(KnowledgeBase, kb_uuid)
+    if kb is not None:
+        kb_name = kb.name
+
+    items: list[dict[str, object]] = []
+    for rec in records:
+        item: dict[str, object] = {
+            "id": rec.id,
+            "knowledge_base_id": rec.knowledge_base_id,
+            "provider": rec.provider,
+            "model": rec.model,
+            "profile_id": rec.profile_id,
+            "trigger_source": rec.trigger_source,
+            "operator": rec.operator,
+            "status": rec.status,
+            "total": rec.total,
+            "created": rec.created,
+            "skipped": rec.skipped,
+            "failed": rec.failed,
+            "error_summary": rec.error_summary,
+            "started_at": rec.started_at,
+            "finished_at": rec.finished_at,
+        }
+        items.append(_sanitize_value(item))  # type: ignore[arg-type]
+
+    result: dict[str, object] = {
+        "knowledge_base": kb_name,
+        "knowledge_base_id": knowledge_base_id,
+        "total_runs": len(items),
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "filters_applied": {
+            "provider": filters.provider if filters else None,
+            "model": filters.model if filters else None,
+            "profile_id": filters.profile_id if filters else None,
+            "status": filters.status if filters else None,
+            "started_after": filters.started_after if filters else None,
+            "started_before": filters.started_before if filters else None,
+        },
+        "runs": items,
+    }
+    return _sanitize_value(result)  # type: ignore[return-value]
+
+
+def compare_understanding_runs(
+    session: Session, run_id_a: str, run_id_b: str
+) -> dict[str, object] | None:
+    """Compare two understanding runs (best-effort diff).
+
+    Returns a structured diff showing differences in counts and status.
+    """
+    rec_a = get_understanding_run(session, run_id_a)
+    rec_b = get_understanding_run(session, run_id_b)
+    if rec_a is None or rec_b is None:
+        return None
+
+    changes: list[dict[str, object]] = []
+
+    for field_name, label in [
+        ("total", "Total versions"),
+        ("created", "Created"),
+        ("skipped", "Skipped"),
+        ("failed", "Failed"),
+        ("status", "Status"),
+        ("provider", "Provider"),
+        ("model", "Model"),
+        ("profile_id", "Profile ID"),
+        ("trigger_source", "Trigger source"),
+    ]:
+        val_a = getattr(rec_a, field_name, None)
+        val_b = getattr(rec_b, field_name, None)
+        change: dict[str, object] = {
+            "field": field_name,
+            "label": label,
+            "run_a": val_a,
+            "run_b": val_b,
+            "changed": val_a != val_b,
+        }
+        if isinstance(val_a, (int, float)) and isinstance(val_b, (int, float)):
+            change["delta"] = val_b - val_a  # type: ignore[operator]
+        changes.append(change)
+
+    return {
+        "run_a": {
+            "id": rec_a.id,
+            "started_at": rec_a.started_at,
+            "status": rec_a.status,
+        },
+        "run_b": {
+            "id": rec_b.id,
+            "started_at": rec_b.started_at,
+            "status": rec_b.status,
+        },
+        "changes": changes,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+    }
