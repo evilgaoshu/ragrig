@@ -1296,6 +1296,141 @@ async def test_upload_planned_format_returns_415(tmp_path) -> None:
     assert ".pdf" in payload["rejections"][0]["extension"]
 
 
+@pytest.mark.anyio
+async def test_upload_preview_format_tracks_parser_in_pipeline_items(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-preview-items.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    test_file = tmp_path / "data.csv"
+    test_file.write_text("col1,col2\na,b", encoding="utf-8")
+
+    with session_factory() as session:
+        from ragrig.repositories import get_or_create_knowledge_base
+
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("data.csv", f, "text/csv")},
+            )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["pipeline_run_id"] is not None
+    assert payload["pipeline_run_id"] != ""
+    assert payload["warnings"][0]["parser_id"] == "parser.csv"
+    assert payload["warnings"][0]["fallback_policy"] == "parse_as_plaintext"
+
+    # Query pipeline run items
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        items_response = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
+
+    assert items_response.status_code == 200
+    items = items_response.json()["items"]
+    assert len(items) == 1
+    item = items[0]
+    assert item["status"] == "degraded"
+    assert item["metadata"]["parser_id"] == "parser.csv"
+    assert item["metadata"]["parser_name"] == "csv"
+    assert "degraded_reason" in item["metadata"]
+
+
+@pytest.mark.anyio
+async def test_upload_preview_html_tracks_parser_and_stripped_reason(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-html-items.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    test_file = tmp_path / "page.html"
+    test_file.write_text("<html><body><p>hello</p></body></html>", encoding="utf-8")
+
+    with session_factory() as session:
+        from ragrig.repositories import get_or_create_knowledge_base
+
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("page.html", f, "text/html")},
+            )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["warnings"][0]["parser_id"] == "parser.html"
+    assert payload["warnings"][0]["fallback_policy"] == "strip_tags_then_plaintext"
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        items_response = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
+
+    assert items_response.status_code == 200
+    items = items_response.json()["items"]
+    assert items[0]["status"] == "degraded"
+    assert items[0]["metadata"]["parser_id"] == "parser.html"
+    assert "degraded_reason" in items[0]["metadata"]
+
+
+@pytest.mark.anyio
+async def test_upload_exceeds_per_format_size_limit(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-size-limit.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    # Create a file larger than the 50 MB preview limit
+    test_file = tmp_path / "huge.csv"
+    test_file.write_bytes(b"x" * (51 * 1024 * 1024))
+
+    with session_factory() as session:
+        from ragrig.repositories import get_or_create_knowledge_base
+
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as f:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("huge.csv", f, "text/csv")},
+            )
+
+    assert response.status_code == 413
+    payload = response.json()
+    assert payload["accepted_files"] == 0
+    assert payload["rejections"][0]["reason"] == "file_too_large"
+    assert "50 MB" in payload["rejections"][0]["message"]
+
+
+@pytest.mark.anyio
+async def test_supported_formats_includes_fallback_policy_for_preview(tmp_path) -> None:
+    database_path = tmp_path / "web-console-formats-fallback.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/supported-formats?status=preview")
+
+    assert response.status_code == 200
+    for fmt in response.json()["formats"]:
+        assert "parser_id" in fmt
+        assert "status" in fmt
+        assert fmt["status"] == "preview"
+        assert "fallback_policy" in fmt
+        assert fmt["fallback_policy"] is not None
+
+
 # Understanding coverage + batch understand tests
 @pytest.mark.anyio
 async def test_understand_all_endpoint_creates_and_skips(tmp_path) -> None:

@@ -197,10 +197,12 @@ def test_ingest_skip_does_not_overwrite_existing_document_hash_or_metadata(tmp_p
     assert document.metadata_json["extension"] == ".md"
 
 
-def test_select_parser_uses_markdown_parser_for_markdown_extensions() -> None:
+def test_select_parser_uses_correct_parser_by_extension() -> None:
     assert _select_parser(Path("guide.md")).parser_name == "markdown"
     assert _select_parser(Path("guide.markdown")).parser_name == "markdown"
     assert _select_parser(Path("notes.txt")).parser_name == "plaintext"
+    assert _select_parser(Path("data.csv")).parser_name == "csv"
+    assert _select_parser(Path("page.html")).parser_name == "html"
 
 
 def test_ingest_local_directory_persists_parser_plugin_id_in_version_config(tmp_path) -> None:

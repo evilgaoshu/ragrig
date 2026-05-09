@@ -16,6 +16,7 @@ from ragrig.db.engine import create_db_engine
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.health import create_database_check
 from ragrig.ingestion.pipeline import _select_parser
+from ragrig.parsers.base import ParserTimeoutError, parse_with_timeout
 from ragrig.processing_profile import (
     ProfileStatus,
     TaskType,
@@ -445,8 +446,6 @@ def create_app(
         result = check_format(extension)
         return result
 
-    _MAX_UPLOAD_FILE_SIZE = 10 * 1024 * 1024
-
     @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
     async def knowledge_base_upload(
         kb_name: str,
@@ -513,6 +512,8 @@ def create_app(
                         "filename": filename,
                         "extension": extension,
                         "status": "preview",
+                        "parser_id": fmt.parser_id,
+                        "fallback_policy": fmt.fallback_policy,
                         "message": (
                             f"{fmt.display_name} is in preview status — "
                             f"{fmt.limitations or 'content will be parsed as plain text.'}"
@@ -552,13 +553,19 @@ def create_app(
                 safe_name = _sanitize_filename(filename)
                 dest = staging_path / safe_name
                 content = await f.read()
-                if len(content) > _MAX_UPLOAD_FILE_SIZE:
+                extension = Path(filename).suffix.lower()
+                fmt = registry.lookup(extension)
+                max_size = (fmt.max_file_size_mb * 1024 * 1024) if fmt else (10 * 1024 * 1024)
+                if len(content) > max_size:
                     rejected.append(
                         {
                             "filename": filename,
-                            "extension": Path(filename).suffix.lower(),
+                            "extension": extension,
                             "reason": "file_too_large",
-                            "message": (f"File '{filename}' exceeds the 10 MB size limit."),
+                            "message": (
+                                f"File '{filename}' exceeds the {fmt.max_file_size_mb} MB "
+                                f"size limit for {fmt.display_name}."
+                            ),
                         }
                     )
                     continue
@@ -604,9 +611,12 @@ def create_app(
 
             for dest in saved_paths:
                 document = None
+                item_status = "success"
+                item_error: str | None = None
+                item_metadata: dict[str, Any] = {"file_name": dest.name}
                 try:
                     parser = _select_parser(dest)
-                    parse_result = parser.parse(dest)
+                    parse_result = parse_with_timeout(parser, dest, timeout_seconds=30.0)
                     document, was_created = get_or_create_document(
                         session,
                         knowledge_base_id=kb.id,
@@ -624,7 +634,7 @@ def create_app(
                         version_number=get_next_version_number(session, document_id=document.id),
                         content_hash=parse_result.content_hash,
                         parser_name=parse_result.parser_name,
-                        parser_config_json={},
+                        parser_config_json={"plugin_id": f"parser.{parse_result.parser_name}"},
                         extracted_text=parse_result.extracted_text,
                         metadata_json=parse_result.metadata,
                     )
@@ -632,26 +642,52 @@ def create_app(
                     session.flush()
                     created_versions += 1
 
-                    create_pipeline_run_item(
-                        session,
-                        pipeline_run_id=run.id,
-                        document_id=document.id,
-                        status="success",
-                        metadata_json={
-                            "file_name": dest.name,
-                            "version_number": version.version_number,
-                        },
-                    )
+                    item_metadata["version_number"] = version.version_number
+                    item_metadata["parser_name"] = parse_result.parser_name
+                    item_metadata["parser_id"] = f"parser.{parse_result.parser_name}"
+                    degraded_reason = parse_result.metadata.get("degraded_reason")
+                    if degraded_reason:
+                        item_status = "degraded"
+                        item_metadata["degraded_reason"] = degraded_reason
+                except ParserTimeoutError as exc:
+                    failed_count += 1
+                    item_status = "failed"
+                    item_error = str(exc)
+                    item_metadata["failure_reason"] = "parser_timeout"
+                    if document is None:
+                        document, _ = get_or_create_document(
+                            session,
+                            knowledge_base_id=kb.id,
+                            source_id=source.id,
+                            uri=str(dest),
+                            content_hash="timeout",
+                            mime_type="text/plain",
+                            metadata_json={"failure_reason": "parser_timeout", "path": str(dest)},
+                        )
                 except Exception as exc:
                     failed_count += 1
-                    create_pipeline_run_item(
-                        session,
-                        pipeline_run_id=run.id,
-                        document_id=document.id if document is not None else None,
-                        status="failed",
-                        error_message=str(exc),
-                        metadata_json={"file_name": dest.name},
-                    )
+                    item_status = "failed"
+                    item_error = str(exc)
+                    item_metadata["failure_reason"] = str(exc)
+                    if document is None:
+                        document, _ = get_or_create_document(
+                            session,
+                            knowledge_base_id=kb.id,
+                            source_id=source.id,
+                            uri=str(dest),
+                            content_hash="failed",
+                            mime_type="text/plain",
+                            metadata_json={"failure_reason": str(exc), "path": str(dest)},
+                        )
+
+                create_pipeline_run_item(
+                    session,
+                    pipeline_run_id=run.id,
+                    document_id=document.id,
+                    status=item_status,
+                    error_message=item_error,
+                    metadata_json=item_metadata,
+                )
 
             run.total_items = len(saved_paths)
             run.success_count = created_versions
