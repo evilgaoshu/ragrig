@@ -37,6 +37,7 @@ def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
 def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
     return compiler.process(JSON(), **kwargs)
 
+
 FIXTURE_ROOT = Path("tests/fixtures/local_ingestion")
 FIXTURE_KB = "fixture-local"
 DEFAULT_TOP_K = 5

@@ -922,9 +922,7 @@ def get_recent_benchmark() -> dict[str, Any]:
     return {
         "available": True,
         "artifact_path": str(
-            _BENCHMARK_ARTIFACT_PATH.relative_to(
-                Path(__file__).resolve().parents[2]
-            )
+            _BENCHMARK_ARTIFACT_PATH.relative_to(Path(__file__).resolve().parents[2])
         ),
         "last_updated": artifact_mtime,
         "summary": artifact,

@@ -42,14 +42,13 @@ def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
 def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
     return compiler.process(JSON(), **kwargs)
 
+
 FIXTURE_ROOT = Path("tests/fixtures/local_ingestion")
 FIXTURE_KB = "fixture-local"
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Run BGE reranker smoke test."
-    )
+    parser = argparse.ArgumentParser(description="Run BGE reranker smoke test.")
     parser.add_argument(
         "--output",
         default=None,
@@ -160,10 +159,7 @@ def run_bge_smoke() -> dict:
     fixture_root = FIXTURE_ROOT
     if not fixture_root.exists():
         result["status"] = "skipped"
-        result["reason"] = (
-            f"Fixture directory not found: {fixture_root}. "
-            "Run from the repo root."
-        )
+        result["reason"] = f"Fixture directory not found: {fixture_root}. Run from the repo root."
         return result
 
     temp_dir = tempfile.mkdtemp(prefix="ragrig-bge-smoke-")
@@ -215,9 +211,9 @@ def run_bge_smoke() -> dict:
         "degraded_reason": "",
         "latency_ms": round(elapsed * 1000, 3),
         "result_count": report.total_results,
-        "reranker_provider": report.results[0].rank_stage_trace["stages"][-1].get(
-            "reranker", "reranker.bge"
-        ),
+        "reranker_provider": report.results[0]
+        .rank_stage_trace["stages"][-1]
+        .get("reranker", "reranker.bge"),
     }
 
     return result
