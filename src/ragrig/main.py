@@ -80,6 +80,7 @@ from ragrig.web_console import (
     build_system_status,
     check_format,
     get_pipeline_run_detail,
+    get_recent_benchmark,
     get_sanitizer_coverage,
     get_understanding_run_detail,
     list_document_version_chunks,
@@ -651,6 +652,17 @@ def create_app(
         Never includes raw secret fragments.
         """
         return get_sanitizer_coverage()
+
+    @app.get("/retrieval/benchmark/recent", response_model=None)
+    def retrieval_benchmark_recent() -> dict[str, Any]:
+        """Return the most recent retrieval benchmark result.
+
+        Reads from the baseline artifact at
+        docs/operations/artifacts/retrieval-benchmark-baseline.json.
+
+        Never includes raw secret fragments.
+        """
+        return get_recent_benchmark()
 
     @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
     async def knowledge_base_upload(

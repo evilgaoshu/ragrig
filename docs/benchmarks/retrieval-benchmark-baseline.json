@@ -1,0 +1,70 @@
+{
+  "database": "sqlite:///:memory: (temp)",
+  "iterations_per_query": 2,
+  "knowledge_base": "fixture-local",
+  "modes": [
+    {
+      "candidate_k": 20,
+      "degraded": false,
+      "degraded_reason": "",
+      "iterations": 10,
+      "max_latency_ms": 5.683,
+      "mean_latency_ms": 1.714,
+      "min_latency_ms": 1.113,
+      "mode": "dense",
+      "p50_latency_ms": 1.296,
+      "p95_latency_ms": 5.683,
+      "result_count": 30,
+      "top_k": 5
+    },
+    {
+      "candidate_k": 20,
+      "degraded": false,
+      "degraded_reason": "",
+      "iterations": 10,
+      "max_latency_ms": 1.624,
+      "mean_latency_ms": 1.293,
+      "min_latency_ms": 1.143,
+      "mode": "hybrid",
+      "p50_latency_ms": 1.255,
+      "p95_latency_ms": 1.624,
+      "result_count": 30,
+      "top_k": 5
+    },
+    {
+      "candidate_k": 20,
+      "degraded": false,
+      "degraded_reason": "",
+      "iterations": 10,
+      "max_latency_ms": 1.452,
+      "mean_latency_ms": 1.234,
+      "min_latency_ms": 1.144,
+      "mode": "rerank",
+      "p50_latency_ms": 1.222,
+      "p95_latency_ms": 1.452,
+      "result_count": 30,
+      "top_k": 5
+    },
+    {
+      "candidate_k": 20,
+      "degraded": false,
+      "degraded_reason": "",
+      "iterations": 10,
+      "max_latency_ms": 1.544,
+      "mean_latency_ms": 1.212,
+      "min_latency_ms": 1.138,
+      "mode": "hybrid_rerank",
+      "p50_latency_ms": 1.171,
+      "p95_latency_ms": 1.544,
+      "result_count": 30,
+      "top_k": 5
+    }
+  ],
+  "queries": [
+    "retrieval configuration guide",
+    "embedding dimensions",
+    "chunking pipeline",
+    "knowledge base setup",
+    "vector search backend"
+  ]
+}
