@@ -871,6 +871,7 @@
         <div class="nav-item" data-section="upload">Upload</div>
         <div class="nav-item" data-section="formats">Formats</div>
         <div class="nav-item" data-section="sanitizer-coverage">Sanitizer Coverage</div>
+        <div class="nav-item" data-section="retrieval-benchmark">Retrieval Benchmark</div>
         <div class="nav-item">Documents</div>
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
@@ -928,6 +929,29 @@
                 <tbody id="sanitizer-coverage-body"></tbody>
               </table>
             </div>
+          </div>
+        </section>
+
+        <section class="panel" id="retrieval-benchmark-panel">
+          <div class="panel-head"><div class="panel-title">Retrieval Benchmark</div><div class="panel-meta">Latency measurement · GET /retrieval/benchmark/recent · make retrieval-benchmark</div></div>
+          <div class="panel-body stack">
+            <div id="retrieval-benchmark-status" style="margin-bottom:12px"></div>
+            <div style="overflow-x:auto;max-width:100%">
+              <table style="min-width:600px;table-layout:fixed;width:100%">
+                <thead><tr>
+                  <th style="width:15%">Mode</th>
+                  <th style="width:12%">P50 (ms)</th>
+                  <th style="width:12%">P95 (ms)</th>
+                  <th style="width:12%">Mean (ms)</th>
+                  <th style="width:10%">Results</th>
+                  <th style="width:15%">Iterations</th>
+                  <th style="width:12%">Degraded</th>
+                  <th style="width:12%">Top-K</th>
+                </tr></thead>
+                <tbody id="retrieval-benchmark-body"></tbody>
+              </table>
+            </div>
+            <div id="retrieval-benchmark-meta" style="margin-top:12px"></div>
           </div>
         </section>
 
@@ -2846,6 +2870,59 @@
 
       // ── End Evaluation Panel ────────────────────────────────────────────
 
+      async function loadRetrievalBenchmark() {
+        try {
+          state.retrievalBenchmark = await getJson('/retrieval/benchmark/recent');
+        } catch {
+          state.retrievalBenchmark = { available: false };
+        }
+      }
+
+      function renderRetrievalBenchmark() {
+        const statusEl = document.getElementById('retrieval-benchmark-status');
+        const bodyEl = document.getElementById('retrieval-benchmark-body');
+        const metaEl = document.getElementById('retrieval-benchmark-meta');
+        const data = state.retrievalBenchmark;
+
+        if (!data || !data.available) {
+          statusEl.innerHTML = '<span class="pill neutral">No benchmark data</span>';
+          bodyEl.innerHTML = '<tr><td colspan="8">' + empty('No benchmark artifact found. Run make retrieval-benchmark to generate it.') + '</td></tr>';
+          metaEl.innerHTML = '';
+          return;
+        }
+
+        const summary = data.summary;
+        statusEl.innerHTML = [
+          '<span class="pill good">' + escapeHtml(summary.knowledge_base) + '</span>',
+          '<span class="pill neutral">' + escapeHtml(summary.iterations_per_query) + ' iter/query</span>',
+          '<span class="pill neutral">Updated: ' + escapeHtml(data.last_updated ? new Date(data.last_updated).toLocaleString() : 'unknown') + '</span>',
+        ].join(' ');
+
+        if (summary.modes && summary.modes.length) {
+          bodyEl.innerHTML = summary.modes.map(function(m) {
+            var degradedClass = m.degraded ? 'warn' : 'good';
+            return '<tr>' +
+              '<td><div class="name">' + escapeHtml(m.mode) + '</div></td>' +
+              '<td>' + escapeHtml(formatValue(m.p50_latency_ms)) + '</td>' +
+              '<td>' + escapeHtml(formatValue(m.p95_latency_ms)) + '</td>' +
+              '<td>' + escapeHtml(formatValue(m.mean_latency_ms)) + '</td>' +
+              '<td>' + escapeHtml(m.result_count) + '</td>' +
+              '<td>' + escapeHtml(m.iterations) + '</td>' +
+              '<td><span class="pill ' + degradedClass + '">' + escapeHtml(m.degraded ? 'yes' : 'no') + '</span></td>' +
+              '<td>' + escapeHtml(m.top_k) + '/' + escapeHtml(m.candidate_k) + '</td>' +
+            '</tr>';
+          }).join('');
+        } else {
+          bodyEl.innerHTML = '<tr><td colspan="8">' + empty('No mode results in benchmark artifact.') + '</td></tr>';
+        }
+
+        metaEl.innerHTML = [
+          '<div class="meta">Queries: ' + escapeHtml((summary.queries || []).join(', ')) + '</div>',
+          '<div class="meta">Artifact: ' + escapeHtml(data.artifact_path || '') + '</div>',
+          '<div class="meta">Run <code>make retrieval-benchmark</code> to refresh.</div>',
+        ].join('');
+      }
+
       async function loadSanitizerCoverage() {
         try {
           state.sanitizerCoverage = await getJson('/sanitizer-coverage');
@@ -3473,6 +3550,7 @@
           await loadFormats();
           await loadFormats();
           await loadSanitizerCoverage();
+          await loadRetrievalBenchmark();
           renderStatusStrip();
           renderKnowledgeBases();
           renderSources();
@@ -3496,6 +3574,7 @@
           renderAnswerControls();
           renderFormats();
           renderSanitizerCoverage();
+          renderRetrievalBenchmark();
           renderUploadKBSelect();
         } catch (error) {
           document.body.innerHTML = `<main class="main">${empty(error.message)}</main>`;

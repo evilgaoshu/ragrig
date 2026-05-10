@@ -862,3 +862,68 @@ def get_sanitizer_coverage() -> dict[str, Any] | None:
         "redaction_floor": 1,
         "redaction_floor_check": all(p["redacted"] >= 1 for p in parsers),
     }
+
+
+# ── Retrieval Benchmark ────────────────────────────────────────────────────
+
+_BENCHMARK_ARTIFACT_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "benchmarks"
+    / "retrieval-benchmark-baseline.json"
+)
+
+
+def get_recent_benchmark() -> dict[str, Any]:
+    """Return the most recent retrieval benchmark result.
+
+    Reads from the baseline artifact.  Returns {'available': False} when
+    no artifact exists.
+    """
+    import json as _json
+    from datetime import datetime, timezone
+
+    if not _BENCHMARK_ARTIFACT_PATH.exists():
+        return {"available": False}
+
+    try:
+        artifact = _json.loads(_BENCHMARK_ARTIFACT_PATH.read_text(encoding="utf-8"))
+        mtime = _BENCHMARK_ARTIFACT_PATH.stat().st_mtime
+        artifact_mtime = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+    except (OSError, ValueError, _json.JSONDecodeError):
+        return {"available": False}
+
+    # Redact any secret-like values
+    SECRET_KEY_PARTS = (
+        "api_key",
+        "access_key",
+        "secret",
+        "password",
+        "token",
+        "credential",
+        "private_key",
+        "dsn",
+        "service_account",
+        "session_token",
+    )
+
+    def _redact(obj):
+        if isinstance(obj, dict):
+            return {
+                k: "[redacted]" if any(p in k.lower() for p in SECRET_KEY_PARTS) else _redact(v)
+                for k, v in obj.items()
+            }
+        if isinstance(obj, list):
+            return [_redact(v) for v in obj]
+        return obj
+
+    artifact = _redact(artifact)
+
+    return {
+        "available": True,
+        "artifact_path": str(
+            _BENCHMARK_ARTIFACT_PATH.relative_to(Path(__file__).resolve().parents[2])
+        ),
+        "last_updated": artifact_mtime,
+        "summary": artifact,
+    }

@@ -1,7 +1,7 @@
 UV ?= uv
 ARTIFACTS_DIR ?= docs/operations/artifacts
 
-.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down
+.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark bge-rerank-smoke
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -152,6 +152,20 @@ sanitizer-coverage-summary:
 
 eval-local:
 	$(UV) run python -m scripts.eval_local
+
+# ── Retrieval benchmark ───────────────────────────────────────
+# Runs latency measurements for dense/hybrid/rerank/hybrid_rerank
+# against the fixture-local knowledge base.  No network, GPU,
+# torch, or BGE dependency — fully deterministic and local.
+retrieval-benchmark:
+	$(UV) run python -m scripts.retrieval_benchmark --pretty
+
+# ── Optional BGE reranker smoke ────────────────────────────────
+# Requires local-ml extras (FlagEmbedding, sentence-transformers,
+# torch).  If dependencies are missing the test safely reports
+# "skipped" — never a false success.
+bge-rerank-smoke:
+	$(UV) run python -m scripts.bge_rerank_smoke --pretty
 
 export-object-storage-check:
 	$(UV) run python -m scripts.export_object_storage
