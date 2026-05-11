@@ -1,7 +1,8 @@
 """Live smoke tests for answer generation with optional local LLM providers.
 
-Requires RAGRIG_ANSWER_LIVE_SMOKE=1 to run.
-When provider is unreachable, tests are xfail (degraded) — never false success.
+Requires RAGRIG_ANSWER_LIVE_SMOKE=1 to run the end-to-end live tests.
+Diagnostic tests (missing dependency, redaction, mock citations) run in CI
+without network or real LLM.
 """
 
 from __future__ import annotations
@@ -12,12 +13,15 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from ragrig.answer.diagnostics import (
+    AnswerDiagnosticsReport,
+    _check_openai_dependency,
+    _redact_base_url,
+    run_answer_diagnostics,
+)
+
 pytestmark = [
     pytest.mark.answer_live_smoke,
-    pytest.mark.skipif(
-        os.environ.get("RAGRIG_ANSWER_LIVE_SMOKE") != "1",
-        reason="set RAGRIG_ANSWER_LIVE_SMOKE=1 to run answer live smoke tests",
-    ),
 ]
 
 # Provider configuration via environment variables
@@ -118,9 +122,163 @@ def _check_provider_reachable() -> bool:
         return False
 
 
-# ── Live smoke test class ─────────────────────────────────────────────────────
+# ── Diagnostic unit tests (CI-runnable, no network) ───────────────────────────
 
 
+def test_missing_dependency_returns_skip(monkeypatch):
+    """When openai is missing, diagnostics return skip with clear reason."""
+
+    def _fake_deps():
+        return False, "Missing optional dependency: openai. Install with: uv sync --extra local-ml"
+
+    report = run_answer_diagnostics(
+        provider="ollama",
+        model="llama3.2:1b",
+        base_url="http://localhost:11434/v1",
+        _deps_fn=_fake_deps,
+    )
+
+    assert isinstance(report, AnswerDiagnosticsReport)
+    assert report.status == "skip"
+    assert "openai" in report.reason.lower()
+    assert report.citation_count == 0
+    assert report.timing_ms >= 0
+
+
+def test_bad_base_url_returns_error(monkeypatch):
+    """When provider ping fails, diagnostics return error with reason."""
+
+    def _fake_deps():
+        return True, "ok"
+
+    def _fake_ping(base_url):
+        return False, "Connection refused"
+
+    report = run_answer_diagnostics(
+        provider="ollama",
+        model="llama3.2:1b",
+        base_url="http://bad-host:99999/v1",
+        _deps_fn=_fake_deps,
+        _ping_fn=_fake_ping,
+    )
+
+    assert report.status == "error"
+    assert "unreachable" in report.reason.lower() or "refused" in report.reason.lower()
+    assert report.citation_count == 0
+    assert report.timing_ms >= 0
+
+
+def test_base_url_redacted_no_api_key():
+    """base_url_redacted must not contain raw API keys."""
+    url_with_key = "http://sk-abc123@localhost:11434/v1?api_key=sk-secret&foo=bar"
+    redacted = _redact_base_url(url_with_key)
+
+    assert "sk-abc123" not in redacted
+    assert "sk-secret" not in redacted
+    assert "[REDACTED]" in redacted
+    assert "foo=bar" in redacted
+    assert "localhost:11434" in redacted
+
+
+def test_mock_provider_with_citations_returns_healthy(monkeypatch):
+    """A mock provider returning citations yields healthy status and citation_count > 0."""
+
+    def _fake_deps():
+        return True, "ok"
+
+    def _fake_ping(base_url):
+        return True, "mock reachable"
+
+    def _fake_chat(base_url, model):
+        return 2, "Mock chat with [cit-1] and [cit-2]"
+
+    report = run_answer_diagnostics(
+        provider="mock",
+        model="mock-model",
+        base_url="http://mock:1234/v1",
+        _deps_fn=_fake_deps,
+        _ping_fn=_fake_ping,
+        _chat_fn=_fake_chat,
+    )
+
+    assert report.status == "healthy"
+    assert report.citation_count == 2
+    assert report.timing_ms >= 0
+    assert report.provider == "mock"
+    assert report.model == "mock-model"
+
+
+def test_mock_provider_zero_citations_returns_degraded(monkeypatch):
+    """A mock provider returning zero citations yields degraded status."""
+
+    def _fake_deps():
+        return True, "ok"
+
+    def _fake_ping(base_url):
+        return True, "mock reachable"
+
+    def _fake_chat(base_url, model):
+        return 0, "Mock chat with no citations"
+
+    report = run_answer_diagnostics(
+        provider="mock",
+        model="mock-model",
+        base_url="http://mock:1234/v1",
+        _deps_fn=_fake_deps,
+        _ping_fn=_fake_ping,
+        _chat_fn=_fake_chat,
+    )
+
+    assert report.status == "degraded"
+    assert report.citation_count == 0
+    assert "no citations" in report.reason.lower()
+
+
+def test_diagnostics_report_to_json():
+    """AnswerDiagnosticsReport serialises to the expected JSON shape."""
+    report = AnswerDiagnosticsReport(
+        provider="ollama",
+        model="llama3.2:1b",
+        base_url_redacted="http://localhost:11434/v1",
+        status="skip",
+        reason="missing deps",
+        citation_count=0,
+        timing_ms=12.34,
+    )
+
+    d = report.to_dict()
+    assert d["provider"] == "ollama"
+    assert d["model"] == "llama3.2:1b"
+    assert d["base_url_redacted"] == "http://localhost:11434/v1"
+    assert d["status"] == "skip"
+    assert d["reason"] == "missing deps"
+    assert d["citation_count"] == 0
+    assert d["timing_ms"] == 12.34
+    assert "details" in d
+
+    json_str = report.to_json()
+    assert '"provider":' in json_str
+    assert '"status":' in json_str
+
+
+def test_check_openai_dependency_when_missing(monkeypatch):
+    """_check_openai_dependency returns False when openai cannot be imported."""
+    monkeypatch.setattr(
+        "ragrig.answer.diagnostics._try_import",
+        lambda name: False,
+    )
+    ok, reason = _check_openai_dependency()
+    assert ok is False
+    assert "openai" in reason.lower()
+
+
+# ── Live smoke test class (requires RAGRIG_ANSWER_LIVE_SMOKE=1) ───────────────
+
+
+@pytest.mark.skipif(
+    os.environ.get("RAGRIG_ANSWER_LIVE_SMOKE") != "1",
+    reason="set RAGRIG_ANSWER_LIVE_SMOKE=1 to run answer live smoke tests",
+)
 class TestAnswerLiveSmoke:
     """End-to-end answer generation smoke test with a local LLM."""
 
