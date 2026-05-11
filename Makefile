@@ -207,6 +207,9 @@ verify-export-fixture:
 # Compares base/head sanitizer-coverage-summary.json artifacts and
 # produces a structured diff + Markdown report.  Exit code 2 when
 # risk=degraded, 0 when unchanged, 1 on error.
+sanitizer-contract-check:
+	$(UV) run python -m scripts.sanitizer_contract_check
+
 sanitizer-drift-diff:
 	$(UV) run python -m scripts.sanitizer_drift_diff \
 		--base $(DRIFT_BASE) \
