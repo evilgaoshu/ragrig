@@ -113,29 +113,32 @@ def test_non_sensitive_values_not_matched() -> None:
 
 def test_redact_top_level_sensitive_key() -> None:
     meta = {"api_key": "sk-12345", "normal": "visible"}
-    sanitized, count, paths = redact_metadata(meta)
+    sanitized, count, paths, summary = redact_metadata(meta)
     assert sanitized["api_key"] == REDACTED
     assert sanitized["normal"] == "visible"
     assert count == 1
     assert paths == ["api_key"]
+    assert summary.redacted_count == 1
 
 
 def test_redact_nested_sensitive_key() -> None:
     meta = {"auth": {"token": "top-secret-token", "user": "admin"}}
-    sanitized, count, paths = redact_metadata(meta)
+    sanitized, count, paths, summary = redact_metadata(meta)
     assert sanitized["auth"]["token"] == REDACTED
     assert sanitized["auth"]["user"] == "admin"
     assert count == 1
     assert paths == ["auth.token"]
+    assert summary.redacted_count == 1
 
 
 def test_redact_deeply_nested() -> None:
     meta = {"level1": {"level2": {"level3": {"api_key": "deep-secret", "name": "leaf"}}}}
-    sanitized, count, paths = redact_metadata(meta)
+    sanitized, count, paths, summary = redact_metadata(meta)
     assert sanitized["level1"]["level2"]["level3"]["api_key"] == REDACTED
     assert sanitized["level1"]["level2"]["level3"]["name"] == "leaf"
     assert count == 1
     assert "level1.level2.level3.api_key" in paths
+    assert summary.redacted_count == 1
 
 
 def test_redact_list_of_dicts() -> None:
@@ -146,7 +149,7 @@ def test_redact_list_of_dicts() -> None:
             {"name": "c", "normal": "c-val"},
         ]
     }
-    sanitized, count, paths = redact_metadata(meta)
+    sanitized, count, paths, summary = redact_metadata(meta)
     assert sanitized["providers"][0]["api_key"] == REDACTED
     assert sanitized["providers"][0]["name"] == "a"
     assert sanitized["providers"][1]["password"] == REDACTED
@@ -155,6 +158,7 @@ def test_redact_list_of_dicts() -> None:
     assert count == 2
     assert "providers[0].api_key" in paths
     assert "providers[1].password" in paths
+    assert summary.redacted_count == 2
 
 
 def test_redact_nested_list_in_list() -> None:
@@ -169,26 +173,29 @@ def test_redact_nested_list_in_list() -> None:
             }
         ]
     }
-    sanitized, count, paths = redact_metadata(meta)
+    sanitized, count, paths, summary = redact_metadata(meta)
     assert sanitized["clusters"][0]["nodes"][0]["secret"] == REDACTED
     assert sanitized["clusters"][0]["nodes"][1]["secret"] == REDACTED
     assert sanitized["clusters"][0]["id"] == "c1"
     assert count == 2
+    assert summary.redacted_count == 2
 
 
 def test_redact_list_of_lists() -> None:
     meta = {"matrix": [["a", "b"], ["c", "d"]]}
-    sanitized, count, _ = redact_metadata(meta)
+    sanitized, count, _paths, summary = redact_metadata(meta)
     assert sanitized["matrix"] == [["a", "b"], ["c", "d"]]
     assert count == 0
+    assert summary.redacted_count == 0
 
 
 def test_redact_bearer_token_value() -> None:
     meta = {"headers": {"Authorization": "Bearer secret-token-123"}}
-    sanitized, count, paths = redact_metadata(meta)
+    sanitized, count, paths, summary = redact_metadata(meta)
     assert sanitized["headers"]["Authorization"] == REDACTED
     assert count == 1
     assert "headers.Authorization" in paths
+    assert summary.redacted_count == 1
 
 
 def test_redact_pem_key_value() -> None:
@@ -197,9 +204,10 @@ def test_redact_pem_key_value() -> None:
             "key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpA...\n-----END RSA PRIVATE KEY-----"
         }
     }
-    sanitized, count, paths = redact_metadata(meta)
+    sanitized, count, paths, summary = redact_metadata(meta)
     assert sanitized["certs"]["key"] == REDACTED
     assert count == 1
+    assert summary.redacted_count == 1
 
 
 def test_redact_preserves_non_sensitive() -> None:
@@ -211,9 +219,10 @@ def test_redact_preserves_non_sensitive() -> None:
             "enabled": True,
         }
     }
-    sanitized, count, _ = redact_metadata(meta)
+    sanitized, count, _paths, summary = redact_metadata(meta)
     assert sanitized == meta
     assert count == 0
+    assert summary.redacted_count == 0
 
 
 def test_redact_null_empty_scalar() -> None:
@@ -224,13 +233,14 @@ def test_redact_null_empty_scalar() -> None:
         "scalar": 42,
         "bool_val": False,
     }
-    sanitized, count, _ = redact_metadata(meta)
+    sanitized, count, _paths, summary = redact_metadata(meta)
     assert sanitized["null_field"] is None
     assert sanitized["empty_dict"] == {}
     assert sanitized["empty_list"] == []
     assert sanitized["scalar"] == 42
     assert sanitized["bool_val"] is False
     assert count == 0
+    assert summary.redacted_count == 0
 
 
 def test_redact_multiple_across_levels() -> None:
@@ -246,7 +256,7 @@ def test_redact_multiple_across_levels() -> None:
         ],
         "ok": "fine",
     }
-    sanitized, count, paths = redact_metadata(meta)
+    sanitized, count, paths, summary = redact_metadata(meta)
     assert sanitized["api_key"] == REDACTED
     assert sanitized["nested"]["token"] == REDACTED
     assert sanitized["nested"]["deep"]["password"] == REDACTED
@@ -255,20 +265,23 @@ def test_redact_multiple_across_levels() -> None:
     assert sanitized["ok"] == "fine"
     assert count == 4
     assert len(paths) == 4
+    assert summary.redacted_count == 4
 
 
 def test_redact_empty_metadata() -> None:
-    sanitized, count, paths = redact_metadata({})
+    sanitized, count, paths, summary = redact_metadata({})
     assert sanitized == {}
     assert count == 0
     assert paths == []
+    assert summary.redacted_count == 0
 
 
 def test_redact_only_sensitive_keys() -> None:
     meta = {"api_key": "val", "password": "val2"}
-    sanitized, count, _ = redact_metadata(meta)
+    sanitized, count, _paths, summary = redact_metadata(meta)
     assert sanitized == {"api_key": REDACTED, "password": REDACTED}
     assert count == 2
+    assert summary.redacted_count == 2
 
 
 def test_redact_bearer_in_deep_list() -> None:
@@ -277,17 +290,19 @@ def test_redact_bearer_in_deep_list() -> None:
             {"url": "https://x.com", "headers": {"Authorization": "Bearer secret-abc"}},
         ]
     }
-    sanitized, count, paths = redact_metadata(meta)
+    sanitized, count, paths, summary = redact_metadata(meta)
     assert sanitized["webhooks"][0]["headers"]["Authorization"] == REDACTED
     assert count == 1
     assert "webhooks[0].headers.Authorization" in paths
+    assert summary.redacted_count == 1
 
 
 def test_redact_custom_prefix() -> None:
     meta = {"token": "abc"}
-    sanitized, count, paths = redact_metadata(meta, prefix="metadata_json")
+    sanitized, count, paths, summary = redact_metadata(meta, prefix="metadata_json")
     assert sanitized["token"] == REDACTED
     assert paths == ["metadata_json.token"]
+    assert summary.redacted_count == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -297,16 +312,18 @@ def test_redact_custom_prefix() -> None:
 
 def test_remove_top_level_sensitive_key() -> None:
     meta = {"api_key": "sk-abc", "version": 1}
-    result = remove_metadata(meta)
+    result, summary = remove_metadata(meta)
     assert "api_key" not in result
     assert result["version"] == 1
+    assert summary.removed_count == 1
 
 
 def test_remove_nested_sensitive_key() -> None:
     meta = {"config": {"api_key": "nested-secret", "visible": "ok"}}
-    result = remove_metadata(meta)
+    result, summary = remove_metadata(meta)
     assert "api_key" not in result["config"]
     assert result["config"]["visible"] == "ok"
+    assert summary.removed_count == 1
 
 
 def test_remove_list_of_dicts() -> None:
@@ -316,23 +333,26 @@ def test_remove_list_of_dicts() -> None:
             {"token": "t2", "name": "b"},
         ]
     }
-    result = remove_metadata(meta)
+    result, summary = remove_metadata(meta)
     assert "token" not in result["items"][0]
     assert result["items"][0]["name"] == "a"
     assert "token" not in result["items"][1]
     assert result["items"][1]["name"] == "b"
+    assert summary.removed_count == 2
 
 
 def test_remove_bearer_token() -> None:
     meta = {"headers": {"auth": "Bearer xyz123"}}
-    result = remove_metadata(meta)
+    result, summary = remove_metadata(meta)
     assert "auth" not in result["headers"]
+    assert summary.removed_count == 1
 
 
 def test_remove_pem_key() -> None:
     meta = {"key": "-----BEGIN PRIVATE KEY-----\nxxx"}
-    result = remove_metadata(meta)
+    result, summary = remove_metadata(meta)
     assert "key" not in result
+    assert summary.removed_count == 1
 
 
 def test_remove_preserves_non_sensitive() -> None:
@@ -344,13 +364,14 @@ def test_remove_preserves_non_sensitive() -> None:
         "empty_list": [],
         "empty_dict": {},
     }
-    result = remove_metadata(meta)
+    result, summary = remove_metadata(meta)
     assert result["version"] == 2
     assert result["tags"] == ["a", "b"]
     assert result["config"] == {"timeout": 30}
     assert result["nil"] is None
     assert result["empty_list"] == []
     assert result["empty_dict"] == {}
+    assert summary.removed_count == 0
 
 
 def test_remove_sensitive_in_list() -> None:
@@ -363,8 +384,9 @@ def test_remove_sensitive_in_list() -> None:
             "Bearer token2",
         ]
     }
-    result = remove_metadata(meta)
+    result, summary = remove_metadata(meta)
     assert result["items"] == ["normal value", 42, None]
+    assert summary.removed_count == 2
 
 
 def test_remove_sensitive_in_nested_list() -> None:
@@ -374,15 +396,18 @@ def test_remove_sensitive_in_nested_list() -> None:
             {"password": "pass-b", "name": "b"},
         ]
     }
-    result = remove_metadata(meta)
+    result, summary = remove_metadata(meta)
     assert "api_key" not in result["providers"][0]
     assert result["providers"][0]["name"] == "a"
     assert "password" not in result["providers"][1]
     assert result["providers"][1]["name"] == "b"
+    assert summary.removed_count == 2
 
 
 def test_remove_empty_metadata() -> None:
-    assert remove_metadata({}) == {}
+    result, summary = remove_metadata({})
+    assert result == {}
+    assert summary.removed_count == 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -402,6 +427,8 @@ def test_redact_state_includes_redaction_meta() -> None:
     assert "metadata_json.api_key" in sanitized["_redaction"]["paths"]
     assert sanitized["metadata_json"]["api_key"] == REDACTED
     assert sanitized["metadata_json"]["version"] == 2
+    assert "_sanitization_summary" in sanitized
+    assert sanitized["_sanitization_summary"]["redacted_count"] == 1
 
 
 def test_redact_state_top_level_sensitive() -> None:
@@ -411,6 +438,8 @@ def test_redact_state_top_level_sensitive() -> None:
     assert sanitized["display_name"] == "Test"
     assert sanitized["_redaction"]["count"] == 1
     assert "api_key" in sanitized["_redaction"]["paths"]
+    assert "_sanitization_summary" in sanitized
+    assert sanitized["_sanitization_summary"]["redacted_count"] == 1
 
 
 def test_redact_state_no_redaction_meta_when_clean() -> None:
@@ -421,6 +450,8 @@ def test_redact_state_no_redaction_meta_when_clean() -> None:
     }
     sanitized = _sanitize_state(state)
     assert "_redaction" not in sanitized
+    assert "_sanitization_summary" in sanitized
+    assert sanitized["_sanitization_summary"]["redacted_count"] == 0
 
 
 def test_redact_state_non_dict_metadata() -> None:
@@ -429,6 +460,8 @@ def test_redact_state_non_dict_metadata() -> None:
     sanitized = _sanitize_state(state)
     assert sanitized["metadata_json"] == "not-a-dict"
     assert "_redaction" not in sanitized
+    assert "_sanitization_summary" in sanitized
+    assert sanitized["_sanitization_summary"]["redacted_count"] == 0
 
 
 def test_redact_state_shared_helper_identical() -> None:
@@ -454,8 +487,8 @@ def test_model_wrapper_matches_shared_remove() -> None:
         "nested": {"token": "t1", "name": "ok"},
         "items": [{"secret": "s1", "id": 1}],
     }
-    via_wrapper = _sanitize_metadata(meta)
-    via_shared = remove_metadata(meta)
+    via_wrapper, _wrapper_summary = _sanitize_metadata(meta)
+    via_shared, _shared_summary = remove_metadata(meta)
     assert via_wrapper == via_shared
 
 
@@ -503,12 +536,12 @@ def test_drift_all_sensitive_keys_handled_consistently() -> None:
         meta = {key: "test-value", "normal": "ok"}
 
         # Redact mode
-        redacted, count, _ = redact_metadata(meta)
+        redacted, count, _paths, _summary = redact_metadata(meta)
         assert redacted[key] == REDACTED, f"Redact mode missed key='{key}'"
         assert count >= 1, f"Redact count=0 for key='{key}'"
 
         # Removal mode
-        removed = remove_metadata(meta)
+        removed, _summary = remove_metadata(meta)
         assert key not in removed, f"Remove mode missed key='{key}'"
 
 
@@ -523,12 +556,12 @@ def test_drift_all_sensitive_value_prefixes_handled_consistently() -> None:
         meta = {key: value}
 
         # Redact mode
-        redacted, count, _ = redact_metadata(meta)
+        redacted, count, _paths, _summary = redact_metadata(meta)
         assert redacted[key] == REDACTED, f"Redact mode missed prefix='{prefix}'"
         assert count >= 1, f"Redact count=0 for prefix='{prefix}'"
 
         # Removal mode
-        removed = remove_metadata(meta)
+        removed, _summary = remove_metadata(meta)
         assert key not in removed, f"Remove mode missed prefix='{prefix}'"
 
 
@@ -537,13 +570,13 @@ def test_drift_detection_classifies_caller_sites() -> None:
     meta = _drift_input()
 
     # 1. Shared redact_metadata (repository path)
-    redacted_dict, redact_count, redact_paths = redact_metadata(meta)
+    redacted_dict, redact_count, redact_paths, _redact_summary = redact_metadata(meta)
 
     # 2. Shared remove_metadata (model/API path)
-    removed_dict = remove_metadata(meta)
+    removed_dict, _remove_summary = remove_metadata(meta)
 
     # 3. Repository wrapper (via _sanitize_metadata_json)
-    repo_dict, repo_count, repo_paths = _sanitize_metadata_json(meta)
+    repo_dict, repo_count, repo_paths, _repo_summary = _sanitize_metadata_json(meta)
 
     # Redact paths must match between shared and wrapper (accounting for prefix)
     shared_paths_stripped = [
@@ -590,7 +623,7 @@ def test_drift_additional_sensitive_key_propagates_to_all_callers() -> None:
 
     # Before adding "license_key" to sensitive parts:
     # It should NOT be treated as sensitive yet.
-    redacted, count, _ = redact_metadata(meta)
+    redacted, count, _paths, _summary = redact_metadata(meta)
     # license_key is NOT in SENSITIVE_KEY_PARTS, so it should pass through
     # "license_key" does not match any SENSITIVE_KEY_PARTS entry (substring).
     # So "license_key" is not currently sensitive.
@@ -610,7 +643,7 @@ def test_drift_additional_sensitive_key_propagates_to_all_callers() -> None:
     assert redacted_val["api_key"] == REDACTED
     assert redacted_val["normal"] == "ok"
 
-    removed_val = remove_metadata({"api_key": "v", "normal": "ok"})
+    removed_val = remove_metadata({"api_key": "v", "normal": "ok"})[0]
     assert "api_key" not in removed_val
     assert removed_val["normal"] == "ok"
 
@@ -620,10 +653,10 @@ def test_drift_repository_model_api_same_output_for_redacted_keys() -> None:
     meta = _drift_input()
 
     # Repository redacted output
-    repo_out, _, repo_paths = _sanitize_metadata_json(meta)
+    repo_out, _repo_count, repo_paths, _repo_summary = _sanitize_metadata_json(meta)
 
     # Model (API) removed output
-    model_out = _sanitize_metadata(meta)
+    model_out, _model_summary = _sanitize_metadata(meta)
 
     # Every redacted path in repo must be absent from model
     for path in repo_paths:
@@ -665,9 +698,12 @@ def test_drift_state_sanitizer_agrees_with_metadata_sanitizer() -> None:
     }
 
     state_sanitized = _sanitize_state(state)
-    meta_sanitized, meta_count, meta_paths = _sanitize_metadata_json(meta)
+    meta_sanitized, meta_count, meta_paths, _meta_summary = _sanitize_metadata_json(meta)
 
-    assert state_sanitized["metadata_json"] == meta_sanitized
+    # Pop _sanitization_summary from state_sanitized["metadata_json"] before comparing
+    state_meta = dict(state_sanitized["metadata_json"])
+    state_meta.pop("_sanitization_summary", None)
+    assert state_meta == meta_sanitized
     if "_redaction" in state_sanitized:
         assert state_sanitized["_redaction"]["count"] == meta_count
         # Paths from _sanitize_state are relative to metadata_json
@@ -697,13 +733,13 @@ def test_drift_no_plaintext_secrets_in_output() -> None:
     meta = _drift_input()
 
     # Redact mode
-    redacted, _, _ = redact_metadata(meta)
+    redacted, _count, _paths, _summary = redact_metadata(meta)
     redacted_str = str(redacted)
     for secret in plaintext_secrets:
         assert secret not in redacted_str, f"Redact mode leaked plaintext: '{secret}'"
 
     # Removal mode
-    removed = remove_metadata(meta)
+    removed, _summary = remove_metadata(meta)
     removed_str = str(removed)
     for secret in plaintext_secrets:
         assert secret not in removed_str, f"Remove mode leaked plaintext: '{secret}'"
@@ -715,13 +751,13 @@ def test_drift_verify_output_has_no_plain_secret_in_str_representation() -> None
         "api_key": "sk-real-actual-secret-12345",
         "nested": {"token": "ghp_actual_token_value"},
     }
-    redacted, _, _ = redact_metadata(meta)
+    redacted, _count, _paths, _summary = redact_metadata(meta)
     redacted_flat = str(redacted)
     assert "sk-real-actual-secret-12345" not in redacted_flat
     assert "ghp_actual_token_value" not in redacted_flat
     assert REDACTED in redacted_flat
 
-    removed = remove_metadata(meta)
+    removed, _summary = remove_metadata(meta)
     removed_flat = str(removed)
     assert "sk-real-actual-secret-12345" not in removed_flat
     assert "ghp_actual_token_value" not in removed_flat
@@ -763,7 +799,7 @@ def test_redact_metadata_with_non_string_keys() -> None:
         "normal": "ok",
         "api_key": "secret",
     }
-    sanitized, count, paths = redact_metadata(meta)
+    sanitized, count, paths, summary = redact_metadata(meta)
     # Non-string keys are preserved; only string keys are checked for sensitivity
     assert sanitized[123] == "numeric-key-value"
     assert sanitized[None] == "none-key-value"
@@ -772,6 +808,7 @@ def test_redact_metadata_with_non_string_keys() -> None:
     assert sanitized["api_key"] == REDACTED
     assert count == 1
     assert paths == ["api_key"]
+    assert summary.non_string_key_count == 3
 
 
 def test_remove_metadata_with_non_string_keys() -> None:
@@ -782,12 +819,13 @@ def test_remove_metadata_with_non_string_keys() -> None:
         "normal": "ok",
         "api_key": "secret",
     }
-    result = remove_metadata(meta)
+    result, summary = remove_metadata(meta)
     assert result[123] == "numeric-key-value"
     assert result[None] == "none-key-value"
     assert result[("tuple", "key")] == "tuple-key-value"
     assert result["normal"] == "ok"
     assert "api_key" not in result
+    assert summary.non_string_key_count == 3
 
 
 def test_redact_metadata_nested_with_non_string_keys() -> None:
@@ -799,11 +837,12 @@ def test_redact_metadata_nested_with_non_string_keys() -> None:
             },
         }
     }
-    sanitized, count, paths = redact_metadata(meta)
+    sanitized, count, paths, summary = redact_metadata(meta)
     assert sanitized["level1"][42]["api_key"] == REDACTED
     assert sanitized["level1"][42]["name"] == "leaf"
     assert count == 1
     assert "level1.42.api_key" in paths
+    assert summary.non_string_key_count == 1
 
 
 def test_remove_metadata_nested_with_non_string_keys() -> None:
@@ -815,9 +854,10 @@ def test_remove_metadata_nested_with_non_string_keys() -> None:
             },
         }
     }
-    result = remove_metadata(meta)
+    result, summary = remove_metadata(meta)
     assert "api_key" not in result["level1"][42]
     assert result["level1"][42]["name"] == "leaf"
+    assert summary.non_string_key_count == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -831,11 +871,13 @@ def test_redact_metadata_does_not_recurse_error_on_deep_input() -> None:
     for _ in range(1500):
         deep_meta = {"level": deep_meta}
 
-    sanitized, count, paths = redact_metadata(deep_meta)
+    sanitized, count, paths, summary = redact_metadata(deep_meta)
     # Should complete without RecursionError and mark depth-exceeded nodes
     assert isinstance(sanitized, dict)
     assert count >= 1
     assert DEGRADED in str(sanitized)
+    assert summary.max_depth_exceeded is True
+    assert summary.degraded_count >= 1
 
 
 def test_remove_metadata_does_not_recurse_error_on_deep_input() -> None:
@@ -844,41 +886,51 @@ def test_remove_metadata_does_not_recurse_error_on_deep_input() -> None:
     for _ in range(1500):
         deep_meta = {"level": deep_meta}
 
-    result = remove_metadata(deep_meta)
+    result, summary = remove_metadata(deep_meta)
     # Should complete without RecursionError
     assert isinstance(result, dict)
+    assert summary.max_depth_exceeded is True
+    assert summary.degraded_count >= 1
 
 
 def test_redact_metadata_custom_max_depth() -> None:
     """Verify that a low max_depth produces DEGRADED markers."""
     meta = {"a": {"b": {"c": {"d": "value"}}}}
-    sanitized, count, paths = redact_metadata(meta, max_depth=2)
+    sanitized, count, paths, summary = redact_metadata(meta, max_depth=2)
     assert sanitized["a"]["b"] == DEGRADED
     assert count == 1
     assert "a.b" in paths
+    assert summary.max_depth_exceeded is True
+    assert summary.degraded_count == 1
 
 
 def test_remove_metadata_custom_max_depth() -> None:
     """Verify that a low max_depth omits subtrees beyond the limit."""
     meta = {"a": {"b": {"c": {"d": "value"}}}}
-    result = remove_metadata(meta, max_depth=2)
+    result, summary = remove_metadata(meta, max_depth=2)
     assert "b" not in result.get("a", {})
+    assert summary.max_depth_exceeded is True
+    assert summary.degraded_count == 1
 
 
 def test_redact_metadata_degraded_in_list() -> None:
     meta = {"items": [{"a": {"b": {"c": "value"}}}]}
-    sanitized, count, paths = redact_metadata(meta, max_depth=2)
+    sanitized, count, paths, summary = redact_metadata(meta, max_depth=2)
     # The dict inside the list is at depth 2, so it is replaced with DEGRADED
     assert sanitized["items"][0] == DEGRADED
     assert count == 1
     assert "items[0]" in paths
+    assert summary.max_depth_exceeded is True
+    assert summary.degraded_count == 1
 
 
 def test_remove_metadata_degraded_in_list() -> None:
     meta = {"items": [{"a": {"b": {"c": "value"}}}]}
-    result = remove_metadata(meta, max_depth=2)
+    result, summary = remove_metadata(meta, max_depth=2)
     # The dict inside the list is at depth 2, so it is omitted
     assert result["items"] == []
+    assert summary.max_depth_exceeded is True
+    assert summary.degraded_count == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -893,7 +945,7 @@ def test_model_sanitize_metadata_does_not_recurse_error() -> None:
     for _ in range(1500):
         deep_meta = {"level": deep_meta}
 
-    result = _sanitize_metadata(deep_meta)
+    result, summary = _sanitize_metadata(deep_meta)
     assert isinstance(result, dict)
 
 
@@ -904,9 +956,11 @@ def test_repository_sanitize_metadata_json_does_not_recurse_error() -> None:
     for _ in range(1500):
         deep_meta = {"level": deep_meta}
 
-    sanitized, count, paths = _sanitize_metadata_json(deep_meta)
+    sanitized, count, paths, summary = _sanitize_metadata_json(deep_meta)
     assert isinstance(sanitized, dict)
     assert count >= 1
+    assert summary.max_depth_exceeded is True
+    assert summary.degraded_count >= 1
 
 
 def test_model_sanitize_metadata_non_string_keys() -> None:
@@ -917,10 +971,12 @@ def test_model_sanitize_metadata_non_string_keys() -> None:
         "normal": "ok",
         "api_key": "secret",
     }
-    result = _sanitize_metadata(meta)
+    result, summary = _sanitize_metadata(meta)
     assert result[123] == "numeric-key-value"
     assert result["normal"] == "ok"
     assert "api_key" not in result
+    assert summary.non_string_key_count == 1
+    assert summary.removed_count == 1
 
 
 def test_repository_sanitize_metadata_json_non_string_keys() -> None:
@@ -931,8 +987,146 @@ def test_repository_sanitize_metadata_json_non_string_keys() -> None:
         "normal": "ok",
         "api_key": "secret",
     }
-    sanitized, count, paths = _sanitize_metadata_json(meta)
+    sanitized, count, paths, summary = _sanitize_metadata_json(meta)
     assert sanitized[123] == "numeric-key-value"
     assert sanitized["normal"] == "ok"
     assert sanitized["api_key"] == REDACTED
     assert count == 1
+    assert summary.non_string_key_count == 1
+    assert summary.redacted_count == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SanitizationSummary
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_redact_metadata_summary_no_op() -> None:
+    """Empty metadata returns summary with all zeros and max_depth_exceeded=False."""
+    sanitized, count, paths, summary = redact_metadata({})
+    assert summary.schema_version == "1.0"
+    assert summary.redacted_count == 0
+    assert summary.removed_count == 0
+    assert summary.degraded_count == 0
+    assert summary.non_string_key_count == 0
+    assert summary.max_depth_exceeded is False
+
+
+def test_redact_metadata_summary_secret_like() -> None:
+    """Metadata with api_key and bearer token returns correct
+    redacted_count, removed_count=0, degraded_count=0."""
+    meta = {"api_key": "sk-123", "headers": {"Authorization": "Bearer token"}}
+    sanitized, count, paths, summary = redact_metadata(meta)
+    assert summary.redacted_count == 2
+    assert summary.removed_count == 0
+    assert summary.degraded_count == 0
+    assert summary.non_string_key_count == 0
+    assert summary.max_depth_exceeded is False
+
+
+def test_redact_metadata_summary_non_string_keys() -> None:
+    """Metadata with non-string keys returns correct non_string_key_count."""
+    meta = {123: "val", "api_key": "secret"}
+    sanitized, count, paths, summary = redact_metadata(meta)
+    assert summary.non_string_key_count == 1
+    assert summary.redacted_count == 1
+
+
+def test_redact_metadata_summary_depth_truncation() -> None:
+    """Deeply nested metadata with max_depth=2 returns degraded_count>0
+    and max_depth_exceeded=True."""
+    meta = {"a": {"b": {"c": {"d": "value"}}}}
+    sanitized, count, paths, summary = redact_metadata(meta, max_depth=2)
+    assert summary.degraded_count > 0
+    assert summary.max_depth_exceeded is True
+
+
+def test_remove_metadata_summary_no_op() -> None:
+    """Empty metadata returns summary with all zeros."""
+    result, summary = remove_metadata({})
+    assert summary.schema_version == "1.0"
+    assert summary.redacted_count == 0
+    assert summary.removed_count == 0
+    assert summary.degraded_count == 0
+    assert summary.non_string_key_count == 0
+    assert summary.max_depth_exceeded is False
+
+
+def test_remove_metadata_summary_secret_like() -> None:
+    """Metadata with secrets returns correct removed_count."""
+    meta = {"api_key": "sk-123", "password": "secret"}
+    result, summary = remove_metadata(meta)
+    assert summary.removed_count == 2
+    assert summary.redacted_count == 0
+    assert summary.degraded_count == 0
+
+
+def test_remove_metadata_summary_non_string_keys() -> None:
+    """Non-string keys count correctly."""
+    meta = {123: "val", "api_key": "secret"}
+    result, summary = remove_metadata(meta)
+    assert summary.non_string_key_count == 1
+    assert summary.removed_count == 1
+
+
+def test_remove_metadata_summary_depth_truncation() -> None:
+    """Depth limit returns degraded_count>0."""
+    meta = {"a": {"b": {"c": {"d": "value"}}}}
+    result, summary = remove_metadata(meta, max_depth=2)
+    assert summary.degraded_count > 0
+    assert summary.max_depth_exceeded is True
+
+
+def test_redact_state_summary_always_present() -> None:
+    """Even clean state has _sanitization_summary with zeros."""
+    state = {"display_name": "Test", "metadata_json": {"version": 1}}
+    sanitized = redact_state(state)
+    assert "_sanitization_summary" in sanitized
+    assert sanitized["_sanitization_summary"]["redacted_count"] == 0
+    assert sanitized["_sanitization_summary"]["removed_count"] == 0
+    assert sanitized["_sanitization_summary"]["degraded_count"] == 0
+    assert sanitized["_sanitization_summary"]["non_string_key_count"] == 0
+    assert sanitized["_sanitization_summary"]["max_depth_exceeded"] is False
+
+
+def test_redact_state_summary_with_redactions() -> None:
+    """State with secrets has correct counts in _sanitization_summary."""
+    state = {"display_name": "Test", "api_key": "secret", "metadata_json": {"token": "t"}}
+    sanitized = redact_state(state)
+    assert sanitized["_sanitization_summary"]["redacted_count"] == 2
+    assert sanitized["_sanitization_summary"]["removed_count"] == 0
+    assert sanitized["_sanitization_summary"]["degraded_count"] == 0
+
+
+def test_summary_does_not_contain_secrets() -> None:
+    """Verify summary.to_dict() does not contain secret values."""
+    meta = {"api_key": "sk-real-secret-12345"}
+    sanitized, count, paths, summary = redact_metadata(meta)
+    summary_dict = summary.to_dict()
+    summary_str = str(summary_dict)
+    assert "sk-real-secret-12345" not in summary_str
+    assert REDACTED not in summary_str  # summary itself should not contain REDACTED either
+
+
+def test_call_site_summary_consistency() -> None:
+    """Verify that _sanitize_metadata_json(), remove_metadata(), and
+    _sanitize_metadata() produce consistent summary counts for the same input."""
+    meta = {
+        "api_key": "sk-123",
+        "password": "secret",
+        123: "numeric",
+        "nested": {"token": "bearer"},
+    }
+
+    repo_sanitized, repo_count, repo_paths, repo_summary = _sanitize_metadata_json(meta)
+    removed, remove_summary = remove_metadata(meta)
+    model_sanitized, model_summary = _sanitize_metadata(meta)
+
+    # remove_metadata and _sanitize_metadata should agree on removed counts
+    assert remove_summary.removed_count == model_summary.removed_count
+    assert remove_summary.non_string_key_count == model_summary.non_string_key_count
+
+    # _sanitize_metadata_json redacted count should equal remove_summary
+    # removed count for this input (since same keys trigger both)
+    assert repo_summary.redacted_count == remove_summary.removed_count
+    assert repo_summary.non_string_key_count == remove_summary.non_string_key_count
