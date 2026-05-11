@@ -105,6 +105,16 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "retrieval-reranker-provider" in response.text
     assert "retrieval-reranker-model" in response.text
     assert "_renderRankStageTrace" in response.text
+    assert "Baseline Integrity" in response.text
+    assert "retrieval-benchmark-integrity-panel" in response.text
+    assert "Retrieval Baseline Integrity" in response.text
+    assert "retrieval-integrity-status" in response.text
+    assert "retrieval-integrity-facts" in response.text
+    assert "retrieval-integrity-reasons" in response.text
+    assert "loadRetrievalBenchmarkIntegrity" in response.text
+    assert "renderRetrievalBenchmarkIntegrity" in response.text
+    assert "baseline-integrity-status" in response.text
+    assert "baseline-integrity-subtext" in response.text
 
 
 @pytest.mark.anyio
@@ -3418,6 +3428,127 @@ async def test_answer_api_acl_filters_protected_content(tmp_path) -> None:
     assert "top secret" not in response_text
     # But public content should be there
     assert payload["grounding_status"] == "grounded"
+
+
+@pytest.mark.anyio
+async def test_retrieval_benchmark_integrity_endpoint_returns_summary(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "web-console-integrity.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    import json
+
+    manifest = {
+        "schema_version": "1.0",
+        "baseline_id": "test-baseline-id",
+        "fixture_id": "test-fixture-id",
+        "iteration_count": 5,
+        "modes": ["dense", "hybrid", "rerank", "hybrid_rerank"],
+        "metrics_hash": "85127e140d1d2bf6",
+        "created_at": "2026-05-11T00:00:00Z",
+        "generator_version": "0.1.0",
+    }
+    baseline = {
+        "knowledge_base": "fixture-local",
+        "queries": ["q1", "q2", "q3", "q4", "q5"],
+        "iterations_per_query": 5,
+        "database": "sqlite:///:memory: (temp)",
+        "modes": [
+            {
+                "mode": "dense",
+                "top_k": 5,
+                "candidate_k": 20,
+                "iterations": 25,
+                "p50_latency_ms": 1.1,
+                "p95_latency_ms": 1.4,
+                "min_latency_ms": 1.0,
+                "max_latency_ms": 5.0,
+                "mean_latency_ms": 1.3,
+                "result_count": 75,
+                "degraded": False,
+                "degraded_reason": "",
+            },
+            {
+                "mode": "hybrid",
+                "top_k": 5,
+                "candidate_k": 20,
+                "iterations": 25,
+                "p50_latency_ms": 1.1,
+                "p95_latency_ms": 1.5,
+                "min_latency_ms": 1.1,
+                "max_latency_ms": 1.5,
+                "mean_latency_ms": 1.2,
+                "result_count": 75,
+                "degraded": False,
+                "degraded_reason": "",
+            },
+            {
+                "mode": "rerank",
+                "top_k": 5,
+                "candidate_k": 20,
+                "iterations": 25,
+                "p50_latency_ms": 1.1,
+                "p95_latency_ms": 1.4,
+                "min_latency_ms": 1.1,
+                "max_latency_ms": 1.5,
+                "mean_latency_ms": 1.2,
+                "result_count": 75,
+                "degraded": False,
+                "degraded_reason": "",
+            },
+            {
+                "mode": "hybrid_rerank",
+                "top_k": 5,
+                "candidate_k": 20,
+                "iterations": 25,
+                "p50_latency_ms": 1.1,
+                "p95_latency_ms": 1.5,
+                "min_latency_ms": 1.1,
+                "max_latency_ms": 1.8,
+                "mean_latency_ms": 1.2,
+                "result_count": 75,
+                "degraded": False,
+                "degraded_reason": "",
+            },
+        ],
+    }
+
+    manifest_path = tmp_path / "manifest.json"
+    baseline_path = tmp_path / "baseline.json"
+    manifest_path.write_text(json.dumps(manifest))
+    baseline_path.write_text(json.dumps(baseline))
+
+    monkeypatch.setattr(
+        "ragrig.retrieval_benchmark_integrity.DEFAULT_MANIFEST_PATH",
+        manifest_path,
+    )
+    monkeypatch.setattr(
+        "ragrig.retrieval_benchmark_integrity.DEFAULT_BASELINE_PATH",
+        baseline_path,
+    )
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/retrieval/benchmark/integrity")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["overall_status"] == "pass"
+    assert payload["schema_version"] == "1.0"
+    assert payload["fixture_id"] == "test-fixture-id"
+    assert payload["iteration_count"] == 5
+    assert payload["metrics_hash_status"] == "match"
+    assert payload["reasons"] == []
+    assert "checked_at" in payload
+
+    # Verify no secrets leaked
+    response_text = response.text
+    assert "secret" not in response_text.lower() or "[redacted]" in response_text
 
 
 # ── Understanding Export Diff Console Badge tests ────────────────────────────

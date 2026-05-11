@@ -26,6 +26,7 @@ from ragrig.db.models import (
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
 from ragrig.providers import get_provider_registry
+from ragrig.retrieval_benchmark_integrity import get_integrity_summary as _get_integrity_summary
 from ragrig.vectorstore.base import VectorBackendHealth
 
 
@@ -1172,3 +1173,14 @@ def get_recent_benchmark() -> dict[str, Any]:
         "last_updated": artifact_mtime,
         "summary": artifact,
     }
+
+
+# ── Retrieval Benchmark Integrity ───────────────────────────────────────────
+
+
+def get_retrieval_benchmark_integrity() -> dict[str, Any]:
+    """Return retrieval benchmark baseline integrity for Web Console display.
+
+    Never includes raw secret fragments.
+    """
+    return _get_integrity_summary()

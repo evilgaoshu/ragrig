@@ -81,6 +81,7 @@ from ragrig.web_console import (
     check_format,
     get_pipeline_run_detail,
     get_recent_benchmark,
+    get_retrieval_benchmark_integrity,
     get_sanitizer_coverage,
     get_sanitizer_drift_history,
     get_understanding_export_diff,
@@ -694,6 +695,16 @@ def create_app(
         Never includes raw secret fragments.
         """
         return get_recent_benchmark()
+
+    @app.get("/retrieval/benchmark/integrity", response_model=None)
+    def retrieval_benchmark_integrity() -> dict[str, Any]:
+        """Return retrieval benchmark baseline integrity status.
+
+        Evaluates manifest freshness, hash consistency, and schema
+        compatibility.  Returns a lightweight summary safe for browser
+        rendering — never includes raw secret fragments.
+        """
+        return get_retrieval_benchmark_integrity()
 
     @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
     async def knowledge_base_upload(
