@@ -578,3 +578,103 @@ def test_subprocess_invocation(tmp_path: Path) -> None:
     assert out_path.is_file()
     report = json.loads(out_path.read_text(encoding="utf-8"))
     assert report["status"] == "pass"
+
+
+# ── Missing / Corrupt Artifact tests ─────────────────────────────────────────
+
+
+def test_cli_missing_baseline_produces_failure_report(tmp_path: Path) -> None:
+    rc = main(
+        [
+            "--baseline",
+            str(tmp_path / "missing.json"),
+            "--current",
+            str(tmp_path / "missing.json"),
+            "--output",
+            str(tmp_path / "diff.json"),
+        ]
+    )
+    assert rc == 1
+    report = json.loads((tmp_path / "diff.json").read_text(encoding="utf-8"))
+    assert report["status"] == "failure"
+    assert any(r["type"].endswith("_load_error") for r in report["drift_reasons"])
+
+
+def test_cli_corrupt_baseline_produces_failure_report(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text("not json", encoding="utf-8")
+    rc = main(
+        [
+            "--baseline",
+            str(baseline_path),
+            "--current",
+            str(baseline_path),
+            "--output",
+            str(tmp_path / "diff.json"),
+        ]
+    )
+    assert rc == 1
+    report = json.loads((tmp_path / "diff.json").read_text(encoding="utf-8"))
+    assert report["status"] == "failure"
+    assert any(r["type"].endswith("_load_error") for r in report["drift_reasons"])
+
+
+def test_cli_corrupt_current_produces_failure_report(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "baseline.json"
+    current_path = tmp_path / "current.json"
+    export = _make_export([_make_run()])
+    baseline_path.write_text(json.dumps(export), encoding="utf-8")
+    current_path.write_text("{bad", encoding="utf-8")
+    rc = main(
+        [
+            "--baseline",
+            str(baseline_path),
+            "--current",
+            str(current_path),
+            "--output",
+            str(tmp_path / "diff.json"),
+        ]
+    )
+    assert rc == 1
+    report = json.loads((tmp_path / "diff.json").read_text(encoding="utf-8"))
+    assert report["status"] == "failure"
+    assert any(r["type"].endswith("_load_error") for r in report["drift_reasons"])
+
+
+# ── Secret-like leak interception tests ──────────────────────────────────────
+
+
+def test_scan_output_sanitization_detects_bearer_token() -> None:
+    data = {"config": {"auth_header": "Bearer sk-live-12345"}}
+    count = _scan_output_sanitization(data)
+    assert count >= 1
+
+
+def test_scan_output_sanitization_detects_private_key() -> None:
+    data = {"config": {"private_key": "-----BEGIN PRIVATE KEY-----\nMII..."}}
+    count = _scan_output_sanitization(data)
+    assert count >= 1
+
+
+def test_diff_output_no_ghp_token() -> None:
+    baseline = _make_export([_make_run("run-a")])
+    current = _make_export([_make_run("run-a", status="failure")])
+    report = compute_export_diff(baseline, current)
+    serialized = json.dumps(report, indent=2, ensure_ascii=False)
+    assert "ghp_" not in serialized
+
+
+def test_assert_no_raw_secrets_detects_sk_proj() -> None:
+    with pytest.raises(RuntimeError, match="raw secret fragment"):
+        _assert_no_raw_secrets({"token": "sk-proj-abc123"}, "test")
+
+
+# ── Console adapter tests (script-level) ─────────────────────────────────────
+
+
+def test_compute_export_diff_schema_incompatible_is_failure() -> None:
+    baseline = _make_export([_make_run()], schema_version="1.0")
+    current = _make_export([_make_run()], schema_version="2.0")
+    report = compute_export_diff(baseline, current)
+    assert report["status"] == "failure"
+    assert report["schema_compatible"] is False

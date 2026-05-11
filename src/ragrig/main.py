@@ -84,6 +84,7 @@ from ragrig.web_console import (
     get_retrieval_benchmark_integrity,
     get_sanitizer_coverage,
     get_sanitizer_drift_history,
+    get_understanding_export_diff,
     get_understanding_run_detail,
     list_document_version_chunks,
     list_documents,
@@ -666,6 +667,23 @@ def create_app(
         Never includes raw secret fragments.
         """
         return get_sanitizer_drift_history()
+
+    @app.get("/understanding-export-diff", response_model=None)
+    def understanding_export_diff() -> dict[str, Any]:
+        """Return the latest understanding export diff for Web Console display.
+
+        Reads from the artifact at
+        docs/operations/artifacts/understanding-export-diff.json.
+
+        Returns a lightweight summary with status, baseline/current run counts,
+        added/removed/changed counts, schema compatibility, and artifact path.
+
+        Missing, corrupt, or schema-incompatible artifacts are reported as
+        degraded/failure — never as pass.
+
+        Never includes raw secret fragments.
+        """
+        return get_understanding_export_diff()
 
     @app.get("/retrieval/benchmark/recent", response_model=None)
     def retrieval_benchmark_recent() -> dict[str, Any]:

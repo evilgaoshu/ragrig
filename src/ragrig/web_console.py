@@ -961,6 +961,155 @@ def get_sanitizer_drift_history() -> dict[str, Any]:
     }
 
 
+# ── Understanding Export Diff ──────────────────────────────────────────────
+
+_UNDERSTANDING_EXPORT_DIFF_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "operations"
+    / "artifacts"
+    / "understanding-export-diff.json"
+)
+
+# Fields that must never appear in console output
+_CONSOLE_SECRET_KEY_PARTS: tuple[str, ...] = (
+    "api_key",
+    "access_key",
+    "secret",
+    "password",
+    "token",
+    "credential",
+    "private_key",
+    "dsn",
+    "service_account",
+    "session_token",
+)
+
+# Forbidden fragments that must never appear in console output
+_CONSOLE_FORBIDDEN_FRAGMENTS: tuple[str, ...] = (
+    "sk-live-",
+    "sk-proj-",
+    "sk-ant-",
+    "ghp_",
+    "Bearer ",
+    "PRIVATE KEY-----",
+)
+
+
+def _redact_console_output(obj: Any) -> Any:
+    """Recursively redact secret-like values from console output."""
+    if isinstance(obj, dict):
+        result: dict[str, Any] = {}
+        for k, v in obj.items():
+            if any(p in k.lower() for p in _CONSOLE_SECRET_KEY_PARTS):
+                result[k] = "[redacted]"
+            else:
+                result[k] = _redact_console_output(v)
+        return result
+    if isinstance(obj, list):
+        return [_redact_console_output(v) for v in obj]
+    if isinstance(obj, str):
+        for fragment in _CONSOLE_FORBIDDEN_FRAGMENTS:
+            if fragment in obj:
+                return "[redacted]"
+    return obj
+
+
+def _assert_console_no_secrets(data: object, source: str = "console") -> None:
+    """Panic if any string value contains a forbidden fragment."""
+    if isinstance(data, str):
+        for fragment in _CONSOLE_FORBIDDEN_FRAGMENTS:
+            if fragment in data:
+                raise RuntimeError(f"{source}: raw secret fragment {fragment!r} detected in output")
+    elif isinstance(data, dict):
+        for k, v in data.items():
+            _assert_console_no_secrets(v, f"{source}.{k}")
+    elif isinstance(data, list):
+        for i, v in enumerate(data):
+            _assert_console_no_secrets(v, f"{source}[{i}]")
+
+
+def get_understanding_export_diff() -> dict[str, Any]:
+    """Return the latest understanding export diff for Web Console display.
+
+    Reads the artifact at docs/operations/artifacts/understanding-export-diff.json.
+    Returns a lightweight summary safe for browser rendering.  Never includes
+    raw secret fragments, full prompts, or full original text.
+
+    Missing, corrupt, or schema-incompatible artifacts are reported as
+    degraded/failure — never as pass.
+    """
+    import json as _json
+
+    artifact_path = _UNDERSTANDING_EXPORT_DIFF_PATH
+
+    def _artifact_relative() -> str:
+        try:
+            return str(artifact_path.relative_to(Path(__file__).resolve().parents[2]))
+        except ValueError:
+            return str(artifact_path)
+
+    if not artifact_path.exists():
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": "artifact not found",
+            "artifact_path": _artifact_relative(),
+        }
+
+    try:
+        raw = _json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, _json.JSONDecodeError) as exc:
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": f"corrupt artifact: {exc}",
+            "artifact_path": _artifact_relative(),
+        }
+
+    # Validate artifact type
+    if raw.get("artifact") != "understanding-export-diff":
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": "invalid artifact type",
+            "artifact_path": _artifact_relative(),
+        }
+
+    # Extract safe fields
+    status = raw.get("status", "unknown")
+    schema_compatible = raw.get("schema_compatible", False)
+    baseline = raw.get("baseline", {})
+    current = raw.get("current", {})
+    runs = raw.get("runs", {})
+    generated_at = raw.get("generated_at", "")
+    sanitized_field_count = raw.get("sanitized_field_count", 0)
+
+    # Map schema incompatible to failure if somehow marked pass
+    if not schema_compatible and status not in ("failure", "degraded"):
+        status = "failure"
+
+    summary: dict[str, Any] = {
+        "available": True,
+        "status": status,
+        "schema_compatible": schema_compatible,
+        "baseline_run_count": baseline.get("run_count", 0),
+        "current_run_count": current.get("run_count", 0),
+        "added_count": len(runs.get("added", [])),
+        "removed_count": len(runs.get("removed", [])),
+        "changed_count": len(runs.get("changed", [])),
+        "generated_at": generated_at,
+        "artifact_path": _artifact_relative(),
+        "sanitized_field_count": sanitized_field_count,
+    }
+
+    # Redact and audit
+    summary = _redact_console_output(summary)
+    _assert_console_no_secrets(summary, "understanding-export-diff-console")
+
+    return summary
+
+
 # ── Retrieval Benchmark ────────────────────────────────────────────────────
 
 _BENCHMARK_ARTIFACT_PATH = (
