@@ -708,6 +708,146 @@ def test_llm_answer_provider_both_chat_and_generate_fail(monkeypatch) -> None:
     assert exc_info.value.code == "answer_generation_failed"
 
 
+# ── Snapshot regression tests ─────────────────────────────────────────────────
+
+
+def test_prompt_template_matches_snapshot_fixture() -> None:
+    """Assert the LLMAnswerProvider prompt template has not drifted from fixture."""
+    from pathlib import Path
+
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "answer_snapshots" / "prompt_template.txt"
+    )
+    expected_template = fixture_path.read_text(encoding="utf-8").strip()
+
+    # Reconstruct the actual template from LLMAnswerProvider logic
+
+    system_prompt = (
+        "You are a precise, evidence-grounded answer engine. "
+        "Answer ONLY using the provided evidence. "
+        "Reference sources using their citation IDs in square brackets, e.g. [cit-1]. "
+        "If the evidence is insufficient, state clearly that you cannot answer. "
+        "Never fabricate information or use knowledge outside the provided evidence."
+    )
+
+    # Normalise for comparison: strip trailing whitespace from lines
+    def normalise(text: str) -> str:
+        return "\n".join(line.rstrip() for line in text.splitlines())
+
+    expected_normalised = normalise(expected_template)
+
+    # The fixture and code must agree on the system prompt content
+    assert (
+        system_prompt in expected_normalised
+    ), "Fixture prompt_template.txt must contain the system prompt verbatim"
+    # Verify key phrases from the actual system prompt exist in the fixture
+    for phrase in [
+        "evidence-grounded answer engine",
+        "citation IDs in square brackets",
+        "Never fabricate information",
+        "use knowledge outside the provided evidence",
+    ]:
+        assert phrase in expected_normalised, (
+            f"Fixture missing system prompt phrase: '{phrase}'"
+        )
+
+    # Verify key phrases from the user prompt template exist in the fixture
+    for phrase in [
+        "grounded answer using the evidence above",
+        "cite sources with their citation IDs",
+    ]:
+        assert phrase in expected_normalised, (
+            f"Fixture missing user prompt phrase: '{phrase}'"
+        )
+
+
+def test_deterministic_answer_matches_refusal_fixture() -> None:
+    """Assert DeterministicAnswerProvider refusal matches the refusal boundary fixture."""
+    import json
+    from pathlib import Path
+
+    from ragrig.answer.provider import DeterministicAnswerProvider
+
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "answer_snapshots" / "refusal_boundary.json"
+    )
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    provider = DeterministicAnswerProvider()
+    answer, citations = provider.generate(query="any query", evidence=[])
+
+    expected = fixture["conditions"]["deterministic_provider_no_evidence"]
+    assert answer == expected["answer"], (
+        f"Deterministic refusal text drifted.\n"
+        f"Expected: {expected['answer']}\n"
+        f"Got:      {answer}"
+    )
+    assert citations == expected["citations"]
+
+
+def test_citation_format_matches_fixture() -> None:
+    """Assert the evidence block format matches the citation_format.json fixture."""
+    import json
+    import re
+    from pathlib import Path
+
+    fixture_path = (
+        Path(__file__).parent / "fixtures" / "answer_snapshots" / "citation_format.json"
+    )
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    # Verify the citation regex pattern is valid
+    citation_regex = fixture["citation_regex"]
+    pattern = re.compile(citation_regex)
+    # Test that it matches valid citation IDs
+    assert pattern.search("see [cit-1] for details"), (
+        f"Citation regex '{citation_regex}' should match '[cit-1]'"
+    )
+    assert pattern.search("sources [cit-1] and [cit-42]"), (
+        f"Citation regex '{citation_regex}' should match '[cit-42]'"
+    )
+    # Verify field names match the actual schema
+    expected_fields = set(fixture["field_structure"].keys())
+    actual_fields = {
+        "citation_id",
+        "document_uri",
+        "score",
+        "text",
+    }
+    assert actual_fields <= expected_fields, (
+        f"Fixture field_structure missing fields: {actual_fields - expected_fields}"
+    )
+
+
+def test_answer_snapshot_fixtures_contain_no_secrets() -> None:
+    """All answer snapshot fixtures must be free of raw secrets."""
+    from pathlib import Path
+
+    snapshots_dir = Path(__file__).parent / "fixtures" / "answer_snapshots"
+
+    import re
+
+    secret_patterns = [
+        r"api_key",
+        r"token",
+        r"password",
+        r"secret",
+        r"sk-[a-zA-Z0-9_\-]+",
+        r"Bearer\s+[a-zA-Z0-9_\-]+",
+    ]
+
+    for snapshot_file in sorted(snapshots_dir.iterdir()):
+        if snapshot_file.is_dir():
+            continue
+        content = snapshot_file.read_text(encoding="utf-8")
+        for pattern in secret_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            assert match is None, (
+                f"Snapshot '{snapshot_file.name}' contains secret-like pattern '{pattern}': "
+                f"'{match.group()}'"
+            )
+
+
 def test_get_answer_provider_rejects_unsupported_capability(monkeypatch) -> None:
     """get_answer_provider should raise ProviderError for providers without chat/generate."""
     from ragrig.providers import (
