@@ -1,7 +1,7 @@
 UV ?= uv
 ARTIFACTS_DIR ?= docs/operations/artifacts
 
-.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark bge-rerank-smoke sanitizer-drift-diff answer-live-smoke
+.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark bge-rerank-smoke sanitizer-drift-diff answer-live-smoke understanding-export-diff
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -220,3 +220,18 @@ verify-understanding-export:
 
 verify-understanding-export-json:
 	$(UV) run python -m scripts.verify_understanding_export --json --output $(ARTIFACTS_DIR)/understanding-export-verify-summary.json
+
+# ── Understanding export baseline diff ────────────────────────
+# Compares current understanding export against a baseline fixture/path
+# and produces a structured drift/delta report. Exit code 2 when
+# status=degraded, 0 when pass, 1 on error/failure.
+UNDERSTANDING_DIFF_BASELINE ?= tests/fixtures/understanding_export_contract.json
+UNDERSTANDING_DIFF_CURRENT ?= tests/fixtures/understanding_export_contract.json
+
+understanding-export-diff:
+	$(UV) run python -m scripts.understanding_export_diff \
+		--baseline $(UNDERSTANDING_DIFF_BASELINE) \
+		--current $(UNDERSTANDING_DIFF_CURRENT) \
+		--output $(ARTIFACTS_DIR)/understanding-export-diff.json \
+		--markdown-output $(ARTIFACTS_DIR)/understanding-export-diff.md \
+		--stdout
