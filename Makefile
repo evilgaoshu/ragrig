@@ -186,3 +186,9 @@ sanitizer-drift-diff:
 		--output $(ARTIFACTS_DIR)/sanitizer-drift-diff.json \
 		--markdown-output $(ARTIFACTS_DIR)/sanitizer-drift-diff.md \
 		--stdout
+
+verify-understanding-export:
+	$(UV) run python -m scripts.verify_understanding_export
+
+verify-understanding-export-json:
+	$(UV) run python -m scripts.verify_understanding_export --json --output $(ARTIFACTS_DIR)/understanding-export-verify-summary.json
