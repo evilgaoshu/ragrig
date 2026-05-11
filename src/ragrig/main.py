@@ -1048,6 +1048,22 @@ def create_app(
         runs = list_runs_from_store(store_dir=store_path)
         return build_evaluation_list_report(runs)
 
+    @app.get("/evaluations/baselines", response_model=None)
+    def evaluation_baselines_list(
+        baseline_dir: str | None = None,
+    ) -> dict[str, Any] | JSONResponse:
+        """List all baselines and current baseline id."""
+        from ragrig.evaluation.baseline import list_baselines
+
+        path = Path(baseline_dir) if baseline_dir else Path("evaluation_baselines")
+        try:
+            return list_baselines(baseline_dir=path)
+        except Exception as exc:
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Failed to list baselines: {exc}"},
+            )
+
     @app.post("/retrieval/answer", response_model=None)
     def retrieval_answer(
         request: AnswerRequest,

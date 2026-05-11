@@ -1098,6 +1098,15 @@
                 </div>
                 <button class="button primary" id="run-evaluation-btn" type="button">Run Evaluation</button>
               </div>
+              <div class="panel-body stack" id="evaluation-controls" style="display:none">
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                  <label class="sub" for="eval-baseline-select">Baseline</label>
+                  <select id="eval-baseline-select" style="min-width:160px;">
+                    <option value="">None</option>
+                  </select>
+                  <span class="sub muted" id="eval-baseline-info"></span>
+                </div>
+              </div>
               <div class="panel-body stack" id="evaluation-body">
                 <div class="sub muted">No evaluation run yet. Load a golden fixture to begin.</div>
               </div>
@@ -1107,6 +1116,7 @@
                   <div class="sub">
                     <span id="eval-metrics-summary"></span>
                   </div>
+                  <div class="stack" style="margin-top:8px; gap:6px;" id="eval-delta-badge"></div>
                   <div class="stack" style="margin-top:8px; gap:6px;" id="eval-failure-list"></div>
                 </div>
               </div>
@@ -1302,6 +1312,8 @@
         evaluation: {
           runs: [],
           latest: null,
+          baselines: [],
+          current_baseline_id: null,
           loading: false,
           error: null,
         },
@@ -2733,9 +2745,22 @@
 
       async function loadEvaluation() {
         try {
-          state.evaluation = await getJson('/evaluations');
+          var evalData = await getJson('/evaluations');
+          state.evaluation.runs = evalData.runs || [];
+          state.evaluation.latest_id = evalData.latest_id || null;
+          state.evaluation.latest_metrics = evalData.latest_metrics || null;
         } catch {
-          state.evaluation = { runs: [], latest_id: null, latest_metrics: null };
+          state.evaluation.runs = [];
+          state.evaluation.latest_id = null;
+          state.evaluation.latest_metrics = null;
+        }
+        try {
+          var baselineData = await getJson('/evaluations/baselines');
+          state.evaluation.baselines = baselineData.baselines || [];
+          state.evaluation.current_baseline_id = baselineData.current_baseline_id || null;
+        } catch {
+          state.evaluation.baselines = [];
+          state.evaluation.current_baseline_id = null;
         }
       }
 
@@ -2743,14 +2768,41 @@
         const bodyEl = document.getElementById('evaluation-body');
         const reportEl = document.getElementById('evaluation-report');
         const errorEl = document.getElementById('evaluation-error');
+        const controlsEl = document.getElementById('evaluation-controls');
         const metricsEl = document.getElementById('eval-metrics-summary');
         const failureEl = document.getElementById('eval-failure-list');
+        const deltaEl = document.getElementById('eval-delta-badge');
         const runIdEl = document.getElementById('eval-run-id');
         const btnEl = document.getElementById('run-evaluation-btn');
+        const baselineSelect = document.getElementById('eval-baseline-select');
+        const baselineInfo = document.getElementById('eval-baseline-info');
 
         var ev = state.evaluation || {};
         var runs = ev.runs || [];
         var latest = runs[0];
+        var baselines = ev.baselines || [];
+
+        // Build baseline selector
+        if (baselineSelect) {
+          var currentVal = baselineSelect.value;
+          var optionsHtml = '<option value="">None</option>';
+          for (var b = 0; b < baselines.length; b++) {
+            var bl = baselines[b];
+            var selected = (currentVal === bl.id) ? ' selected' : '';
+            optionsHtml += '<option value="' + escapeHtml(bl.id) + '"' + selected + '>' + escapeHtml(bl.id) + '</option>';
+          }
+          baselineSelect.innerHTML = optionsHtml;
+          if (baselines.length > 0 || currentVal) {
+            controlsEl.style.display = 'block';
+          }
+        }
+        if (baselineInfo) {
+          if (ev.current_baseline_id) {
+            baselineInfo.textContent = 'current: ' + escapeHtml(ev.current_baseline_id);
+          } else {
+            baselineInfo.textContent = '';
+          }
+        }
 
         // Empty state
         if (!latest) {
@@ -2802,9 +2854,9 @@
           failureEl.innerHTML = '<div class="sub">All questions passed ✓</div>';
         }
 
-        // Regression delta
+        // Regression delta badge
         var delta = metrics.regression_delta_vs_baseline;
-        if (delta && delta.mrr != null) {
+        if (delta && (delta.mrr != null || delta.hit_at_1 != null)) {
           var deltaHtml = ['<div class="name" style="margin-top:8px;">Regression Delta vs Baseline</div>'];
           var keys = ['hit_at_1', 'hit_at_3', 'mrr', 'zero_result_rate'];
           for (var k = 0; k < keys.length; k++) {
@@ -2816,7 +2868,9 @@
               deltaHtml.push('<span class="' + cls + '">' + key + ': ' + sign + (val * 100).toFixed(1) + '%</span> ');
             }
           }
-          failureEl.innerHTML += deltaHtml.join('');
+          deltaEl.innerHTML = deltaHtml.join('');
+        } else {
+          deltaEl.innerHTML = '';
         }
 
         btnEl.disabled = false;
@@ -2830,16 +2884,23 @@
 
         var kbSelect = document.getElementById('retrieval-kb');
         var kbName = kbSelect ? kbSelect.value : 'fixture-local';
+        var baselineSelect = document.getElementById('eval-baseline-select');
+        var baselineId = baselineSelect ? baselineSelect.value : null;
+
+        var payload = {
+          golden_path: 'tests/fixtures/evaluation_golden.yaml',
+          knowledge_base: kbName,
+          top_k: 5,
+        };
+        if (baselineId) {
+          payload.baseline_path = baselineId;
+        }
 
         try {
           var response = await fetch('/evaluations/runs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              golden_path: 'tests/fixtures/evaluation_golden.yaml',
-              knowledge_base: kbName,
-              top_k: 5,
-            }),
+            body: JSON.stringify(payload),
           });
           if (!response.ok) {
             var errData = await response.json().catch(function() { return {}; });
