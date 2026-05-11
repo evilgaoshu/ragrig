@@ -312,7 +312,7 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SESSION_TOKEN",
     ]
-    assert discovery["source.fileshare"]["status"] == "unavailable"
+    assert discovery["source.fileshare"]["status"] == "degraded"
     assert discovery["source.fileshare"]["missing_dependencies"] == [
         "httpx",
         "paramiko",
