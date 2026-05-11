@@ -26,6 +26,7 @@ from ragrig.db.models import (
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
 from ragrig.providers import get_provider_registry
+from ragrig.providers.model_catalog import serialize_provider_catalog
 from ragrig.retrieval_benchmark_integrity import get_integrity_summary as _get_integrity_summary
 from ragrig.vectorstore.base import VectorBackendHealth
 
@@ -496,6 +497,7 @@ def list_models(session: Session) -> dict[str, Any]:
     return {
         "embedding_profiles": profiles,
         "registered_providers": registered_providers,
+        "provider_catalog": serialize_provider_catalog(),
         "registry_shell": {
             "llm": {
                 "status": "ready",

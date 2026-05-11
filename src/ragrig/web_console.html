@@ -1344,6 +1344,7 @@
         documents: [],
         plugins: [],
         models: null,
+        providerProbes: {},
         system: null,
         evaluation: {
           runs: [],
@@ -2077,7 +2078,76 @@
           <div class="card"><div class="name">LLM registry</div><div class="sub">${escapeHtml(state.models.registry_shell.llm.reason)}</div><div class="sub"><span class="pill warn">${escapeHtml(state.models.registry_shell.llm.status)}</span></div></div>
           <div class="card"><div class="name">Reranker registry</div><div class="sub">${escapeHtml(state.models.registry_shell.reranker.reason)}</div><div class="sub"><span class="pill warn">${escapeHtml(state.models.registry_shell.reranker.status)}</span></div></div>
         `);
+        const catalog = state.models.provider_catalog || [];
+        if (catalog.length) {
+          blocks.push('<div class="section-title">Provider catalog</div>');
+          blocks.push(...catalog.map((provider) => {
+            const probe = state.providerProbes[provider.provider] || {};
+            const modelList = probe.models && probe.models.length
+              ? '<div class="sub">Models: ' + probe.models.slice(0, 5).map((m) => escapeHtml(m.id)).join(', ') + (probe.models.length > 5 ? ' ...' : '') + '</div>'
+              : '';
+            const status = probe.status
+              ? '<span class="pill ' + (probe.status === 'ready' ? 'good' : probe.status === 'missing_credentials' ? 'warn' : 'neutral') + '">' + escapeHtml(probe.status) + '</span>'
+              : '<span class="pill neutral">idle</span>';
+            const latency = probe.latency_ms
+              ? '<span class="pill good">' + escapeHtml(probe.latency_ms) + ' ms</span>'
+              : '';
+            return `
+              <div class="card">
+                <div class="name">${escapeHtml(provider.display_name)}</div>
+                <div class="sub">${escapeHtml(provider.provider)} · ${escapeHtml(provider.protocol)}</div>
+                <div class="sub">Env: ${escapeHtml((provider.auth_env_vars || []).join(', ') || 'none')}</div>
+                <div class="sub"><a href="${escapeHtml(provider.official_docs_url)}" target="_blank" rel="noreferrer">Official docs</a></div>
+                <div class="row" style="margin-top:8px;">
+                  <button data-provider-list="${escapeHtml(provider.provider)}" ${provider.list_models_supported ? '' : 'disabled'}>List models</button>
+                  <button data-provider-speed="${escapeHtml(provider.provider)}" ${provider.speed_test_supported ? '' : 'disabled'}>Speed test</button>
+                  ${status}
+                  ${latency}
+                </div>
+                ${modelList}
+                ${probe.reason ? '<div class="sub warn">' + escapeHtml(probe.reason) + '</div>' : ''}
+                ${probe.error ? '<div class="sub warn">' + escapeHtml(probe.error) + '</div>' : ''}
+              </div>
+            `;
+          }));
+        }
         root.innerHTML = blocks.join('');
+        root.querySelectorAll('[data-provider-list]').forEach((button) => {
+          button.addEventListener('click', () => loadProviderModels(button.dataset.providerList));
+        });
+        root.querySelectorAll('[data-provider-speed]').forEach((button) => {
+          button.addEventListener('click', () => runProviderSpeedTest(button.dataset.providerSpeed));
+        });
+      }
+
+      async function loadProviderModels(provider) {
+        if (!provider) return;
+        state.providerProbes[provider] = { status: 'loading', models: [] };
+        renderModels();
+        try {
+          const result = await getJson('/models/' + encodeURIComponent(provider) + '/available-models');
+          state.providerProbes[provider] = result;
+        } catch (error) {
+          state.providerProbes[provider] = { status: 'error', models: [], error: error.message };
+        }
+        renderModels();
+      }
+
+      async function runProviderSpeedTest(provider) {
+        if (!provider) return;
+        state.providerProbes[provider] = { status: 'testing', models: [] };
+        renderModels();
+        try {
+          const result = await getJson('/models/' + encodeURIComponent(provider) + '/speed-test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          state.providerProbes[provider] = result;
+        } catch (error) {
+          state.providerProbes[provider] = { status: 'error', models: [], error: error.message };
+        }
+        renderModels();
       }
 
       async function renderProfileMatrix() {

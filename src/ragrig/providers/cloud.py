@@ -304,15 +304,440 @@ JINA_METADATA = build_cloud_model_metadata(
 )
 
 
+ANTHROPIC_METADATA = build_cloud_model_metadata(
+    name="model.anthropic",
+    description="Contract-only Anthropic Claude provider stub for messages and model listing.",
+    capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE, ProviderCapability.BATCH},
+    required_secrets=["ANTHROPIC_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://api.anthropic.com/v1"},
+        "model_name": {"type": "string", "default": "claude-sonnet-4-5"},
+    },
+    sdk_protocol="anthropic-messages-api",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "managed_api"],
+    default_context_window=200000,
+)
+
+
+GOOGLE_GEMINI_METADATA = build_cloud_model_metadata(
+    name="model.google_gemini",
+    description="Contract-only Google Gemini API provider stub.",
+    capabilities={
+        ProviderCapability.CHAT,
+        ProviderCapability.GENERATE,
+        ProviderCapability.EMBEDDING,
+        ProviderCapability.BATCH,
+    },
+    required_secrets=["GOOGLE_API_KEY"],
+    config_schema={
+        "api_base_url": {
+            "type": "string",
+            "default": "https://generativelanguage.googleapis.com/v1beta",
+        },
+        "model_name": {"type": "string", "default": "gemini-3-pro"},
+        "embedding_model_name": {"type": "string", "default": "text-embedding-004"},
+    },
+    sdk_protocol="gemini-rest-api",
+    dependency_group="cloud-google",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model", "embedding_model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "managed_api"],
+    default_dimensions=768,
+    max_dimensions=3072,
+    default_context_window=1048576,
+)
+
+
+MISTRAL_METADATA = build_cloud_model_metadata(
+    name="model.mistral",
+    description="Contract-only Mistral AI provider stub.",
+    capabilities={
+        ProviderCapability.CHAT,
+        ProviderCapability.GENERATE,
+        ProviderCapability.EMBEDDING,
+        ProviderCapability.BATCH,
+    },
+    required_secrets=["MISTRAL_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://api.mistral.ai/v1"},
+        "model_name": {"type": "string", "default": "mistral-large-latest"},
+        "embedding_model_name": {"type": "string", "default": "mistral-embed"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model", "embedding_model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "managed_api"],
+    default_dimensions=1024,
+    max_dimensions=4096,
+    default_context_window=128000,
+)
+
+
+TOGETHER_METADATA = build_cloud_model_metadata(
+    name="model.together",
+    description="Contract-only Together AI OpenAI-compatible provider stub.",
+    capabilities={
+        ProviderCapability.CHAT,
+        ProviderCapability.GENERATE,
+        ProviderCapability.EMBEDDING,
+        ProviderCapability.BATCH,
+    },
+    required_secrets=["TOGETHER_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://api.together.xyz/v1"},
+        "model_name": {"type": "string", "default": "meta-llama/Llama-3.3-70B-Instruct-Turbo"},
+        "embedding_model_name": {
+            "type": "string",
+            "default": "togethercomputer/m2-bert-80M-8k-retrieval",
+        },
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model", "embedding_model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "open_model_hosting"],
+    default_dimensions=768,
+    max_dimensions=4096,
+    default_context_window=128000,
+)
+
+
+FIREWORKS_METADATA = build_cloud_model_metadata(
+    name="model.fireworks",
+    description="Contract-only Fireworks AI OpenAI-compatible provider stub.",
+    capabilities={
+        ProviderCapability.CHAT,
+        ProviderCapability.GENERATE,
+        ProviderCapability.EMBEDDING,
+        ProviderCapability.BATCH,
+    },
+    required_secrets=["FIREWORKS_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://api.fireworks.ai/inference/v1"},
+        "model_name": {"type": "string", "default": "accounts/fireworks/models/llama-v3p1-70b"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "open_model_hosting"],
+    default_context_window=128000,
+)
+
+
+GROQ_METADATA = build_cloud_model_metadata(
+    name="model.groq",
+    description="Contract-only Groq OpenAI-compatible provider stub.",
+    capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
+    required_secrets=["GROQ_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://api.groq.com/openai/v1"},
+        "model_name": {"type": "string", "default": "llama-3.3-70b-versatile"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "low_latency"],
+    default_context_window=128000,
+)
+
+
+DEEPSEEK_METADATA = build_cloud_model_metadata(
+    name="model.deepseek",
+    description="Contract-only DeepSeek OpenAI-compatible provider stub.",
+    capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
+    required_secrets=["DEEPSEEK_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://api.deepseek.com/v1"},
+        "model_name": {"type": "string", "default": "deepseek-chat"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "managed_api"],
+    default_context_window=128000,
+)
+
+
+MOONSHOT_METADATA = build_cloud_model_metadata(
+    name="model.moonshot",
+    description="Contract-only Moonshot Kimi OpenAI-compatible provider stub.",
+    capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
+    required_secrets=["MOONSHOT_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://api.moonshot.ai/v1"},
+        "model_name": {"type": "string", "default": "kimi-k2.5"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "managed_api"],
+    default_context_window=256000,
+)
+
+
+MINIMAX_METADATA = build_cloud_model_metadata(
+    name="model.minimax",
+    description="Contract-only MiniMax OpenAI-compatible provider stub.",
+    capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
+    required_secrets=["MINIMAX_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://api.minimax.io/v1"},
+        "model_name": {"type": "string", "default": "MiniMax-M2.7"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "managed_api"],
+    default_context_window=200000,
+)
+
+
+DASHSCOPE_METADATA = build_cloud_model_metadata(
+    name="model.dashscope",
+    description="Contract-only Alibaba Cloud DashScope OpenAI-compatible provider stub.",
+    capabilities={
+        ProviderCapability.CHAT,
+        ProviderCapability.GENERATE,
+        ProviderCapability.EMBEDDING,
+        ProviderCapability.BATCH,
+    },
+    required_secrets=["DASHSCOPE_API_KEY"],
+    config_schema={
+        "api_base_url": {
+            "type": "string",
+            "default": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        },
+        "model_name": {"type": "string", "default": "qwen-plus"},
+        "embedding_model_name": {"type": "string", "default": "text-embedding-v4"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model", "embedding_model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "managed_api"],
+    default_dimensions=1024,
+    max_dimensions=4096,
+    default_context_window=128000,
+)
+
+
+SILICONFLOW_METADATA = build_cloud_model_metadata(
+    name="model.siliconflow",
+    description="Contract-only SiliconFlow OpenAI-compatible provider stub.",
+    capabilities={
+        ProviderCapability.CHAT,
+        ProviderCapability.GENERATE,
+        ProviderCapability.EMBEDDING,
+        ProviderCapability.RERANK,
+    },
+    required_secrets=["SILICONFLOW_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://api.siliconflow.cn/v1"},
+        "model_name": {"type": "string", "default": "Qwen/Qwen3-235B-A22B-Instruct-2507"},
+        "embedding_model_name": {"type": "string", "default": "BAAI/bge-m3"},
+        "reranker_model_name": {"type": "string", "default": "BAAI/bge-reranker-v2-m3"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model", "embedding_model", "reranker_model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "open_model_hosting"],
+    default_dimensions=1024,
+    max_dimensions=4096,
+    default_context_window=128000,
+)
+
+
+ZHIPU_METADATA = build_cloud_model_metadata(
+    name="model.zhipu",
+    description="Contract-only Zhipu / Z.ai GLM OpenAI-compatible provider stub.",
+    capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
+    required_secrets=["ZHIPU_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://open.bigmodel.cn/api/paas/v4"},
+        "model_name": {"type": "string", "default": "glm-4.5"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "managed_api"],
+    default_context_window=128000,
+)
+
+
+BAIDU_QIANFAN_METADATA = build_cloud_model_metadata(
+    name="model.baidu_qianfan",
+    description="Contract-only Baidu Qianfan OpenAI-compatible provider stub.",
+    capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE, ProviderCapability.BATCH},
+    required_secrets=["QIANFAN_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://qianfan.baidubce.com/v2"},
+        "model_name": {"type": "string", "default": "ernie-4.5-turbo"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "managed_api"],
+    default_context_window=128000,
+)
+
+
+VOLCENGINE_ARK_METADATA = build_cloud_model_metadata(
+    name="model.volcengine_ark",
+    description="Contract-only Volcengine Ark OpenAI-compatible provider stub.",
+    capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE, ProviderCapability.BATCH},
+    required_secrets=["ARK_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://ark.cn-beijing.volces.com/api/v3"},
+        "model_name": {"type": "string", "default": "doubao-seed-1-6"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "managed_api"],
+    default_context_window=128000,
+)
+
+
+XAI_METADATA = build_cloud_model_metadata(
+    name="model.xai",
+    description="Contract-only xAI OpenAI-compatible provider stub.",
+    capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
+    required_secrets=["XAI_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://api.x.ai/v1"},
+        "model_name": {"type": "string", "default": "grok-4"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "managed_api"],
+    default_context_window=128000,
+)
+
+
+PERPLEXITY_METADATA = build_cloud_model_metadata(
+    name="model.perplexity",
+    description="Contract-only Perplexity OpenAI-compatible provider stub.",
+    capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
+    required_secrets=["PERPLEXITY_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://api.perplexity.ai/v1"},
+        "model_name": {"type": "string", "default": "sonar-pro"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "web_grounded"],
+    default_context_window=128000,
+)
+
+
+NVIDIA_NIM_METADATA = build_cloud_model_metadata(
+    name="model.nvidia_nim",
+    description="Contract-only NVIDIA NIM OpenAI-compatible provider stub.",
+    capabilities={
+        ProviderCapability.CHAT,
+        ProviderCapability.GENERATE,
+        ProviderCapability.EMBEDDING,
+        ProviderCapability.BATCH,
+    },
+    required_secrets=["NVIDIA_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://integrate.api.nvidia.com/v1"},
+        "model_name": {"type": "string", "default": "meta/llama-3.1-70b-instruct"},
+    },
+    sdk_protocol="openai-compatible-cloud",
+    dependency_group="cloud-llm",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["cloud_second", "nim"],
+    default_context_window=128000,
+)
+
+
+OPENAI_COMPATIBLE_METADATA = build_cloud_model_metadata(
+    name="model.openai_compatible",
+    description="Generic OpenAI-compatible provider contract for custom endpoints.",
+    capabilities={
+        ProviderCapability.CHAT,
+        ProviderCapability.GENERATE,
+        ProviderCapability.EMBEDDING,
+        ProviderCapability.RERANK,
+    },
+    required_secrets=[],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "http://localhost:8000/v1"},
+        "api_key": {"type": "string", "default": "env:OPENAI_COMPATIBLE_API_KEY"},
+        "model_name": {"type": "string", "default": "local-model"},
+    },
+    sdk_protocol="openai-compatible",
+    dependency_group="cloud-llm",
+    failure_modes=["connection_failed", "provider_stub_only"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "tokens_in", "tokens_out"],
+    intended_uses=["custom_gateway", "self_hosted"],
+)
+
+
 CLOUD_MODEL_METADATA = {
     VERTEX_AI_METADATA.name: (VERTEX_AI_METADATA, ["google-cloud-aiplatform"]),
     BEDROCK_METADATA.name: (BEDROCK_METADATA, ["boto3"]),
     AZURE_OPENAI_METADATA.name: (AZURE_OPENAI_METADATA, ["openai"]),
+    ANTHROPIC_METADATA.name: (ANTHROPIC_METADATA, []),
+    GOOGLE_GEMINI_METADATA.name: (GOOGLE_GEMINI_METADATA, ["google-cloud-aiplatform"]),
+    MISTRAL_METADATA.name: (MISTRAL_METADATA, []),
     OPENROUTER_METADATA.name: (OPENROUTER_METADATA, ["openai"]),
     OPENAI_METADATA.name: (OPENAI_METADATA, ["openai"]),
     COHERE_METADATA.name: (COHERE_METADATA, ["cohere"]),
     VOYAGE_METADATA.name: (VOYAGE_METADATA, ["voyageai"]),
     JINA_METADATA.name: (JINA_METADATA, []),
+    TOGETHER_METADATA.name: (TOGETHER_METADATA, []),
+    FIREWORKS_METADATA.name: (FIREWORKS_METADATA, []),
+    GROQ_METADATA.name: (GROQ_METADATA, []),
+    DEEPSEEK_METADATA.name: (DEEPSEEK_METADATA, []),
+    MOONSHOT_METADATA.name: (MOONSHOT_METADATA, []),
+    MINIMAX_METADATA.name: (MINIMAX_METADATA, []),
+    DASHSCOPE_METADATA.name: (DASHSCOPE_METADATA, []),
+    SILICONFLOW_METADATA.name: (SILICONFLOW_METADATA, []),
+    ZHIPU_METADATA.name: (ZHIPU_METADATA, []),
+    BAIDU_QIANFAN_METADATA.name: (BAIDU_QIANFAN_METADATA, []),
+    VOLCENGINE_ARK_METADATA.name: (VOLCENGINE_ARK_METADATA, []),
+    XAI_METADATA.name: (XAI_METADATA, []),
+    PERPLEXITY_METADATA.name: (PERPLEXITY_METADATA, []),
+    NVIDIA_NIM_METADATA.name: (NVIDIA_NIM_METADATA, []),
+    OPENAI_COMPATIBLE_METADATA.name: (OPENAI_COMPATIBLE_METADATA, []),
 }
 
 
@@ -373,16 +798,34 @@ def create_cloud_stub_provider(provider_name: str, **config: Any) -> CloudStubPr
 
 
 __all__ = [
+    "ANTHROPIC_METADATA",
     "AZURE_OPENAI_METADATA",
+    "BAIDU_QIANFAN_METADATA",
     "BEDROCK_METADATA",
     "CLOUD_MODEL_METADATA",
     "COHERE_METADATA",
+    "DASHSCOPE_METADATA",
     "CloudStubProvider",
+    "DEEPSEEK_METADATA",
+    "FIREWORKS_METADATA",
+    "GOOGLE_GEMINI_METADATA",
+    "GROQ_METADATA",
     "JINA_METADATA",
+    "MINIMAX_METADATA",
+    "MISTRAL_METADATA",
+    "MOONSHOT_METADATA",
+    "NVIDIA_NIM_METADATA",
     "OPENAI_METADATA",
+    "OPENAI_COMPATIBLE_METADATA",
     "OPENROUTER_METADATA",
+    "PERPLEXITY_METADATA",
+    "SILICONFLOW_METADATA",
+    "TOGETHER_METADATA",
     "VERTEX_AI_METADATA",
     "VOYAGE_METADATA",
+    "VOLCENGINE_ARK_METADATA",
+    "XAI_METADATA",
+    "ZHIPU_METADATA",
     "create_cloud_stub_provider",
     "load_cloud_client",
 ]
