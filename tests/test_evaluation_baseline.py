@@ -435,3 +435,17 @@ def test_delta_computation_with_strict_loader(tmp_path) -> None:
     assert delta["mrr"] == -0.25
     assert delta["mean_rank_of_expected"] == 0.5
     assert delta["citation_coverage_mean"] == -0.5
+
+
+# ── Corrupt Baseline File via Resolution Tests ───────────────────────────────
+
+
+def test_resolve_then_strict_detects_corrupt_file(tmp_path) -> None:
+    """A file that exists but contains invalid JSON is caught by strict loader."""
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    (baseline_dir / "corrupt.json").write_text("not json")
+    resolved = resolve_baseline_path(str(baseline_dir / "corrupt.json"))
+    assert resolved.exists()
+    with pytest.raises(BaselineCorruptError, match="corrupt"):
+        load_baseline_metrics_strict(resolved)

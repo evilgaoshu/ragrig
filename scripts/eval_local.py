@@ -20,6 +20,7 @@ from ragrig.config import get_settings
 from ragrig.evaluation import (
     BaselineCorruptError,
     BaselineNotFoundError,
+    load_baseline_metrics_strict,
     resolve_baseline_path,
     run_evaluation,
 )
@@ -168,12 +169,14 @@ def main() -> int:
     store_dir = Path(args.store_dir)
     baseline_dir = Path(args.baseline_dir)
 
-    # Resolve baseline
+    # Resolve baseline and validate content strictly
     baseline_path: Path | None = None
     baseline_error: dict[str, str] | None = None
     if args.baseline:
         try:
             baseline_path = resolve_baseline_path(args.baseline, baseline_dir=baseline_dir)
+            # Strict validation: catch corrupt/missing metrics before run
+            load_baseline_metrics_strict(baseline_path)
         except BaselineNotFoundError as exc:
             baseline_error = {
                 "error": str(exc),
