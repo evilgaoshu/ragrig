@@ -15,6 +15,7 @@ import pytest
 
 from ragrig.processing_profile.models import _sanitize_metadata
 from ragrig.processing_profile.sanitizer import (
+    DEGRADED,
     REDACTED,
     SENSITIVE_KEY_PARTS,
     is_sensitive_key,
@@ -741,3 +742,197 @@ def test_sensitive_key_parts_are_consistent() -> None:
     from ragrig.repositories.processing_profile import SENSITIVE_KEY_PARTS as REPO_PARTS
 
     assert set(SENSITIVE_KEY_PARTS) == REPO_PARTS
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Boundary inputs — non-string keys
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("key", [123, None, (1, 2), 3.14, True, []])
+def test_is_sensitive_key_non_string_returns_false(key: object) -> None:
+    """Non-string keys must not raise AttributeError; they are treated as non-sensitive."""
+    assert is_sensitive_key(key) is False
+
+
+def test_redact_metadata_with_non_string_keys() -> None:
+    meta = {
+        123: "numeric-key-value",
+        None: "none-key-value",
+        ("tuple", "key"): "tuple-key-value",
+        "normal": "ok",
+        "api_key": "secret",
+    }
+    sanitized, count, paths = redact_metadata(meta)
+    # Non-string keys are preserved; only string keys are checked for sensitivity
+    assert sanitized[123] == "numeric-key-value"
+    assert sanitized[None] == "none-key-value"
+    assert sanitized[("tuple", "key")] == "tuple-key-value"
+    assert sanitized["normal"] == "ok"
+    assert sanitized["api_key"] == REDACTED
+    assert count == 1
+    assert paths == ["api_key"]
+
+
+def test_remove_metadata_with_non_string_keys() -> None:
+    meta = {
+        123: "numeric-key-value",
+        None: "none-key-value",
+        ("tuple", "key"): "tuple-key-value",
+        "normal": "ok",
+        "api_key": "secret",
+    }
+    result = remove_metadata(meta)
+    assert result[123] == "numeric-key-value"
+    assert result[None] == "none-key-value"
+    assert result[("tuple", "key")] == "tuple-key-value"
+    assert result["normal"] == "ok"
+    assert "api_key" not in result
+
+
+def test_redact_metadata_nested_with_non_string_keys() -> None:
+    meta = {
+        "level1": {
+            42: {
+                "api_key": "deep-secret",
+                "name": "leaf",
+            },
+        }
+    }
+    sanitized, count, paths = redact_metadata(meta)
+    assert sanitized["level1"][42]["api_key"] == REDACTED
+    assert sanitized["level1"][42]["name"] == "leaf"
+    assert count == 1
+    assert "level1.42.api_key" in paths
+
+
+def test_remove_metadata_nested_with_non_string_keys() -> None:
+    meta = {
+        "level1": {
+            42: {
+                "api_key": "deep-secret",
+                "name": "leaf",
+            },
+        }
+    }
+    result = remove_metadata(meta)
+    assert "api_key" not in result["level1"][42]
+    assert result["level1"][42]["name"] == "leaf"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Boundary inputs — depth limit
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_redact_metadata_does_not_recurse_error_on_deep_input() -> None:
+    """A deeply nested dict (>1000 levels) must not trigger RecursionError."""
+    deep_meta: dict[str, object] = {"bottom": "secret"}
+    for _ in range(1500):
+        deep_meta = {"level": deep_meta}
+
+    sanitized, count, paths = redact_metadata(deep_meta)
+    # Should complete without RecursionError and mark depth-exceeded nodes
+    assert isinstance(sanitized, dict)
+    assert count >= 1
+    assert DEGRADED in str(sanitized)
+
+
+def test_remove_metadata_does_not_recurse_error_on_deep_input() -> None:
+    """A deeply nested dict (>1000 levels) must not trigger RecursionError."""
+    deep_meta: dict[str, object] = {"bottom": "secret"}
+    for _ in range(1500):
+        deep_meta = {"level": deep_meta}
+
+    result = remove_metadata(deep_meta)
+    # Should complete without RecursionError
+    assert isinstance(result, dict)
+
+
+def test_redact_metadata_custom_max_depth() -> None:
+    """Verify that a low max_depth produces DEGRADED markers."""
+    meta = {"a": {"b": {"c": {"d": "value"}}}}
+    sanitized, count, paths = redact_metadata(meta, max_depth=2)
+    assert sanitized["a"]["b"] == DEGRADED
+    assert count == 1
+    assert "a.b" in paths
+
+
+def test_remove_metadata_custom_max_depth() -> None:
+    """Verify that a low max_depth omits subtrees beyond the limit."""
+    meta = {"a": {"b": {"c": {"d": "value"}}}}
+    result = remove_metadata(meta, max_depth=2)
+    assert "b" not in result.get("a", {})
+
+
+def test_redact_metadata_degraded_in_list() -> None:
+    meta = {"items": [{"a": {"b": {"c": "value"}}}]}
+    sanitized, count, paths = redact_metadata(meta, max_depth=2)
+    # The dict inside the list is at depth 2, so it is replaced with DEGRADED
+    assert sanitized["items"][0] == DEGRADED
+    assert count == 1
+    assert "items[0]" in paths
+
+
+def test_remove_metadata_degraded_in_list() -> None:
+    meta = {"items": [{"a": {"b": {"c": "value"}}}]}
+    result = remove_metadata(meta, max_depth=2)
+    # The dict inside the list is at depth 2, so it is omitted
+    assert result["items"] == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Boundary inputs — model / repository / API caller consistency
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_model_sanitize_metadata_does_not_recurse_error() -> None:
+    from ragrig.processing_profile.models import _sanitize_metadata
+
+    deep_meta: dict[str, object] = {"bottom": "secret"}
+    for _ in range(1500):
+        deep_meta = {"level": deep_meta}
+
+    result = _sanitize_metadata(deep_meta)
+    assert isinstance(result, dict)
+
+
+def test_repository_sanitize_metadata_json_does_not_recurse_error() -> None:
+    from ragrig.repositories.processing_profile import _sanitize_metadata_json
+
+    deep_meta: dict[str, object] = {"bottom": "secret"}
+    for _ in range(1500):
+        deep_meta = {"level": deep_meta}
+
+    sanitized, count, paths = _sanitize_metadata_json(deep_meta)
+    assert isinstance(sanitized, dict)
+    assert count >= 1
+
+
+def test_model_sanitize_metadata_non_string_keys() -> None:
+    from ragrig.processing_profile.models import _sanitize_metadata
+
+    meta = {
+        123: "numeric-key-value",
+        "normal": "ok",
+        "api_key": "secret",
+    }
+    result = _sanitize_metadata(meta)
+    assert result[123] == "numeric-key-value"
+    assert result["normal"] == "ok"
+    assert "api_key" not in result
+
+
+def test_repository_sanitize_metadata_json_non_string_keys() -> None:
+    from ragrig.repositories.processing_profile import _sanitize_metadata_json
+
+    meta = {
+        123: "numeric-key-value",
+        "normal": "ok",
+        "api_key": "secret",
+    }
+    sanitized, count, paths = _sanitize_metadata_json(meta)
+    assert sanitized[123] == "numeric-key-value"
+    assert sanitized["normal"] == "ok"
+    assert sanitized["api_key"] == REDACTED
+    assert count == 1
