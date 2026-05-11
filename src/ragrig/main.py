@@ -82,6 +82,7 @@ from ragrig.web_console import (
     get_pipeline_run_detail,
     get_recent_benchmark,
     get_sanitizer_coverage,
+    get_sanitizer_drift_history,
     get_understanding_run_detail,
     list_document_version_chunks,
     list_documents,
@@ -652,6 +653,18 @@ def create_app(
         Never includes raw secret fragments.
         """
         return get_sanitizer_coverage()
+
+    @app.get("/sanitizer-drift-history", response_model=None)
+    def sanitizer_drift_history() -> dict[str, Any]:
+        """Return the sanitizer drift history for Web Console display.
+
+        Reads drift diff artifacts from docs/operations/artifacts/ and
+        returns a lightweight summary with risk level, base/head hashes,
+        changed parser count, and trend sparklines.
+
+        Never includes raw secret fragments.
+        """
+        return get_sanitizer_drift_history()
 
     @app.get("/retrieval/benchmark/recent", response_model=None)
     def retrieval_benchmark_recent() -> dict[str, Any]:

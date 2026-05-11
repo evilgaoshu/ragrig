@@ -871,6 +871,7 @@
         <div class="nav-item" data-section="upload">Upload</div>
         <div class="nav-item" data-section="formats">Formats</div>
         <div class="nav-item" data-section="sanitizer-coverage">Sanitizer Coverage</div>
+        <div class="nav-item" data-section="sanitizer-drift">Sanitizer Drift</div>
         <div class="nav-item" data-section="retrieval-benchmark">Retrieval Benchmark</div>
         <div class="nav-item">Documents</div>
         <div class="nav-label">Inspect</div>
@@ -902,6 +903,7 @@
           <div class="status-card"><div class="status-head">Knowledge Bases</div><strong id="kb-count">0</strong><span id="kb-subtext">Knowledge inventory</span></div>
           <div class="status-card"><div class="status-head">Pipeline Runs</div><strong id="run-count">0</strong><span id="run-subtext">Recent ingestion and indexing</span></div>
           <div class="status-card"><div class="status-head">Embedding Profiles</div><strong id="model-count">0</strong><span id="model-subtext">Real indexed model profiles</span></div>
+          <div class="status-card"><div class="status-head">Sanitizer Drift</div><strong id="drift-risk">—</strong><span id="drift-subtext">Latest drift risk</span></div>
         </section>
 
         <section class="panel">
@@ -929,6 +931,21 @@
                 <tbody id="sanitizer-coverage-body"></tbody>
               </table>
             </div>
+          </div>
+        </section>
+
+        <section class="panel" id="sanitizer-drift-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Sanitizer Drift History</div>
+              <div class="panel-meta">Trend analysis · GET /sanitizer-drift-history · no raw secrets</div>
+            </div>
+            <div id="sanitizer-drift-panel-status" class="pill neutral">Loading</div>
+          </div>
+          <div class="panel-body stack">
+            <div id="sanitizer-drift-status" style="margin-bottom:12px"></div>
+            <div class="facts" id="sanitizer-drift-facts"></div>
+            <div id="sanitizer-drift-sparkline" style="margin-top:12px"></div>
           </div>
         </section>
 
@@ -3026,6 +3043,77 @@
         }).join('');
       }
 
+      async function loadSanitizerDriftHistory() {
+        try {
+          state.sanitizerDriftHistory = await getJson('/sanitizer-drift-history');
+        } catch {
+          state.sanitizerDriftHistory = null;
+        }
+      }
+
+      function renderSanitizerDriftHistory() {
+        const panelStatus = document.getElementById('sanitizer-drift-panel-status');
+        const statusEl = document.getElementById('sanitizer-drift-status');
+        const factsEl = document.getElementById('sanitizer-drift-facts');
+        const sparklineEl = document.getElementById('sanitizer-drift-sparkline');
+        const data = state.sanitizerDriftHistory;
+
+        if (!data || !data.available) {
+          panelStatus.className = 'pill neutral';
+          panelStatus.textContent = 'No history';
+          statusEl.innerHTML = '<span class="pill neutral">No drift history</span>';
+          factsEl.innerHTML = empty('No valid drift diff reports found. Run make sanitizer-drift-diff to generate them.');
+          sparklineEl.innerHTML = '';
+          document.getElementById('drift-risk').textContent = '—';
+          document.getElementById('drift-subtext').textContent = 'No history';
+          return;
+        }
+
+        var risk = data.risk || 'unknown';
+        var riskClass = risk === 'degraded' ? 'error' : risk === 'unchanged' ? 'good' : 'warn';
+        panelStatus.className = 'pill ' + riskClass;
+        panelStatus.textContent = risk;
+
+        document.getElementById('drift-risk').textContent = risk;
+        document.getElementById('drift-subtext').textContent = data.report_count + ' report' + (data.report_count === 1 ? '' : 's');
+
+        statusEl.innerHTML = [
+          '<span class="pill ' + riskClass + '">' + (risk === 'degraded' ? '⚠️ ' : '✅ ') + escapeHtml(risk) + '</span>',
+          '<span class="pill neutral">' + escapeHtml(data.changed_parser_count) + ' changed</span>',
+          '<span class="pill neutral">' + escapeHtml(data.added_parser_count) + ' added</span>',
+          '<span class="pill neutral">' + escapeHtml(data.removed_parser_count) + ' removed</span>',
+        ].join('');
+
+        factsEl.innerHTML = [
+          '<div class="card"><div class="fact-label">Base Hash</div><div class="fact-value code">' + escapeHtml(data.base_golden_hash || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Head Hash</div><div class="fact-value code">' + escapeHtml(data.head_golden_hash || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Head Redacted</div><div class="fact-value">' + escapeHtml(data.head_redacted) + '</div></div>',
+          '<div class="card"><div class="fact-label">Head Degraded</div><div class="fact-value">' + escapeHtml(data.head_degraded) + '</div></div>',
+          '<div class="card"><div class="fact-label">Generated At</div><div class="fact-value">' + escapeHtml(data.generated_at || '—') + '</div></div>',
+        ].join('');
+
+        var sparkline = data.sparkline || {};
+        var riskSpark = sparkline.risk || [];
+        var redactedSpark = sparkline.redacted || [];
+        var degradedSpark = sparkline.degraded || [];
+
+        if (riskSpark.length > 1) {
+          var sparkHtml = '<div class="fact-label">Trend Sparkline (last ' + riskSpark.length + ')</div>';
+          sparkHtml += '<div class="sub" style="margin-top:6px">Risk: ' + riskSpark.map(function(r) {
+            return r === 'degraded' ? '<span class="pill error">D</span>' : '<span class="pill good">·</span>';
+          }).join(' ') + '</div>';
+          if (redactedSpark.length) {
+            sparkHtml += '<div class="sub" style="margin-top:6px">Redacted: ' + redactedSpark.join(' → ') + '</div>';
+          }
+          if (degradedSpark.length) {
+            sparkHtml += '<div class="sub" style="margin-top:6px">Degraded: ' + degradedSpark.join(' → ') + '</div>';
+          }
+          sparklineEl.innerHTML = sparkHtml;
+        } else {
+          sparklineEl.innerHTML = '<div class="sub">At least 2 reports are needed for a trend sparkline.</div>';
+        }
+      }
+
       function buildRetrievalRequest() {
         const mode = document.getElementById('retrieval-mode').value;
         const req = {
@@ -3611,6 +3699,7 @@
           await loadFormats();
           await loadFormats();
           await loadSanitizerCoverage();
+          await loadSanitizerDriftHistory();
           await loadRetrievalBenchmark();
           renderStatusStrip();
           renderKnowledgeBases();
@@ -3635,6 +3724,7 @@
           renderAnswerControls();
           renderFormats();
           renderSanitizerCoverage();
+          renderSanitizerDriftHistory();
           renderRetrievalBenchmark();
           renderUploadKBSelect();
         } catch (error) {
