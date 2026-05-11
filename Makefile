@@ -215,6 +215,17 @@ sanitizer-drift-diff:
 		--markdown-output $(ARTIFACTS_DIR)/sanitizer-drift-diff.md \
 		--stdout
 
+# ── Sanitizer drift history ───────────────────────────────────
+# Reads multiple sanitizer-drift-diff*.json artifacts and produces
+# a historical trend report (JSON + Markdown).  Exit code 3 when
+# status=degraded, 0 when success/no_history, 2 on safety failure.
+sanitizer-drift-history:
+	$(UV) run python -m scripts.sanitizer_drift_history \
+		--artifacts-dir $(ARTIFACTS_DIR) \
+		--output $(ARTIFACTS_DIR)/sanitizer-drift-history.json \
+		--markdown-output $(ARTIFACTS_DIR)/sanitizer-drift-history.md \
+		--stdout
+
 verify-understanding-export:
 	$(UV) run python -m scripts.verify_understanding_export
 

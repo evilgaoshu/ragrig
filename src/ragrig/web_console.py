@@ -864,6 +864,102 @@ def get_sanitizer_coverage() -> dict[str, Any] | None:
     }
 
 
+# ── Sanitizer Drift History ────────────────────────────────────────────────
+
+_SANITIZER_DRIFT_ARTIFACTS_DIR = (
+    Path(__file__).resolve().parents[2] / "docs" / "operations" / "artifacts"
+)
+
+
+def get_sanitizer_drift_history() -> dict[str, Any]:
+    """Return the sanitizer drift history for Web Console display.
+
+    Reads drift diff artifacts from docs/operations/artifacts/ and returns
+    a lightweight summary safe for browser rendering.  Never includes raw
+    secret fragments.  Reports degraded status for missing or corrupt files.
+    """
+    import json as _json
+
+    if not _SANITIZER_DRIFT_ARTIFACTS_DIR.is_dir():
+        return {
+            "available": False,
+            "status": "no_history",
+            "reason": "artifacts directory not found",
+        }
+
+    reports: list[dict[str, Any]] = []
+    for path in sorted(_SANITIZER_DRIFT_ARTIFACTS_DIR.glob("sanitizer-drift-diff*.json")):
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            if data.get("artifact") != "sanitizer-drift-diff":
+                reports.append(
+                    {
+                        "_source_path": str(path.name),
+                        "_degraded": True,
+                        "_degraded_reason": "invalid artifact type",
+                    }
+                )
+                continue
+            reports.append(data)
+        except (OSError, ValueError, _json.JSONDecodeError) as exc:
+            reports.append(
+                {
+                    "_source_path": str(path.name),
+                    "_degraded": True,
+                    "_degraded_reason": str(exc),
+                }
+            )
+
+    def _sort_key(r: dict[str, Any]) -> str:
+        if r.get("_degraded"):
+            return "9999"
+        return r.get("generated_at", "")
+
+    reports.sort(key=_sort_key)
+    valid_reports = [r for r in reports if not r.get("_degraded")]
+
+    if not valid_reports:
+        return {
+            "available": False,
+            "status": "no_history",
+            "reason": "no valid drift diff reports",
+            "degraded_count": len([r for r in reports if r.get("_degraded")]),
+        }
+
+    latest = valid_reports[-1]
+    parsers = latest.get("parsers", {})
+    risk = latest.get("risk", "unknown")
+
+    # Build sparkline data (last 10 reports)
+    sparkline_risk: list[str] = []
+    sparkline_redacted: list[int] = []
+    sparkline_degraded: list[int] = []
+    for r in valid_reports[-10:]:
+        sparkline_risk.append(r.get("risk", "unknown"))
+        sparkline_redacted.append(r.get("totals", {}).get("head", {}).get("redacted", 0))
+        sparkline_degraded.append(r.get("totals", {}).get("head", {}).get("degraded", 0))
+
+    return {
+        "available": True,
+        "status": "success",
+        "risk": risk,
+        "base_golden_hash": latest.get("base_golden_hash", "")[:12],
+        "head_golden_hash": latest.get("head_golden_hash", "")[:12],
+        "changed_parser_count": len(parsers.get("changed", [])),
+        "added_parser_count": len(parsers.get("added", [])),
+        "removed_parser_count": len(parsers.get("removed", [])),
+        "head_redacted": latest.get("totals", {}).get("head", {}).get("redacted", 0),
+        "head_degraded": latest.get("totals", {}).get("head", {}).get("degraded", 0),
+        "generated_at": latest.get("generated_at", ""),
+        "report_count": len(valid_reports),
+        "sparkline": {
+            "risk": sparkline_risk,
+            "redacted": sparkline_redacted,
+            "degraded": sparkline_degraded,
+        },
+    }
+
+
 # ── Retrieval Benchmark ────────────────────────────────────────────────────
 
 _BENCHMARK_ARTIFACT_PATH = (
