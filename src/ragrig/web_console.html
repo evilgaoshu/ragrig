@@ -873,6 +873,7 @@
         <div class="nav-item" data-section="sanitizer-coverage">Sanitizer Coverage</div>
         <div class="nav-item" data-section="sanitizer-drift">Sanitizer Drift</div>
         <div class="nav-item" data-section="retrieval-benchmark">Retrieval Benchmark</div>
+        <div class="nav-item" data-section="retrieval-benchmark-integrity">Baseline Integrity</div>
         <div class="nav-item">Documents</div>
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
@@ -904,6 +905,7 @@
           <div class="status-card"><div class="status-head">Pipeline Runs</div><strong id="run-count">0</strong><span id="run-subtext">Recent ingestion and indexing</span></div>
           <div class="status-card"><div class="status-head">Embedding Profiles</div><strong id="model-count">0</strong><span id="model-subtext">Real indexed model profiles</span></div>
           <div class="status-card"><div class="status-head">Sanitizer Drift</div><strong id="drift-risk">—</strong><span id="drift-subtext">Latest drift risk</span></div>
+          <div class="status-card"><div class="status-head">Baseline Integrity</div><strong id="baseline-integrity-status">—</strong><span id="baseline-integrity-subtext">Retrieval benchmark health</span></div>
         </section>
 
         <section class="panel">
@@ -969,6 +971,21 @@
               </table>
             </div>
             <div id="retrieval-benchmark-meta" style="margin-top:12px"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="retrieval-benchmark-integrity-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Retrieval Baseline Integrity</div>
+              <div class="panel-meta">Health check · GET /retrieval/benchmark/integrity · make retrieval-benchmark-integrity-artifact</div>
+            </div>
+            <div id="retrieval-integrity-panel-status" class="pill neutral">Loading</div>
+          </div>
+          <div class="panel-body stack">
+            <div id="retrieval-integrity-status" style="margin-bottom:12px"></div>
+            <div class="facts" id="retrieval-integrity-facts"></div>
+            <div id="retrieval-integrity-reasons" style="margin-top:12px"></div>
           </div>
         </section>
 
@@ -1351,6 +1368,7 @@
           started_before: '',
           limit: 10,
         },
+        retrievalBenchmarkIntegrity: null,
       };
 
       const WIZARD_FILTERS = [
@@ -1435,6 +1453,16 @@
         document.getElementById('model-count').textContent = String(state.models.embedding_profiles.length);
         document.getElementById('model-subtext').textContent = state.models.embedding_profiles.length ? 'Indexed embedding profiles' : 'No indexed profiles';
         document.getElementById('sidebar-note').innerHTML = `${escapeHtml(state.system.db.dialect)} primary<br>${escapeHtml(state.system.db.extension.state)} extension state<br>${escapeHtml(state.system.db.runtime_database_url)}`;
+
+        var integrity = state.retrievalBenchmarkIntegrity;
+        if (integrity && integrity.available) {
+          var status = integrity.overall_status || 'unknown';
+          document.getElementById('baseline-integrity-status').textContent = status;
+          document.getElementById('baseline-integrity-subtext').textContent = integrity.baseline_age !== null ? (integrity.baseline_age + ' days') : 'N/A';
+        } else {
+          document.getElementById('baseline-integrity-status').textContent = '—';
+          document.getElementById('baseline-integrity-subtext').textContent = 'No data';
+        }
       }
 
       function renderVectorPanel() {
@@ -3024,6 +3052,67 @@
         ].join('');
       }
 
+      async function loadRetrievalBenchmarkIntegrity() {
+        try {
+          state.retrievalBenchmarkIntegrity = await getJson('/retrieval/benchmark/integrity');
+        } catch {
+          state.retrievalBenchmarkIntegrity = null;
+        }
+      }
+
+      function renderRetrievalBenchmarkIntegrity() {
+        const panelStatus = document.getElementById('retrieval-integrity-panel-status');
+        const statusEl = document.getElementById('retrieval-integrity-status');
+        const factsEl = document.getElementById('retrieval-integrity-facts');
+        const reasonsEl = document.getElementById('retrieval-integrity-reasons');
+        const data = state.retrievalBenchmarkIntegrity;
+
+        if (!data || !data.available) {
+          panelStatus.className = 'pill neutral';
+          panelStatus.textContent = 'No data';
+          statusEl.innerHTML = '<span class="pill neutral">No integrity data</span>';
+          factsEl.innerHTML = empty('No manifest or baseline found. Run make retrieval-benchmark-baseline-refresh to generate them.');
+          reasonsEl.innerHTML = '';
+          document.getElementById('baseline-integrity-status').textContent = '—';
+          document.getElementById('baseline-integrity-subtext').textContent = 'No data';
+          return;
+        }
+
+        var overall = data.overall_status || 'unknown';
+        var overallClass = overall === 'pass' ? 'good' : overall === 'degraded' ? 'warn' : 'error';
+        panelStatus.className = 'pill ' + overallClass;
+        panelStatus.textContent = overall;
+
+        document.getElementById('baseline-integrity-status').textContent = overall;
+        document.getElementById('baseline-integrity-subtext').textContent = data.baseline_age !== null ? (data.baseline_age + ' days') : 'N/A';
+
+        statusEl.innerHTML = [
+          '<span class="pill ' + overallClass + '">' + (overall === 'pass' ? '✅ ' : overall === 'degraded' ? '⚠️ ' : '✗ ') + escapeHtml(overall) + '</span>',
+          '<span class="pill neutral">hash: ' + escapeHtml(data.metrics_hash_status || '—') + '</span>',
+          '<span class="pill neutral">schema: ' + escapeHtml(data.schema_version || '—') + '</span>',
+        ].join('');
+
+        factsEl.innerHTML = [
+          '<div class="card"><div class="fact-label">Schema Version</div><div class="fact-value">' + escapeHtml(data.schema_version || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Baseline Age</div><div class="fact-value">' + (data.baseline_age !== null ? escapeHtml(data.baseline_age) + ' days' : '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Fixture ID</div><div class="fact-value code">' + escapeHtml(data.fixture_id || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Iteration Count</div><div class="fact-value">' + escapeHtml(data.iteration_count !== null ? data.iteration_count : '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Metrics Hash</div><div class="fact-value">' + escapeHtml(data.metrics_hash_status || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Checked At</div><div class="fact-value" title="' + escapeHtml(data.checked_at || '') + '">' + (data.checked_at ? new Date(data.checked_at).toLocaleString() : '—') + '</div></div>',
+        ].join('');
+
+        if (data.reasons && data.reasons.length) {
+          reasonsEl.innerHTML = '<div class="fact-label">Reasons</div><div class="stack" style="margin-top:6px">' +
+            data.reasons.map(function(r) {
+              var reasonClass = overall === 'degraded' ? 'warn' : 'error';
+              return '<div class="card" style="border-left:4px solid var(--' + (reasonClass === 'warn' ? 'amber' : 'red') + ')"><code style="font-size:12px">' + escapeHtml(r) + '</code></div>';
+            }).join('') +
+            '</div>';
+        } else {
+          reasonsEl.innerHTML = '';
+        }
+      }
+
       async function loadSanitizerCoverage() {
         try {
           state.sanitizerCoverage = await getJson('/sanitizer-coverage');
@@ -3724,6 +3813,7 @@
           await loadSanitizerCoverage();
           await loadSanitizerDriftHistory();
           await loadRetrievalBenchmark();
+          await loadRetrievalBenchmarkIntegrity();
           renderStatusStrip();
           renderKnowledgeBases();
           renderSources();
@@ -3749,6 +3839,7 @@
           renderSanitizerCoverage();
           renderSanitizerDriftHistory();
           renderRetrievalBenchmark();
+          renderRetrievalBenchmarkIntegrity();
           renderUploadKBSelect();
         } catch (error) {
           document.body.innerHTML = `<main class="main">${empty(error.message)}</main>`;
