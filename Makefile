@@ -1,10 +1,12 @@
 UV ?= uv
 ARTIFACTS_DIR ?= docs/operations/artifacts
 
-.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark bge-rerank-smoke
+.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark bge-rerank-smoke sanitizer-drift-diff
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
+DRIFT_BASE ?= $(ARTIFACTS_DIR)/sanitizer-coverage-summary.json
+DRIFT_HEAD ?= $(ARTIFACTS_DIR)/sanitizer-coverage-summary.json
 
 sync:
 	$(UV) sync --dev
@@ -172,6 +174,18 @@ export-object-storage-check:
 
 verify-export-fixture:
 	$(UV) run python -m scripts.verify_export_fixture
+
+# ── Sanitizer drift diff ──────────────────────────────────────
+# Compares base/head sanitizer-coverage-summary.json artifacts and
+# produces a structured diff + Markdown report.  Exit code 2 when
+# risk=degraded, 0 when unchanged, 1 on error.
+sanitizer-drift-diff:
+	$(UV) run python -m scripts.sanitizer_drift_diff \
+		--base $(DRIFT_BASE) \
+		--head $(DRIFT_HEAD) \
+		--output $(ARTIFACTS_DIR)/sanitizer-drift-diff.json \
+		--markdown-output $(ARTIFACTS_DIR)/sanitizer-drift-diff.md \
+		--stdout
 
 verify-understanding-export:
 	$(UV) run python -m scripts.verify_understanding_export
