@@ -7,7 +7,8 @@ Define the first official `sink.object_storage` runtime for exporting governed R
 ## Scope
 
 - Support S3-compatible object storage through optional `boto3`.
-- Export a minimum artifact set as JSONL and Markdown.
+- Support optional Parquet encoding through optional `pyarrow`.
+- Export a minimum artifact set as JSONL, Markdown, and opt-in Parquet.
 - Preserve traceability back to knowledge base, document version, chunk, and pipeline run metadata.
 - Expose truthful plugin readiness through the registry, `/plugins`, and the web console.
 - Provide an opt-in CLI smoke command with dry-run support.
@@ -30,7 +31,7 @@ Contract-only, not runtime-ready in this phase:
 - Google Cloud Storage
 - Azure Blob Storage
 
-Because of that split, `sink.object_storage` reports `degraded` when `boto3` is installed and `unavailable` when it is missing.
+Because of that split, `sink.object_storage` reports `degraded` even when optional runtime dependencies are missing. Missing `boto3`, missing `pyarrow`, or both are surfaced through discovery metadata without breaking core imports or config validation.
 
 ## Config Contract
 
@@ -56,6 +57,7 @@ Sink-only fields:
 - `dry_run`
 - `include_retrieval_artifact`
 - `include_markdown_summary`
+- `parquet_export`
 - `object_metadata`
 
 Secrets must use explicit `env:` references and are limited to declared requirements.
@@ -71,6 +73,13 @@ Minimum artifact set in this phase:
 - `pipeline_runs.jsonl`
 - `export_summary.md`
 
+When `parquet_export=true`, the sink also emits:
+
+- `documents.parquet`
+- `document_versions.parquet`
+- `chunks.parquet`
+- `retrieval_status.parquet` when `include_retrieval_artifact=true`
+
 The manifest explicitly marks retrieval and evaluation exports as unsupported until a dedicated runtime path exists.
 
 ## Idempotency and Overwrite
@@ -84,11 +93,12 @@ The manifest explicitly marks retrieval and evaluation exports as unsupported un
 
 - JSONL artifacts use `application/x-ndjson`.
 - Markdown summaries use `text/markdown; charset=utf-8`.
+- Parquet artifacts use `application/vnd.apache.parquet`.
 - Object metadata includes artifact name, knowledge base, run id, content hash, and caller-supplied metadata.
 
 ## Testing Requirements
 
-- Fake-client contract tests cover write success, dry-run, overwrite/idempotency, missing credentials, bucket access failure, retryable write failure, and metadata/content type handling.
+- Fake-client contract tests cover JSONL and Parquet write success, dry-run, overwrite/idempotency, missing credentials, bucket access failure, retryable write failure, and metadata/content type handling.
 - Default tests remain offline and secret-free.
 - Optional SDKs remain outside top-level core imports.
 
