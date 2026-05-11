@@ -1,7 +1,7 @@
 UV ?= uv
 ARTIFACTS_DIR ?= docs/operations/artifacts
 
-.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact bge-rerank-smoke sanitizer-drift-diff answer-live-smoke understanding-export-diff
+.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact bge-rerank-smoke sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -235,6 +235,30 @@ sanitizer-drift-history:
 		--artifacts-dir $(ARTIFACTS_DIR) \
 		--output $(ARTIFACTS_DIR)/sanitizer-drift-history.json \
 		--markdown-output $(ARTIFACTS_DIR)/sanitizer-drift-history.md \
+		--stdout
+
+# ── Sanitizer drift history summary ───────────────────────────
+# Reads sanitizer-drift-history.json and produces a concise
+# PR-ready Markdown summary.  Exit code 1 on failure, 3 on degraded,
+# 0 on success/no_history.
+sanitizer-drift-history-summary:
+	$(UV) run python -m scripts.sanitizer_drift_history_summary \
+		--history $(ARTIFACTS_DIR)/sanitizer-drift-history.json \
+		--stdout
+
+# ── Artifact retention / cleanup ──────────────────────────────
+# Dry-run by default.  Lists files that would be removed.
+# Use --confirm-delete to actually delete.
+# Examples:
+#   make artifact-cleanup PATTERN="sanitizer-drift-diff*.json" KEEP_COUNT=10
+#   make artifact-cleanup PATTERN="*.json" KEEP_DAYS=30 CONFIRM_DELETE=1
+artifact-cleanup:
+	$(UV) run python -m scripts.artifact_cleanup \
+		--artifacts-dir $(ARTIFACTS_DIR) \
+		--pattern "$(PATTERN)" \
+		$(if $(KEEP_COUNT),--keep-count $(KEEP_COUNT),) \
+		$(if $(KEEP_DAYS),--keep-days $(KEEP_DAYS),) \
+		$(if $(CONFIRM_DELETE),--confirm-delete,) \
 		--stdout
 
 verify-understanding-export:
