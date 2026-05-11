@@ -23,9 +23,9 @@ from ragrig.evaluation.baseline import (
     promote_run_to_baseline,
     resolve_baseline_path,
 )
-from ragrig.evaluation.retention import cleanup_evaluation_runs
 from ragrig.evaluation.engine import _persist_run
 from ragrig.evaluation.models import EvaluationMetrics, EvaluationRun, now_iso
+from ragrig.evaluation.retention import cleanup_evaluation_runs
 
 
 def _make_run(run_id: str, **overrides) -> EvaluationRun:
