@@ -1013,7 +1013,7 @@ Executable commands in this repository:
 
 ## Object Storage Sink
 
-`sink.object_storage` now exports a minimal governed artifact set to S3-compatible object storage using optional `boto3`.
+`sink.object_storage` now exports a minimal governed artifact set to S3-compatible object storage using optional `boto3`, with opt-in Parquet export support via optional `pyarrow`.
 
 Current runtime-ready targets:
 
@@ -1047,7 +1047,9 @@ Example config:
   "path_template": "{knowledge_base}/{run_id}/{artifact}.{format}",
   "overwrite": false,
   "dry_run": true,
+  "include_retrieval_artifact": true,
   "include_markdown_summary": true,
+  "parquet_export": false,
   "object_metadata": {
     "environment": "dev"
   }
@@ -1058,9 +1060,12 @@ Behavior notes:
 
 - JSONL artifacts use `application/x-ndjson`.
 - Markdown summaries use `text/markdown; charset=utf-8`.
+- Parquet artifacts use `application/vnd.apache.parquet` when `parquet_export=true`.
+- Install `uv sync --dev --extra parquet` to enable local Parquet export and validation.
 - Existing objects are skipped when `overwrite=false`.
 - `dry_run=true` computes the export plan without uploading objects.
 - Retrieval and evaluation exports are explicitly marked unsupported/degraded until dedicated runtimes exist.
+- `retrieval_status.parquet` is emitted only when `include_retrieval_artifact=true`; schema-only Parquet remains typed.
 - `make sbom`: writes a CycloneDX JSON SBOM to `docs/operations/artifacts/sbom.cyclonedx.json`.
 - `make audit`: runs a vulnerability audit of the local environment and writes `docs/operations/artifacts/pip-audit.json`.
 - `make dependency-inventory`: refreshes `docs/operations/dependency-inventory.md`.

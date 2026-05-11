@@ -57,6 +57,12 @@ class PreparedArtifact:
     metadata: dict[str, str]
 
 
+@dataclass(frozen=True)
+class ParquetArtifactPayload:
+    artifact_name: str
+    rows: list[dict[str, Any]]
+
+
 def export_to_object_storage(
     session: Session,
     *,
@@ -459,29 +465,34 @@ def _prepare_artifacts(
                 (
                     "chunks",
                     "parquet",
-                    chunk_rows,
+                    ParquetArtifactPayload(artifact_name="chunks", rows=chunk_rows),
                     "application/vnd.apache.parquet",
                 ),
                 (
                     "document_versions",
                     "parquet",
-                    document_version_rows,
+                    ParquetArtifactPayload(
+                        artifact_name="document_versions", rows=document_version_rows
+                    ),
                     "application/vnd.apache.parquet",
                 ),
                 (
                     "documents",
                     "parquet",
-                    document_rows,
-                    "application/vnd.apache.parquet",
-                ),
-                (
-                    "retrieval_status",
-                    "parquet",
-                    retrieval_rows,
+                    ParquetArtifactPayload(artifact_name="documents", rows=document_rows),
                     "application/vnd.apache.parquet",
                 ),
             ]
         )
+        if bool(config.get("include_retrieval_artifact", True)):
+            artifact_rows.append(
+                (
+                    "retrieval_status",
+                    "parquet",
+                    ParquetArtifactPayload(artifact_name="retrieval_status", rows=retrieval_rows),
+                    "application/vnd.apache.parquet",
+                )
+            )
     if bool(config.get("include_markdown_summary", True)):
         artifact_rows.append(
             (
@@ -606,7 +617,9 @@ def _json_string(value: object) -> str | None:
     return json.dumps(value, sort_keys=True)
 
 
-def _encode_payload(payload: list[dict[str, Any]] | str, *, artifact_format: str) -> bytes:
+def _encode_payload(
+    payload: list[dict[str, Any]] | ParquetArtifactPayload | str, *, artifact_format: str
+) -> bytes:
     if artifact_format == "md":
         return str(payload).encode("utf-8")
     if artifact_format == "parquet":
@@ -615,8 +628,14 @@ def _encode_payload(payload: list[dict[str, Any]] | str, *, artifact_format: str
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def _encode_parquet_payload(payload: list[dict[str, Any]] | str) -> bytes:
-    if not isinstance(payload, list):
+def _encode_parquet_payload(payload: list[dict[str, Any]] | ParquetArtifactPayload | str) -> bytes:
+    if isinstance(payload, ParquetArtifactPayload):
+        artifact_name = payload.artifact_name
+        rows = payload.rows
+    elif isinstance(payload, list):
+        artifact_name = "unknown"
+        rows = payload
+    else:
         raise ObjectStorageConfigError("parquet export payload must be a list of records")
     try:
         import pyarrow as pa
@@ -624,14 +643,14 @@ def _encode_parquet_payload(payload: list[dict[str, Any]] | str) -> bytes:
     except ImportError as exc:  # pragma: no cover
         raise ObjectStorageConfigError("pyarrow is required for parquet export") from exc
 
-    schema = _schema_for_parquet_payload(payload)
-    table = pa.Table.from_pylist(payload, schema=schema)
+    schema = _schema_for_parquet_payload(artifact_name=artifact_name, payload=rows)
+    table = pa.Table.from_pylist(rows, schema=schema)
     sink = io.BytesIO()
     pq.write_table(table, sink)
     return sink.getvalue()
 
 
-def _schema_for_parquet_payload(payload: list[dict[str, Any]]):
+def _schema_for_parquet_payload(*, artifact_name: str, payload: list[dict[str, Any]]):
     try:
         import pyarrow as pa
     except ImportError as exc:  # pragma: no cover
@@ -640,25 +659,14 @@ def _schema_for_parquet_payload(payload: list[dict[str, Any]]):
     if payload:
         keys = list(payload[0])
     else:
-        return pa.schema([])
+        keys = []
 
     typed_fields = {
-        ("reason", "status"): [
+        "retrieval_status": [
             pa.field("status", pa.string(), nullable=False),
             pa.field("reason", pa.string(), nullable=False),
         ],
-        (
-            "char_end",
-            "char_start",
-            "chunk_id",
-            "chunk_index",
-            "document_uri",
-            "document_version_id",
-            "heading",
-            "metadata",
-            "page_number",
-            "text",
-        ): [
+        "chunks": [
             pa.field("chunk_id", pa.string(), nullable=False),
             pa.field("document_version_id", pa.string(), nullable=False),
             pa.field("document_uri", pa.string()),
@@ -670,17 +678,7 @@ def _schema_for_parquet_payload(payload: list[dict[str, Any]]):
             pa.field("heading", pa.string()),
             pa.field("metadata", pa.string()),
         ],
-        (
-            "content_hash",
-            "document_id",
-            "document_uri",
-            "document_version_id",
-            "metadata",
-            "parser_config",
-            "parser_name",
-            "source_uri",
-            "version_number",
-        ): [
+        "document_versions": [
             pa.field("document_version_id", pa.string(), nullable=False),
             pa.field("document_id", pa.string(), nullable=False),
             pa.field("version_number", pa.int64(), nullable=False),
@@ -691,15 +689,7 @@ def _schema_for_parquet_payload(payload: list[dict[str, Any]]):
             pa.field("document_uri", pa.string(), nullable=False),
             pa.field("source_uri", pa.string()),
         ],
-        (
-            "content_hash",
-            "document_id",
-            "document_uri",
-            "knowledge_base_id",
-            "metadata",
-            "mime_type",
-            "source_id",
-        ): [
+        "documents": [
             pa.field("document_id", pa.string(), nullable=False),
             pa.field("knowledge_base_id", pa.string(), nullable=False),
             pa.field("source_id", pa.string(), nullable=False),
@@ -709,7 +699,7 @@ def _schema_for_parquet_payload(payload: list[dict[str, Any]]):
             pa.field("metadata", pa.string()),
         ],
     }
-    fields = typed_fields.get(tuple(sorted(keys)))
+    fields = typed_fields.get(artifact_name)
     if fields is None:
         fields = [pa.field(key, pa.string()) for key in keys]
     return pa.schema(fields)
