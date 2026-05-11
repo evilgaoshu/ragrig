@@ -31,6 +31,7 @@ from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.health import create_database_check
 from ragrig.ingestion.pipeline import _select_parser
 from ragrig.parsers.base import ParserTimeoutError, parse_with_timeout
+from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.processing_profile import (
     ProfileStatus,
     TaskType,
@@ -100,6 +101,13 @@ from ragrig.web_console import (
     load_console_html,
     validate_plugin_config_for_wizard,
 )
+from ragrig.workflows import (
+    WorkflowDefinition,
+    WorkflowStep,
+    WorkflowValidationError,
+    list_workflow_operations,
+    run_workflow,
+)
 
 
 class EvaluationRunRequest(BaseModel):
@@ -131,6 +139,25 @@ class RetrievalSearchRequest(BaseModel):
     candidate_k: int = Field(default=20, ge=1, le=200)
     reranker_provider: str | None = None
     reranker_model: str | None = None
+
+
+class EnterpriseConnectorProbeRequest(BaseModel):
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowStepRequest(BaseModel):
+    step_id: str
+    operation: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    depends_on: list[str] = Field(default_factory=list)
+    max_retries: int = Field(default=0, ge=0, le=5)
+    continue_on_error: bool = False
+
+
+class WorkflowRunRequest(BaseModel):
+    workflow_id: str
+    steps: list[WorkflowStepRequest]
+    dry_run: bool = False
 
 
 class AnswerRequest(BaseModel):
@@ -606,6 +633,49 @@ def create_app(
     @app.get("/plugins", response_model=None)
     def plugins() -> dict[str, list[dict[str, Any]]]:
         return {"items": list_plugins()}
+
+    @app.get("/enterprise-connectors", response_model=None)
+    def enterprise_connectors() -> dict[str, list[dict[str, object]]]:
+        return {"items": list_enterprise_connectors()}
+
+    @app.post("/enterprise-connectors/{connector_id:path}/probe", response_model=None)
+    def enterprise_connector_probe(
+        connector_id: str,
+        request: EnterpriseConnectorProbeRequest,
+    ) -> dict[str, object]:
+        return probe_enterprise_connector(connector_id, config=request.config)
+
+    @app.get("/workflows/operations", response_model=None)
+    def workflow_operations() -> dict[str, list[dict[str, object]]]:
+        return {"items": list_workflow_operations()}
+
+    @app.post("/workflows/runs", response_model=None)
+    def workflow_run(
+        request: WorkflowRunRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            definition = WorkflowDefinition(
+                workflow_id=request.workflow_id,
+                steps=[
+                    WorkflowStep(
+                        step_id=step.step_id,
+                        operation=step.operation,
+                        config=step.config,
+                        depends_on=step.depends_on,
+                        max_retries=step.max_retries,
+                        continue_on_error=step.continue_on_error,
+                    )
+                    for step in request.steps
+                ],
+            )
+            return run_workflow(
+                session=session,
+                definition=definition,
+                dry_run=request.dry_run,
+            ).as_dict()
+        except WorkflowValidationError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
 
     @app.post("/plugins/{plugin_id}/validate-config", response_model=None)
     async def validate_plugin_config(

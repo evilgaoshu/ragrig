@@ -901,6 +901,35 @@ Current contract-first implementation adds:
 - `source.fileshare` as a real official source plugin with mounted-path NFS support, fake-client SMB/WebDAV/SFTP coverage, and protocol-level readiness reporting.
 - `make fileshare-check` for offline mounted-path and fake remote fileshare smoke validation.
 
+### Enterprise Connector Catalog and Workflow Engine
+
+RAGRig now exposes an enterprise connector catalog separate from live connector execution.
+It covers local files, fileshares, S3-compatible storage, Google Workspace, Microsoft
+365, wikis, databases, collaboration suites, Notion, Slack files, Box, Dropbox, and
+GitHub repository contents with official documentation links, protocols, credential
+names, and workflow operation metadata.
+
+New endpoints:
+
+- `GET /enterprise-connectors` lists connector families, protocols, credential env var names, docs links, and workflow operation mappings.
+- `POST /enterprise-connectors/{connector_id}/probe` performs a safe local probe. Without credentials, cloud/SaaS connectors return `missing_credentials` and do not make network calls.
+- `GET /workflows/operations` lists workflow node operations.
+- `POST /workflows/runs` runs or dry-runs a lightweight DAG with dependency validation.
+
+Workflow operations available now:
+
+- `ingest.local`
+- `ingest.fileshare`
+- `ingest.s3`
+- `ingest.connector`
+- `index.knowledge_base`
+- `noop`
+
+The engine executes steps in topological order, rejects duplicate steps, unknown
+dependencies, cycles, and unsupported operations, supports dry-runs, per-step retry
+counts, dependency skipping, and returns linked `pipeline_run_id` values for real
+ingest/index steps. Default tests stay network-free and secret-free.
+
 ### Fileshare Source
 
 `source.fileshare` is the current local-first bridge for enterprise shared storage.
