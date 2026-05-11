@@ -175,11 +175,20 @@ eval-cleanup:
 retrieval-benchmark:
 	$(UV) run python -m scripts.retrieval_benchmark --pretty
 
+# ── Retrieval benchmark baseline refresh ──────────────────────
+# Generates a fresh baseline and manifest from offline fixture data.
+# No network, GPU, torch, or BGE dependency.
+retrieval-benchmark-baseline-refresh:
+	$(UV) run python -m scripts.retrieval_benchmark_baseline_refresh --pretty
+
 # ── Retrieval benchmark baseline compare ──────────────────────
 # Compares the current fixture benchmark against a stored baseline.
 # No network, GPU, torch, or BGE dependency by default.
+# Latency threshold is set high (500%) because local sqlite benchmarks
+# are inherently noisy on shared development machines. CI can override
+# via BENCHMARK_LATENCY_THRESHOLD_PCT env var.
 retrieval-benchmark-compare:
-	$(UV) run python -m scripts.retrieval_benchmark_compare --pretty
+	$(UV) run python -m scripts.retrieval_benchmark_compare --pretty --latency-threshold-pct 500
 
 # ── Optional BGE reranker smoke ────────────────────────────────
 # Requires local-ml extras (FlagEmbedding, sentence-transformers,
