@@ -16,7 +16,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).parent.parent
+from dotenv import load_dotenv
+
+# Load .env early so that port overrides and other env vars are available
+# for the rest of the preflight logic.
+load_dotenv(dotenv_path=Path(".env"))
+
 _REQUIRED_PORTS = {
     "SMB_HOST_PORT": 1445,
     "WEBDAV_HOST_PORT": 8080,
@@ -31,17 +36,6 @@ _OPTIONAL_SDKS = {
 
 def _run_quiet(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, capture_output=True, text=True)
-
-
-def _env_file_exists() -> str | None:
-    """Return blocker message if .env is missing, else None."""
-    if not (_REPO_ROOT / ".env").exists():
-        return (
-            ".env file is missing. Create it with:\n"
-            "  cp .env.example .env\n"
-            "Then edit any host ports that conflict with your local environment."
-        )
-    return None
 
 
 def _docker_available() -> str | None:
@@ -146,6 +140,17 @@ def _optional_sdks() -> list[str]:
     return blockers
 
 
+def _env_file() -> str | None:
+    """Return warning message if .env is missing, else None."""
+    if not Path(".env").exists():
+        return (
+            ".env file not found.\n"
+            "  Fix: cp .env.example .env  (then edit overrides if needed)\n"
+            "  Note: preflight will still proceed; defaults will be used."
+        )
+    return None
+
+
 def run_checks() -> dict[str, object]:
     """Run all preflight checks and return a structured result.
 
@@ -156,12 +161,6 @@ def run_checks() -> dict[str, object]:
     hard_blockers: list[str] = []
     warnings: list[str] = []
     suggested_ports: dict[str, int] = {}
-
-    # .env file check
-    env_msg = _env_file_exists()
-    checks["env_file"] = {"ok": env_msg is None, "blocker": env_msg}
-    if env_msg:
-        hard_blockers.append(env_msg)
 
     for name, fn in [
         ("docker_cli", _docker_available),
@@ -183,6 +182,11 @@ def run_checks() -> dict[str, object]:
         "suggested_ports": suggested_ports,
     }
     hard_blockers.extend(port_blockers)
+
+    env_msg = _env_file()
+    checks["env_file"] = {"ok": env_msg is None, "blocker": env_msg}
+    if env_msg:
+        warnings.append(env_msg)
 
     sdk_blockers = _optional_sdks()
     checks["optional_sdks"] = {"ok": not sdk_blockers, "blockers": sdk_blockers}
