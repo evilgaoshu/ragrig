@@ -59,9 +59,7 @@ def _redact_base_url(url: str) -> str:
                 safe_params.append(param)
 
     query = "&".join(safe_params) if safe_params else ""
-    return urlunparse(
-        (parsed.scheme, netloc, parsed.path, parsed.params, query, parsed.fragment)
-    )
+    return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, query, parsed.fragment))
 
 
 def _check_openai_dependency() -> tuple[bool, str]:
@@ -111,9 +109,7 @@ def _smoke_chat(
             messages=[
                 {
                     "role": "user",
-                    "content": (
-                        "Say 'pong' and include a citation like [cit-1]."
-                    ),
+                    "content": ("Say 'pong' and include a citation like [cit-1]."),
                 }
             ],
             temperature=0.0,
@@ -170,9 +166,7 @@ def run_answer_diagnostics(
     """
     provider = provider or os.environ.get("RAGRIG_ANSWER_PROVIDER", "ollama")
     model = model or os.environ.get("RAGRIG_ANSWER_MODEL", "llama3.2:1b")
-    base_url = base_url or os.environ.get(
-        "RAGRIG_ANSWER_BASE_URL", "http://localhost:11434/v1"
-    )
+    base_url = base_url or os.environ.get("RAGRIG_ANSWER_BASE_URL", "http://localhost:11434/v1")
 
     t0 = time.perf_counter()
     base_url_redacted = _redact_base_url(base_url)
