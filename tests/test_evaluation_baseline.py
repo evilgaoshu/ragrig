@@ -23,6 +23,17 @@ from ragrig.evaluation.baseline import (
     promote_run_to_baseline,
     resolve_baseline_path,
 )
+from ragrig.evaluation.baseline_manifest import (
+    MANIFEST_SCHEMA_VERSION,
+    BaselineHashMismatchError,
+    BaselineIncompatibleSchemaError,
+    BaselineManifestCorruptError,
+    BaselineManifestMissingError,
+    build_manifest,
+    get_baseline_integrity_status,
+    validate_baseline_manifest,
+    write_manifest,
+)
 from ragrig.evaluation.engine import _persist_run
 from ragrig.evaluation.models import EvaluationMetrics, EvaluationRun, now_iso
 from ragrig.evaluation.retention import cleanup_evaluation_runs
@@ -172,26 +183,26 @@ def test_load_baseline_metrics_strict_missing_file(tmp_path) -> None:
 
 
 def test_load_baseline_metrics_strict_invalid_json(tmp_path) -> None:
-    """Strict loader raises BaselineCorruptError for invalid JSON."""
+    """Strict loader raises BaselineManifestCorruptError for invalid JSON (backfill fails)."""
     path = tmp_path / "bad.json"
     path.write_text("not json")
-    with pytest.raises(BaselineCorruptError, match="corrupt"):
+    with pytest.raises(BaselineManifestCorruptError, match="corrupt"):
         load_baseline_metrics_strict(path)
 
 
 def test_load_baseline_metrics_strict_missing_metrics_key(tmp_path) -> None:
-    """Strict loader raises BaselineCorruptError when metrics key missing."""
+    """Strict loader raises BaselineManifestCorruptError when metrics key missing."""
     path = tmp_path / "no_metrics.json"
-    path.write_text('{"id": "x"}')
-    with pytest.raises(BaselineCorruptError, match="missing 'metrics'"):
+    path.write_text('{"id": "x", "created_at": "2026-05-01T00:00:00+00:00"}')
+    with pytest.raises(BaselineManifestCorruptError, match="missing 'metrics'"):
         load_baseline_metrics_strict(path)
 
 
 def test_load_baseline_metrics_strict_invalid_metrics_schema(tmp_path) -> None:
-    """Strict loader raises BaselineCorruptError for invalid metrics schema."""
+    """Strict loader raises BaselineManifestCorruptError for invalid metrics schema."""
     path = tmp_path / "bad_metrics.json"
-    path.write_text('{"metrics": "not_a_dict"}')
-    with pytest.raises(BaselineCorruptError, match="missing 'metrics'"):
+    path.write_text('{"metrics": "not_a_dict", "created_at": "2026-05-01T00:00:00+00:00"}')
+    with pytest.raises(BaselineManifestCorruptError, match="missing 'metrics'"):
         load_baseline_metrics_strict(path)
 
 
@@ -447,5 +458,241 @@ def test_resolve_then_strict_detects_corrupt_file(tmp_path) -> None:
     (baseline_dir / "corrupt.json").write_text("not json")
     resolved = resolve_baseline_path(str(baseline_dir / "corrupt.json"))
     assert resolved.exists()
-    with pytest.raises(BaselineCorruptError, match="corrupt"):
+    with pytest.raises(BaselineManifestCorruptError, match="corrupt"):
         load_baseline_metrics_strict(resolved)
+
+
+# ── Manifest Tests ───────────────────────────────────────────────────────────
+
+
+def test_promote_creates_manifest_with_required_fields(tmp_path) -> None:
+    """Promoting a run creates a manifest with all required fields."""
+    store_dir = tmp_path / "runs"
+    baseline_dir = tmp_path / "baselines"
+    run = _make_run("run-manifest")
+    _persist_run(run, store_dir)
+
+    metadata = promote_run_to_baseline(
+        "run-manifest", store_dir=store_dir, baseline_dir=baseline_dir, baseline_id="bl-manifest"
+    )
+
+    manifest_path = baseline_dir / "bl-manifest.manifest.json"
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == MANIFEST_SCHEMA_VERSION
+    assert manifest["baseline_id"] == "bl-manifest"
+    assert manifest["source_run_id"] == "run-manifest"
+    assert "report_path" in manifest
+    assert manifest["metrics_hash"].startswith("sha256:")
+    assert "created_at" in manifest
+    assert manifest["compatible_eval_schema"] == "1.0.0"
+    assert metadata["manifest"] == manifest
+
+
+def test_load_baseline_metrics_strict_valid_manifest(tmp_path) -> None:
+    """Strict loader succeeds when manifest is valid."""
+    store_dir = tmp_path / "runs"
+    baseline_dir = tmp_path / "baselines"
+    run = _make_run("run-valid", metrics=EvaluationMetrics(total_questions=3, hit_at_1=0.8))
+    _persist_run(run, store_dir)
+    promote_run_to_baseline(
+        "run-valid", store_dir=store_dir, baseline_dir=baseline_dir, baseline_id="bl-valid"
+    )
+
+    baseline_path = baseline_dir / "bl-valid.json"
+    metrics = load_baseline_metrics_strict(baseline_path)
+    assert metrics.hit_at_1 == 0.8
+
+
+def test_load_baseline_metrics_strict_missing_manifest_no_backfill(tmp_path) -> None:
+    """Without auto-backfill, missing manifest raises BaselineManifestMissingError."""
+    path = tmp_path / "legacy.json"
+    run = _make_run("legacy-run")
+    path.write_text(run.model_dump_json(), encoding="utf-8")
+    with pytest.raises(BaselineManifestMissingError, match="missing"):
+        validate_baseline_manifest(path, auto_backfill=False)
+
+
+def test_load_baseline_metrics_strict_hash_mismatch(tmp_path) -> None:
+    """Tampered metrics trigger BaselineHashMismatchError."""
+    store_dir = tmp_path / "runs"
+    baseline_dir = tmp_path / "baselines"
+    run = _make_run("run-hash", metrics=EvaluationMetrics(total_questions=2, hit_at_1=0.5))
+    _persist_run(run, store_dir)
+    promote_run_to_baseline(
+        "run-hash", store_dir=store_dir, baseline_dir=baseline_dir, baseline_id="bl-hash"
+    )
+
+    # Tamper with metrics in the baseline file
+    baseline_path = baseline_dir / "bl-hash.json"
+    raw = json.loads(baseline_path.read_text(encoding="utf-8"))
+    raw["metrics"]["hit_at_1"] = 0.99
+    baseline_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+
+    with pytest.raises(BaselineHashMismatchError, match="hash mismatch"):
+        load_baseline_metrics_strict(baseline_path)
+
+
+def test_load_baseline_metrics_strict_incompatible_schema(tmp_path) -> None:
+    """Wrong schema_version in manifest raises BaselineIncompatibleSchemaError."""
+    store_dir = tmp_path / "runs"
+    baseline_dir = tmp_path / "baselines"
+    run = _make_run("run-schema")
+    _persist_run(run, store_dir)
+    promote_run_to_baseline(
+        "run-schema", store_dir=store_dir, baseline_dir=baseline_dir, baseline_id="bl-schema"
+    )
+
+    manifest_path = baseline_dir / "bl-schema.manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["schema_version"] = "99.99.99"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    with pytest.raises(BaselineIncompatibleSchemaError, match="Incompatible manifest schema"):
+        load_baseline_metrics_strict(baseline_dir / "bl-schema.json")
+
+
+def test_legacy_baseline_auto_backfill(tmp_path) -> None:
+    """Legacy baseline without manifest gets auto-backfilled on validation."""
+    baseline_path = tmp_path / "legacy-baseline.json"
+    run = _make_run("legacy-run", metrics=EvaluationMetrics(total_questions=5, hit_at_1=0.6))
+    baseline_path.write_text(run.model_dump_json(), encoding="utf-8")
+
+    assert not (tmp_path / "legacy-baseline.manifest.json").exists()
+    manifest = validate_baseline_manifest(
+        baseline_path,
+        auto_backfill=True,
+        baseline_id="legacy-baseline",
+        source_run_id="legacy-run",
+        created_at=run.created_at,
+    )
+    assert (tmp_path / "legacy-baseline.manifest.json").exists()
+    assert manifest["baseline_id"] == "legacy-baseline"
+    assert manifest["source_run_id"] == "legacy-run"
+    assert manifest["schema_version"] == MANIFEST_SCHEMA_VERSION
+
+
+def test_legacy_baseline_backfill_from_file_content(tmp_path) -> None:
+    """Auto-backfill infers fields from baseline file content when not provided."""
+    baseline_path = tmp_path / "orphan.json"
+    run = _make_run("orphan-run", created_at="2026-05-01T00:00:00+00:00")
+    baseline_path.write_text(run.model_dump_json(), encoding="utf-8")
+
+    manifest = validate_baseline_manifest(baseline_path, auto_backfill=True)
+    assert manifest["baseline_id"] == "orphan-run"  # inferred from raw.id
+    assert manifest["source_run_id"] == "orphan-run"  # inferred from id
+    assert manifest["created_at"] == "2026-05-01T00:00:00+00:00"
+
+
+def test_list_baselines_includes_integrity_status(tmp_path) -> None:
+    """list_baselines returns integrity_status for each baseline."""
+    store_dir = tmp_path / "runs"
+    baseline_dir = tmp_path / "baselines"
+    run = _make_run("run-integ")
+    _persist_run(run, store_dir)
+    promote_run_to_baseline(
+        "run-integ", store_dir=store_dir, baseline_dir=baseline_dir, baseline_id="bl-integ"
+    )
+
+    result = list_baselines(baseline_dir=baseline_dir)
+    baseline = result["baselines"][0]
+    assert "integrity_status" in baseline
+    assert baseline["integrity_status"]["status"] == "valid"
+    assert "schema_version" in baseline["integrity_status"]
+    assert "metrics_hash" in baseline["integrity_status"]
+
+
+def test_list_baselines_no_secrets_in_output(tmp_path) -> None:
+    """list_baselines must not leak raw secrets or config_snapshot."""
+    store_dir = tmp_path / "runs"
+    baseline_dir = tmp_path / "baselines"
+    run = _make_run(
+        "secret-run-2",
+        config_snapshot={"api_key": "secret-123", "password": "hunter2"},
+    )
+    _persist_run(run, store_dir)
+    promote_run_to_baseline(
+        "secret-run-2", store_dir=store_dir, baseline_dir=baseline_dir, baseline_id="bl-sec2"
+    )
+
+    result = list_baselines(baseline_dir=baseline_dir)
+    baseline = result["baselines"][0]
+    assert "config_snapshot" not in baseline
+    assert "items" not in baseline
+    text = json.dumps(result)
+    assert "secret-123" not in text
+    assert "hunter2" not in text
+
+
+def test_integrity_status_missing_file(tmp_path) -> None:
+    """get_baseline_integrity_status reports missing file gracefully."""
+    baseline_path = tmp_path / "ghost.json"
+    status = get_baseline_integrity_status(baseline_path)
+    assert status["status"] == "missing_file"
+
+
+def test_integrity_status_corrupt_manifest(tmp_path) -> None:
+    """get_baseline_integrity_status reports corrupt manifest gracefully."""
+    baseline_path = tmp_path / "bad.json"
+    baseline_path.write_text("{}")
+    manifest_path = tmp_path / "bad.manifest.json"
+    manifest_path.write_text("not json")
+    status = get_baseline_integrity_status(baseline_path)
+    assert status["status"] == "corrupt"
+
+
+def test_integrity_status_hash_mismatch(tmp_path) -> None:
+    """get_baseline_integrity_status reports hash mismatch gracefully."""
+    baseline_path = tmp_path / "tampered.json"
+    run = _make_run("tampered", metrics=EvaluationMetrics(total_questions=1))
+    baseline_path.write_text(run.model_dump_json(), encoding="utf-8")
+    # Write manifest with wrong hash
+    manifest = build_manifest(
+        baseline_id="tampered",
+        source_run_id="tampered",
+        report_path=baseline_path,
+        metrics=EvaluationMetrics(total_questions=99),
+        created_at=run.created_at,
+    )
+    write_manifest(manifest, baseline_path)
+    status = get_baseline_integrity_status(baseline_path)
+    assert status["status"] == "hash_mismatch"
+
+
+def test_integrity_status_incompatible_schema(tmp_path) -> None:
+    """get_baseline_integrity_status reports incompatible schema gracefully."""
+    baseline_path = tmp_path / "old.json"
+    run = _make_run("old")
+    baseline_path.write_text(run.model_dump_json(), encoding="utf-8")
+    manifest = build_manifest(
+        baseline_id="old",
+        source_run_id="old",
+        report_path=baseline_path,
+        metrics=run.metrics,
+        created_at=run.created_at,
+    )
+    manifest["schema_version"] = "0.0.1"
+    write_manifest(manifest, baseline_path)
+    status = get_baseline_integrity_status(baseline_path)
+    assert status["status"] == "incompatible_schema"
+
+
+def test_manifest_no_secret_leakage(tmp_path) -> None:
+    """Manifest must not contain raw secrets."""
+    baseline_path = tmp_path / "sec.json"
+    run = _make_run(
+        "sec",
+        config_snapshot={"api_key": "super-secret"},
+        metrics=EvaluationMetrics(total_questions=1),
+    )
+    baseline_path.write_text(run.model_dump_json(), encoding="utf-8")
+    manifest = build_manifest(
+        baseline_id="sec",
+        source_run_id="sec",
+        report_path=baseline_path,
+        metrics=run.metrics,
+        created_at=run.created_at,
+    )
+    write_manifest(manifest, baseline_path)
+    manifest_text = (tmp_path / "sec.manifest.json").read_text()
+    assert "super-secret" not in manifest_text

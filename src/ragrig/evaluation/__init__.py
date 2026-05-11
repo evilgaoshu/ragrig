@@ -10,6 +10,12 @@ from ragrig.evaluation.baseline import (
     promote_run_to_baseline,
     resolve_baseline_path,
 )
+from ragrig.evaluation.baseline_manifest import (
+    BaselineHashMismatchError,
+    BaselineIncompatibleSchemaError,
+    BaselineManifestCorruptError,
+    BaselineManifestMissingError,
+)
 from ragrig.evaluation.engine import (
     list_runs_from_store,
     load_run_from_store,
@@ -37,5 +43,9 @@ __all__ = [
     "BaselineError",
     "BaselineNotFoundError",
     "BaselineCorruptError",
+    "BaselineManifestMissingError",
+    "BaselineManifestCorruptError",
+    "BaselineHashMismatchError",
+    "BaselineIncompatibleSchemaError",
     "cleanup_evaluation_runs",
 ]

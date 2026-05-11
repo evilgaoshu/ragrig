@@ -19,6 +19,10 @@ from sqlalchemy.orm import Session
 from ragrig.config import get_settings
 from ragrig.evaluation import (
     BaselineCorruptError,
+    BaselineHashMismatchError,
+    BaselineIncompatibleSchemaError,
+    BaselineManifestCorruptError,
+    BaselineManifestMissingError,
     BaselineNotFoundError,
     load_baseline_metrics_strict,
     resolve_baseline_path,
@@ -182,6 +186,30 @@ def main() -> int:
                 "error": str(exc),
                 "status": "degraded",
                 "reason": "baseline_missing",
+            }
+        except BaselineManifestMissingError as exc:
+            baseline_error = {
+                "error": str(exc),
+                "status": "degraded",
+                "reason": "missing_manifest",
+            }
+        except BaselineManifestCorruptError as exc:
+            baseline_error = {
+                "error": str(exc),
+                "status": "degraded",
+                "reason": "corrupt_manifest",
+            }
+        except BaselineHashMismatchError as exc:
+            baseline_error = {
+                "error": str(exc),
+                "status": "degraded",
+                "reason": "hash_mismatch",
+            }
+        except BaselineIncompatibleSchemaError as exc:
+            baseline_error = {
+                "error": str(exc),
+                "status": "degraded",
+                "reason": "incompatible_schema",
             }
         except BaselineCorruptError as exc:
             baseline_error = {

@@ -1122,6 +1122,7 @@
                     <option value="">None</option>
                   </select>
                   <span class="sub muted" id="eval-baseline-info"></span>
+                  <span class="sub" id="eval-baseline-integrity" style="font-size:12px;"></span>
                 </div>
               </div>
               <div class="panel-body stack" id="evaluation-body">
@@ -2793,20 +2794,27 @@
         const btnEl = document.getElementById('run-evaluation-btn');
         const baselineSelect = document.getElementById('eval-baseline-select');
         const baselineInfo = document.getElementById('eval-baseline-info');
+        const baselineIntegrity = document.getElementById('eval-baseline-integrity');
 
         var ev = state.evaluation || {};
         var runs = ev.runs || [];
         var latest = runs[0];
         var baselines = ev.baselines || [];
 
-        // Build baseline selector
+        // Build baseline selector with integrity status
         if (baselineSelect) {
           var currentVal = baselineSelect.value;
           var optionsHtml = '<option value="">None</option>';
           for (var b = 0; b < baselines.length; b++) {
             var bl = baselines[b];
             var selected = (currentVal === bl.id) ? ' selected' : '';
-            optionsHtml += '<option value="' + escapeHtml(bl.id) + '"' + selected + '>' + escapeHtml(bl.id) + '</option>';
+            var integrity = bl.integrity_status || {};
+            var statusLabel = integrity.status || 'unknown';
+            var label = escapeHtml(bl.id);
+            if (statusLabel !== 'valid') {
+              label += ' [' + escapeHtml(statusLabel) + ']';
+            }
+            optionsHtml += '<option value="' + escapeHtml(bl.id) + '"' + selected + '>' + label + '</option>';
           }
           baselineSelect.innerHTML = optionsHtml;
           if (baselines.length > 0 || currentVal) {
@@ -2818,6 +2826,21 @@
             baselineInfo.textContent = 'current: ' + escapeHtml(ev.current_baseline_id);
           } else {
             baselineInfo.textContent = '';
+          }
+        }
+        if (baselineIntegrity) {
+          var selectedBl = baselines.find(function(b) { return b.id === (baselineSelect ? baselineSelect.value : ''); });
+          if (selectedBl && selectedBl.integrity_status) {
+            var ist = selectedBl.integrity_status;
+            if (ist.status === 'valid') {
+              baselineIntegrity.textContent = '✓ manifest valid';
+              baselineIntegrity.style.color = 'var(--success)';
+            } else {
+              baselineIntegrity.textContent = '⚠ ' + escapeHtml(ist.status) + (ist.reason ? ': ' + escapeHtml(ist.reason) : '');
+              baselineIntegrity.style.color = 'var(--warning)';
+            }
+          } else {
+            baselineIntegrity.textContent = '';
           }
         }
 

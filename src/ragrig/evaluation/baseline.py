@@ -1,9 +1,9 @@
 """Baseline management for Golden Question Evaluation.
 
 Provides:
-- promote_run_to_baseline: copy a run to the baseline directory with metadata
+- promote_run_to_baseline: copy a run to the baseline directory with metadata and manifest
 - resolve_baseline_path: resolve a baseline id or path to a file path
-- list_baselines: list all baselines with metadata
+- list_baselines: list all baselines with metadata and integrity status
 - load_baseline_metrics: load metrics from a baseline (with strict error handling)
 """
 
@@ -15,6 +15,12 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from ragrig.evaluation.baseline_manifest import (
+    build_manifest,
+    get_baseline_integrity_status,
+    validate_baseline_manifest,
+    write_manifest,
+)
 from ragrig.evaluation.models import EvaluationMetrics
 
 DEFAULT_BASELINE_DIR = Path("evaluation_baselines")
@@ -75,7 +81,8 @@ def promote_run_to_baseline(
     """Promote an evaluation run to a baseline.
 
     Copies the run JSON from store_dir to baseline_dir, records metadata
-    in the baseline registry, and returns the baseline metadata.
+    in the baseline registry, writes an integrity manifest, and returns
+    the baseline metadata.
     """
     from ragrig.evaluation.engine import DEFAULT_EVAL_DIR, load_run_from_store
 
@@ -93,6 +100,16 @@ def promote_run_to_baseline(
     # Copy run JSON to baseline dir (with redaction already applied by persistence)
     raw = json.loads((store_dir / f"{run_id}.json").read_text(encoding="utf-8"))
     baseline_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Write integrity manifest
+    manifest = build_manifest(
+        baseline_id=baseline_id,
+        source_run_id=run_id,
+        report_path=baseline_path,
+        metrics=run.metrics,
+        created_at=run.created_at,
+    )
+    write_manifest(manifest, baseline_path)
 
     registry = _load_registry(baseline_dir)
 
@@ -113,6 +130,7 @@ def promote_run_to_baseline(
         "knowledge_base": run.knowledge_base,
         "metrics": run.metrics.model_dump(),
         "path": rel_path,
+        "manifest": manifest,
     }
     registry["baselines"].append(metadata)
     registry["current_baseline_id"] = baseline_id
@@ -163,12 +181,41 @@ def resolve_baseline_path(
 def list_baselines(
     baseline_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """List all baselines and the current baseline id."""
+    """List all baselines and the current baseline id with integrity status."""
     baseline_dir = baseline_dir or DEFAULT_BASELINE_DIR
     registry = _load_registry(baseline_dir)
+    baselines = registry.get("baselines", [])
+    enriched = []
+    for baseline in baselines:
+        entry = dict(baseline)
+        # Remove manifest from API response to keep it clean; integrity status is enough
+        entry.pop("manifest", None)
+        path = Path(baseline.get("path", ""))
+        if not path.exists():
+            fallback = baseline_dir / f"{baseline['id']}.json"
+            if fallback.exists():
+                path = fallback
+        if path.exists():
+            integrity = get_baseline_integrity_status(
+                path,
+                auto_backfill=True,
+                baseline_id=baseline.get("id"),
+                source_run_id=baseline.get("source_run_id"),
+                created_at=baseline.get("created_at"),
+            )
+            entry["integrity_status"] = integrity
+        else:
+            entry["integrity_status"] = {
+                "status": "missing_file",
+                "reason": f"Baseline file not found: {path}",
+            }
+        # Ensure no secrets leak through API
+        entry.pop("config_snapshot", None)
+        entry.pop("items", None)
+        enriched.append(entry)
     return {
         "current_baseline_id": registry.get("current_baseline_id"),
-        "baselines": registry.get("baselines", []),
+        "baselines": enriched,
     }
 
 
@@ -177,10 +224,19 @@ def load_baseline_metrics_strict(
 ) -> EvaluationMetrics:
     """Load baseline metrics with strict error handling.
 
+    Validates manifest integrity before loading metrics.
     Raises BaselineNotFoundError or BaselineCorruptError instead of returning None.
     """
     if not baseline_path.exists():
         raise BaselineNotFoundError(f"Baseline file not found: {baseline_path}")
+
+    # Validate manifest integrity (let specific manifest errors propagate)
+    validate_baseline_manifest(
+        baseline_path,
+        auto_backfill=True,
+        baseline_id=baseline_path.stem,
+    )
+
     try:
         raw = json.loads(baseline_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
