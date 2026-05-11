@@ -124,8 +124,7 @@ MAINSTREAM_MODEL_PROVIDERS: dict[str, ModelProviderSpec] = {
         display_name="Amazon Bedrock",
         protocol="bedrock",
         official_docs_url=(
-            "https://docs.aws.amazon.com/bedrock/latest/APIReference/"
-            "API_ListFoundationModels.html"
+            "https://docs.aws.amazon.com/bedrock/latest/APIReference/API_ListFoundationModels.html"
         ),
         base_url="https://bedrock.us-east-1.amazonaws.com",
         list_models_path="/foundation-models",
@@ -137,8 +136,7 @@ MAINSTREAM_MODEL_PROVIDERS: dict[str, ModelProviderSpec] = {
         display_name="Google Vertex AI",
         protocol="vertex-ai",
         official_docs_url=(
-            "https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/"
-            "inference"
+            "https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference"
         ),
         base_url="https://us-central1-aiplatform.googleapis.com",
         list_models_path="/v1/projects/{project}/locations/us-central1/publishers/google/models",
@@ -259,8 +257,7 @@ MAINSTREAM_MODEL_PROVIDERS: dict[str, ModelProviderSpec] = {
         display_name="Alibaba Cloud DashScope",
         protocol="openai-compatible",
         official_docs_url=(
-            "https://help.aliyun.com/zh/model-studio/"
-            "compatibility-of-openai-with-dashscope"
+            "https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope"
         ),
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         list_models_path="/models",
@@ -325,8 +322,7 @@ MAINSTREAM_MODEL_PROVIDERS: dict[str, ModelProviderSpec] = {
         display_name="NVIDIA NIM",
         protocol="openai-compatible",
         official_docs_url=(
-            "https://docs.nvidia.com/nim/large-language-models/latest/reference/"
-            "api-reference.html"
+            "https://docs.nvidia.com/nim/large-language-models/latest/reference/api-reference.html"
         ),
         base_url="https://integrate.api.nvidia.com/v1",
         list_models_path="/models",
