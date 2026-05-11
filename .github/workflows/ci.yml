@@ -153,6 +153,79 @@ jobs:
       - name: Build Docker image
         run: docker build -t ragrig:ci .
 
+  drift-diff:
+    name: RAGRig CI / drift-diff
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync dependencies (base)
+        run: cd base && uv sync --dev --frozen
+
+      - name: Generate base sanitizer coverage summary
+        run: cd base && uv run python -m scripts.sanitizer_coverage --output ../base-summary.json
+
+      - name: Sync dependencies (head)
+        run: cd head && uv sync --dev --frozen
+
+      - name: Generate head sanitizer coverage summary
+        run: cd head && uv run python -m scripts.sanitizer_coverage --output ../head-summary.json
+
+      - name: Compare sanitizer coverage summaries
+        run: |
+          cd head
+          uv run python -m scripts.sanitizer_drift_diff \
+            --base ../base-summary.json \
+            --head ../head-summary.json \
+            --output docs/operations/artifacts/sanitizer-drift-diff.json \
+            --markdown-output docs/operations/artifacts/sanitizer-drift-diff.md \
+            --format both
+
+      - name: Upload drift diff artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sanitizer-drift-diff
+          path: head/docs/operations/artifacts/sanitizer-drift-diff.*
+
+      - name: Post PR comment (if permission allows)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh api "repos/${{ github.repository }}/pulls/${{ github.event.number }}" >/dev/null 2>&1; then
+            gh pr comment "${{ github.event.number }}" \
+              --body-file head/docs/operations/artifacts/sanitizer-drift-diff.md || true
+          fi
+        continue-on-error: true
+
+      - name: Write job summary (fallback)
+        if: always()
+        run: |
+          echo "## Sanitizer Golden Drift Diff" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f head/docs/operations/artifacts/sanitizer-drift-diff.md ]; then
+            cat head/docs/operations/artifacts/sanitizer-drift-diff.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Drift diff artifact not generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   supply-chain:
     name: RAGRig CI / supply-chain
     runs-on: ubuntu-latest
