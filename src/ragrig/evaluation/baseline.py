@@ -188,15 +188,11 @@ def load_baseline_metrics_strict(
 
     metrics_raw = raw.get("metrics")
     if not metrics_raw or not isinstance(metrics_raw, dict):
-        raise BaselineCorruptError(
-            f"Baseline file missing 'metrics' object: {baseline_path}"
-        )
+        raise BaselineCorruptError(f"Baseline file missing 'metrics' object: {baseline_path}")
     try:
         return EvaluationMetrics.model_validate(metrics_raw)
     except Exception as exc:
-        raise BaselineCorruptError(
-            f"Baseline metrics schema invalid: {exc}"
-        ) from exc
+        raise BaselineCorruptError(f"Baseline metrics schema invalid: {exc}") from exc
 
 
 def get_current_baseline_id(baseline_dir: Path | None = None) -> str | None:

@@ -19,9 +19,7 @@ from ragrig.evaluation.baseline import (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Promote an evaluation run to a baseline."
-    )
+    parser = argparse.ArgumentParser(description="Promote an evaluation run to a baseline.")
     parser.add_argument(
         "--run-id",
         required=True,
