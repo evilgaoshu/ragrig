@@ -715,9 +715,7 @@ def test_prompt_template_matches_snapshot_fixture() -> None:
     """Assert the LLMAnswerProvider prompt template has not drifted from fixture."""
     from pathlib import Path
 
-    fixture_path = (
-        Path(__file__).parent / "fixtures" / "answer_snapshots" / "prompt_template.txt"
-    )
+    fixture_path = Path(__file__).parent / "fixtures" / "answer_snapshots" / "prompt_template.txt"
     expected_template = fixture_path.read_text(encoding="utf-8").strip()
 
     # Reconstruct the actual template from LLMAnswerProvider logic
@@ -737,9 +735,9 @@ def test_prompt_template_matches_snapshot_fixture() -> None:
     expected_normalised = normalise(expected_template)
 
     # The fixture and code must agree on the system prompt content
-    assert (
-        system_prompt in expected_normalised
-    ), "Fixture prompt_template.txt must contain the system prompt verbatim"
+    assert system_prompt in expected_normalised, (
+        "Fixture prompt_template.txt must contain the system prompt verbatim"
+    )
     # Verify key phrases from the actual system prompt exist in the fixture
     for phrase in [
         "evidence-grounded answer engine",
@@ -747,18 +745,14 @@ def test_prompt_template_matches_snapshot_fixture() -> None:
         "Never fabricate information",
         "use knowledge outside the provided evidence",
     ]:
-        assert phrase in expected_normalised, (
-            f"Fixture missing system prompt phrase: '{phrase}'"
-        )
+        assert phrase in expected_normalised, f"Fixture missing system prompt phrase: '{phrase}'"
 
     # Verify key phrases from the user prompt template exist in the fixture
     for phrase in [
         "grounded answer using the evidence above",
         "cite sources with their citation IDs",
     ]:
-        assert phrase in expected_normalised, (
-            f"Fixture missing user prompt phrase: '{phrase}'"
-        )
+        assert phrase in expected_normalised, f"Fixture missing user prompt phrase: '{phrase}'"
 
 
 def test_deterministic_answer_matches_refusal_fixture() -> None:
@@ -768,9 +762,7 @@ def test_deterministic_answer_matches_refusal_fixture() -> None:
 
     from ragrig.answer.provider import DeterministicAnswerProvider
 
-    fixture_path = (
-        Path(__file__).parent / "fixtures" / "answer_snapshots" / "refusal_boundary.json"
-    )
+    fixture_path = Path(__file__).parent / "fixtures" / "answer_snapshots" / "refusal_boundary.json"
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
 
     provider = DeterministicAnswerProvider()
@@ -778,9 +770,7 @@ def test_deterministic_answer_matches_refusal_fixture() -> None:
 
     expected = fixture["conditions"]["deterministic_provider_no_evidence"]
     assert answer == expected["answer"], (
-        f"Deterministic refusal text drifted.\n"
-        f"Expected: {expected['answer']}\n"
-        f"Got:      {answer}"
+        f"Deterministic refusal text drifted.\nExpected: {expected['answer']}\nGot:      {answer}"
     )
     assert citations == expected["citations"]
 
@@ -791,9 +781,7 @@ def test_citation_format_matches_fixture() -> None:
     import re
     from pathlib import Path
 
-    fixture_path = (
-        Path(__file__).parent / "fixtures" / "answer_snapshots" / "citation_format.json"
-    )
+    fixture_path = Path(__file__).parent / "fixtures" / "answer_snapshots" / "citation_format.json"
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
 
     # Verify the citation regex pattern is valid

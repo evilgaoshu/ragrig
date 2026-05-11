@@ -104,9 +104,7 @@ def _seed_fixture_kb(session: Session, tmp_path):
         encoding="utf-8",
     )
 
-    ingest_local_directory(
-        session=session, knowledge_base_name="answer-live-smoke", root_path=docs
-    )
+    ingest_local_directory(session=session, knowledge_base_name="answer-live-smoke", root_path=docs)
     index_knowledge_base(session=session, knowledge_base_name="answer-live-smoke")
 
 
