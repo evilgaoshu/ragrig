@@ -213,19 +213,18 @@ This section defines the preflight checks and evidence output added to the live 
 
 Before starting containers, the preflight script verifies:
 
-1. **`.env` file** — `.env` must exist. Missing `.env` emits an actionable blocker (`cp .env.example .env`) and stops before any container or port checks.
-2. **Docker CLI** — `docker --version` must succeed.
-3. **Docker Compose** — `docker compose version` must succeed (Compose v2).
-4. **Docker daemon** — `docker info` must succeed and show a running daemon.
-5. **Ports** — `127.0.0.1` ports `SMB_HOST_PORT` (default `1445`), `WEBDAV_HOST_PORT` (default `8080`), and `SFTP_HOST_PORT` (default `2222`) must be free. If a port is occupied, the blocker message includes the port number, env var name, and three fix options:
+1. **Docker CLI** — `docker --version` must succeed.
+2. **Docker Compose** — `docker compose version` must succeed (Compose v2).
+3. **Docker daemon** — `docker info` must succeed and show a running daemon.
+4. **Ports** — `127.0.0.1` ports `SMB_HOST_PORT` (default `1445`), `WEBDAV_HOST_PORT` (default `8080`), and `SFTP_HOST_PORT` (default `2222`) must be free. If a port is occupied, the blocker message includes the port number, env var name, and three fix options:
    - free the port,
-   - override in `.env`,
+   - override via environment variables,
    - or enable `FILESHARE_AUTO_PICK_PORTS=1` to let preflight find free alternatives.
-6. **Optional SDKs** — `smbprotocol`, `paramiko`, and `httpx` import checks. Missing SDKs produce a warning with the exact install command (`uv sync --extra fileshare --dev`) and a fallback note that pytest will skip the protocol.
+5. **Optional SDKs** — `smbprotocol`, `paramiko`, and `httpx` import checks. Missing SDKs produce a warning with the exact install command (`uv sync --extra fileshare --dev`) and a fallback note that pytest will skip the protocol.
 
 Failure behavior:
 
-- If any hard blocker (`.env` missing, Docker missing, daemon down, port conflict) is found, the script exits `1` and prints an actionable, numbered list of blockers to `stderr`. No containers are started.
+- If any hard blocker (Docker missing, daemon down, port conflict) is found, the script exits `1` and prints an actionable, numbered list of blockers to `stderr`. No containers are started.
 - If only optional SDKs are missing, the script exits `0` with a warning; pytest skips the corresponding tests.
 - `--json` outputs a structured result including `suggested_ports`, `target_ports`, and per-check details for programmatic consumption.
 
@@ -234,11 +233,11 @@ Failure behavior:
 The orchestration script runs the live smoke end-to-end and produces a timestamped evidence record:
 
 1. **Preflight** — runs the preflight script; hard blockers stop before `compose up`.
-2. **Compose up** — `docker compose --profile fileshare-live up -d --wait`.
+2. **Compose up** — `docker compose --profile fileshare-live up -d --wait samba webdav sftp`.
 3. **Seed fixtures** — copies `tests/fixtures/fileshare_live/` into each container.
 4. **Pytest** — runs `tests/test_fileshare_live_smoke.py` with `RAGRIG_FILESHARE_LIVE_SMOKE=1`.
 5. **Container logs** — tails the last N lines (default 100) from `samba`, `webdav`, and `sftp`.
-6. **Teardown** — runs `docker compose --profile fileshare-live down --remove-orphans` (default true; disable with `--no-teardown`).
+6. **Teardown** — runs `docker compose --profile fileshare-live down --remove-orphans samba webdav sftp` (default true; disable with `--no-teardown`).
 
 The evidence record is written to `docs/operations/artifacts/fileshare-live-smoke-record.json` by default and contains:
 

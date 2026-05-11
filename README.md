@@ -919,20 +919,16 @@ make fileshare-check
 Live smoke (local Docker services, explicit opt-in):
 
 ```bash
-make preflight-fileshare-live          # check .env, Docker, ports, and optional SDKs
-make test-live-fileshare               # preflight + up + seed + pytest + evidence
+make preflight-fileshare-live           # check Docker, ports, and optional SDKs
+make test-live-fileshare                # preflight + up + seed + pytest + evidence
 make test-live-fileshare-print-evidence # same, but prints the evidence record to stdout
-make fileshare-live-down               # tear down
+make fileshare-live-down                # tear down
 ```
 
 Live smoke validates real list/read/stat/skip behavior against local Samba, WebDAV, and SFTP containers. It does not run in default CI.
 
 **Prerequisites:**
 
-- `.env` must exist. If it is missing, preflight blocks with:
-  ```
-  cp .env.example .env
-  ```
 - Optional SDKs can be installed with:
   ```bash
   uv sync --extra fileshare --dev
