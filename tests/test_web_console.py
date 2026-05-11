@@ -115,6 +115,10 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "renderRetrievalBenchmarkIntegrity" in response.text
     assert "baseline-integrity-status" in response.text
     assert "baseline-integrity-subtext" in response.text
+    assert "List models" in response.text
+    assert "Speed test" in response.text
+    assert "loadProviderModels" in response.text
+    assert "runProviderSpeedTest" in response.text
 
 
 @pytest.mark.anyio
@@ -208,7 +212,36 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     llm_shell = models.json()["registry_shell"]["llm"]
     assert llm_shell["status"] == "ready"
     assert {"model.lm_studio", "model.ollama"} <= set(llm_shell["providers"])
-    assert {"model.openai", "model.vertex_ai", "model.bedrock"} <= set(llm_shell["providers"])
+    assert {
+        "model.openai",
+        "model.vertex_ai",
+        "model.bedrock",
+        "model.anthropic",
+        "model.google_gemini",
+        "model.mistral",
+        "model.openrouter",
+        "model.deepseek",
+        "model.moonshot",
+        "model.minimax",
+        "model.dashscope",
+        "model.siliconflow",
+        "model.xai",
+    } <= set(llm_shell["providers"])
+    catalog_names = {item["provider"] for item in models.json()["provider_catalog"]}
+    assert {
+        "model.openai",
+        "model.anthropic",
+        "model.google_gemini",
+        "model.bedrock",
+        "model.groq",
+        "model.nvidia_nim",
+    } <= catalog_names
+    openai_catalog = next(
+        item for item in models.json()["provider_catalog"] if item["provider"] == "model.openai"
+    )
+    assert openai_catalog["official_docs_url"].startswith("https://")
+    assert openai_catalog["list_models_supported"] is True
+    assert openai_catalog["speed_test_supported"] is True
     assert models.json()["registry_shell"]["reranker"]["status"] == "ready"
     assert plugins.status_code == 200
     plugin_ids = {item["plugin_id"] for item in plugins.json()["items"]}
@@ -233,6 +266,26 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     assert "smb" in fileshare_plugin["protocol_example_configs"]
     assert "webdav" in fileshare_plugin["protocol_example_configs"]
     assert "sftp" in fileshare_plugin["protocol_example_configs"]
+
+
+@pytest.mark.anyio
+async def test_model_list_and_speed_test_endpoints_degrade_without_credentials(tmp_path) -> None:
+    database_path = tmp_path / "web-console-model-probes.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        models = await client.get("/models/model.openai/available-models")
+        speed = await client.post("/models/model.openai/speed-test")
+
+    assert models.status_code == 200
+    assert models.json()["status"] == "missing_credentials"
+    assert models.json()["missing_credentials"] == ["OPENAI_API_KEY"]
+    assert models.json()["models"] == []
+    assert speed.status_code == 200
+    assert speed.json()["status"] == "missing_credentials"
+    assert speed.json()["measurement"] == "model_list_latency_ms"
 
 
 @pytest.mark.anyio

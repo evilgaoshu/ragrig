@@ -207,14 +207,32 @@ def create_provider_registry() -> ProviderRegistry:
         create_bge_reranker_provider,
     )
     from ragrig.providers.cloud import (
+        ANTHROPIC_METADATA,
         AZURE_OPENAI_METADATA,
+        BAIDU_QIANFAN_METADATA,
         BEDROCK_METADATA,
         COHERE_METADATA,
+        DASHSCOPE_METADATA,
+        DEEPSEEK_METADATA,
+        FIREWORKS_METADATA,
+        GOOGLE_GEMINI_METADATA,
+        GROQ_METADATA,
         JINA_METADATA,
+        MINIMAX_METADATA,
+        MISTRAL_METADATA,
+        MOONSHOT_METADATA,
+        NVIDIA_NIM_METADATA,
+        OPENAI_COMPATIBLE_METADATA,
         OPENAI_METADATA,
         OPENROUTER_METADATA,
+        PERPLEXITY_METADATA,
+        SILICONFLOW_METADATA,
+        TOGETHER_METADATA,
         VERTEX_AI_METADATA,
+        VOLCENGINE_ARK_METADATA,
         VOYAGE_METADATA,
+        XAI_METADATA,
+        ZHIPU_METADATA,
         create_cloud_stub_provider,
     )
     from ragrig.providers.local import (
@@ -269,12 +287,24 @@ def create_provider_registry() -> ProviderRegistry:
         lambda **config: create_cloud_stub_provider("model.azure_openai", **config),
     )
     registry.register(
+        ANTHROPIC_METADATA,
+        lambda **config: create_cloud_stub_provider("model.anthropic", **config),
+    )
+    registry.register(
+        GOOGLE_GEMINI_METADATA,
+        lambda **config: create_cloud_stub_provider("model.google_gemini", **config),
+    )
+    registry.register(
         OPENROUTER_METADATA,
         lambda **config: create_cloud_stub_provider("model.openrouter", **config),
     )
     registry.register(
         OPENAI_METADATA,
         lambda **config: create_cloud_stub_provider("model.openai", **config),
+    )
+    registry.register(
+        MISTRAL_METADATA,
+        lambda **config: create_cloud_stub_provider("model.mistral", **config),
     )
     registry.register(
         COHERE_METADATA,
@@ -287,6 +317,66 @@ def create_provider_registry() -> ProviderRegistry:
     registry.register(
         JINA_METADATA,
         lambda **config: create_cloud_stub_provider("model.jina", **config),
+    )
+    registry.register(
+        TOGETHER_METADATA,
+        lambda **config: create_cloud_stub_provider("model.together", **config),
+    )
+    registry.register(
+        FIREWORKS_METADATA,
+        lambda **config: create_cloud_stub_provider("model.fireworks", **config),
+    )
+    registry.register(
+        GROQ_METADATA,
+        lambda **config: create_cloud_stub_provider("model.groq", **config),
+    )
+    registry.register(
+        DEEPSEEK_METADATA,
+        lambda **config: create_cloud_stub_provider("model.deepseek", **config),
+    )
+    registry.register(
+        MOONSHOT_METADATA,
+        lambda **config: create_cloud_stub_provider("model.moonshot", **config),
+    )
+    registry.register(
+        MINIMAX_METADATA,
+        lambda **config: create_cloud_stub_provider("model.minimax", **config),
+    )
+    registry.register(
+        DASHSCOPE_METADATA,
+        lambda **config: create_cloud_stub_provider("model.dashscope", **config),
+    )
+    registry.register(
+        SILICONFLOW_METADATA,
+        lambda **config: create_cloud_stub_provider("model.siliconflow", **config),
+    )
+    registry.register(
+        ZHIPU_METADATA,
+        lambda **config: create_cloud_stub_provider("model.zhipu", **config),
+    )
+    registry.register(
+        BAIDU_QIANFAN_METADATA,
+        lambda **config: create_cloud_stub_provider("model.baidu_qianfan", **config),
+    )
+    registry.register(
+        VOLCENGINE_ARK_METADATA,
+        lambda **config: create_cloud_stub_provider("model.volcengine_ark", **config),
+    )
+    registry.register(
+        XAI_METADATA,
+        lambda **config: create_cloud_stub_provider("model.xai", **config),
+    )
+    registry.register(
+        PERPLEXITY_METADATA,
+        lambda **config: create_cloud_stub_provider("model.perplexity", **config),
+    )
+    registry.register(
+        NVIDIA_NIM_METADATA,
+        lambda **config: create_cloud_stub_provider("model.nvidia_nim", **config),
+    )
+    registry.register(
+        OPENAI_COMPATIBLE_METADATA,
+        lambda **config: create_cloud_stub_provider("model.openai_compatible", **config),
     )
     return registry
 

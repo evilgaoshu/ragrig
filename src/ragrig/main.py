@@ -43,6 +43,7 @@ from ragrig.processing_profile import (
     resolve_provider_availability,
     update_override,
 )
+from ragrig.providers.model_catalog import list_provider_models, measure_provider_latency
 from ragrig.repositories import (
     create_pipeline_run,
     create_pipeline_run_item,
@@ -593,6 +594,14 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, Any]:
         return list_models(session)
+
+    @app.get("/models/{provider_name:path}/available-models", response_model=None)
+    def provider_available_models(provider_name: str) -> dict[str, Any]:
+        return list_provider_models(provider_name)
+
+    @app.post("/models/{provider_name:path}/speed-test", response_model=None)
+    def provider_speed_test(provider_name: str) -> dict[str, Any]:
+        return measure_provider_latency(provider_name)
 
     @app.get("/plugins", response_model=None)
     def plugins() -> dict[str, list[dict[str, Any]]]:

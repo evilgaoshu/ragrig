@@ -221,6 +221,21 @@ What is still deferred:
 
 `deterministic-local` remains a secret-free, network-free test and smoke provider. It is not a production semantic embedding model.
 
+### Model Provider Catalog
+
+RAGRig also exposes a provider catalog for mainstream model vendors and API protocols. The catalog is based on official provider documentation links and is visible in `GET /models` and the Web Console model panel.
+
+Current catalog coverage includes OpenAI-compatible providers and gateways, Anthropic, Google Gemini, Azure OpenAI, Amazon Bedrock, OpenRouter, Mistral, Cohere, Together, Fireworks, Groq, DeepSeek, Moonshot/Kimi, MiniMax, Alibaba DashScope, SiliconFlow, Zhipu/Z.ai, Baidu Qianfan, Volcengine Ark, xAI, Perplexity, NVIDIA NIM, Ollama, LM Studio, llama.cpp, vLLM, Xinference, LocalAI, BGE embedding, and BGE reranking.
+
+Runtime probing endpoints:
+
+```text
+GET  /models/{provider_name}/available-models
+POST /models/{provider_name}/speed-test
+```
+
+Without credentials, these endpoints return `missing_credentials` with the exact required environment variable names and do not attempt a network call. With credentials, the first implementation measures the provider's model-list endpoint latency; it does not spend tokens on generation.
+
 ## Local Provider Extras
 
 PR-2 keeps local runtime SDKs and heavy ML packages out of the default install.
