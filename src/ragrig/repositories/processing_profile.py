@@ -12,6 +12,9 @@ from ragrig.processing_profile.sanitizer import (
     REDACTED as _sanitizer_REDACTED,
 )
 from ragrig.processing_profile.sanitizer import (
+    SanitizationSummary as _SanitizationSummary,
+)
+from ragrig.processing_profile.sanitizer import (
     is_sensitive_key as _shared_is_sensitive_key,
 )
 from ragrig.processing_profile.sanitizer import (
@@ -65,7 +68,7 @@ def _is_sensitive_value(value: object) -> bool:
 def _sanitize_metadata_json(
     metadata: dict[str, Any],
     prefix: str = "metadata_json",
-) -> tuple[dict[str, Any], int, list[str]]:
+) -> tuple[dict[str, Any], int, list[str], _SanitizationSummary]:
     """Recursively redact sensitive fields from a metadata dict.
 
     Thin wrapper around the shared ``redact_metadata`` helper.

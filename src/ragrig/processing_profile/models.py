@@ -4,6 +4,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
+from ragrig.processing_profile.sanitizer import (
+    SanitizationSummary,
+    is_sensitive_key,
+    is_sensitive_value,
+)
+
 
 class TaskType(StrEnum):
     CORRECT = "correct"
@@ -50,7 +56,8 @@ class ProcessingProfile:
     updated_at: datetime | None = None
 
     def to_api_dict(self) -> dict[str, object]:
-        return {
+        metadata_sanitized, summary = _sanitize_metadata(self.metadata)
+        result: dict[str, object] = {
             "profile_id": self.profile_id,
             "extension": self.extension,
             "task_type": self.task_type.value,
@@ -62,106 +69,138 @@ class ProcessingProfile:
             "kind": self.kind.value,
             "source": self.source.value,
             "tags": self.tags,
-            "metadata": _sanitize_metadata(self.metadata),
+            "metadata": metadata_sanitized,
             "created_by": self.created_by,
             "updated_at": self.updated_at.isoformat() if self.updated_at is not None else None,
         }
+        # Include summary when there is any degradation to avoid false positives
+        # for clean metadata while providing observability for actual issues.
+        if (
+            summary.redacted_count
+            or summary.removed_count
+            or summary.degraded_count
+            or summary.non_string_key_count
+            or summary.max_depth_exceeded
+        ):
+            result["_sanitization_summary"] = summary.to_dict()
+        return result
 
-
-_SECRET_KEY_PARTS = (
-    "api_key",
-    "access_key",
-    "secret",
-    "session_token",
-    "token",
-    "password",
-    "private_key",
-    "credential",
-    "dsn",
-    "service_account",
-)
-
-_SENSITIVE_VALUE_PREFIXES: tuple[str, ...] = (
-    "bearer ",
-    "-----begin",
-)
 
 _DEFAULT_MAX_DEPTH = 100
-
-
-def _is_sensitive_key(key: object) -> bool:
-    """Return True if *key* contains any known sensitive key part.
-
-    Non-string keys are treated as non-sensitive to avoid ``AttributeError``.
-    """
-    if not isinstance(key, str):
-        return False
-    key_lower = key.lower()
-    return any(part in key_lower for part in _SECRET_KEY_PARTS)
-
-
-def _is_sensitive_value(value: object) -> bool:
-    if not isinstance(value, str):
-        return False
-    value_lower = value.lower()
-    return any(pattern in value_lower for pattern in _SENSITIVE_VALUE_PREFIXES)
 
 
 def _sanitize_metadata(
     metadata: dict[str, object],
     max_depth: int = _DEFAULT_MAX_DEPTH,
     current_depth: int = 0,
-) -> dict[str, object]:
-    """Recursively redact sensitive keys/values from metadata for API responses."""
+) -> tuple[dict[str, object], SanitizationSummary]:
+    """Recursively remove sensitive keys/values from metadata for API responses.
+
+    Returns ``(sanitized_dict, summary)``.
+    """
+    summary = SanitizationSummary()
     if current_depth >= max_depth:
-        return {}
+        return {}, summary
 
     sanitized: dict[str, object] = {}
     next_depth = current_depth + 1
 
     for key, value in metadata.items():
-        if _is_sensitive_key(key):
+        if not isinstance(key, str):
+            summary = SanitizationSummary(
+                schema_version=summary.schema_version,
+                redacted_count=summary.redacted_count,
+                removed_count=summary.removed_count,
+                degraded_count=summary.degraded_count,
+                non_string_key_count=summary.non_string_key_count + 1,
+                max_depth_exceeded=summary.max_depth_exceeded,
+            )
+        if is_sensitive_key(key):
+            summary = SanitizationSummary(
+                schema_version=summary.schema_version,
+                redacted_count=summary.redacted_count,
+                removed_count=summary.removed_count + 1,
+                degraded_count=summary.degraded_count,
+                non_string_key_count=summary.non_string_key_count,
+                max_depth_exceeded=summary.max_depth_exceeded,
+            )
             continue
         if isinstance(value, dict):
-            sanitized[key] = _sanitize_metadata(
+            sub, sub_summary = _sanitize_metadata(
                 value, max_depth=max_depth, current_depth=next_depth
             )
+            sanitized[key] = sub
+            summary = _merge_summary(summary, sub_summary)
         elif isinstance(value, list):
-            sanitized[key] = _sanitize_metadata_list(
+            sub, sub_summary = _sanitize_metadata_list(
                 value, max_depth=max_depth, current_depth=next_depth
             )
-        elif _is_sensitive_value(value):
+            sanitized[key] = sub
+            summary = _merge_summary(summary, sub_summary)
+        elif is_sensitive_value(value):
+            summary = SanitizationSummary(
+                schema_version=summary.schema_version,
+                redacted_count=summary.redacted_count,
+                removed_count=summary.removed_count + 1,
+                degraded_count=summary.degraded_count,
+                non_string_key_count=summary.non_string_key_count,
+                max_depth_exceeded=summary.max_depth_exceeded,
+            )
             continue
         else:
             sanitized[key] = value
-    return sanitized
+    return sanitized, summary
 
 
 def _sanitize_metadata_list(
     items: list[object],
     max_depth: int = _DEFAULT_MAX_DEPTH,
     current_depth: int = 0,
-) -> list[object]:
+) -> tuple[list[object], SanitizationSummary]:
+    summary = SanitizationSummary()
     if current_depth >= max_depth:
-        return []
+        return [], summary
 
     sanitized: list[object] = []
     next_depth = current_depth + 1
 
     for item in items:
         if isinstance(item, dict):
-            sanitized.append(
-                _sanitize_metadata(item, max_depth=max_depth, current_depth=next_depth)
+            sub, sub_summary = _sanitize_metadata(
+                item, max_depth=max_depth, current_depth=next_depth
             )
+            sanitized.append(sub)
+            summary = _merge_summary(summary, sub_summary)
         elif isinstance(item, list):
-            sanitized.append(
-                _sanitize_metadata_list(item, max_depth=max_depth, current_depth=next_depth)
+            sub, sub_summary = _sanitize_metadata_list(
+                item, max_depth=max_depth, current_depth=next_depth
             )
-        elif _is_sensitive_value(item):
+            sanitized.append(sub)
+            summary = _merge_summary(summary, sub_summary)
+        elif is_sensitive_value(item):
+            summary = SanitizationSummary(
+                schema_version=summary.schema_version,
+                redacted_count=summary.redacted_count,
+                removed_count=summary.removed_count + 1,
+                degraded_count=summary.degraded_count,
+                non_string_key_count=summary.non_string_key_count,
+                max_depth_exceeded=summary.max_depth_exceeded,
+            )
             continue
         else:
             sanitized.append(item)
-    return sanitized
+    return sanitized, summary
+
+
+def _merge_summary(a: SanitizationSummary, b: SanitizationSummary) -> SanitizationSummary:
+    return SanitizationSummary(
+        schema_version=a.schema_version,
+        redacted_count=a.redacted_count + b.redacted_count,
+        removed_count=a.removed_count + b.removed_count,
+        degraded_count=a.degraded_count + b.degraded_count,
+        non_string_key_count=a.non_string_key_count + b.non_string_key_count,
+        max_depth_exceeded=a.max_depth_exceeded or b.max_depth_exceeded,
+    )
 
 
 __all__ = [
