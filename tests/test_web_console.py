@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -3417,3 +3418,255 @@ async def test_answer_api_acl_filters_protected_content(tmp_path) -> None:
     assert "top secret" not in response_text
     # But public content should be there
     assert payload["grounding_status"] == "grounded"
+
+
+# ── Understanding Export Diff Console Badge tests ────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_understanding_export_diff_endpoint_returns_pass_when_artifact_exists(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-diff-pass.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    # Create a valid artifact
+    artifact = {
+        "artifact": "understanding-export-diff",
+        "version": "1.0.0",
+        "generated_at": "2026-05-11T12:00:00+00:00",
+        "schema_version": "1.0",
+        "schema_compatible": True,
+        "baseline": {"run_count": 2, "schema_version": "1.0"},
+        "current": {"run_count": 2, "schema_version": "1.0"},
+        "runs": {"added": [], "removed": [], "changed": []},
+        "run_details": {"added": [], "removed": [], "changed": []},
+        "status": "pass",
+        "drift_reasons": [],
+        "sanitized_field_count": 0,
+    }
+    artifact_path = tmp_path / "understanding-export-diff.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setattr("ragrig.web_console._UNDERSTANDING_EXPORT_DIFF_PATH", artifact_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/understanding-export-diff")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["status"] == "pass"
+    assert payload["schema_compatible"] is True
+    assert payload["baseline_run_count"] == 2
+    assert payload["current_run_count"] == 2
+    assert payload["added_count"] == 0
+    assert payload["removed_count"] == 0
+    assert payload["changed_count"] == 0
+    assert payload["artifact_path"].endswith("understanding-export-diff.json")
+    assert payload["sanitized_field_count"] == 0
+
+
+@pytest.mark.anyio
+async def test_understanding_export_diff_endpoint_returns_failure_when_artifact_missing(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-diff-missing.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    missing_path = tmp_path / "nonexistent-diff.json"
+    monkeypatch.setattr("ragrig.web_console._UNDERSTANDING_EXPORT_DIFF_PATH", missing_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/understanding-export-diff")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "failure"
+    assert "not found" in payload["reason"]
+
+
+@pytest.mark.anyio
+async def test_understanding_export_diff_endpoint_returns_failure_when_artifact_corrupt(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-diff-corrupt.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    corrupt_path = tmp_path / "corrupt-diff.json"
+    corrupt_path.write_text("not json", encoding="utf-8")
+    monkeypatch.setattr("ragrig.web_console._UNDERSTANDING_EXPORT_DIFF_PATH", corrupt_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/understanding-export-diff")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "failure"
+    assert "corrupt" in payload["reason"]
+
+
+@pytest.mark.anyio
+async def test_understanding_export_diff_endpoint_returns_failure_when_artifact_type_invalid(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-diff-invalid-type.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    invalid_path = tmp_path / "invalid-type.json"
+    invalid_path.write_text(json.dumps({"artifact": "wrong-type"}), encoding="utf-8")
+    monkeypatch.setattr("ragrig.web_console._UNDERSTANDING_EXPORT_DIFF_PATH", invalid_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/understanding-export-diff")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "failure"
+    assert "invalid artifact type" in payload["reason"]
+
+
+@pytest.mark.anyio
+async def test_understanding_export_diff_endpoint_returns_degraded_when_artifact_degraded(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-diff-degraded.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    artifact = {
+        "artifact": "understanding-export-diff",
+        "version": "1.0.0",
+        "generated_at": "2026-05-11T12:00:00+00:00",
+        "schema_version": "1.0",
+        "schema_compatible": True,
+        "baseline": {"run_count": 1, "schema_version": "1.0"},
+        "current": {"run_count": 2, "schema_version": "1.0"},
+        "runs": {"added": ["run-b"], "removed": [], "changed": []},
+        "run_details": {"added": [], "removed": [], "changed": []},
+        "status": "degraded",
+        "drift_reasons": [{"type": "runs_added", "count": 1, "run_ids": ["run-b"]}],
+        "sanitized_field_count": 0,
+    }
+    artifact_path = tmp_path / "degraded-diff.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setattr("ragrig.web_console._UNDERSTANDING_EXPORT_DIFF_PATH", artifact_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/understanding-export-diff")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["status"] == "degraded"
+    assert payload["added_count"] == 1
+    assert payload["removed_count"] == 0
+    assert payload["changed_count"] == 0
+
+
+@pytest.mark.anyio
+async def test_understanding_export_diff_endpoint_no_secret_leakage(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "web-console-diff-secrets.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    artifact = {
+        "artifact": "understanding-export-diff",
+        "version": "1.0.0",
+        "generated_at": "2026-05-11T12:00:00+00:00",
+        "schema_version": "1.0",
+        "schema_compatible": True,
+        "baseline": {"run_count": 2, "schema_version": "1.0"},
+        "current": {"run_count": 2, "schema_version": "1.0"},
+        "runs": {"added": [], "removed": [], "changed": []},
+        "run_details": {"added": [], "removed": [], "changed": []},
+        "status": "pass",
+        "drift_reasons": [],
+        "sanitized_field_count": 0,
+    }
+    artifact_path = tmp_path / "safe-diff.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setattr("ragrig.web_console._UNDERSTANDING_EXPORT_DIFF_PATH", artifact_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/understanding-export-diff")
+
+    assert response.status_code == 200
+    text = response.text.lower()
+    assert "api_key" not in text
+    assert "secret" not in text
+    assert "password" not in text
+    assert "sk-live-" not in text
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_understanding_export_diff_badge(tmp_path) -> None:
+    database_path = tmp_path / "web-console-diff-badge.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "understanding-export-diff-badge" in html
+    assert "Understanding Export Diff" in html
+    assert "copy-diff-path-btn" in html
+
+
+@pytest.mark.anyio
+async def test_understanding_export_diff_schema_incompatible_maps_to_failure(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-diff-schema-fail.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    artifact = {
+        "artifact": "understanding-export-diff",
+        "version": "1.0.0",
+        "generated_at": "2026-05-11T12:00:00+00:00",
+        "schema_version": "2.0",
+        "schema_compatible": False,
+        "baseline": {"run_count": 2, "schema_version": "1.0"},
+        "current": {"run_count": 2, "schema_version": "2.0"},
+        "runs": {"added": [], "removed": [], "changed": []},
+        "run_details": {"added": [], "removed": [], "changed": []},
+        "status": "pass",  # Should be corrected to failure by adapter
+        "drift_reasons": [{"type": "schema_incompatible"}],
+        "sanitized_field_count": 0,
+    }
+    artifact_path = tmp_path / "schema-diff.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setattr("ragrig.web_console._UNDERSTANDING_EXPORT_DIFF_PATH", artifact_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/understanding-export-diff")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["status"] == "failure"
+    assert payload["schema_compatible"] is False
