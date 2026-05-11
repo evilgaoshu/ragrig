@@ -236,8 +236,7 @@ def test_diff_run_changed() -> None:
     assert report["runs"]["changed"] == ["run-a"]
     assert report["status"] == "degraded"
     assert any(
-        r["type"] == "run_changed" and r["run_id"] == "run-a"
-        for r in report["drift_reasons"]
+        r["type"] == "run_changed" and r["run_id"] == "run-a" for r in report["drift_reasons"]
     )
 
 

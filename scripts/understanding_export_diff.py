@@ -35,9 +35,7 @@ from scripts.verify_understanding_export import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = (
-    REPO_ROOT / "docs" / "operations" / "artifacts" / "understanding-export-diff.json"
-)
+DEFAULT_OUTPUT = REPO_ROOT / "docs" / "operations" / "artifacts" / "understanding-export-diff.json"
 
 ARTIFACT_VERSION = "1.0.0"
 
@@ -85,9 +83,7 @@ def _assert_no_raw_secrets(data: object, source: str = "diff") -> None:
     if isinstance(data, str):
         for fragment in _FORBIDDEN_FRAGMENTS:
             if fragment in data:
-                raise RuntimeError(
-                    f"{source}: raw secret fragment {fragment!r} detected in output"
-                )
+                raise RuntimeError(f"{source}: raw secret fragment {fragment!r} detected in output")
     elif isinstance(data, dict):
         for k, v in data.items():
             _assert_no_raw_secrets(v, f"{source}.{k}")
@@ -427,8 +423,8 @@ def _render_markdown(report: dict[str, Any]) -> str:
     lines.append("")
     lines.append("| Source | Run Count | Schema Version |")
     lines.append("|--------|-----------|----------------|")
-    b_ver = baseline['schema_version'] or 'unknown'
-    c_ver = current['schema_version'] or 'unknown'
+    b_ver = baseline["schema_version"] or "unknown"
+    c_ver = current["schema_version"] or "unknown"
     lines.append(f"| Baseline | {baseline['run_count']} | {b_ver} |")
     lines.append(f"| Current | {current['run_count']} | {c_ver} |")
     lines.append("")
