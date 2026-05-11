@@ -147,10 +147,10 @@ test-live-fileshare-print-evidence:
 	$(UV) run python -m scripts.test_live_fileshare --print-evidence
 
 fileshare-live-up:
-	docker compose --profile fileshare-live up -d
+	docker compose --profile fileshare-live up -d samba webdav sftp
 
 fileshare-live-down:
-	docker compose --profile fileshare-live down --remove-orphans
+	docker compose --profile fileshare-live down --remove-orphans samba webdav sftp
 
 sanitizer-coverage-summary:
 	$(UV) run python -m scripts.sanitizer_coverage
