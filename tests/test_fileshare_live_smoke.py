@@ -70,7 +70,8 @@ class TestWebDAVLiveSmoke:
 
     def test_scanner_applies_filters_and_skips(self, client: WebDAVClient) -> None:
         result = scan_files(
-            client, config=_live_config("webdav", base_url=f"http://localhost:{_WEBDAV_PORT}")
+            client,
+            config=_live_config("webdav", base_url=f"http://localhost:{_WEBDAV_PORT}"),
         )
         discovered_paths = [c.file_metadata.path for c in result.discovered]
         skipped_reasons = {s.file_metadata.path: s.reason for s in result.skipped}

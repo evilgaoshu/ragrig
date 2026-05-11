@@ -28,6 +28,7 @@ _REPO_ROOT = Path(__file__).parent.parent
 _RECORD_DIR = _REPO_ROOT / "docs" / "operations" / "artifacts"
 _DEFAULT_RECORD = _RECORD_DIR / "fileshare-live-smoke-record.json"
 _COMPOSE_FILE = _REPO_ROOT / "docker-compose.yml"
+_LIVE_SERVICES = ["samba", "webdav", "sftp"]
 
 
 def _now() -> str:
@@ -60,7 +61,16 @@ def _run(
 def _docker_compose_up() -> dict[str, object]:
     start = _now()
     proc = _run(
-        ["docker", "compose", "--profile", "fileshare-live", "up", "-d", "--wait"],
+        [
+            "docker",
+            "compose",
+            "--profile",
+            "fileshare-live",
+            "up",
+            "-d",
+            "--wait",
+            *_LIVE_SERVICES,
+        ],
         check=False,
         timeout=120,
         cwd=_REPO_ROOT,
@@ -147,7 +157,15 @@ def _container_logs_tail(lines: int = 100) -> dict[str, object]:
 def _docker_compose_down() -> dict[str, object]:
     start = _now()
     proc = _run(
-        ["docker", "compose", "--profile", "fileshare-live", "down", "--remove-orphans"],
+        [
+            "docker",
+            "compose",
+            "--profile",
+            "fileshare-live",
+            "down",
+            "--remove-orphans",
+            *_LIVE_SERVICES,
+        ],
         check=False,
         timeout=60,
         cwd=_REPO_ROOT,
