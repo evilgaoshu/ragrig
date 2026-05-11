@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Block Format",
+  "description": "Fixed evidence format used in LLMAnswerProvider prompt construction.",
+  "pattern": "[cit-N] (source: {document_uri}, relevance: {score}):\n{text}",
+  "example": {
+    "block": "[cit-1] (source: guide.txt, relevance: 0.95):\nRAGRig is a retrieval-augmented generation platform.",
+    "parts": {
+      "citation_id": "cit-1",
+      "document_uri": "guide.txt",
+      "score": 0.95,
+      "text": "RAGRig is a retrieval-augmented generation platform."
+    }
+  },
+  "field_structure": {
+    "citation_id": "string — pattern 'cit-{N}' where N is 1-indexed retrieval rank",
+    "document_uri": "string — source document identifier",
+    "score": "number — retrieval relevance score (0.0–1.0)",
+    "text": "string — full evidence chunk text"
+  },
+  "citation_regex": "\\[cit-\\d+\\]"
+}
