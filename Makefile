@@ -172,6 +172,12 @@ eval-cleanup:
 retrieval-benchmark:
 	$(UV) run python -m scripts.retrieval_benchmark --pretty
 
+# ── Retrieval benchmark baseline compare ──────────────────────
+# Compares the current fixture benchmark against a stored baseline.
+# No network, GPU, torch, or BGE dependency by default.
+retrieval-benchmark-compare:
+	$(UV) run python -m scripts.retrieval_benchmark_compare --pretty
+
 # ── Optional BGE reranker smoke ────────────────────────────────
 # Requires local-ml extras (FlagEmbedding, sentence-transformers,
 # torch).  If dependencies are missing the test safely reports
