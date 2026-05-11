@@ -92,19 +92,13 @@ def read_manifest(baseline_path: Path) -> dict[str, Any]:
     """Read manifest for a baseline, raising on missing or corrupt."""
     path = _manifest_path(baseline_path)
     if not path.exists():
-        raise BaselineManifestMissingError(
-            f"Baseline manifest missing: {path.name}"
-        )
+        raise BaselineManifestMissingError(f"Baseline manifest missing: {path.name}")
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
-        raise BaselineManifestCorruptError(
-            f"Baseline manifest is corrupt: {exc}"
-        ) from exc
+        raise BaselineManifestCorruptError(f"Baseline manifest is corrupt: {exc}") from exc
     if not isinstance(raw, dict):
-        raise BaselineManifestCorruptError(
-            f"Baseline manifest is not a JSON object: {path}"
-        )
+        raise BaselineManifestCorruptError(f"Baseline manifest is not a JSON object: {path}")
     return raw
 
 
@@ -122,19 +116,13 @@ def _validate_metrics_hash(baseline_path: Path, manifest: dict[str, Any]) -> Non
     """Validate baseline metrics hash against manifest."""
     expected_hash = manifest.get("metrics_hash")
     if not expected_hash:
-        raise BaselineManifestCorruptError(
-            "Baseline manifest missing 'metrics_hash'"
-        )
+        raise BaselineManifestCorruptError("Baseline manifest missing 'metrics_hash'")
     if not baseline_path.exists():
-        raise BaselineManifestMissingError(
-            f"Baseline file missing: {baseline_path}"
-        )
+        raise BaselineManifestMissingError(f"Baseline file missing: {baseline_path}")
     try:
         raw = json.loads(baseline_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
-        raise BaselineManifestCorruptError(
-            f"Baseline file is corrupt: {exc}"
-        ) from exc
+        raise BaselineManifestCorruptError(f"Baseline file is corrupt: {exc}") from exc
     metrics_raw = raw.get("metrics")
     if not metrics_raw or not isinstance(metrics_raw, dict):
         raise BaselineManifestCorruptError(
