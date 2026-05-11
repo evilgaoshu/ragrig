@@ -147,10 +147,10 @@ test-live-fileshare-print-evidence:
 	$(UV) run python -m scripts.test_live_fileshare --print-evidence
 
 fileshare-live-up:
-	docker compose --profile fileshare-live up -d
+	docker compose --profile fileshare-live up -d samba webdav sftp
 
 fileshare-live-down:
-	docker compose --profile fileshare-live down --remove-orphans
+	docker compose --profile fileshare-live down --remove-orphans samba webdav sftp
 
 sanitizer-coverage-summary:
 	$(UV) run python -m scripts.sanitizer_coverage
@@ -207,6 +207,9 @@ verify-export-fixture:
 # Compares base/head sanitizer-coverage-summary.json artifacts and
 # produces a structured diff + Markdown report.  Exit code 2 when
 # risk=degraded, 0 when unchanged, 1 on error.
+sanitizer-contract-check:
+	$(UV) run python -m scripts.sanitizer_contract_check
+
 sanitizer-drift-diff:
 	$(UV) run python -m scripts.sanitizer_drift_diff \
 		--base $(DRIFT_BASE) \
