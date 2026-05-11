@@ -287,9 +287,7 @@ def _render_markdown(history: dict[str, Any]) -> str:
         lines.append("|--------------|------|------------|")
         for entry in trends["risk_trend"]:
             drift = "yes" if entry["golden_hash_drift"] else "no"
-            lines.append(
-                f"| {entry['generated_at']} | {entry['risk']} | {drift} |"
-            )
+            lines.append(f"| {entry['generated_at']} | {entry['risk']} | {drift} |")
         lines.append("")
 
         lines.append("#### Parser Changes")

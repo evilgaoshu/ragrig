@@ -281,12 +281,8 @@ def test_assert_no_raw_secrets_panics() -> None:
 
 def test_build_history_no_secrets_in_output(tmp_path: Path) -> None:
     report = _make_drift_report()
-    report["risk_details"] = [
-        {"type": "test", "reason": "Auth failed with sk-live-12345"}
-    ]
-    (tmp_path / "sanitizer-drift-diff.json").write_text(
-        json.dumps(report), encoding="utf-8"
-    )
+    report["risk_details"] = [{"type": "test", "reason": "Auth failed with sk-live-12345"}]
+    (tmp_path / "sanitizer-drift-diff.json").write_text(json.dumps(report), encoding="utf-8")
     history = build_history(tmp_path)
     serialized = json.dumps(history, indent=2, ensure_ascii=False)
     # The secret from input risk_details must not propagate to history output
@@ -406,9 +402,7 @@ def test_subprocess_invocation(tmp_path: Path) -> None:
 
 
 def test_console_adapter_no_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "src.ragrig.web_console._SANITIZER_DRIFT_ARTIFACTS_DIR", tmp_path
-    )
+    monkeypatch.setattr("src.ragrig.web_console._SANITIZER_DRIFT_ARTIFACTS_DIR", tmp_path)
     result = get_sanitizer_drift_history()
     assert result["available"] is False
     assert result["status"] == "no_history"
@@ -419,9 +413,7 @@ def test_console_adapter_with_history(tmp_path: Path, monkeypatch: pytest.Monkey
         json.dumps(_make_drift_report(risk="degraded", changed=[{"parser_id": "p1"}])),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "src.ragrig.web_console._SANITIZER_DRIFT_ARTIFACTS_DIR", tmp_path
-    )
+    monkeypatch.setattr("src.ragrig.web_console._SANITIZER_DRIFT_ARTIFACTS_DIR", tmp_path)
     result = get_sanitizer_drift_history()
     assert result["available"] is True
     assert result["status"] == "success"
@@ -433,9 +425,7 @@ def test_console_adapter_with_history(tmp_path: Path, monkeypatch: pytest.Monkey
 
 def test_console_adapter_corrupt_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "sanitizer-drift-diff.json").write_text("not json", encoding="utf-8")
-    monkeypatch.setattr(
-        "src.ragrig.web_console._SANITIZER_DRIFT_ARTIFACTS_DIR", tmp_path
-    )
+    monkeypatch.setattr("src.ragrig.web_console._SANITIZER_DRIFT_ARTIFACTS_DIR", tmp_path)
     result = get_sanitizer_drift_history()
     assert result["available"] is False
     assert result["status"] == "no_history"
@@ -447,32 +437,26 @@ def test_console_adapter_invalid_schema(tmp_path: Path, monkeypatch: pytest.Monk
         json.dumps({"artifact": "wrong-thing", "version": "1.0.0"}),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "src.ragrig.web_console._SANITIZER_DRIFT_ARTIFACTS_DIR", tmp_path
-    )
+    monkeypatch.setattr("src.ragrig.web_console._SANITIZER_DRIFT_ARTIFACTS_DIR", tmp_path)
     result = get_sanitizer_drift_history()
     assert result["available"] is False
     assert result["status"] == "no_history"
     assert result["degraded_count"] == 1
 
 
-def test_console_adapter_multi_sparkline(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_console_adapter_multi_sparkline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for i in range(3):
         (tmp_path / f"sanitizer-drift-diff-{i:02d}.json").write_text(
             json.dumps(
                 _make_drift_report(
-                    generated_at=f"2026-05-{10+i}T00:00:00+00:00",
+                    generated_at=f"2026-05-{10 + i}T00:00:00+00:00",
                     head_redacted=8 + i,
                     risk="unchanged" if i < 2 else "degraded",
                 )
             ),
             encoding="utf-8",
         )
-    monkeypatch.setattr(
-        "src.ragrig.web_console._SANITIZER_DRIFT_ARTIFACTS_DIR", tmp_path
-    )
+    monkeypatch.setattr("src.ragrig.web_console._SANITIZER_DRIFT_ARTIFACTS_DIR", tmp_path)
     result = get_sanitizer_drift_history()
     assert result["available"] is True
     assert result["report_count"] == 3
