@@ -18,4 +18,7 @@ def test_run_checks_does_not_require_env_file_for_fileshare_only_services(monkey
 
     assert result["ok"] is True
     assert result["hard_blockers"] == []
-    assert "env_file" not in result["checks"]
+    # .env missing is a warning, not a hard blocker
+    assert "env_file" in result["checks"]
+    assert result["checks"]["env_file"]["ok"] is False
+    assert ".env file not found" in result["checks"]["env_file"]["blocker"]
