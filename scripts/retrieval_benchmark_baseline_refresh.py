@@ -50,10 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--manifest-output",
         default=None,
-        help=(
-            "Path for the manifest JSON. Defaults to "
-            "<baseline-path>.manifest.json"
-        ),
+        help=("Path for the manifest JSON. Defaults to <baseline-path>.manifest.json"),
     )
     parser.add_argument(
         "--iterations",
@@ -184,10 +181,7 @@ def main() -> int:
     )
     baseline_path = Path(baseline_path_str)
 
-    manifest_path_str = (
-        args.manifest_output
-        or str(baseline_path.with_suffix(".manifest.json"))
-    )
+    manifest_path_str = args.manifest_output or str(baseline_path.with_suffix(".manifest.json"))
     manifest_path = Path(manifest_path_str)
 
     fixture_root = FIXTURE_ROOT
@@ -195,8 +189,7 @@ def main() -> int:
         error_report = {
             "error": f"Fixture directory not found: {fixture_root}",
             "hint": (
-                "Run from the repo root; "
-                "the fixture directory is tests/fixtures/local_ingestion"
+                "Run from the repo root; the fixture directory is tests/fixtures/local_ingestion"
             ),
         }
         print(json.dumps(error_report), file=sys.stderr)
