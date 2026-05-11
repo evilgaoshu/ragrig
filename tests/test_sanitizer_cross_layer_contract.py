@@ -67,9 +67,7 @@ FIXTURE_SECRET_LIKE: dict[str, Any] = {
     "api_key": "sk-proj-deadbeef",
     "auth": {
         "token": "ghp_secret_token_123",
-        "headers": {
-            "Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"
-        },
+        "headers": {"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0"},
     },
     "config": {"version": 2, "timeout": 30, "tags": ["prod", "us-east-1"]},
     "secrets": [
@@ -77,9 +75,7 @@ FIXTURE_SECRET_LIKE: dict[str, Any] = {
         {"name": "redis", "token": "redis-secret-token"},
         {"name": "cache", "normal": "no-auth"},
     ],
-    "certs": {
-        "key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpA...\n-----END RSA PRIVATE KEY-----"
-    },
+    "certs": {"key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpA...\n-----END RSA PRIVATE KEY-----"},
 }
 
 FIXTURE_REMOVE_REDACT_MIXED: dict[str, Any] = {

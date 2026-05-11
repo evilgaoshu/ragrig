@@ -78,9 +78,7 @@ def _find_function_defs(
     tree: ast.AST,
 ) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
     return [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
 
 
@@ -190,9 +188,7 @@ def _check_no_duplicate_impls() -> list[str]:
 
         imported = _get_imported_names(tree)
         # Check if this module imports from canonical sanitizer
-        imports_canonical = any(
-            v.startswith(CANONICAL_SANITIZER) for v in imported.values()
-        )
+        imports_canonical = any(v.startswith(CANONICAL_SANITIZER) for v in imported.values())
 
         if not imports_canonical and rel_module not in REGISTERED_WRAPPER_MODULES:
             # Look for suspicious patterns that suggest a copy-paste implementation
