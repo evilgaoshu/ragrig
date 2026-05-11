@@ -86,8 +86,16 @@ _SENSITIVE_VALUE_PREFIXES: tuple[str, ...] = (
     "-----begin",
 )
 
+_DEFAULT_MAX_DEPTH = 100
 
-def _is_sensitive_key(key: str) -> bool:
+
+def _is_sensitive_key(key: object) -> bool:
+    """Return True if *key* contains any known sensitive key part.
+
+    Non-string keys are treated as non-sensitive to avoid ``AttributeError``.
+    """
+    if not isinstance(key, str):
+        return False
     key_lower = key.lower()
     return any(part in key_lower for part in _SECRET_KEY_PARTS)
 
@@ -99,16 +107,29 @@ def _is_sensitive_value(value: object) -> bool:
     return any(pattern in value_lower for pattern in _SENSITIVE_VALUE_PREFIXES)
 
 
-def _sanitize_metadata(metadata: dict[str, object]) -> dict[str, object]:
+def _sanitize_metadata(
+    metadata: dict[str, object],
+    max_depth: int = _DEFAULT_MAX_DEPTH,
+    current_depth: int = 0,
+) -> dict[str, object]:
     """Recursively redact sensitive keys/values from metadata for API responses."""
+    if current_depth >= max_depth:
+        return {}
+
     sanitized: dict[str, object] = {}
+    next_depth = current_depth + 1
+
     for key, value in metadata.items():
         if _is_sensitive_key(key):
             continue
         if isinstance(value, dict):
-            sanitized[key] = _sanitize_metadata(value)
+            sanitized[key] = _sanitize_metadata(
+                value, max_depth=max_depth, current_depth=next_depth
+            )
         elif isinstance(value, list):
-            sanitized[key] = _sanitize_metadata_list(value)
+            sanitized[key] = _sanitize_metadata_list(
+                value, max_depth=max_depth, current_depth=next_depth
+            )
         elif _is_sensitive_value(value):
             continue
         else:
@@ -116,13 +137,26 @@ def _sanitize_metadata(metadata: dict[str, object]) -> dict[str, object]:
     return sanitized
 
 
-def _sanitize_metadata_list(items: list[object]) -> list[object]:
+def _sanitize_metadata_list(
+    items: list[object],
+    max_depth: int = _DEFAULT_MAX_DEPTH,
+    current_depth: int = 0,
+) -> list[object]:
+    if current_depth >= max_depth:
+        return []
+
     sanitized: list[object] = []
+    next_depth = current_depth + 1
+
     for item in items:
         if isinstance(item, dict):
-            sanitized.append(_sanitize_metadata(item))
+            sanitized.append(
+                _sanitize_metadata(item, max_depth=max_depth, current_depth=next_depth)
+            )
         elif isinstance(item, list):
-            sanitized.append(_sanitize_metadata_list(item))
+            sanitized.append(
+                _sanitize_metadata_list(item, max_depth=max_depth, current_depth=next_depth)
+            )
         elif _is_sensitive_value(item):
             continue
         else:

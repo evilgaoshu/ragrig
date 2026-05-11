@@ -30,6 +30,8 @@ from __future__ import annotations
 from typing import Any
 
 REDACTED = "[REDACTED]"
+DEGRADED = "[DEGRADED: depth limit exceeded]"
+DEFAULT_MAX_DEPTH = 100
 
 SENSITIVE_KEY_PARTS: tuple[str, ...] = (
     "api_key",
@@ -50,8 +52,15 @@ SENSITIVE_VALUE_PREFIXES: tuple[str, ...] = (
 )
 
 
-def is_sensitive_key(key: str) -> bool:
-    """Return True if *key* contains any known sensitive key part (case-insensitive)."""
+def is_sensitive_key(key: object) -> bool:
+    """Return True if *key* contains any known sensitive key part (case-insensitive).
+
+    Non-string keys are treated as non-sensitive (return ``False``) to avoid
+    ``AttributeError`` on unexpected key types such as ``int``, ``None``, or
+    ``tuple``.
+    """
+    if not isinstance(key, str):
+        return False
     key_lower = key.lower()
     return any(part in key_lower for part in SENSITIVE_KEY_PARTS)
 
@@ -75,6 +84,8 @@ def _sanitize_list_impl(
     *,
     mode: str,
     prefix: str = "",
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    current_depth: int = 0,
 ) -> tuple[list[Any], int, list[str]]:
     """Recurse into a list, applying the chosen *mode*."""
     sanitized: list[Any] = []
@@ -84,12 +95,38 @@ def _sanitize_list_impl(
     for idx, item in enumerate(items):
         item_path = f"{prefix}[{idx}]"
         if isinstance(item, dict):
-            sub, sub_count, sub_paths = _sanitize_metadata_impl(item, mode=mode, prefix=item_path)
+            if current_depth + 1 >= max_depth:
+                if mode == "redact":
+                    sanitized.append(DEGRADED)
+                    count += 1
+                    paths.append(item_path)
+                # remove mode: skip the item
+                continue
+            sub, sub_count, sub_paths = _sanitize_metadata_impl(
+                item,
+                mode=mode,
+                prefix=item_path,
+                max_depth=max_depth,
+                current_depth=current_depth + 1,
+            )
             sanitized.append(sub)
             count += sub_count
             paths.extend(sub_paths)
         elif isinstance(item, list):
-            sub, sub_count, sub_paths = _sanitize_list_impl(item, mode=mode, prefix=item_path)
+            if current_depth + 1 >= max_depth:
+                if mode == "redact":
+                    sanitized.append(DEGRADED)
+                    count += 1
+                    paths.append(item_path)
+                # remove mode: skip the item
+                continue
+            sub, sub_count, sub_paths = _sanitize_list_impl(
+                item,
+                mode=mode,
+                prefix=item_path,
+                max_depth=max_depth,
+                current_depth=current_depth + 1,
+            )
             sanitized.append(sub)
             count += sub_count
             paths.extend(sub_paths)
@@ -110,6 +147,8 @@ def _sanitize_metadata_impl(
     *,
     mode: str,
     prefix: str = "",
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    current_depth: int = 0,
 ) -> tuple[dict[str, Any], int, list[str]]:
     """Core recursive sanitizer shared by ``redact_metadata`` and ``remove_metadata``.
 
@@ -122,6 +161,11 @@ def _sanitize_metadata_impl(
         ``"remove"`` → omit sensitive fields entirely.
     prefix : str
         Dot-path prefix for tracking redacted paths (only meaningful in redact mode).
+    max_depth : int
+        Maximum recursion depth.  When exceeded the subtree is replaced with
+        ``DEGRADED`` (redact) or omitted (remove).
+    current_depth : int
+        Current recursion depth (used internally).
 
     Returns
     -------
@@ -131,8 +175,16 @@ def _sanitize_metadata_impl(
     count = 0
     paths: list[str] = []
 
+    if max_depth <= 0:
+        # Top-level depth limit of 0 means we can't inspect anything.
+        if mode == "redact":
+            sanitized[prefix or "_root"] = DEGRADED
+            count += 1
+            paths.append(prefix or "_root")
+        return sanitized, count, paths
+
     for key, value in metadata.items():
-        current_path = f"{prefix}.{key}" if prefix else key
+        current_path = f"{prefix}.{key}" if prefix else str(key)
 
         if is_sensitive_key(key):
             if mode == "redact":
@@ -141,14 +193,38 @@ def _sanitize_metadata_impl(
             count += 1
             paths.append(current_path)
         elif isinstance(value, dict):
+            if current_depth + 1 >= max_depth:
+                if mode == "redact":
+                    sanitized[key] = DEGRADED
+                    count += 1
+                    paths.append(current_path)
+                # remove mode: skip the key
+                continue
             sub, sub_count, sub_paths = _sanitize_metadata_impl(
-                value, mode=mode, prefix=current_path
+                value,
+                mode=mode,
+                prefix=current_path,
+                max_depth=max_depth,
+                current_depth=current_depth + 1,
             )
             sanitized[key] = sub
             count += sub_count
             paths.extend(sub_paths)
         elif isinstance(value, list):
-            sub, sub_count, sub_paths = _sanitize_list_impl(value, mode=mode, prefix=current_path)
+            if current_depth + 1 >= max_depth:
+                if mode == "redact":
+                    sanitized[key] = DEGRADED
+                    count += 1
+                    paths.append(current_path)
+                # remove mode: skip the key
+                continue
+            sub, sub_count, sub_paths = _sanitize_list_impl(
+                value,
+                mode=mode,
+                prefix=current_path,
+                max_depth=max_depth,
+                current_depth=current_depth + 1,
+            )
             sanitized[key] = sub
             count += sub_count
             paths.extend(sub_paths)
@@ -170,6 +246,8 @@ def _sanitize_metadata_impl(
 def redact_metadata(
     metadata: dict[str, Any],
     prefix: str = "",
+    *,
+    max_depth: int = DEFAULT_MAX_DEPTH,
 ) -> tuple[dict[str, Any], int, list[str]]:
     """Redact sensitive fields, replacing them with ``[REDACTED]``.
 
@@ -177,22 +255,28 @@ def redact_metadata(
     Used by repository audit/diff/rollback and any caller that needs to
     preserve field presence while hiding values.
     """
-    return _sanitize_metadata_impl(metadata, mode="redact", prefix=prefix)
+    return _sanitize_metadata_impl(metadata, mode="redact", prefix=prefix, max_depth=max_depth)
 
 
-def remove_metadata(metadata: dict[str, object]) -> dict[str, object]:
+def remove_metadata(
+    metadata: dict[str, object],
+    *,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+) -> dict[str, object]:
     """Remove sensitive fields entirely from *metadata*.
 
     Returns a new dict with sensitive keys and values omitted.
     Used by ``ProcessingProfile.to_api_dict()`` for API response payloads.
     """
-    result, _count, _paths = _sanitize_metadata_impl(metadata, mode="remove")
+    result, _count, _paths = _sanitize_metadata_impl(metadata, mode="remove", max_depth=max_depth)
     return result  # type: ignore[return-value]
 
 
 def redact_state(
     state: dict[str, Any],
     metadata_key: str = "metadata_json",
+    *,
+    max_depth: int = DEFAULT_MAX_DEPTH,
 ) -> dict[str, Any]:
     """Redact sensitive fields from a state dict for audit logging.
 
@@ -209,9 +293,11 @@ def redact_state(
         if is_sensitive_key(key):
             sanitized[key] = REDACTED
             redaction_count += 1
-            redacted_paths.append(key)
+            redacted_paths.append(str(key))
         elif key == metadata_key and isinstance(value, dict):
-            sub, sub_count, sub_paths = redact_metadata(value, prefix=metadata_key)
+            sub, sub_count, sub_paths = redact_metadata(
+                value, prefix=metadata_key, max_depth=max_depth
+            )
             sanitized[key] = sub
             redaction_count += sub_count
             redacted_paths.extend(sub_paths)
@@ -229,6 +315,8 @@ def redact_state(
 
 __all__ = [
     "REDACTED",
+    "DEGRADED",
+    "DEFAULT_MAX_DEPTH",
     "SENSITIVE_KEY_PARTS",
     "SENSITIVE_VALUE_PREFIXES",
     "is_sensitive_key",
