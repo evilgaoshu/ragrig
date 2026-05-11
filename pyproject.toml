@@ -88,6 +88,7 @@ markers = [
     "live: tests requiring live external services (skipped by default)",
     "slow: tests that take a noticeable amount of time",
     "optional: tests for optional features that may be skipped",
+    "answer_live_smoke: live smoke tests for answer generation with local LLM (requires RAGRIG_ANSWER_LIVE_SMOKE=1)",
 ]
 
 [tool.coverage.run]

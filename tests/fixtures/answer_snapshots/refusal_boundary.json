@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Refusal Boundary Contract",
+  "description": "Expected refusal behaviour when no evidence is available.",
+  "conditions": {
+    "deterministic_provider_no_evidence": {
+      "answer": "I cannot answer this question because no relevant evidence was found in the knowledge base.",
+      "citations": [],
+      "grounding_status_expected": "refused"
+    },
+    "llm_provider_no_evidence": {
+      "answer": "I cannot answer this question because no relevant evidence was found in the knowledge base.",
+      "citations": [],
+      "grounding_status_expected": "refused"
+    }
+  }
+}
