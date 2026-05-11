@@ -172,3 +172,9 @@ export-object-storage-check:
 
 verify-export-fixture:
 	$(UV) run python -m scripts.verify_export_fixture
+
+verify-understanding-export:
+	$(UV) run python -m scripts.verify_understanding_export
+
+verify-understanding-export-json:
+	$(UV) run python -m scripts.verify_understanding_export --json --output $(ARTIFACTS_DIR)/understanding-export-verify-summary.json
