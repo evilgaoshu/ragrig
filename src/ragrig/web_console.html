@@ -1060,6 +1060,7 @@
                 </div>
                 <button class="runs-export-btn" id="export-runs-list-btn" title="Export filtered runs as safe JSON" style="display:none">⬇ Export</button>
               </div>
+              <div class="panel-body stack" id="understanding-export-diff-badge" style="display:none"></div>
               <div class="panel-body stack" id="understanding-runs-filter"></div>
               <div class="panel-body stack" id="understanding-runs-body"></div>
               <div class="panel-body stack" id="understanding-runs-diff" style="display:none"></div>
@@ -2971,6 +2972,61 @@
 
       // ── End Evaluation Panel ────────────────────────────────────────────
 
+      async function loadUnderstandingExportDiff() {
+        try {
+          state.understandingExportDiff = await getJson('/understanding-export-diff');
+        } catch {
+          state.understandingExportDiff = { available: false, status: 'failure', reason: 'network error' };
+        }
+      }
+
+      function renderUnderstandingExportDiffBadge() {
+        var badgeRoot = document.getElementById('understanding-export-diff-badge');
+        if (!badgeRoot) return;
+        var data = state.understandingExportDiff || { available: false, status: 'failure', reason: 'not loaded' };
+
+        if (!data.available) {
+          var reason = data.reason || 'artifact not found';
+          var failClass = data.status === 'failure' ? 'pill error' : 'pill warn';
+          badgeRoot.innerHTML = '<div class="card"><div class="name">Understanding Export Diff</div><div class="sub"><span class="' + failClass + '">' + escapeHtml(data.status) + '</span> ' + escapeHtml(reason) + '</div></div>';
+          badgeRoot.style.display = '';
+          return;
+        }
+
+        var statusPill = data.status === 'pass' ? 'pill'
+          : data.status === 'degraded' ? 'pill warn'
+          : 'pill error';
+        var schemaPill = data.schema_compatible ? 'pill' : 'pill error';
+
+        var copyBtn = '';
+        if (data.artifact_path) {
+          copyBtn = '<button class="button" type="button" id="copy-diff-path-btn" title="Copy artifact path">📋 Copy path</button>';
+        }
+
+        badgeRoot.innerHTML = '' +
+          '<div class="card">' +
+            '<div class="name">Understanding Export Diff <span class="' + statusPill + '">' + escapeHtml(data.status) + '</span></div>' +
+            '<div class="sub">baseline: ' + (data.baseline_run_count || 0) + ' runs · current: ' + (data.current_run_count || 0) + ' runs</div>' +
+            '<div class="sub">added: ' + (data.added_count || 0) + ' · removed: ' + (data.removed_count || 0) + ' · changed: ' + (data.changed_count || 0) + '</div>' +
+            '<div class="sub">schema_compatible: <span class="' + schemaPill + '">' + (data.schema_compatible ? 'yes' : 'no') + '</span> · generated: ' + escapeHtml(data.generated_at ? new Date(data.generated_at).toLocaleString() : 'unknown') + '</div>' +
+            '<div class="sub">artifact: <code>' + escapeHtml(data.artifact_path || '') + '</code></div>' +
+            '<div class="run-card-actions">' + copyBtn + '</div>' +
+          '</div>';
+        badgeRoot.style.display = '';
+
+        var copyBtnEl = document.getElementById('copy-diff-path-btn');
+        if (copyBtnEl && data.artifact_path) {
+          copyBtnEl.addEventListener('click', function() {
+            navigator.clipboard.writeText(data.artifact_path).then(function() {
+              copyBtnEl.textContent = '📋 Copied!';
+              setTimeout(function() { copyBtnEl.textContent = '📋 Copy path'; }, 2000);
+            }).catch(function() {
+              alert('Copy failed: ' + data.artifact_path);
+            });
+          });
+        }
+      }
+
       async function loadRetrievalBenchmark() {
         try {
           state.retrievalBenchmark = await getJson('/retrieval/benchmark/recent');
@@ -3724,6 +3780,7 @@
           await loadSanitizerCoverage();
           await loadSanitizerDriftHistory();
           await loadRetrievalBenchmark();
+          await loadUnderstandingExportDiff();
           renderStatusStrip();
           renderKnowledgeBases();
           renderSources();
@@ -3731,6 +3788,7 @@
           await renderPipelineRuns();
           await renderUnderstandingCoverage();
           renderRunsFilterBar();
+          renderUnderstandingExportDiffBadge();
           await renderUnderstandingRuns();
           await renderDocumentPreview();
           renderModels();
@@ -3749,6 +3807,7 @@
           renderSanitizerCoverage();
           renderSanitizerDriftHistory();
           renderRetrievalBenchmark();
+          renderUnderstandingExportDiffBadge();
           renderUploadKBSelect();
         } catch (error) {
           document.body.innerHTML = `<main class="main">${empty(error.message)}</main>`;
