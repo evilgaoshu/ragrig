@@ -25,6 +25,11 @@ from scripts.retrieval_benchmark import (
     _sanitize_summary,
     run_benchmarks,
 )
+from scripts.retrieval_benchmark_baseline_refresh import (
+    SCHEMA_VERSION,
+    _compute_fixture_id,
+    _compute_metrics_hash,
+)
 
 DEFAULT_BASELINE_PATH = Path("docs/benchmarks/retrieval-benchmark-baseline.json")
 DEFAULT_LATENCY_THRESHOLD_PCT = 20
@@ -206,6 +211,68 @@ def _compare_mode(
     }
 
 
+def _check_manifest_compatibility(baseline: dict, current: dict) -> tuple[bool, str]:
+    """Check baseline manifest against current benchmark for compatibility.
+
+    Returns (compatible, reason).  If compatible, reason is "".
+    """
+    manifest = baseline.get("_manifest")
+    if not manifest:
+        return False, "baseline missing _manifest: run baseline refresh first"
+
+    if not isinstance(manifest, dict):
+        return False, "baseline _manifest is not a dict"
+
+    # schema_version
+    baseline_schema = manifest.get("schema_version")
+    if baseline_schema != SCHEMA_VERSION:
+        return (
+            False,
+            f"schema_version mismatch: baseline {baseline_schema!r} != expected {SCHEMA_VERSION!r}",
+        )
+
+    # fixture_id
+    baseline_fixture_id = manifest.get("fixture_id")
+    current_fixture_id = current.get("_manifest", {}).get("fixture_id")
+    if current_fixture_id is None:
+        from scripts.retrieval_benchmark import FIXTURE_ROOT
+
+        current_fixture_id = _compute_fixture_id(FIXTURE_ROOT)
+    if baseline_fixture_id != current_fixture_id:
+        return (
+            False,
+            (
+                f"fixture_id mismatch: baseline {baseline_fixture_id!r}"
+                f" != current {current_fixture_id!r}"
+            ),
+        )
+
+    # iteration_count
+    baseline_iters = manifest.get("iteration_count")
+    current_iters = current.get("_manifest", {}).get("iteration_count")
+    if current_iters is None:
+        current_iters = current.get("iterations_per_query")
+    if baseline_iters is not None and current_iters is not None and baseline_iters != current_iters:
+        return (
+            False,
+            f"iteration_count mismatch: baseline {baseline_iters} != current {current_iters}",
+        )
+
+    # metrics_hash
+    baseline_hash = manifest.get("metrics_hash")
+    current_hash = current.get("_manifest", {}).get("metrics_hash")
+    if current_hash is None:
+        current_hash = _compute_metrics_hash(current)
+    if baseline_hash is not None and baseline_hash != current_hash:
+        return (
+            False,
+            f"metrics_hash mismatch: baseline {baseline_hash!r} != current {current_hash!r}"
+            " (metrics structure changed)",
+        )
+
+    return True, ""
+
+
 def compare_benchmarks(
     baseline: dict,
     current: dict,
@@ -346,6 +413,23 @@ def main() -> int:
             top_k=DEFAULT_TOP_K,
             candidate_k=DEFAULT_CANDIDATE_K,
         )
+
+    # Manifest compatibility check
+    compatible, compat_reason = _check_manifest_compatibility(baseline, current)
+    if not compatible:
+        report = {
+            "knowledge_base": current.get("knowledge_base", baseline.get("knowledge_base", "")),
+            "baseline_path": str(baseline_path),
+            "latency_threshold_pct": latency_threshold_pct,
+            "result_count_threshold": result_count_threshold,
+            "overall_status": "failure",
+            "overall_reason": compat_reason,
+            "modes": [],
+        }
+        report = _sanitize_summary(report)
+        indent = 2 if args.pretty else None
+        print(json.dumps(report, indent=indent, ensure_ascii=False, sort_keys=True))
+        return 1
 
     report = compare_benchmarks(
         baseline,
