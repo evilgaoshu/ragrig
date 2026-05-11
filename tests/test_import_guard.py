@@ -65,7 +65,6 @@ OPTIONAL_IMPORT_ROOTS = {
     "pyarrow",
     "paddleocr",
     "paramiko",
-    "pyarrow",
     "pymilvus",
     "qdrant_client",
     "redis",

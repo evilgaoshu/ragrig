@@ -643,6 +643,7 @@ def test_export_to_object_storage_dry_run_excludes_parquet_when_pyarrow_missing(
     assert all(not key.endswith(".parquet") for key in report.artifact_keys)
     assert any(key.endswith(".jsonl") for key in report.artifact_keys)
 
+
 def test_export_to_object_storage_dry_run_reports_planned_artifacts_without_writes(
     sqlite_session,
 ) -> None:
@@ -872,6 +873,37 @@ def test_export_to_object_storage_respects_optional_artifact_flags(sqlite_sessio
         key for key in report.artifact_keys if key.endswith("knowledge_base_manifest.jsonl")
     )
     assert b'"status": "disabled"' in client.objects[manifest_key].body
+
+
+def test_export_to_object_storage_respects_optional_artifact_flags_for_parquet(
+    sqlite_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragrig.plugins.object_storage.client import FakeObjectStorageClient
+    from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
+
+    _seed_export_fixture(sqlite_session)
+    captures = _install_fake_pyarrow(monkeypatch)
+    client = FakeObjectStorageClient()
+
+    report = export_to_object_storage(
+        sqlite_session,
+        knowledge_base_name="fixture-export",
+        config=_config(
+            parquet_export=True,
+            include_markdown_summary=False,
+            include_retrieval_artifact=False,
+        ),
+        env={
+            "AWS_ACCESS_KEY_ID": "test-access-key",
+            "AWS_SECRET_ACCESS_KEY": "test-secret-key",
+        },
+        client=client,
+    )
+
+    assert report.planned_count == 8
+    assert all("retrieval_status" not in key for key in report.artifact_keys)
+    assert len(captures) == 6
 
 
 def test_export_to_object_storage_rejects_missing_knowledge_base(sqlite_session) -> None:
@@ -1136,10 +1168,18 @@ def test_parquet_schema_helpers_cover_empty_and_fallback_payloads(
 
     _install_fake_pyarrow(monkeypatch)
 
-    empty_schema = _schema_for_parquet_payload([])
-    assert [field.name for field in empty_schema.fields] == []
+    empty_schema = _schema_for_parquet_payload(artifact_name="retrieval_status", payload=[])
+    assert [
+        {"name": field.name, "type": field.type.name, "nullable": field.nullable}
+        for field in empty_schema.fields
+    ] == [
+        {"name": "status", "type": "string", "nullable": False},
+        {"name": "reason", "type": "string", "nullable": False},
+    ]
 
-    fallback_schema = _schema_for_parquet_payload([{"custom_field": "value"}])
+    fallback_schema = _schema_for_parquet_payload(
+        artifact_name="custom_artifact", payload=[{"custom_field": "value"}]
+    )
     assert [
         {"name": field.name, "type": field.type.name, "nullable": field.nullable}
         for field in fallback_schema.fields
