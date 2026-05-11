@@ -51,9 +51,7 @@ def _assert_no_raw_secrets(data: object, source: str) -> None:
     if isinstance(data, str):
         for fragment in _FORBIDDEN_FRAGMENTS:
             if fragment in data:
-                raise RuntimeError(
-                    f"{source}: raw secret fragment {fragment!r} detected in output"
-                )
+                raise RuntimeError(f"{source}: raw secret fragment {fragment!r} detected in output")
     elif isinstance(data, dict):
         for k, v in data.items():
             _assert_no_raw_secrets(v, f"{source}.{k}")
@@ -338,13 +336,9 @@ def _render_markdown(diff: dict[str, Any]) -> str:
                     f"({detail['base']} → {detail['head']})"
                 )
             elif t == "parser_degraded":
-                lines.append(
-                    f"- ⚠️ Parser `{detail['parser_id']}`: {detail['reason']}"
-                )
+                lines.append(f"- ⚠️ Parser `{detail['parser_id']}`: {detail['reason']}")
             elif t == "parser_added_with_risk":
-                lines.append(
-                    f"- ⚠️ Parser `{detail['parser_id']}`: {detail['reason']}"
-                )
+                lines.append(f"- ⚠️ Parser `{detail['parser_id']}`: {detail['reason']}")
             else:
                 lines.append(f"- ⚠️ {t}: {detail}")
     else:
@@ -383,8 +377,7 @@ def _render_markdown(diff: dict[str, Any]) -> str:
             for r in parsers["removed"]:
                 b = r["base"]
                 lines.append(
-                    f"| `{r['parser_id']}` | {b['fixtures']} | {b['redacted']} | "
-                    f"{b['degraded']} |"
+                    f"| `{r['parser_id']}` | {b['fixtures']} | {b['redacted']} | {b['degraded']} |"
                 )
             lines.append("")
 

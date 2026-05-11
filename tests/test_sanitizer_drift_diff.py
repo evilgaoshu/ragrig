@@ -215,9 +215,7 @@ def test_drift_degraded_increased_triggers_risk() -> None:
     diff = compute_drift_diff(base, head)
     assert diff["risk"] == "degraded"
     assert diff["totals"]["delta"]["degraded"] == 1
-    assert any(
-        d["type"] == "parser_degraded" for d in diff["risk_details"]
-    )
+    assert any(d["type"] == "parser_degraded" for d in diff["risk_details"])
 
 
 def test_drift_total_redaction_drop_triggers_risk() -> None:
@@ -236,9 +234,7 @@ def test_drift_total_redaction_drop_triggers_risk() -> None:
     diff = compute_drift_diff(base, head)
     assert diff["risk"] == "degraded"
     assert diff["totals"]["delta"]["redacted"] == -2
-    assert any(
-        d["type"] == "total_redaction_drop" for d in diff["risk_details"]
-    )
+    assert any(d["type"] == "total_redaction_drop" for d in diff["risk_details"])
 
 
 def test_drift_total_degraded_increase_triggers_risk() -> None:
@@ -257,9 +253,7 @@ def test_drift_total_degraded_increase_triggers_risk() -> None:
     diff = compute_drift_diff(base, head)
     assert diff["risk"] == "degraded"
     assert diff["totals"]["delta"]["degraded"] == 1
-    assert any(
-        d["type"] == "total_degraded_increase" for d in diff["risk_details"]
-    )
+    assert any(d["type"] == "total_degraded_increase" for d in diff["risk_details"])
 
 
 def test_drift_golden_hash_drift() -> None:
@@ -295,9 +289,7 @@ def test_drift_added_parser_degraded_is_risk() -> None:
     )
     diff = compute_drift_diff(base, head)
     assert diff["risk"] == "degraded"
-    assert any(
-        d["type"] == "parser_added_with_risk" for d in diff["risk_details"]
-    )
+    assert any(d["type"] == "parser_added_with_risk" for d in diff["risk_details"])
 
 
 def test_drift_multiple_changes() -> None:
@@ -364,9 +356,7 @@ def test_diff_output_never_contains_raw_secrets() -> None:
 
 def test_assert_no_raw_secrets_panics() -> None:
     with pytest.raises(RuntimeError, match="raw secret fragment"):
-        _assert_no_raw_secrets(
-            {"foo": "contains Bearer token"}, "test"
-        )
+        _assert_no_raw_secrets({"foo": "contains Bearer token"}, "test")
 
 
 def test_render_markdown_no_secrets() -> None:
@@ -476,9 +466,12 @@ def test_cli_stdout(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
 
     rc = main(
         [
-            "--base", str(base_path),
-            "--head", str(head_path),
-            "--output", str(tmp_path / "diff.json"),
+            "--base",
+            str(base_path),
+            "--head",
+            str(head_path),
+            "--output",
+            str(tmp_path / "diff.json"),
             "--stdout",
         ]
     )
@@ -497,11 +490,16 @@ def test_cli_markdown_only(tmp_path: Path) -> None:
 
     rc = main(
         [
-            "--base", str(base_path),
-            "--head", str(head_path),
-            "--output", str(tmp_path / "diff.json"),
-            "--markdown-output", str(md_path),
-            "--format", "markdown",
+            "--base",
+            str(base_path),
+            "--head",
+            str(head_path),
+            "--output",
+            str(tmp_path / "diff.json"),
+            "--markdown-output",
+            str(md_path),
+            "--format",
+            "markdown",
         ]
     )
     assert rc == 0
@@ -518,9 +516,12 @@ def test_cli_both_outputs(tmp_path: Path) -> None:
 
     rc = main(
         [
-            "--base", str(base_path),
-            "--head", str(head_path),
-            "--output", str(tmp_path / "diff.json"),
+            "--base",
+            str(base_path),
+            "--head",
+            str(head_path),
+            "--output",
+            str(tmp_path / "diff.json"),
         ]
     )
     assert rc == 0
@@ -545,9 +546,12 @@ def test_subprocess_invocation(tmp_path: Path) -> None:
             sys.executable,
             "-m",
             "scripts.sanitizer_drift_diff",
-            "--base", str(base_path),
-            "--head", str(head_path),
-            "--output", str(out_path),
+            "--base",
+            str(base_path),
+            "--head",
+            str(head_path),
+            "--output",
+            str(out_path),
         ],
         capture_output=True,
         text=True,
