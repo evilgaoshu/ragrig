@@ -155,6 +155,16 @@ sanitizer-coverage-summary:
 eval-local:
 	$(UV) run python -m scripts.eval_local
 
+# ── Baseline management ───────────────────────────────────────
+# Promote a run to baseline: make eval-baseline RUN_ID=<uuid>
+eval-baseline:
+	$(UV) run python -m scripts.eval_baseline --run-id "$(RUN_ID)" $(if $(BASELINE_ID),--baseline-id $(BASELINE_ID),)
+
+# ── Retention / cleanup ───────────────────────────────────────
+# Clean old evaluation runs: make eval-cleanup KEEP_COUNT=20
+eval-cleanup:
+	$(UV) run python -m scripts.eval_cleanup $(if $(KEEP_COUNT),--keep-count $(KEEP_COUNT),) $(if $(KEEP_DAYS),--keep-days $(KEEP_DAYS),) $(if $(DRY_RUN),--dry-run,)
+
 # ── Retrieval benchmark ───────────────────────────────────────
 # Runs latency measurements for dense/hybrid/rerank/hybrid_rerank
 # against the fixture-local knowledge base.  No network, GPU,

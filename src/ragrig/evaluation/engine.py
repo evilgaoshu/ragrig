@@ -396,23 +396,13 @@ def _persist_run(run: EvaluationRun, store_dir: Path) -> None:
 
 def _serialize_run_for_persistence(run: EvaluationRun) -> dict[str, Any]:
     """Serialize an evaluation run for JSON persistence, without secrets."""
+    from ragrig.evaluation.report import _sanitize_dict
+
     data = run.model_dump()
-    # Ensure no sensitive fields leak
-    sensitive_keys = {
-        "api_key",
-        "secret",
-        "password",
-        "token",
-        "credential",
-        "private_key",
-        "access_key",
-    }
+    # Recursively sanitize config_snapshot to ensure no secrets leak at any depth
     config = data.get("config_snapshot", {})
     if isinstance(config, dict):
-        for key in list(config.keys()):
-            key_lower = key.lower()
-            if any(sk in key_lower for sk in sensitive_keys):
-                config[key] = "[REDACTED]"
+        data["config_snapshot"] = _sanitize_dict(config)
     return data
 
 

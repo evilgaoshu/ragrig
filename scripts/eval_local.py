@@ -3,7 +3,7 @@
 Usage:
     uv run python -m scripts.eval_local
     uv run python -m scripts.eval_local --golden tests/fixtures/evaluation_golden.yaml
-    uv run python -m scripts.eval_local --baseline evaluation_runs/<id>.json
+    uv run python -m scripts.eval_local --baseline <baseline-id-or-path>
 """
 
 from __future__ import annotations
@@ -17,7 +17,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from ragrig.config import get_settings
-from ragrig.evaluation import run_evaluation
+from ragrig.evaluation import (
+    BaselineCorruptError,
+    BaselineNotFoundError,
+    resolve_baseline_path,
+    run_evaluation,
+)
 from ragrig.evaluation.report import build_evaluation_run_report
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
@@ -116,7 +121,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--baseline",
         default=None,
-        help="Optional path to a baseline evaluation run JSON for delta computation.",
+        help=(
+            "Optional baseline id or path for delta computation. "
+            "Can be a baseline ID from the registry or a direct file path."
+        ),
+    )
+    parser.add_argument(
+        "--baseline-dir",
+        default="evaluation_baselines",
+        help="Directory containing baselines. Default: evaluation_baselines",
     )
     parser.add_argument(
         "--store-dir",
@@ -153,7 +166,26 @@ def main() -> int:
     engine = create_engine(settings.sqlalchemy_runtime_database_url, pool_pre_ping=True)
 
     store_dir = Path(args.store_dir)
-    baseline_path = Path(args.baseline) if args.baseline else None
+    baseline_dir = Path(args.baseline_dir)
+
+    # Resolve baseline
+    baseline_path: Path | None = None
+    baseline_error: dict[str, str] | None = None
+    if args.baseline:
+        try:
+            baseline_path = resolve_baseline_path(args.baseline, baseline_dir=baseline_dir)
+        except BaselineNotFoundError as exc:
+            baseline_error = {
+                "error": str(exc),
+                "status": "degraded",
+                "reason": "baseline_missing",
+            }
+        except BaselineCorruptError as exc:
+            baseline_error = {
+                "error": str(exc),
+                "status": "degraded",
+                "reason": "baseline_corrupt",
+            }
 
     with Session(engine, expire_on_commit=False) as session:
         _ensure_indexed(session, args.knowledge_base, Path(args.ingest_root))
@@ -174,6 +206,15 @@ def main() -> int:
         run,
         include_items=(args.format == "full"),
     )
+
+    # If baseline resolution failed, inject degraded info into report
+    if baseline_error:
+        report["baseline_status"] = baseline_error
+        report["metrics"]["baseline_label"] = args.baseline
+        report["metrics"]["regression_delta_vs_baseline"] = {
+            k: None for k in report["metrics"].get("regression_delta_vs_baseline", {})
+        }
+
     print(json.dumps(report, indent=2, ensure_ascii=False))
 
     if args.output:
@@ -183,6 +224,10 @@ def main() -> int:
             encoding="utf-8",
         )
         print(f"\nReport written to {output_path}", file=sys.stderr)
+
+    # Exit with non-zero if baseline was missing/corrupt to signal degraded
+    if baseline_error:
+        return 2
 
     return 0
 
