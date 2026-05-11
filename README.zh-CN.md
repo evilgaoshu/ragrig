@@ -517,6 +517,34 @@ secret_requirements:
 - `source.fileshare`：已升级为真实官方 source plugin，支持 mounted NFS/local path、SMB/WebDAV/SFTP fake-client contract tests，以及协议级 readiness 展示。
 - `make fileshare-check`：离线验证 mounted path 和 fake SMB/WebDAV/SFTP scanner 行为。
 
+### 企业连接器目录与工作流引擎
+
+RAGRig 现在把“企业连接器发现”和“真实连接器执行”分开暴露。目录覆盖
+local files、fileshare、S3-compatible storage、Google Workspace、Microsoft 365、
+wiki、database、collaboration suites、Notion、Slack files、Box、Dropbox、GitHub
+repository contents，并记录官方文档链接、协议、credential 环境变量名和 workflow
+operation 映射。
+
+新增 API：
+
+- `GET /enterprise-connectors`：列出 connector family、protocol、credential env var name、官方文档链接和 workflow operation。
+- `POST /enterprise-connectors/{connector_id}/probe`：安全本地探测。没有 credential 时，云/SaaS connector 返回 `missing_credentials`，不会发起网络请求。
+- `GET /workflows/operations`：列出可用 workflow node operation。
+- `POST /workflows/runs`：运行或 dry-run 一个带依赖校验的轻量 DAG。
+
+当前 workflow operation：
+
+- `ingest.local`
+- `ingest.fileshare`
+- `ingest.s3`
+- `ingest.connector`
+- `index.knowledge_base`
+- `noop`
+
+工作流引擎按拓扑顺序执行 step，拒绝重复 step、未知依赖、循环依赖和未知
+operation，支持 dry-run、step retry、依赖失败后的跳过，并在真实 ingest/index
+step 结果中返回对应的 `pipeline_run_id`。默认测试仍保持无网络、无 secret。
+
 ### Fileshare Source
 
 `source.fileshare` 现在是企业共享盘接入的本地优先入口。
