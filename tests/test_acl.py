@@ -6,6 +6,7 @@ import pytest
 
 from ragrig.acl import (
     AclMetadata,
+    Principal,
     acl_permits_chunk_metadata,
     acl_summary_from_metadata,
 )
@@ -82,6 +83,14 @@ def test_case_insensitive_principal_matching() -> None:
     assert acl.permits(["alice"]) is True
     assert acl.permits(["ALICE"]) is True
     assert acl.permits(["BOB"]) is False
+
+
+def test_principal_expands_user_and_group_subjects() -> None:
+    principal = Principal(user_id="Alice", group_ids=["Engineering", "Engineering"])
+    assert principal.subject_ids() == ["user:alice", "alice", "group:engineering"]
+
+    acl = AclMetadata(visibility="protected", allowed_principals=["group:engineering"])
+    assert acl.permits(principal.subject_ids()) is True
 
 
 def test_from_metadata_extracts_acl_correctly() -> None:

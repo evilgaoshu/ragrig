@@ -13,6 +13,20 @@ from typing import Any, Literal
 
 Visibility = Literal["public", "protected", "unknown"]
 AclSummaryVisibility = Literal["public", "protected", "unknown"]
+AuditEventType = Literal["acl_write", "retrieval_filter", "access_denied"]
+
+
+@dataclass(frozen=True)
+class Principal:
+    """A retrieval principal with explicit user and group subjects."""
+
+    user_id: str
+    group_ids: list[str] = field(default_factory=list)
+
+    def subject_ids(self) -> list[str]:
+        subjects = [f"user:{self.user_id}", self.user_id]
+        subjects.extend(f"group:{group_id}" for group_id in self.group_ids)
+        return normalize_principal_ids(subjects)
 
 
 @dataclass(frozen=True)
@@ -38,12 +52,29 @@ class AclMetadata:
         if not principal_ids:
             return False
         # denied principals are excluded first
-        allowed = {pid.lower() for pid in self.allowed_principals}
-        denied = {pid.lower() for pid in self.denied_principals}
-        request_principals = {pid.lower() for pid in principal_ids}
+        allowed = set(normalize_principal_ids(self.allowed_principals))
+        denied = set(normalize_principal_ids(self.denied_principals))
+        request_principals = set(normalize_principal_ids(principal_ids))
         if denied & request_principals:
             return False
         return bool(allowed & request_principals)
+
+    def decision_reason(self, principal_ids: list[str] | None) -> str:
+        """Return a safe reason code for permission preview and explain payloads."""
+        if self.visibility == "public":
+            return "public"
+        if self.visibility == "unknown":
+            return "unknown_visibility"
+        if not principal_ids:
+            return "missing_principal"
+        allowed = set(normalize_principal_ids(self.allowed_principals))
+        denied = set(normalize_principal_ids(self.denied_principals))
+        request_principals = set(normalize_principal_ids(principal_ids))
+        if denied & request_principals:
+            return "explicit_deny"
+        if allowed & request_principals:
+            return "principal_match"
+        return "no_matching_principal"
 
     @classmethod
     def from_metadata(cls, metadata: dict[str, Any] | None) -> AclMetadata:
@@ -121,12 +152,35 @@ def _coerce_str_list(value: Any) -> list[str]:
     return []
 
 
+def normalize_principal_ids(principal_ids: list[str] | tuple[str, ...] | None) -> list[str]:
+    """Normalize principal strings for case-insensitive user/group matching."""
+    if not principal_ids:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for principal_id in principal_ids:
+        value = str(principal_id).strip().lower()
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return normalized
+
+
 def acl_permits_chunk_metadata(
     chunk_metadata: dict[str, Any] | None,
     principal_ids: list[str] | None,
 ) -> bool:
     """Convenience: check whether chunk metadata grants access."""
     return AclMetadata.from_metadata(chunk_metadata).permits(principal_ids)
+
+
+def acl_decision_reason(
+    chunk_metadata: dict[str, Any] | None,
+    principal_ids: list[str] | None,
+) -> str:
+    """Return a safe ACL reason code for a chunk metadata decision."""
+    return AclMetadata.from_metadata(chunk_metadata).decision_reason(principal_ids)
 
 
 def acl_summary_from_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:

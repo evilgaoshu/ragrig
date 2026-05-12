@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from starlette.responses import Response
 
 from ragrig import __version__
+from ragrig.acl import acl_summary_from_metadata
 from ragrig.answer import (
     NoEvidenceError,
     generate_answer,
@@ -79,6 +80,7 @@ from ragrig.understanding import (
 from ragrig.vectorstore import get_vector_backend, get_vector_backend_health
 from ragrig.web_console import (
     PluginWizardValidationError,
+    build_permission_preview,
     build_system_status,
     check_format,
     get_answer_live_smoke,
@@ -174,6 +176,10 @@ class AnswerRequest(BaseModel):
     enforce_acl: bool = True
 
 
+class PermissionPreviewRequest(BaseModel):
+    principal_ids: list[str] | None = None
+
+
 class CreateProcessingProfileRequest(BaseModel):
     profile_id: str
     extension: str
@@ -224,6 +230,13 @@ def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
             "details": exc.details,
         }
     }
+
+
+def _safe_chunk_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    safe = dict(metadata or {})
+    if "acl" in safe:
+        safe["acl"] = acl_summary_from_metadata(metadata)
+    return safe
 
 
 def _plugin_validation_error_response(*, code: str, message: str) -> JSONResponse:
@@ -1138,6 +1151,7 @@ def create_app(
             "backend": report.backend,
             "backend_metadata": report.backend_metadata,
             "total_results": report.total_results,
+            "acl_explain": report.acl_explain,
             "results": [
                 {
                     "document_id": str(result.document_id),
@@ -1150,7 +1164,7 @@ def create_app(
                     "text_preview": result.text_preview,
                     "distance": result.distance,
                     "score": result.score,
-                    "chunk_metadata": result.chunk_metadata,
+                    "chunk_metadata": _safe_chunk_metadata(result.chunk_metadata),
                     "rank_stage_trace": result.rank_stage_trace,
                 }
                 for result in report.results
@@ -1160,6 +1174,13 @@ def create_app(
             response["degraded"] = True
             response["degraded_reason"] = report.degraded_reason
         return response
+
+    @app.post("/permissions/preview", response_model=None)
+    def permission_preview(
+        request: PermissionPreviewRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any]:
+        return build_permission_preview(session, principal_ids=request.principal_ids)
 
     @app.post("/evaluations/runs", response_model=None)
     def evaluation_run(
