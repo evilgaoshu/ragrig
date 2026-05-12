@@ -511,7 +511,6 @@ class TestSourceValidateConfigAPI:
         app = create_app(check_database=lambda: None, session_factory=sf)
         transport = httpx.ASGITransport(app=app)
 
-
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             resp = await client.post(
                 "/sources/validate-config",
@@ -546,7 +545,6 @@ class TestDryRunAPI:
         docs = tmp_path / "dryrun_docs"
         docs.mkdir()
         (docs / "test.md").write_text("# Dry Run", encoding="utf-8")
-
 
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             resp = await client.post(
@@ -586,7 +584,6 @@ class TestSaveConfigAPI:
         docs = tmp_path / "save_docs"
         docs.mkdir()
 
-
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             resp = await client.post(
                 "/sources",
@@ -620,7 +617,6 @@ class TestRetryAPI:
         app = create_app(check_database=lambda: None, session_factory=sf)
         transport = httpx.ASGITransport(app=app)
 
-
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             resp = await client.post(
                 f"/pipeline-run-items/{uuid.uuid4()}/retry",
@@ -639,7 +635,6 @@ class TestRetryAPI:
 
         app = create_app(check_database=lambda: None, session_factory=sf)
         transport = httpx.ASGITransport(app=app)
-
 
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             resp = await client.post(
@@ -697,7 +692,6 @@ class TestConsoleHTMLContract:
 
         app = create_app(check_database=lambda: None, session_factory=sf)
         transport = httpx.ASGITransport(app=app)
-
 
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             resp = await client.get("/console")

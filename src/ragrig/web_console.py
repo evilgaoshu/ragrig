@@ -1539,6 +1539,7 @@ def validate_source_config(
 
 # ── Dry-run source ingestion ────────────────────────────────────────────────
 
+
 @dataclass
 class DryRunFile:
     path: str
@@ -1596,9 +1597,7 @@ def _dry_run_local_directory(
                 )
             )
         except Exception as exc:
-            failed.append(
-                DryRunFile(path=str(cand.path), status="failed", reason=str(exc))
-            )
+            failed.append(DryRunFile(path=str(cand.path), status="failed", reason=str(exc)))
 
     return DryRunReport(
         source_id=None,
@@ -1703,13 +1702,9 @@ def _dry_run_fileshare_source(
     discovered: list[DryRunFile] = []
     skipped: list[DryRunFile] = []
     for sk in scan_result.skipped:
-        skipped.append(
-            DryRunFile(path=sk.path, status="skipped", reason=sk.reason)
-        )
+        skipped.append(DryRunFile(path=sk.path, status="skipped", reason=sk.reason))
     for cand in scan_result.discovered:
-        discovered.append(
-            DryRunFile(path=cand.path, status="discovered", parser=cand.content_type)
-        )
+        discovered.append(DryRunFile(path=cand.path, status="discovered", parser=cand.content_type))
 
     return DryRunReport(
         source_id=None,
@@ -1732,12 +1727,8 @@ def _serialize_dry_run(report: DryRunReport) -> dict[str, Any]:
         "discovered": [
             {"path": f.path, "status": f.status, "parser": f.parser} for f in report.discovered
         ],
-        "skipped": [
-            {"path": f.path, "reason": f.reason} for f in report.skipped
-        ],
-        "failed": [
-            {"path": f.path, "reason": f.reason} for f in report.failed
-        ],
+        "skipped": [{"path": f.path, "reason": f.reason} for f in report.skipped],
+        "failed": [{"path": f.path, "reason": f.reason} for f in report.failed],
     }
 
 
@@ -1769,6 +1760,7 @@ def dry_run_source(
 
 
 # ── Source Config Save ──────────────────────────────────────────────────────
+
 
 def save_source_config(
     session: Session,
@@ -1853,9 +1845,8 @@ def save_source_config(
 
 # ── Pipeline Run Item Inspect & Retry ───────────────────────────────────────
 
-def get_pipeline_run_item_detail(
-    session: Session, item_id: str
-) -> dict[str, Any] | None:
+
+def get_pipeline_run_item_detail(session: Session, item_id: str) -> dict[str, Any] | None:
     """Return detail for a single pipeline run item."""
     item_uuid = uuid.UUID(item_id)
     row = session.execute(
@@ -1917,9 +1908,9 @@ def retry_pipeline_run_item(
 
     # Determine file path from metadata or config
     file_path = None
-    metadata_path = (item.metadata_json or {}).get("object_key") or (
-        item.metadata_json or {}
-    ).get("file_name")
+    metadata_path = (item.metadata_json or {}).get("object_key") or (item.metadata_json or {}).get(
+        "file_name"
+    )
     doc_uri = document.uri
 
     if run.run_type == "s3_ingest":
