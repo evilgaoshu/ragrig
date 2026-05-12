@@ -295,8 +295,104 @@ def get_integrity_summary() -> dict[str, Any]:
     return summary
 
 
+def summarize_artifact(
+    artifact_path: str | Path,
+    *,
+    output_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Read a JSON integrity artifact and produce a Markdown summary + JSON report."""
+    ap = Path(artifact_path)
+    if not ap.exists():
+        raise FileNotFoundError(f"Artifact not found: {ap}")
+    try:
+        artifact = json.loads(ap.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Corrupt artifact (invalid JSON): {ap} - {exc}") from exc
+    if not isinstance(artifact, dict):
+        raise ValueError(f"Artifact root is not a JSON object: {ap}")
+    out_dir = Path(output_dir) if output_dir else ap.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    md_path = out_dir / f"{ap.stem}_summary.md"
+    json_path = out_dir / f"{ap.stem}_summary.json"
+    overall_status = artifact.get("overall_status", "unknown")
+    reasons = artifact.get("reasons", [])
+    baseline_age = artifact.get("baseline_age")
+    baseline_age_str = f"{baseline_age:.1f}d" if baseline_age is not None else "unknown"
+    fixture_id = artifact.get("fixture_id", "unknown") or "unknown"
+    iteration_count = artifact.get("iteration_count", 0) or 0
+    metrics_hash_status = artifact.get("metrics_hash_status", "unchecked") or "unchecked"
+    schema_version = artifact.get("schema_version", "unknown") or "unknown"
+    generated_at = artifact.get("generated_at", "unknown") or "unknown"
+    summary = {
+        "overall_status": overall_status,
+        "reasons": reasons,
+        "baseline_age": baseline_age_str,
+        "fixture_id": str(fixture_id),
+        "iteration_count": int(iteration_count),
+        "metrics_hash_status": metrics_hash_status,
+        "schema_version": schema_version,
+        "generated_at": generated_at,
+        "json_report_path": str(json_path),
+        "md_report_path": str(md_path),
+    }
+    json_path.write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    md_lines = [
+        "# Integrity Summary", "",
+        "| Field | Value |", "|---|---|",
+        f"| **Overall Status** | {overall_status} |",
+        f"| **Fixture ID** | {fixture_id} |",
+        f"| **Iteration Count** | {iteration_count} |",
+        f"| **Baseline Age** | {baseline_age_str} |",
+        f"| **Metrics Hash Status** | {metrics_hash_status} |",
+        f"| **Schema Version** | {schema_version} |",
+        f"| **Generated At** | {generated_at} |",
+    ]
+    if reasons:
+        md_lines.extend(["", "## Reasons"])
+        for r in reasons:
+            md_lines.append(f"- {r}")
+    md_lines.extend([
+        "", "## Reports",
+        f"- JSON: `{summary['json_report_path']}`",
+        f"- Markdown: `{summary['md_report_path']}`", "",
+    ])
+    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+    return summary
+
+
+def summary_main() -> int:
+    """CLI entry point for Markdown summary generation."""
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Generate a Markdown integrity summary from an artifact JSON."
+    )
+    parser.add_argument("artifact_path", help="Path to the integrity artifact JSON")
+    parser.add_argument("--output-dir", default=None, help="Output directory for summary files")
+    args = parser.parse_args()
+    summary = summarize_artifact(args.artifact_path, output_dir=args.output_dir)
+    status = summary["overall_status"]
+    print(f"Integrity Summary: {status}")
+    print(f"  Fixture ID:      {summary['fixture_id']}")
+    print(f"  Baseline Age:    {summary['baseline_age']}")
+    print(f"  Iteration Count: {summary['iteration_count']}")
+    print(f"  Metrics Hash:    {summary['metrics_hash_status']}")
+    print(f"  JSON Report:     {summary['json_report_path']}")
+    print(f"  MD Report:       {summary['md_report_path']}")
+    for r in summary.get("reasons", []):
+        print(f"  Reason: {r}")
+    return 0 if status != "failure" else 1
+
+
+
 def main() -> int:
-    """CLI entry point for CI artifact generation."""
+    """CLI entry point for CI artifact generation or summary delegation."""
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "--summary":
+        sys.argv.pop(1)
+        return summary_main()
     import argparse
 
     parser = argparse.ArgumentParser(description="Generate retrieval benchmark integrity artifact.")

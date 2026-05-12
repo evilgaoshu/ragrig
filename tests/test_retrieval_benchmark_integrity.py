@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +17,8 @@ from ragrig.retrieval_benchmark_integrity import (
     generate_artifact,
     get_integrity_summary,
     main,
+    summarize_artifact,
+    summary_main,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -641,3 +644,121 @@ class TestMain:
         code = main()
         assert code == 0
         assert output_path.exists()
+
+
+# ── summarize_artifact tests ──────────────────────────────────────────
+
+
+_PASS_JSON = json.dumps({
+    "overall_status": "pass", "reasons": [], "baseline_age": 12.5,
+    "fixture_id": "news_qa_2026", "iteration_count": 3,
+    "metrics_hash_status": "match", "schema_version": "1.0",
+    "generated_at": "2026-05-12T00:00:00Z",
+    "manifest_present": True, "baseline_present": True,
+})
+_DEGRADED_JSON = json.dumps({
+    "overall_status": "degraded",
+    "reasons": ["baseline_stale: age 45d exceeds 30d"],
+    "baseline_age": 45.0, "fixture_id": "f1", "iteration_count": 1,
+    "metrics_hash_status": "match", "schema_version": "1.0",
+    "generated_at": "2026-05-12T00:00:00Z",
+    "manifest_present": True, "baseline_present": True,
+})
+_FAILURE_JSON = json.dumps({
+    "overall_status": "failure",
+    "reasons": ["manifest_missing: file not found"],
+    "baseline_age": None, "fixture_id": None, "iteration_count": 0,
+    "metrics_hash_status": None, "schema_version": None,
+    "generated_at": "unknown",
+    "manifest_present": False, "baseline_present": False,
+})
+_SIMPLE_PASS_JSON = json.dumps({
+    "overall_status": "pass", "reasons": [], "baseline_age": 1.0,
+    "fixture_id": "f1", "iteration_count": 1,
+    "metrics_hash_status": "match", "schema_version": "1.0",
+    "generated_at": "2026-05-12T00:00:00Z",
+    "manifest_present": True, "baseline_present": True,
+})
+
+
+class TestSummarizeArtifact:
+    def test_summary_pass(self, tmp_path):
+        ap = tmp_path / "artifact.json"
+        ap.write_text(_PASS_JSON)
+        summary = summarize_artifact(ap, output_dir=tmp_path)
+        assert summary["overall_status"] == "pass"
+        assert summary["fixture_id"] == "news_qa_2026"
+        assert summary["iteration_count"] == 3
+        assert summary["metrics_hash_status"] == "match"
+        assert summary["baseline_age"] == "12.5d"
+        assert Path(summary["json_report_path"]).exists()
+        assert Path(summary["md_report_path"]).exists()
+
+    def test_summary_degraded(self, tmp_path):
+        ap = tmp_path / "artifact.json"
+        ap.write_text(_DEGRADED_JSON)
+        summary = summarize_artifact(ap, output_dir=tmp_path)
+        assert summary["overall_status"] == "degraded"
+        assert len(summary["reasons"]) == 1
+        md = Path(summary["md_report_path"]).read_text()
+        assert "degraded" in md
+        assert "baseline_stale" in md
+
+    def test_summary_failure(self, tmp_path):
+        ap = tmp_path / "artifact.json"
+        ap.write_text(_FAILURE_JSON)
+        summary = summarize_artifact(ap, output_dir=tmp_path)
+        assert summary["overall_status"] == "failure"
+        md = Path(summary["md_report_path"]).read_text()
+        assert "failure" in md
+
+    def test_summary_missing_artifact(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="Artifact not found"):
+            summarize_artifact(tmp_path / "nonexistent.json")
+
+    def test_summary_corrupt_artifact(self, tmp_path):
+        ap = tmp_path / "corrupt.json"
+        ap.write_text("{bad json}")
+        with pytest.raises(ValueError, match="Corrupt artifact"):
+            summarize_artifact(ap)
+
+    def test_summary_not_a_dict(self, tmp_path):
+        ap = tmp_path / "array.json"
+        ap.write_text("[]")
+        with pytest.raises(ValueError, match="not a JSON object"):
+            summarize_artifact(ap)
+
+    def test_summary_missing_fields(self, tmp_path):
+        ap = tmp_path / "minimal.json"
+        ap.write_text('{"overall_status":"pass"}')
+        summary = summarize_artifact(ap, output_dir=tmp_path)
+        assert summary["fixture_id"] == "unknown"
+        assert summary["baseline_age"] == "unknown"
+
+    def test_summary_main_cli_pass(self, tmp_path, monkeypatch):
+        ap = tmp_path / "artifact.json"
+        ap.write_text(_SIMPLE_PASS_JSON)
+        monkeypatch.setattr(
+            "sys.argv", ["prog", str(ap), "--output-dir", str(tmp_path)]
+        )
+        code = summary_main()
+        assert code == 0
+
+    def test_summary_main_cli_failure(self, tmp_path, monkeypatch):
+        ap = tmp_path / "artifact.json"
+        ap.write_text(_FAILURE_JSON)
+        monkeypatch.setattr(
+            "sys.argv", ["prog", str(ap), "--output-dir", str(tmp_path)]
+        )
+        code = summary_main()
+        assert code == 1
+
+    def test_main_delegates_to_summary(self, tmp_path, monkeypatch):
+        ap = tmp_path / "artifact.json"
+        ap.write_text(_SIMPLE_PASS_JSON)
+        monkeypatch.setattr(
+            "sys.argv",
+            ["prog", "--summary", str(ap), "--output-dir", str(tmp_path)],
+        )
+        code = main()
+        assert code == 0
