@@ -649,36 +649,62 @@ class TestMain:
 # ── summarize_artifact tests ──────────────────────────────────────────
 
 
-_PASS_JSON = json.dumps({
-    "overall_status": "pass", "reasons": [], "baseline_age": 12.5,
-    "fixture_id": "news_qa_2026", "iteration_count": 3,
-    "metrics_hash_status": "match", "schema_version": "1.0",
-    "generated_at": "2026-05-12T00:00:00Z",
-    "manifest_present": True, "baseline_present": True,
-})
-_DEGRADED_JSON = json.dumps({
-    "overall_status": "degraded",
-    "reasons": ["baseline_stale: age 45d exceeds 30d"],
-    "baseline_age": 45.0, "fixture_id": "f1", "iteration_count": 1,
-    "metrics_hash_status": "match", "schema_version": "1.0",
-    "generated_at": "2026-05-12T00:00:00Z",
-    "manifest_present": True, "baseline_present": True,
-})
-_FAILURE_JSON = json.dumps({
-    "overall_status": "failure",
-    "reasons": ["manifest_missing: file not found"],
-    "baseline_age": None, "fixture_id": None, "iteration_count": 0,
-    "metrics_hash_status": None, "schema_version": None,
-    "generated_at": "unknown",
-    "manifest_present": False, "baseline_present": False,
-})
-_SIMPLE_PASS_JSON = json.dumps({
-    "overall_status": "pass", "reasons": [], "baseline_age": 1.0,
-    "fixture_id": "f1", "iteration_count": 1,
-    "metrics_hash_status": "match", "schema_version": "1.0",
-    "generated_at": "2026-05-12T00:00:00Z",
-    "manifest_present": True, "baseline_present": True,
-})
+_PASS_JSON = json.dumps(
+    {
+        "overall_status": "pass",
+        "reasons": [],
+        "baseline_age": 12.5,
+        "fixture_id": "news_qa_2026",
+        "iteration_count": 3,
+        "metrics_hash_status": "match",
+        "schema_version": "1.0",
+        "generated_at": "2026-05-12T00:00:00Z",
+        "manifest_present": True,
+        "baseline_present": True,
+    }
+)
+_DEGRADED_JSON = json.dumps(
+    {
+        "overall_status": "degraded",
+        "reasons": ["baseline_stale: age 45d exceeds 30d"],
+        "baseline_age": 45.0,
+        "fixture_id": "f1",
+        "iteration_count": 1,
+        "metrics_hash_status": "match",
+        "schema_version": "1.0",
+        "generated_at": "2026-05-12T00:00:00Z",
+        "manifest_present": True,
+        "baseline_present": True,
+    }
+)
+_FAILURE_JSON = json.dumps(
+    {
+        "overall_status": "failure",
+        "reasons": ["manifest_missing: file not found"],
+        "baseline_age": None,
+        "fixture_id": None,
+        "iteration_count": 0,
+        "metrics_hash_status": None,
+        "schema_version": None,
+        "generated_at": "unknown",
+        "manifest_present": False,
+        "baseline_present": False,
+    }
+)
+_SIMPLE_PASS_JSON = json.dumps(
+    {
+        "overall_status": "pass",
+        "reasons": [],
+        "baseline_age": 1.0,
+        "fixture_id": "f1",
+        "iteration_count": 1,
+        "metrics_hash_status": "match",
+        "schema_version": "1.0",
+        "generated_at": "2026-05-12T00:00:00Z",
+        "manifest_present": True,
+        "baseline_present": True,
+    }
+)
 
 
 class TestSummarizeArtifact:
@@ -738,18 +764,14 @@ class TestSummarizeArtifact:
     def test_summary_main_cli_pass(self, tmp_path, monkeypatch):
         ap = tmp_path / "artifact.json"
         ap.write_text(_SIMPLE_PASS_JSON)
-        monkeypatch.setattr(
-            "sys.argv", ["prog", str(ap), "--output-dir", str(tmp_path)]
-        )
+        monkeypatch.setattr("sys.argv", ["prog", str(ap), "--output-dir", str(tmp_path)])
         code = summary_main()
         assert code == 0
 
     def test_summary_main_cli_failure(self, tmp_path, monkeypatch):
         ap = tmp_path / "artifact.json"
         ap.write_text(_FAILURE_JSON)
-        monkeypatch.setattr(
-            "sys.argv", ["prog", str(ap), "--output-dir", str(tmp_path)]
-        )
+        monkeypatch.setattr("sys.argv", ["prog", str(ap), "--output-dir", str(tmp_path)])
         code = summary_main()
         assert code == 1
 

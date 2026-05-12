@@ -340,8 +340,10 @@ def summarize_artifact(
         encoding="utf-8",
     )
     md_lines = [
-        "# Integrity Summary", "",
-        "| Field | Value |", "|---|---|",
+        "# Integrity Summary",
+        "",
+        "| Field | Value |",
+        "|---|---|",
         f"| **Overall Status** | {overall_status} |",
         f"| **Fixture ID** | {fixture_id} |",
         f"| **Iteration Count** | {iteration_count} |",
@@ -354,11 +356,15 @@ def summarize_artifact(
         md_lines.extend(["", "## Reasons"])
         for r in reasons:
             md_lines.append(f"- {r}")
-    md_lines.extend([
-        "", "## Reports",
-        f"- JSON: `{summary['json_report_path']}`",
-        f"- Markdown: `{summary['md_report_path']}`", "",
-    ])
+    md_lines.extend(
+        [
+            "",
+            "## Reports",
+            f"- JSON: `{summary['json_report_path']}`",
+            f"- Markdown: `{summary['md_report_path']}`",
+            "",
+        ]
+    )
     md_path.write_text("\n".join(md_lines), encoding="utf-8")
     return summary
 
@@ -366,6 +372,7 @@ def summarize_artifact(
 def summary_main() -> int:
     """CLI entry point for Markdown summary generation."""
     import argparse
+
     parser = argparse.ArgumentParser(
         description="Generate a Markdown integrity summary from an artifact JSON."
     )
@@ -386,10 +393,10 @@ def summary_main() -> int:
     return 0 if status != "failure" else 1
 
 
-
 def main() -> int:
     """CLI entry point for CI artifact generation or summary delegation."""
     import sys
+
     if len(sys.argv) > 1 and sys.argv[1] == "--summary":
         sys.argv.pop(1)
         return summary_main()
