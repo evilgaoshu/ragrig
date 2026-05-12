@@ -39,7 +39,7 @@ test-optional:
 	$(UV) run pytest -m optional
 
 answer-live-smoke:
-	$(UV) run python -m scripts.answer_live_smoke --pretty
+	$(UV) run python -m scripts.answer_live_smoke --pretty --output $(ARTIFACTS_DIR)/answer-live-smoke.json
 
 coverage:
 	$(UV) run pytest --cov --cov-report=term-missing --cov-report=json:coverage.json
@@ -277,6 +277,15 @@ verify-understanding-export:
 
 verify-understanding-export-json:
 	$(UV) run python -m scripts.verify_understanding_export --json --output $(ARTIFACTS_DIR)/understanding-export-verify-summary.json
+
+# ── Understanding export diff summary ──────────────────────────
+# Reads understanding-export-diff.json and produces a concise
+# PR-ready Markdown summary.  Exit code 1 on failure, 3 on degraded,
+# 0 on pass.
+understanding-export-diff-summary:
+	$(UV) run python -m scripts.understanding_export_diff_summary \
+		--diff $(ARTIFACTS_DIR)/understanding-export-diff.json \
+		--stdout
 
 # ── Understanding export baseline diff ────────────────────────
 # Compares current understanding export against a baseline fixture/path

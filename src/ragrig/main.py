@@ -81,6 +81,7 @@ from ragrig.web_console import (
     PluginWizardValidationError,
     build_system_status,
     check_format,
+    get_answer_live_smoke,
     get_pipeline_run_detail,
     get_recent_benchmark,
     get_retrieval_benchmark_integrity,
@@ -817,6 +818,23 @@ def create_app(
         rendering — never includes raw secret fragments.
         """
         return get_retrieval_benchmark_integrity()
+
+    @app.get("/answer/live-smoke", response_model=None)
+    def answer_live_smoke() -> dict[str, Any]:
+        """Return the latest answer live smoke diagnostics for Web Console display.
+
+        Reads the artifact at
+        docs/operations/artifacts/answer-live-smoke.json.
+
+        Returns a lightweight summary with provider, model, status, reason,
+        citation count, timing, and artifact path.
+
+        Missing, corrupt, or stale artifacts are reported as degraded/failure
+        — never as healthy.
+
+        Never includes raw secret fragments.
+        """
+        return get_answer_live_smoke()
 
     @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
     async def knowledge_base_upload(

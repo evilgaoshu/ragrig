@@ -22,17 +22,20 @@ import json
 import sys
 from pathlib import Path
 
-from ragrig.answer.diagnostics import AnswerDiagnosticsReport, run_answer_diagnostics
+from ragrig.answer.diagnostics import generate_diagnostics_artifact
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run answer live smoke diagnostics and emit JSON report."
+        description="Run answer live smoke diagnostics and emit JSON artifact."
     )
     parser.add_argument(
         "--output",
         default=None,
-        help="Optional output path for the JSON diagnostic report.",
+        help=(
+            "Output path for the JSON artifact. "
+            "Defaults to docs/operations/artifacts/answer-live-smoke.json"
+        ),
     )
     parser.add_argument(
         "--pretty",
@@ -57,57 +60,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _sanitize_result(result: dict) -> dict:
-    """Remove any secret-like values from the result dict."""
-    SECRET_KEY_PARTS = (
-        "api_key",
-        "access_key",
-        "secret",
-        "password",
-        "token",
-        "credential",
-        "private_key",
-        "dsn",
-        "service_account",
-        "session_token",
-    )
-
-    def _redact(obj):
-        if isinstance(obj, dict):
-            return {
-                k: "[REDACTED]" if any(p in k.lower() for p in SECRET_KEY_PARTS) else _redact(v)
-                for k, v in obj.items()
-            }
-        if isinstance(obj, list):
-            return [_redact(v) for v in obj]
-        return obj
-
-    return _redact(result)
-
-
 def main() -> int:
     args = build_parser().parse_args()
 
-    report: AnswerDiagnosticsReport = run_answer_diagnostics(
+    output_path = Path(args.output) if args.output else None
+
+    artifact = generate_diagnostics_artifact(
         provider=args.provider,
         model=args.model,
         base_url=args.base_url,
+        output_path=output_path,
     )
 
-    result = report.to_dict()
-    result = _sanitize_result(result)
-
     indent = 2 if args.pretty else None
-    json_output = json.dumps(result, indent=indent, ensure_ascii=False, sort_keys=True)
+    json_output = json.dumps(artifact, indent=indent, ensure_ascii=False, sort_keys=True)
     print(json_output)
 
-    if args.output:
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json_output, encoding="utf-8")
-        print(f"\nAnswer live smoke report written to {output_path}", file=sys.stderr)
+    print(f"\nArtifact written to {artifact['report_path']}", file=sys.stderr)
 
-    return 0 if report.status in ("healthy", "degraded", "skip") else 1
+    # Exit codes: 0 for healthy/degraded/skip, 1 for error
+    status = artifact.get("status", "error")
+    return 0 if status in ("healthy", "degraded", "skip") else 1
 
 
 if __name__ == "__main__":
