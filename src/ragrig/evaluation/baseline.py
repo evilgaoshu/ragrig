@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from ragrig.evaluation.baseline_manifest import (
+    _canonical_metrics_dict,
     build_manifest,
     get_baseline_integrity_status,
     validate_baseline_manifest,
@@ -97,8 +98,11 @@ def promote_run_to_baseline(
     baseline_path = baseline_dir / f"{baseline_id}.json"
     baseline_dir.mkdir(parents=True, exist_ok=True)
 
-    # Copy run JSON to baseline dir (with redaction already applied by persistence)
+    # Copy run JSON to baseline dir (with redaction already applied by persistence).
+    # Canonicalize metrics so the file on disk matches the hash input exactly,
+    # eliminating hash_mismatch false positives from missing default fields.
     raw = json.loads((store_dir / f"{run_id}.json").read_text(encoding="utf-8"))
+    raw["metrics"] = _canonical_metrics_dict(run.metrics)
     baseline_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
 
     # Write integrity manifest
