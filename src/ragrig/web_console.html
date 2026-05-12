@@ -1165,10 +1165,28 @@
                 </div>
                 <label class="sub" for="retrieval-query">Query</label>
                 <textarea id="retrieval-query" rows="4">RAGRig Guide</textarea>
+                <label class="sub" for="retrieval-principal">Principal subjects</label>
+                <input id="retrieval-principal" type="text" placeholder="user:alice, group:engineering">
                 <label class="sub" for="retrieval-top-k">Top K</label>
                 <input id="retrieval-top-k" type="number" value="3" min="1" max="50">
                 <div class="actions"><button class="button primary" id="run-retrieval" type="button">Run Retrieval</button></div>
                 <div id="retrieval-results"></div>
+              </div>
+            </section>
+
+            <section class="panel" id="permission-preview-panel">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">Permission Preview</div>
+                  <div class="panel-meta">POST /permissions/preview · no restricted text</div>
+                </div>
+                <div id="permission-preview-status" class="pill neutral">Degraded</div>
+              </div>
+              <div class="panel-body stack">
+                <label class="sub" for="permission-preview-principal">Principal subjects</label>
+                <input id="permission-preview-principal" type="text" placeholder="user:alice, group:engineering">
+                <div class="actions"><button class="button primary" id="run-permission-preview" type="button">Preview Permissions</button></div>
+                <div id="permission-preview-results"></div>
               </div>
             </section>
 
@@ -1419,6 +1437,7 @@
         },
         retrievalBenchmarkIntegrity: null,
         answerLiveSmoke: null,
+        permissionPreview: null,
       };
 
       const WIZARD_FILTERS = [
@@ -1459,6 +1478,13 @@
 
       function empty(message) {
         return `<div class="empty">${escapeHtml(message)}</div>`;
+      }
+
+      function parsePrincipalInput(value) {
+        return String(value || '')
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean);
       }
 
       async function getJson(url, options) {
@@ -3631,6 +3657,9 @@
           top_k: Number(document.getElementById('retrieval-top-k').value || 3),
           mode: mode,
         };
+        const principals = parsePrincipalInput(document.getElementById('retrieval-principal').value);
+        req.principal_ids = principals;
+        req.enforce_acl = true;
         if (mode === 'hybrid' || mode === 'hybrid_rerank') {
           req.lexical_weight = Number(document.getElementById('retrieval-lexical-weight').value || 0.3);
           req.vector_weight = Number(document.getElementById('retrieval-vector-weight').value || 0.7);
@@ -3682,6 +3711,42 @@
         }).join('');
       }
 
+      function renderAclExplain(explain) {
+        if (!explain) return '';
+        const cls = explain.principal_context === 'missing' ? 'pill warn' : 'pill';
+        return `<div class="sub" style="margin:8px 0"><span class="${cls}">ACL ${escapeHtml(explain.principal_context)}</span> candidates ${escapeHtml(explain.candidate_count)} · visible ${escapeHtml(explain.visible_count)} · filtered ${escapeHtml(explain.filtered_count)}</div>`;
+      }
+
+      async function runPermissionPreview() {
+        const root = document.getElementById('permission-preview-results');
+        const status = document.getElementById('permission-preview-status');
+        const principal_ids = parsePrincipalInput(document.getElementById('permission-preview-principal').value);
+        root.innerHTML = '<div class="sub">Calculating visibility...</div>';
+        try {
+          const result = await getJson('/permissions/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ principal_ids }),
+          });
+          state.permissionPreview = result;
+          status.className = result.degraded ? 'pill warn' : 'pill';
+          status.textContent = result.degraded ? 'Degraded' : 'Ready';
+          const banner = result.degraded ? '<div class="empty" style="color:var(--warn)">Missing principal context. Preview is restricted to public/no-ACL visibility and is not full access.</div>' : '';
+          const blocks = (result.knowledge_bases || []).map((kb) => {
+            const docs = (kb.documents || []).slice(0, 8).map((doc) => {
+              const cls = doc.visible ? 'pill' : 'pill warn';
+              return `<div class="result"><div class="name">${escapeHtml(doc.uri)} <span class="${cls}">${doc.visible ? 'visible' : 'filtered'}</span></div><div class="sub">reason ${escapeHtml(doc.reason)} · chunks ${escapeHtml(doc.chunk_count)}</div></div>`;
+            }).join('');
+            return `<div><div class="section-title">${escapeHtml(kb.name)} · ${kb.visible_documents} visible · ${kb.filtered_documents} filtered</div>${docs || empty('No documents in this knowledge base.')}</div>`;
+          }).join('');
+          root.innerHTML = banner + (blocks || empty('No knowledge bases to preview.'));
+        } catch (error) {
+          status.className = 'pill error';
+          status.textContent = 'Error';
+          root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
       async function runRetrieval() {
         const resultRoot = document.getElementById('retrieval-results');
         const requestBody = buildRetrievalRequest();
@@ -3693,14 +3758,14 @@
             body: JSON.stringify(requestBody),
           });
           if (!result.results || !result.results.length) {
-            resultRoot.innerHTML = empty('Retrieval returned zero results. This is a real API response.');
+            resultRoot.innerHTML = renderAclExplain(result.acl_explain) + empty('Retrieval returned zero results. This is a real API response.');
             return;
           }
           var degradedBanner = '';
           if (result.degraded) {
             degradedBanner = `<div class="empty" style="color:var(--warn);margin-bottom:8px">⚠ Degraded: ${escapeHtml(result.degraded_reason || 'reranker unavailable')}</div>`;
           }
-          resultRoot.innerHTML = degradedBanner + result.results.map((item) => `
+          resultRoot.innerHTML = degradedBanner + renderAclExplain(result.acl_explain) + result.results.map((item) => `
             <div class="result">
               <div class="name">${escapeHtml(item.document_uri)}</div>
               <div class="sub">chunk ${item.chunk_index} · score ${item.score} · distance ${item.distance}</div>
@@ -4254,6 +4319,7 @@
 
         document.getElementById('run-evaluation-btn').addEventListener('click', runEvaluationFromConsole);
         document.getElementById('run-retrieval').addEventListener('click', runRetrieval);
+        document.getElementById('run-permission-preview').addEventListener('click', runPermissionPreview);
         document.getElementById('retrieval-mode').addEventListener('change', function() {
           const mode = this.value;
           document.getElementById('retrieval-hybrid-opts').style.display =

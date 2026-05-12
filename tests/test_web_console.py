@@ -104,6 +104,10 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "retrieval-candidate-k" in response.text
     assert "retrieval-reranker-provider" in response.text
     assert "retrieval-reranker-model" in response.text
+    assert "permission-preview-panel" in response.text
+    assert "Permission Preview" in response.text
+    assert "runPermissionPreview" in response.text
+    assert "Principal subjects" in response.text
     assert "_renderRankStageTrace" in response.text
     assert "Baseline Integrity" in response.text
     assert "retrieval-benchmark-integrity-panel" in response.text
@@ -3481,6 +3485,57 @@ async def test_answer_api_acl_filters_protected_content(tmp_path) -> None:
     assert "top secret" not in response_text
     # But public content should be there
     assert payload["grounding_status"] == "grounded"
+
+
+@pytest.mark.anyio
+async def test_permission_preview_endpoint_reports_degraded_and_visible_scope(tmp_path) -> None:
+    database_path = tmp_path / "web-console-permission-preview.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "public.txt": "public permission preview",
+            "secret.txt": "secret permission preview",
+        },
+    )
+
+    with session_factory() as session:
+        ingest_local_directory(session=session, knowledge_base_name="fixture-local", root_path=docs)
+        from ragrig.db.models import Document
+
+        secret = session.scalar(select(Document).where(Document.uri == str(docs / "secret.txt")))
+        assert secret is not None
+        secret.metadata_json = {
+            **secret.metadata_json,
+            "acl": {
+                "visibility": "protected",
+                "allowed_principals": ["group:engineering"],
+                "denied_principals": [],
+                "acl_source": "test",
+                "acl_source_hash": "abc",
+                "inheritance": "document",
+            },
+        }
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        degraded = await client.post("/permissions/preview", json={})
+        allowed = await client.post(
+            "/permissions/preview",
+            json={"principal_ids": ["user:alice", "group:engineering"]},
+        )
+
+    assert degraded.status_code == 200
+    assert degraded.json()["degraded"] is True
+    assert "secret permission preview" not in str(degraded.json())
+    assert allowed.status_code == 200
+    kb = allowed.json()["knowledge_bases"][0]
+    docs_by_uri = {item["uri"]: item for item in kb["documents"]}
+    assert docs_by_uri[str(docs / "secret.txt")]["visible"] is True
+    assert docs_by_uri[str(docs / "secret.txt")]["reason"] == "principal_match"
 
 
 @pytest.mark.anyio

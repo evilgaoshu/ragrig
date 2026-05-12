@@ -1,5 +1,6 @@
 from ragrig.db.models.base import Base
 from ragrig.db.models.entities import (
+    AuditEvent,
     Chunk,
     Document,
     DocumentUnderstanding,
@@ -16,6 +17,7 @@ from ragrig.db.models.entities import (
 
 __all__ = [
     "Base",
+    "AuditEvent",
     "Chunk",
     "Document",
     "DocumentUnderstanding",

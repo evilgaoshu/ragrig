@@ -10,11 +10,13 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
-from ragrig.db.models import Base, DocumentVersion
+from ragrig.acl import AclMetadata, Principal
+from ragrig.db.models import AuditEvent, Base, Document, DocumentVersion
 from ragrig.embeddings import DeterministicEmbeddingProvider
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
+from ragrig.repositories import set_document_acl
 from ragrig.retrieval import (
     EmbeddingProfileMismatchError,
     EmptyQueryError,
@@ -360,6 +362,9 @@ def test_search_with_sql_distance_returns_ranked_results(tmp_path, monkeypatch) 
 
     class FakeStatement:
         def add_columns(self, _column) -> "FakeStatement":
+            return self
+
+        def where(self, _clause) -> "FakeStatement":
             return self
 
         def order_by(self, *_args) -> "FakeStatement":
@@ -1704,6 +1709,121 @@ def test_candidate_k_limits_candidates_for_rerank(tmp_path) -> None:
 
     # With 5 chunks and candidate_k=3 + top_k=3, we get at most 3 results
     assert report.total_results <= 3
+
+
+def test_phase2_acl_fixture_filters_by_principal_before_rerank(tmp_path) -> None:
+    (tmp_path / "engineering").mkdir()
+    (tmp_path / "finance").mkdir()
+    engineering_docs = _seed_documents(
+        tmp_path / "engineering",
+        {
+            "public.txt": "runway planning shared fixture",
+            "engineering.txt": "runway planning engineering fixture",
+        },
+    )
+    finance_docs = _seed_documents(
+        tmp_path / "finance",
+        {"finance.txt": "runway planning finance fixture"},
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="acl-engineering",
+            root_path=engineering_docs,
+        )
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="acl-finance",
+            root_path=finance_docs,
+        )
+        engineering_private = session.scalar(
+            select(Document).where(Document.uri == str(engineering_docs / "engineering.txt"))
+        )
+        finance_private = session.scalar(
+            select(Document).where(Document.uri == str(finance_docs / "finance.txt"))
+        )
+        assert engineering_private is not None
+        assert finance_private is not None
+        set_document_acl(
+            session,
+            document_id=engineering_private.id,
+            acl=AclMetadata(
+                visibility="protected",
+                allowed_principals=["group:engineering"],
+                acl_source="fixture",
+            ),
+            actor="fixture",
+        )
+        set_document_acl(
+            session,
+            document_id=finance_private.id,
+            acl=AclMetadata(
+                visibility="protected",
+                allowed_principals=["group:finance"],
+                acl_source="fixture",
+            ),
+            actor="fixture",
+        )
+        index_knowledge_base(session=session, knowledge_base_name="acl-engineering")
+        index_knowledge_base(session=session, knowledge_base_name="acl-finance")
+
+        alice = Principal(user_id="alice", group_ids=["engineering"]).subject_ids()
+        bob = Principal(user_id="bob", group_ids=["finance"]).subject_ids()
+        alice_report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="acl-engineering",
+            query="runway planning fixture",
+            top_k=5,
+            mode="rerank",
+            principal_ids=alice,
+        )
+        bob_report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="acl-engineering",
+            query="runway planning fixture",
+            top_k=5,
+            mode="rerank",
+            principal_ids=bob,
+        )
+
+    alice_texts = {result.text for result in alice_report.results}
+    bob_texts = {result.text for result in bob_report.results}
+    assert "runway planning engineering fixture" in alice_texts
+    assert "runway planning shared fixture" in alice_texts
+    assert "runway planning engineering fixture" not in bob_texts
+    assert bob_texts == {"runway planning shared fixture"}
+    assert alice_report.acl_explain["stage"] == "pre_retrieval"
+    assert bob_report.acl_explain["filtered_count"] >= 1
+
+
+def test_retrieval_filter_audit_and_denied_payload_are_safe(tmp_path) -> None:
+    docs = _seed_documents(tmp_path, {"secret.txt": "restricted launch secret full text"})
+
+    with _create_session() as session:
+        ingest_local_directory(session=session, knowledge_base_name="acl-audit", root_path=docs)
+        document = session.scalar(select(Document))
+        assert document is not None
+        set_document_acl(
+            session,
+            document_id=document.id,
+            acl=AclMetadata(visibility="protected", allowed_principals=["user:alice"]),
+            actor="fixture",
+        )
+        index_knowledge_base(session=session, knowledge_base_name="acl-audit")
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="acl-audit",
+            query="restricted launch secret",
+            principal_ids=["user:bob"],
+            enforce_acl=True,
+        )
+        events = session.scalars(select(AuditEvent).order_by(AuditEvent.occurred_at)).all()
+
+    assert report.total_results == 0
+    assert events[-1].event_type == "access_denied"
+    assert "restricted launch secret full text" not in str(events[-1].payload_json)
+    assert "raw_prompt" not in str(events[-1].payload_json)
 
 
 # ── Lexical scorer unit tests ───────────────────────────────────────────────

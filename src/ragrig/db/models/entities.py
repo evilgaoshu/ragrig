@@ -285,6 +285,29 @@ class ProcessingProfileAuditLog(UUIDPrimaryKeyMixin, Base):
     new_state: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
+class AuditEvent(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "audit_events"
+
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    actor: Mapped[str | None] = mapped_column(String(255))
+    knowledge_base_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id", ondelete="SET NULL"),
+    )
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="SET NULL"),
+    )
+    chunk_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("chunks.id", ondelete="SET NULL"),
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+
+
 class UnderstandingRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "understanding_runs"
 

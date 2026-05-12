@@ -1,0 +1,20 @@
+{
+  "principals": [
+    {
+      "user_id": "alice",
+      "groups": [
+        "engineering"
+      ]
+    },
+    {
+      "user_id": "bob",
+      "groups": [
+        "finance"
+      ]
+    }
+  ],
+  "knowledge_bases": [
+    "acl-engineering",
+    "acl-finance"
+  ]
+}
