@@ -906,6 +906,7 @@
           <div class="status-card"><div class="status-head">Embedding Profiles</div><strong id="model-count">0</strong><span id="model-subtext">Real indexed model profiles</span></div>
           <div class="status-card"><div class="status-head">Sanitizer Drift</div><strong id="drift-risk">—</strong><span id="drift-subtext">Latest drift risk</span></div>
           <div class="status-card"><div class="status-head">Baseline Integrity</div><strong id="baseline-integrity-status">—</strong><span id="baseline-integrity-subtext">Retrieval benchmark health</span></div>
+          <div class="status-card"><div class="status-head">Contract Matrix</div><strong id="contract-matrix-status">—</strong><span id="contract-matrix-subtext">Sanitizer contract badge</span></div>
         </section>
 
         <section class="panel">
@@ -1001,6 +1002,20 @@
             <div id="retrieval-integrity-status" style="margin-bottom:12px"></div>
             <div class="facts" id="retrieval-integrity-facts"></div>
             <div id="retrieval-integrity-reasons" style="margin-top:12px"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="sanitizer-contract-matrix-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Sanitizer Contract Matrix</div>
+              <div class="panel-meta">Callsite inventory · GET /sanitizer-contract-status · make sanitizer-contract-check</div>
+            </div>
+            <div id="contract-matrix-panel-status" class="pill neutral">Loading</div>
+          </div>
+          <div class="panel-body stack">
+            <div id="sanitizer-contract-status" style="margin-bottom:12px"></div>
+            <div class="facts" id="sanitizer-contract-facts"></div>
           </div>
         </section>
 
@@ -3140,6 +3155,58 @@
         }
       }
 
+      async function loadSanitizerContractMatrix() {
+        try {
+          state.sanitizerContractMatrix = await getJson('/sanitizer-contract-status');
+        } catch {
+          state.sanitizerContractMatrix = { available: false, status: 'failure', reason: 'network error' };
+        }
+      }
+
+      function renderSanitizerContractMatrix() {
+        const panelStatus = document.getElementById('contract-matrix-panel-status');
+        const statusEl = document.getElementById('sanitizer-contract-status');
+        const factsEl = document.getElementById('sanitizer-contract-facts');
+        const data = state.sanitizerContractMatrix || { available: false, status: 'failure', reason: 'not loaded' };
+
+        if (!data.available) {
+          var reason = data.reason || 'artifact not found';
+          panelStatus.className = 'pill error';
+          panelStatus.textContent = 'failure';
+          statusEl.innerHTML = '<span class="pill error">failure</span> ' + escapeHtml(reason);
+          factsEl.innerHTML = '';
+          document.getElementById('contract-matrix-status').textContent = '—';
+          document.getElementById('contract-matrix-subtext').textContent = reason;
+          return;
+        }
+
+        var status = data.status || 'unknown';
+        var statusClass = status === 'pass' ? 'good' : status === 'degraded' ? 'warn' : 'error';
+        panelStatus.className = 'pill ' + statusClass;
+        panelStatus.textContent = status;
+
+        document.getElementById('contract-matrix-status').textContent = status;
+        document.getElementById('contract-matrix-subtext').textContent = data.registered_callsite_count + ' registered · ' + (data.unregistered_count || 0) + ' unregistered';
+
+        statusEl.innerHTML = [
+          '<span class="pill ' + statusClass + '">' + escapeHtml(status) + '</span>',
+          '<span class="pill neutral">' + escapeHtml(data.registered_callsite_count) + ' registered</span>',
+          '<span class="pill neutral">' + escapeHtml(data.unregistered_count || 0) + ' unregistered</span>',
+          data.summary_fields_ok ? '<span class="pill">summary fields ok</span>' : '<span class="pill error">summary fields FAIL</span>',
+          data.no_duplicate_impls ? '<span class="pill">no duplicate impls</span>' : '<span class="pill error">duplicate impls detected</span>',
+        ].join(' ');
+
+        factsEl.innerHTML = [
+          '<div class="card"><div class="fact-label">Status</div><div class="fact-value code">' + escapeHtml(status) + '</div></div>',
+          '<div class="card"><div class="fact-label">Exit Code</div><div class="fact-value">' + escapeHtml(data.exit_code) + '</div></div>',
+          '<div class="card"><div class="fact-label">Registered Callsites</div><div class="fact-value">' + escapeHtml(data.registered_callsite_count) + '</div></div>',
+          '<div class="card"><div class="fact-label">Unregistered</div><div class="fact-value">' + escapeHtml(data.unregistered_count || 0) + '</div></div>',
+          '<div class="card"><div class="fact-label">Fixture OK</div><div class="fact-value">' + (data.fixture_ok ? 'true' : 'false') + '</div></div>',
+          '<div class="card"><div class="fact-label">Generated At</div><div class="fact-value">' + escapeHtml(data.generated_at || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Report Path</div><div class="fact-value code" style="font-size:11px">' + escapeHtml(data.report_path || '') + '</div></div>',
+        ].join('');
+      }
+
       async function loadRetrievalBenchmark() {
         try {
           state.retrievalBenchmark = await getJson('/retrieval/benchmark/recent');
@@ -4055,6 +4122,7 @@
           await loadRetrievalBenchmark();
           await loadRetrievalBenchmarkIntegrity();
           await loadUnderstandingExportDiff();
+          await loadSanitizerContractMatrix();
           renderStatusStrip();
           renderKnowledgeBases();
           renderSources();
@@ -4084,6 +4152,7 @@
           renderRetrievalBenchmark();
           renderRetrievalBenchmarkIntegrity();
           renderUnderstandingExportDiffBadge();
+          renderSanitizerContractMatrix();
           renderUploadKBSelect();
         } catch (error) {
           document.body.innerHTML = `<main class="main">${empty(error.message)}</main>`;

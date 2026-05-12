@@ -84,6 +84,7 @@ from ragrig.web_console import (
     get_pipeline_run_detail,
     get_recent_benchmark,
     get_retrieval_benchmark_integrity,
+    get_sanitizer_contract_status,
     get_sanitizer_coverage,
     get_sanitizer_drift_history,
     get_sanitizer_drift_history_summary,
@@ -777,6 +778,24 @@ def create_app(
         Never includes raw secret fragments.
         """
         return get_understanding_export_diff()
+
+    @app.get("/sanitizer-contract-status", response_model=None)
+    def sanitizer_contract_status() -> dict[str, Any]:
+        """Return the latest sanitizer contract matrix status for Web Console display.
+
+        Reads the artifact at
+        docs/operations/artifacts/sanitizer-contract-matrix.json.
+
+        Returns a lightweight summary with contract status, registered callsite
+        count, unregistered count, summary fields check, duplicate impl check,
+        and artifact path.
+
+        Missing, corrupt, or schema-incompatible artifacts are reported as
+        degraded/failure — never as pass.
+
+        Never includes raw secret fragments.
+        """
+        return get_sanitizer_contract_status()
 
     @app.get("/retrieval/benchmark/recent", response_model=None)
     def retrieval_benchmark_recent() -> dict[str, Any]:
