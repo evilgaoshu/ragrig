@@ -1,7 +1,7 @@
 UV ?= uv
 ARTIFACTS_DIR ?= docs/operations/artifacts
 
-.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact bge-rerank-smoke sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff
+.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -201,6 +201,21 @@ retrieval-benchmark-compare:
 # Env BENCHMARK_BASELINE_MAX_AGE_DAYS overrides default 30 days.
 retrieval-benchmark-integrity-artifact:
 	$(UV) run python -m ragrig.retrieval_benchmark_integrity --pretty --output $(ARTIFACTS_DIR)/retrieval-benchmark-integrity.json
+
+# ── Retrieval benchmark integrity summary ────────────────────
+retrieval-benchmark-integrity-summary:
+	$(UV) run python -m ragrig.retrieval_benchmark_integrity --summary \
+		$(ARTIFACTS_DIR)/retrieval-benchmark-integrity.json \
+		--output-dir $(ARTIFACTS_DIR)
+
+# ── Retrieval benchmark integrity cleanup ────────────────────
+retrieval-benchmark-integrity-cleanup:
+	$(UV) run python -m scripts.artifact_cleanup \
+		--artifacts-dir $(ARTIFACTS_DIR) \
+		--pattern "retrieval-benchmark-integrity*.json" \
+		$(if $(KEEP_DAYS),--keep-days $(KEEP_DAYS),--keep-days 90) \
+		$(if $(CONFIRM_DELETE),--confirm-delete,) \
+		--stdout
 
 # ── Optional BGE reranker smoke ────────────────────────────────
 # Requires local-ml extras (FlagEmbedding, sentence-transformers,
