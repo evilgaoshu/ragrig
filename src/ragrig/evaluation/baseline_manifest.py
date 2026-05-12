@@ -50,11 +50,28 @@ def _manifest_path(baseline_path: Path) -> Path:
     return baseline_path.with_suffix("").with_suffix(MANIFEST_SUFFIX)
 
 
+def _canonical_metrics_dict(metrics: EvaluationMetrics | dict[str, Any]) -> dict[str, Any]:
+    """Produce a canonical dict from metrics, filling all default fields.
+
+    Canonical rules:
+    - Input is always normalized through EvaluationMetrics Pydantic model
+      so that all fields (including defaults) are present.
+    - Extra fields not in the model are silently dropped.
+    - Non-dict inputs (e.g. corrupt data in backfill path) return empty dict.
+    """
+    if isinstance(metrics, EvaluationMetrics):
+        return metrics.model_dump()
+    if not isinstance(metrics, dict):
+        return EvaluationMetrics().model_dump()
+    return EvaluationMetrics.model_validate(metrics).model_dump()
+
+
 def _compute_metrics_hash(metrics: EvaluationMetrics | dict[str, Any]) -> str:
     """Compute a SHA-256 hash of canonical metrics JSON for integrity."""
-    if isinstance(metrics, EvaluationMetrics):
-        metrics = metrics.model_dump()
-    canonical = json.dumps(metrics, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    canonical_dict = _canonical_metrics_dict(metrics)
+    canonical = json.dumps(
+        canonical_dict, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
 

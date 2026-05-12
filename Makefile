@@ -163,6 +163,10 @@ eval-local:
 eval-baseline:
 	$(UV) run python -m scripts.eval_baseline --run-id "$(RUN_ID)" $(if $(BASELINE_ID),--baseline-id $(BASELINE_ID),)
 
+# Canonical backfill for existing baselines: make eval-baseline-backfill-canonical [DRY_RUN=1]
+eval-baseline-backfill-canonical:
+	$(UV) run python -m scripts.eval_baseline_backfill_canonical $(if $(DRY_RUN),--dry-run,) --baseline-dir "$(BASELINE_DIR)"
+
 # ── Retention / cleanup ───────────────────────────────────────
 # Clean old evaluation runs: make eval-cleanup KEEP_COUNT=20
 eval-cleanup:
