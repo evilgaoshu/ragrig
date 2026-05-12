@@ -200,6 +200,7 @@ retrieval-benchmark-compare:
 # Exit code 1 when overall_status=failure, 0 otherwise.
 # Env BENCHMARK_BASELINE_MAX_AGE_DAYS overrides default 30 days.
 retrieval-benchmark-integrity-artifact:
+	$(UV) run python -m ragrig.retrieval_benchmark_integrity --pretty --output $(ARTIFACTS_DIR)/retrieval-benchmark-integrity.json
 
 # ── Retrieval benchmark integrity summary ────────────────────
 retrieval-benchmark-integrity-summary:
@@ -215,8 +216,6 @@ retrieval-benchmark-integrity-cleanup:
 		$(if $(KEEP_DAYS),--keep-days $(KEEP_DAYS),--keep-days 90) \
 		$(if $(CONFIRM_DELETE),--confirm-delete,) \
 		--stdout
-
-	$(UV) run python -m ragrig.retrieval_benchmark_integrity --pretty --output $(ARTIFACTS_DIR)/retrieval-benchmark-integrity.json
 
 # ── Optional BGE reranker smoke ────────────────────────────────
 # Requires local-ml extras (FlagEmbedding, sentence-transformers,
