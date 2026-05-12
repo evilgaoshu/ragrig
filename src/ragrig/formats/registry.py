@@ -130,45 +130,61 @@ _DEFAULT_FORMATS: list[dict[str, Any]] = [
         "extension": ".pdf",
         "mime_type": "application/pdf",
         "display_name": "PDF (.pdf)",
-        "parser_id": "parser.pdf",
-        "status": "planned",
+        "parser_id": "parser.advanced_documents",
+        "status": "preview",
         "max_file_size_mb": 50,
-        "capabilities": [],
-        "limitations": "Requires PDF parser plugin.",
-        "docs_reference": "docs/specs/ragrig-processing-profile-spec.md",
+        "capabilities": ["parse"],
+        "limitations": (
+            "Advanced document parsing in preview. "
+            "Requires optional doc-parsers extras."
+        ),
+        "fallback_policy": "parse_as_plaintext",
+        "docs_reference": "docs/specs/ragrig-advanced-parser-corpus-spec.md",
     },
     {
         "extension": ".docx",
         "mime_type": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         "display_name": "Microsoft Word (.docx)",
         "parser_id": "parser.advanced_documents",
-        "status": "planned",
+        "status": "preview",
         "max_file_size_mb": 50,
-        "capabilities": [],
-        "limitations": "Requires DOCX parser.",
-        "docs_reference": "docs/specs/ragrig-processing-profile-spec.md",
+        "capabilities": ["parse"],
+        "limitations": (
+            "Advanced document parsing in preview. "
+            "Requires optional doc-parsers extras."
+        ),
+        "fallback_policy": "parse_as_plaintext",
+        "docs_reference": "docs/specs/ragrig-advanced-parser-corpus-spec.md",
     },
     {
         "extension": ".xlsx",
         "mime_type": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         "display_name": "Microsoft Excel (.xlsx)",
         "parser_id": "parser.advanced_documents",
-        "status": "planned",
+        "status": "preview",
         "max_file_size_mb": 50,
-        "capabilities": [],
-        "limitations": "Requires XLSX parser.",
-        "docs_reference": "docs/specs/ragrig-processing-profile-spec.md",
+        "capabilities": ["parse"],
+        "limitations": (
+            "Advanced document parsing in preview. "
+            "Requires optional doc-parsers extras."
+        ),
+        "fallback_policy": "parse_as_plaintext",
+        "docs_reference": "docs/specs/ragrig-advanced-parser-corpus-spec.md",
     },
     {
         "extension": ".pptx",
         "mime_type": ("application/vnd.openxmlformats-officedocument.presentationml.presentation"),
         "display_name": "Microsoft PowerPoint (.pptx)",
         "parser_id": "parser.advanced_documents",
-        "status": "planned",
+        "status": "preview",
         "max_file_size_mb": 50,
-        "capabilities": [],
-        "limitations": "Requires PPTX parser.",
-        "docs_reference": "docs/specs/ragrig-processing-profile-spec.md",
+        "capabilities": ["parse"],
+        "limitations": (
+            "Advanced document parsing in preview. "
+            "Requires optional doc-parsers extras."
+        ),
+        "fallback_policy": "parse_as_plaintext",
+        "docs_reference": "docs/specs/ragrig-advanced-parser-corpus-spec.md",
     },
 ]
 
