@@ -39,7 +39,7 @@ test-optional:
 	$(UV) run pytest -m optional
 
 answer-live-smoke:
-	$(UV) run python -m scripts.answer_live_smoke --pretty
+	$(UV) run python -m scripts.answer_live_smoke --pretty --output $(ARTIFACTS_DIR)/answer-live-smoke.json
 
 coverage:
 	$(UV) run pytest --cov --cov-report=term-missing --cov-report=json:coverage.json
