@@ -304,9 +304,7 @@ class TestSecretSafety:
         """Clean content must not raise."""
         clean = {
             "status": "pass",
-            "matrix": [
-                {"callsite": "foo:bar", "status": "pass", "reason": ""}
-            ],
+            "matrix": [{"callsite": "foo:bar", "status": "pass", "reason": ""}],
         }
         _assert_no_raw_secrets(clean, "test")  # must not raise
 

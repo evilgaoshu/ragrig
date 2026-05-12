@@ -36,9 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_JSON_OUTPUT = (
     REPO_ROOT / "docs" / "operations" / "artifacts" / "sanitizer-contract-matrix.json"
 )
-DEFAULT_MD_OUTPUT = (
-    REPO_ROOT / "docs" / "operations" / "artifacts" / "sanitizer-contract-matrix.md"
-)
+DEFAULT_MD_OUTPUT = REPO_ROOT / "docs" / "operations" / "artifacts" / "sanitizer-contract-matrix.md"
 ARTIFACT_VERSION = "1.0.0"
 
 FORBIDDEN_FRAGMENTS: tuple[str, ...] = (
@@ -409,7 +407,9 @@ def main(argv: list[str] | None = None) -> int:
         "--json-output", type=Path, default=DEFAULT_JSON_OUTPUT, help="JSON output path"
     )
     parser.add_argument(
-        "--markdown-output", type=Path, default=DEFAULT_MD_OUTPUT,
+        "--markdown-output",
+        type=Path,
+        default=DEFAULT_MD_OUTPUT,
         help="Markdown output path",
     )
     args = parser.parse_args(argv)
