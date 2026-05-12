@@ -211,12 +211,15 @@ export-object-storage-check:
 verify-export-fixture:
 	$(UV) run python -m scripts.verify_export_fixture
 
-# ── Sanitizer drift diff ──────────────────────────────────────
-# Compares base/head sanitizer-coverage-summary.json artifacts and
-# produces a structured diff + Markdown report.  Exit code 2 when
-# risk=degraded, 0 when unchanged, 1 on error.
+# ── Sanitizer contract check ──────────────────────────────────
+# Scans the source tree for sanitizer call sites, verifies
+# cross-layer contract, and outputs a callsite matrix artifact
+# (JSON + Markdown).  The artifact is consumed by the Web Console
+# badge at GET /sanitizer-contract-status.
 sanitizer-contract-check:
-	$(UV) run python -m scripts.sanitizer_contract_check
+	$(UV) run python -m scripts.sanitizer_contract_check \
+		--json-output $(ARTIFACTS_DIR)/sanitizer-contract-matrix.json \
+		--markdown-output $(ARTIFACTS_DIR)/sanitizer-contract-matrix.md
 
 sanitizer-drift-diff:
 	$(UV) run python -m scripts.sanitizer_drift_diff \

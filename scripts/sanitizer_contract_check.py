@@ -3,7 +3,7 @@
 
 Usage::
 
-    python -m scripts.sanitizer_contract_check
+    python -m scripts.sanitizer_contract_check [--json-output <path>] [--markdown-output <path>]
 
 Exit codes:
     0  – all contracts pass
@@ -15,17 +15,43 @@ The checker scans the source tree for sanitizer call sites and verifies:
    ``ragrig.processing_profile.sanitizer``.
 2. No unregistered duplicate implementations exist.
 3. ``SanitizationSummary`` exposes all required fields.
+
+Outputs a callsite matrix as JSON and Markdown artifacts with fields:
+callsite, layer, registered, summary_fields_ok, status, reason.
 """
 
 from __future__ import annotations
 
+import argparse
 import ast
+import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 SRC_DIR = Path(__file__).resolve().parent.parent / "src" / "ragrig"
 TESTS_DIR = Path(__file__).resolve().parent.parent / "tests"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_JSON_OUTPUT = (
+    REPO_ROOT / "docs" / "operations" / "artifacts" / "sanitizer-contract-matrix.json"
+)
+DEFAULT_MD_OUTPUT = (
+    REPO_ROOT / "docs" / "operations" / "artifacts" / "sanitizer-contract-matrix.md"
+)
+ARTIFACT_VERSION = "1.0.0"
+
+FORBIDDEN_FRAGMENTS: tuple[str, ...] = (
+    "sk-live-",
+    "sk-proj-",
+    "sk-ant-",
+    "ghp_",
+    "Bearer ",
+    "PRIVATE KEY-----",
+    "super_secret_db_pass",
+    "db-super-secret-999",
+    "prod-api-secret-key-2024",
+)
 
 # Canonical sanitizer module path
 CANONICAL_SANITIZER = "ragrig.processing_profile.sanitizer"
@@ -211,7 +237,183 @@ def _check_no_duplicate_impls() -> list[str]:
     return errors
 
 
-def main() -> int:
+def _assert_no_raw_secrets(data: object, source: str) -> None:
+    """Panic if any string value contains a forbidden fragment."""
+    if isinstance(data, str):
+        for fragment in FORBIDDEN_FRAGMENTS:
+            if fragment in data:
+                raise RuntimeError(f"{source}: raw secret fragment '{fragment}' detected in output")
+    elif isinstance(data, dict):
+        for k, v in data.items():
+            _assert_no_raw_secrets(v, f"{source}.{k}")
+    elif isinstance(data, list):
+        for i, v in enumerate(data):
+            _assert_no_raw_secrets(v, f"{source}[{i}]")
+
+
+def _build_callsite_matrix(
+    sites: list[dict[str, Any]],
+    summary_errors: list[str],
+    dup_errors: list[str],
+    fixture_ok: bool,
+) -> list[dict[str, Any]]:
+    """Build a callsite matrix from scan results.
+
+    Each row: callsite, layer, registered, summary_fields_ok, status, reason.
+    """
+    matrix: list[dict[str, Any]] = []
+    for s in sites:
+        callsite = f"{s['module']}:{s['function']}"
+        layer = s["module"].split(".")[0] if "." in s["module"] else s["module"]
+        registered = s["registered"]
+        status = "pass" if registered else "unregistered"
+        reason = ""
+        if not registered:
+            reason = "call site not in REGISTERED_CALL_SITES"
+        matrix.append(
+            {
+                "callsite": callsite,
+                "layer": layer,
+                "registered": registered,
+                "summary_fields_ok": len(summary_errors) == 0,
+                "status": status,
+                "reason": reason,
+            }
+        )
+
+    # If there are summary or dup errors, add synthetic failure rows
+    if summary_errors:
+        for e in summary_errors:
+            matrix.append(
+                {
+                    "callsite": "_check_summary_fields",
+                    "layer": "contract_check",
+                    "registered": False,
+                    "summary_fields_ok": False,
+                    "status": "failure",
+                    "reason": e,
+                }
+            )
+
+    if dup_errors:
+        for e in dup_errors:
+            matrix.append(
+                {
+                    "callsite": "_check_no_duplicate_impls",
+                    "layer": "contract_check",
+                    "registered": False,
+                    "summary_fields_ok": True,
+                    "status": "failure",
+                    "reason": e,
+                }
+            )
+
+    if not fixture_ok:
+        matrix.append(
+            {
+                "callsite": "fixture_smoke_contract",
+                "layer": "contract_check",
+                "registered": True,
+                "summary_fields_ok": True,
+                "status": "failure",
+                "reason": "fixture smoke contract failed",
+            }
+        )
+
+    return matrix
+
+
+def _build_artifact(
+    sites: list[dict[str, Any]],
+    summary_errors: list[str],
+    dup_errors: list[str],
+    fixture_ok: bool,
+    exit_code: int,
+) -> dict[str, Any]:
+    """Build the full versioned contract matrix artifact."""
+    matrix = _build_callsite_matrix(sites, summary_errors, dup_errors, fixture_ok)
+    registered_count = sum(1 for r in matrix if r.get("registered") and r["status"] != "failure")
+
+    status = "pass"
+    if exit_code != 0:
+        status = "failure"
+    elif any(r["status"] in ("failure", "unregistered") for r in matrix):
+        status = "degraded"
+
+    artifact = {
+        "artifact": "sanitizer-contract-matrix",
+        "version": ARTIFACT_VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "status": status,
+        "exit_code": exit_code,
+        "totals": {
+            "callsites": len(sites),
+            "registered": registered_count,
+            "unregistered": len([r for r in matrix if not r.get("registered")]),
+            "summary_fields_ok": len(summary_errors) == 0,
+            "no_duplicate_impls": len(dup_errors) == 0,
+            "fixture_ok": fixture_ok,
+        },
+        "matrix": matrix,
+    }
+    _assert_no_raw_secrets(artifact, "sanitizer-contract-matrix")
+    return artifact
+
+
+def _write_json_artifact(artifact: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(artifact, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"  JSON artifact: {path}")
+
+
+def _write_markdown_artifact(artifact: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    lines.append("# Sanitizer Contract Matrix")
+    lines.append("")
+    lines.append(f"- **Status**: {artifact['status']}")
+    lines.append(f"- **Generated At**: {artifact['generated_at']}")
+    lines.append(f"- **Artifact Version**: {artifact['version']}")
+    lines.append("")
+    lines.append("## Totals")
+    lines.append("")
+    t = artifact["totals"]
+    lines.append("| Metric | Value |")
+    lines.append("|--------|-------|")
+    lines.append(f"| Callsites | {t['callsites']} |")
+    lines.append(f"| Registered | {t['registered']} |")
+    lines.append(f"| Unregistered | {t['unregistered']} |")
+    lines.append(f"| Summary Fields OK | {t['summary_fields_ok']} |")
+    lines.append(f"| No Duplicate Impls | {t['no_duplicate_impls']} |")
+    lines.append(f"| Fixture OK | {t['fixture_ok']} |")
+    lines.append("")
+    lines.append("## Callsite Matrix")
+    lines.append("")
+    lines.append("| Callsite | Layer | Registered | Summary Fields OK | Status | Reason |")
+    lines.append("|----------|-------|------------|-------------------|--------|--------|")
+    for row in artifact["matrix"]:
+        status_pill = row["status"]
+        reason = (row["reason"] or "").replace("|", "\\|")
+        lines.append(
+            f"| {row['callsite']} | {row['layer']} | {row['registered']} | "
+            f"{row['summary_fields_ok']} | {status_pill} | {reason} |"
+        )
+    lines.append("")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"  Markdown artifact: {path}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Sanitizer cross-layer contract checker")
+    parser.add_argument(
+        "--json-output", type=Path, default=DEFAULT_JSON_OUTPUT, help="JSON output path"
+    )
+    parser.add_argument(
+        "--markdown-output", type=Path, default=DEFAULT_MD_OUTPUT,
+        help="Markdown output path",
+    )
+    args = parser.parse_args(argv)
+
     print("── Sanitizer Cross-Layer Contract Checker ──\n")
 
     # 1. Summary field contract
@@ -251,6 +453,7 @@ def main() -> int:
 
     # 4. Cross-layer fixture contract (quick smoke)
     print("\n[INFO] Running fixture smoke contract...")
+    fixture_ok = True
     try:
         from ragrig.processing_profile.models import _sanitize_metadata
         from ragrig.processing_profile.sanitizer import remove_metadata
@@ -273,16 +476,28 @@ def main() -> int:
         print("[PASS] Fixture smoke contract (sanitizer == model, repo counts match).")
     except Exception as exc:
         print(f"[FAIL] Fixture smoke contract: {exc}")
-        return 1
+        fixture_ok = False
 
     # Final verdict
     total_errors = len(summary_errors) + len(dup_errors) + len(unregistered)
+    exit_code = 0
     if total_errors:
         print(f"\n── Contract check FAILED with {total_errors} error(s) ──")
-        return 1
+        exit_code = 1
+    elif not fixture_ok:
+        print("\n── Contract check FAILED (fixture smoke contract) ──")
+        exit_code = 1
+    else:
+        print("\n── Contract check PASSED ──")
 
-    print("\n── Contract check PASSED ──")
-    return 0
+    # Build and write artifact
+    artifact = _build_artifact(sites, summary_errors, dup_errors, fixture_ok, exit_code)
+
+    print("\n── Writing contract matrix artifacts ──")
+    _write_json_artifact(artifact, args.json_output)
+    _write_markdown_artifact(artifact, args.markdown_output)
+
+    return exit_code
 
 
 if __name__ == "__main__":

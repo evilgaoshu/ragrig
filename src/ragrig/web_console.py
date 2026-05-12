@@ -1186,3 +1186,89 @@ def get_retrieval_benchmark_integrity() -> dict[str, Any]:
     Never includes raw secret fragments.
     """
     return _get_integrity_summary()
+
+
+# ── Sanitizer Contract Matrix ───────────────────────────────────────────────
+
+_SANITIZER_CONTRACT_MATRIX_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "operations"
+    / "artifacts"
+    / "sanitizer-contract-matrix.json"
+)
+
+
+def get_sanitizer_contract_status() -> dict[str, Any]:
+    """Return the latest sanitizer contract matrix status for Web Console display.
+
+    Reads the artifact at docs/operations/artifacts/sanitizer-contract-matrix.json.
+    Returns a lightweight summary safe for browser rendering with fields:
+    - status (pass/degraded/failure)
+    - registered_callsite_count
+    - report_path
+    - exit_code
+    - generated_at
+
+    Missing, corrupt, or schema-incompatible artifacts are reported as
+    degraded/failure — never as pass.
+    """
+    import json as _json
+
+    artifact_path = _SANITIZER_CONTRACT_MATRIX_PATH
+
+    def _artifact_relative() -> str:
+        try:
+            return str(artifact_path.relative_to(Path(__file__).resolve().parents[2]))
+        except ValueError:
+            return str(artifact_path)
+
+    if not artifact_path.exists():
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": "artifact not found",
+            "artifact_path": _artifact_relative(),
+        }
+
+    try:
+        raw = _json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, _json.JSONDecodeError) as exc:
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": f"corrupt artifact: {exc}",
+            "artifact_path": _artifact_relative(),
+        }
+
+    if raw.get("artifact") != "sanitizer-contract-matrix":
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": "invalid artifact type",
+            "artifact_path": _artifact_relative(),
+        }
+
+    status = raw.get("status", "unknown")
+    exit_code = raw.get("exit_code", 1)
+    generated_at = raw.get("generated_at", "")
+    totals = raw.get("totals", {})
+    registered_callsite_count = totals.get("registered", 0)
+    matrix = raw.get("matrix", [])
+
+    summary = {
+        "available": True,
+        "status": status,
+        "exit_code": exit_code,
+        "registered_callsite_count": registered_callsite_count,
+        "report_path": _artifact_relative(),
+        "generated_at": generated_at,
+        "unregistered_count": totals.get("unregistered", 0),
+        "summary_fields_ok": totals.get("summary_fields_ok", False),
+        "no_duplicate_impls": totals.get("no_duplicate_impls", False),
+        "fixture_ok": totals.get("fixture_ok", False),
+        "total_callsites": len(matrix),
+    }
+
+    _assert_console_no_secrets(summary, "sanitizer-contract-matrix-console")
+    return summary
