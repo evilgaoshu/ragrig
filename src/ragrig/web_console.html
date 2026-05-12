@@ -951,6 +951,21 @@
           </div>
         </section>
 
+        <section class="panel" id="sanitizer-drift-summary-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Sanitizer Drift History Summary</div>
+              <div class="panel-meta">CI artifact · GET /sanitizer-drift-history-summary · copy-ready</div>
+            </div>
+            <div id="sanitizer-drift-summary-panel-status" class="pill neutral">Loading</div>
+          </div>
+          <div class="panel-body stack">
+            <div id="sanitizer-drift-summary-status" style="margin-bottom:12px"></div>
+            <div class="facts" id="sanitizer-drift-summary-facts"></div>
+            <div id="sanitizer-drift-summary-actions" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"></div>
+          </div>
+        </section>
+
         <section class="panel" id="retrieval-benchmark-panel">
           <div class="panel-head"><div class="panel-title">Retrieval Benchmark</div><div class="panel-meta">Latency measurement · GET /retrieval/benchmark/recent · make retrieval-benchmark</div></div>
           <div class="panel-body stack">
@@ -3352,6 +3367,104 @@
         }
       }
 
+      async function loadSanitizerDriftHistorySummary() {
+        try {
+          state.sanitizerDriftHistorySummary = await getJson('/sanitizer-drift-history-summary');
+        } catch {
+          state.sanitizerDriftHistorySummary = null;
+        }
+      }
+
+      function renderSanitizerDriftHistorySummary() {
+        var panelStatus = document.getElementById('sanitizer-drift-summary-panel-status');
+        var statusEl = document.getElementById('sanitizer-drift-summary-status');
+        var factsEl = document.getElementById('sanitizer-drift-summary-facts');
+        var actionsEl = document.getElementById('sanitizer-drift-summary-actions');
+        var data = state.sanitizerDriftHistorySummary;
+
+        if (!data || !data.available || data.status === 'no_history') {
+          panelStatus.className = 'pill neutral';
+          panelStatus.textContent = 'No summary';
+          statusEl.innerHTML = '<span class="pill neutral">No summary artifact</span>';
+          factsEl.innerHTML = empty(data && data.reason ? data.reason : 'Run make sanitizer-drift-history-summary to generate.');
+          actionsEl.innerHTML = '';
+          return;
+        }
+
+        var isDegraded = data.status === 'degraded' || data.status === 'failure';
+        var isFailure = data.status === 'failure';
+        var riskClass = isFailure ? 'error' : isDegraded ? 'warn' : 'good';
+        panelStatus.className = 'pill ' + riskClass;
+        panelStatus.textContent = data.status;
+
+        statusEl.innerHTML = [
+          '<span class="pill ' + riskClass + '">' + escapeHtml(data.status) + '</span>',
+          '<span class="pill neutral">risk: ' + escapeHtml(data.latest_risk || 'unknown') + '</span>',
+          '<span class="pill neutral">changed: ' + escapeHtml(data.changed_parser_count) + '</span>',
+          '<span class="pill neutral">degraded: ' + escapeHtml(data.degraded_reports_count) + '</span>',
+        ].join('');
+
+        var facts = [
+          '<div class="card"><div class="fact-label">Latest Status</div><div class="fact-value">' + escapeHtml(data.status) + '</div></div>',
+          '<div class="card"><div class="fact-label">Latest Risk</div><div class="fact-value">' + escapeHtml(data.latest_risk || 'unknown') + '</div></div>',
+          '<div class="card"><div class="fact-label">Changed Parsers</div><div class="fact-value">' + escapeHtml(data.changed_parser_count) + '</div></div>',
+          '<div class="card"><div class="fact-label">Degraded Reports</div><div class="fact-value">' + escapeHtml(data.degraded_reports_count) + '</div></div>',
+          '<div class="card"><div class="fact-label">Valid / Total</div><div class="fact-value">' + escapeHtml(data.valid_report_count) + ' / ' + escapeHtml(data.total_report_count) + '</div></div>',
+          '<div class="card"><div class="fact-label">Generated At</div><div class="fact-value">' + escapeHtml(data.generated_at || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Summary Path</div><div class="fact-value code" id="sanitizer-summary-path">' + escapeHtml(data.summary_path) + '</div></div>',
+        ];
+        if (data.summary_json_path) {
+          facts.push('<div class="card"><div class="fact-label">JSON Path</div><div class="fact-value code" id="sanitizer-summary-json-path">' + escapeHtml(data.summary_json_path) + '</div></div>');
+        }
+        factsEl.innerHTML = facts.join('');
+
+        actionsEl.innerHTML = [
+          '<button class="button" onclick="copyText(\'sanitizer-summary-path\')">Copy Path</button>',
+          '<button class="button" onclick="copyText(\'sanitizer-summary-json-path\')">Copy JSON Path</button>',
+          '<button class="button" onclick="copySummaryMarkdown()">Copy Summary</button>',
+        ].join('');
+      }
+
+      function copyText(elementId) {
+        var el = document.getElementById(elementId);
+        if (!el) return;
+        var text = el.textContent || el.innerText;
+        navigator.clipboard.writeText(text).catch(function() {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        });
+      }
+
+      function copySummaryMarkdown() {
+        var data = state.sanitizerDriftHistorySummary;
+        if (!data || !data.available) return;
+        var lines = [
+          '## Sanitizer Drift History Summary',
+          '',
+          '- Status: `' + data.status + '`',
+          '- Latest risk: `' + (data.latest_risk || 'unknown') + '`',
+          '- Changed parsers: ' + (data.changed_parser_count || 0),
+          '- Degraded reports: ' + (data.degraded_reports_count || 0),
+          '- Valid / total reports: ' + (data.valid_report_count || 0) + ' / ' + (data.total_report_count || 0),
+          '- Path: `' + data.summary_path + '`',
+          '',
+          '---',
+          '*Generated by sanitizer-drift-history-summary. No raw secrets are included.*',
+        ].join('\n');
+        navigator.clipboard.writeText(lines).catch(function() {
+          var ta = document.createElement('textarea');
+          ta.value = lines;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        });
+      }
+
       function buildRetrievalRequest() {
         const mode = document.getElementById('retrieval-mode').value;
         const req = {
@@ -3938,6 +4051,7 @@
           await loadFormats();
           await loadSanitizerCoverage();
           await loadSanitizerDriftHistory();
+          await loadSanitizerDriftHistorySummary();
           await loadRetrievalBenchmark();
           await loadRetrievalBenchmarkIntegrity();
           await loadUnderstandingExportDiff();
@@ -3966,6 +4080,7 @@
           renderFormats();
           renderSanitizerCoverage();
           renderSanitizerDriftHistory();
+          renderSanitizerDriftHistorySummary();
           renderRetrievalBenchmark();
           renderRetrievalBenchmarkIntegrity();
           renderUnderstandingExportDiffBadge();
