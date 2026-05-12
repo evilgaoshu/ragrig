@@ -1158,10 +1158,27 @@ def create_app(
                     "score": result.score,
                     "chunk_metadata": result.chunk_metadata,
                     "rank_stage_trace": result.rank_stage_trace,
+                    "acl_explain": {
+                        "chunk_id": result.acl_explain.chunk_id,
+                        "visibility": result.acl_explain.visibility,
+                        "permitted": result.acl_explain.permitted,
+                        "reason": result.acl_explain.reason,
+                    }
+                    if result.acl_explain is not None
+                    else None,
                 }
                 for result in report.results
             ],
         }
+        if report.results:
+            reasons: dict[str, int] = {}
+            for r in report.results:
+                if r.acl_explain is not None:
+                    reasons[r.acl_explain.reason] = reasons.get(r.acl_explain.reason, 0) + 1
+            response["acl_explain_summary"] = {
+                "total_chunks": len(report.results),
+                "reasons": reasons,
+            }
         if report.degraded:
             response["degraded"] = True
             response["degraded_reason"] = report.degraded_reason

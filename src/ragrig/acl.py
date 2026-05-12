@@ -13,6 +13,27 @@ from typing import Any, Literal
 
 Visibility = Literal["public", "protected", "unknown"]
 AclSummaryVisibility = Literal["public", "protected", "unknown"]
+AclExplainReason = Literal[
+    "public",
+    "allowed_principal",
+    "denied_principal",
+    "no_matching_principal",
+    "no_principal",
+    "unknown_visibility",
+]
+
+
+@dataclass(frozen=True)
+class AclExplain:
+    """Per-chunk ACL explanation safe for API responses.
+
+    Must NOT contain raw principal lists, full chunk text, or secrets.
+    """
+
+    chunk_id: str
+    visibility: Visibility
+    permitted: bool
+    reason: AclExplainReason
 
 
 @dataclass(frozen=True)
@@ -121,14 +142,48 @@ def _coerce_str_list(value: Any) -> list[str]:
     return []
 
 
+def acl_explain_reason(
+    chunk_metadata: dict[str, Any] | None,
+    principal_ids: list[str] | None,
+) -> tuple[bool, AclExplainReason]:
+    acl = AclMetadata.from_metadata(chunk_metadata)
+    if acl.visibility == "public":
+        return True, "public"
+    if acl.visibility == "unknown":
+        return False, "unknown_visibility"
+    if not principal_ids:
+        return False, "no_principal"
+    allowed = {pid.lower() for pid in acl.allowed_principals}
+    denied = {pid.lower() for pid in acl.denied_principals}
+    request_principals = {pid.lower() for pid in principal_ids}
+    if denied & request_principals:
+        return False, "denied_principal"
+    if allowed & request_principals:
+        return True, "allowed_principal"
+    return False, "no_matching_principal"
+
+
+def build_acl_explain(
+    chunk_id: str,
+    chunk_metadata: dict[str, Any] | None,
+    principal_ids: list[str] | None,
+) -> AclExplain:
+    permitted, reason = acl_explain_reason(chunk_metadata, principal_ids)
+    acl = AclMetadata.from_metadata(chunk_metadata)
+    return AclExplain(
+        chunk_id=str(chunk_id),
+        visibility=acl.visibility,
+        permitted=permitted,
+        reason=reason,
+    )
+
+
 def acl_permits_chunk_metadata(
     chunk_metadata: dict[str, Any] | None,
     principal_ids: list[str] | None,
 ) -> bool:
-    """Convenience: check whether chunk metadata grants access."""
     return AclMetadata.from_metadata(chunk_metadata).permits(principal_ids)
 
 
 def acl_summary_from_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Convenience: return acl summary from metadata dict."""
     return AclMetadata.from_metadata(metadata).summary()
