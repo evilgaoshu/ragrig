@@ -3854,3 +3854,190 @@ async def test_understanding_export_diff_schema_incompatible_maps_to_failure(
     assert payload["available"] is True
     assert payload["status"] == "failure"
     assert payload["schema_compatible"] is False
+
+
+# ── Sanitizer Drift History Summary ──────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_sanitizer_drift_history_summary_endpoint_missing_artifact(tmp_path) -> None:
+    """When no summary artifact exists, endpoint returns no_history."""
+    database_path = tmp_path / "web-console-ds-missing.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/sanitizer-drift-history-summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "no_history"
+    assert "summary_path" in payload
+
+
+@pytest.mark.anyio
+async def test_sanitizer_drift_history_summary_endpoint_with_artifact(
+    tmp_path, monkeypatch
+) -> None:
+    """When summary JSON artifact exists, endpoint returns its contents."""
+    database_path = tmp_path / "web-console-ds-artifact.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    summary_data = {
+        "status": "success",
+        "latest_risk": "unchanged",
+        "changed_parser_count": 2,
+        "degraded_reports_count": 1,
+        "valid_report_count": 5,
+        "total_report_count": 7,
+        "base_golden_hash": "abc123",
+        "head_golden_hash": "def456",
+        "generated_at": "2026-05-12T00:00:00+00:00",
+    }
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    summary_json = artifact_dir / "sanitizer-drift-history-summary.json"
+    summary_json.write_text(json.dumps(summary_data), encoding="utf-8")
+    summary_md = artifact_dir / "sanitizer-drift-history-summary.md"
+    summary_md.write_text("## Summary\n\ntest", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "ragrig.web_console._SANITIZER_DRIFT_HISTORY_SUMMARY_PATH",
+        summary_md,
+    )
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/sanitizer-drift-history-summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["status"] == "success"
+    assert payload["latest_risk"] == "unchanged"
+    assert payload["changed_parser_count"] == 2
+    assert payload["degraded_reports_count"] == 1
+    assert payload["valid_report_count"] == 5
+    assert payload["total_report_count"] == 7
+    assert payload["summary_md_exists"] is True
+    assert payload["summary_json_path"] is not None
+
+
+@pytest.mark.anyio
+async def test_sanitizer_drift_history_summary_corrupt_json(tmp_path, monkeypatch) -> None:
+    """Corrupt summary JSON returns failure status."""
+    database_path = tmp_path / "web-console-ds-corrupt.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    summary_json = artifact_dir / "sanitizer-drift-history-summary.json"
+    summary_json.write_text("not valid json{", encoding="utf-8")
+    summary_md = artifact_dir / "sanitizer-drift-history-summary.md"
+    summary_md.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "ragrig.web_console._SANITIZER_DRIFT_HISTORY_SUMMARY_PATH",
+        summary_md,
+    )
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/sanitizer-drift-history-summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["status"] == "failure"
+    assert "corrupt" in payload.get("reason", "").lower()
+
+
+@pytest.mark.anyio
+async def test_sanitizer_drift_history_summary_no_secrets(tmp_path, monkeypatch) -> None:
+    """Summary endpoint never leaks secret fragments."""
+    database_path = tmp_path / "web-console-ds-secrets.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    summary_data = {
+        "status": "success",
+        "latest_risk": "unchanged",
+        "changed_parser_count": 0,
+        "degraded_reports_count": 0,
+        "valid_report_count": 1,
+        "total_report_count": 1,
+        "generated_at": "2026-05-12T00:00:00+00:00",
+    }
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    summary_json = artifact_dir / "sanitizer-drift-history-summary.json"
+    summary_json.write_text(json.dumps(summary_data), encoding="utf-8")
+    summary_md = artifact_dir / "sanitizer-drift-history-summary.md"
+    summary_md.write_text("test", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "ragrig.web_console._SANITIZER_DRIFT_HISTORY_SUMMARY_PATH",
+        summary_md,
+    )
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/sanitizer-drift-history-summary")
+
+    assert response.status_code == 200
+    text = response.text
+    assert "Bearer " not in text
+    assert "PRIVATE KEY-----" not in text
+    assert "sk-live-" not in text
+    assert "ghp_" not in text
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_sanitizer_drift_summary_section(tmp_path) -> None:
+    """Console page renders the sanitizer drift history summary panel."""
+    database_path = tmp_path / "web-console-ds-html.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Sanitizer Drift History Summary" in html
+    assert "sanitizer-drift-summary-panel" in html
+    assert "sanitizer-drift-summary-status" in html
+    assert "sanitizer-drift-summary-facts" in html
+    assert "sanitizer-drift-summary-actions" in html
+    assert "loadSanitizerDriftHistorySummary" in html
+    assert "renderSanitizerDriftHistorySummary" in html
+    assert "Copy Path" in html
+    assert "Copy JSON Path" in html
+    assert "Copy Summary" in html
+    assert "copyText" in html
+    assert "copySummaryMarkdown" in html
+
+
+@pytest.mark.anyio
+async def test_sanitizer_drift_summary_console_missing(tmp_path) -> None:
+    """Console page handles missing summary artifact gracefully."""
+    database_path = tmp_path / "web-console-ds-miss-ui.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Sanitizer Drift History Summary" in html
+    assert "sanitizer-drift-summary-panel" in html
