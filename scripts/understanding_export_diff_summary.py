@@ -27,9 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DIFF_PATH = (
     REPO_ROOT / "docs" / "operations" / "artifacts" / "understanding-export-diff.json"
 )
-DEFAULT_MD_PATH = (
-    REPO_ROOT / "docs" / "operations" / "artifacts" / "understanding-export-diff.md"
-)
+DEFAULT_MD_PATH = REPO_ROOT / "docs" / "operations" / "artifacts" / "understanding-export-diff.md"
 
 REQUIRED_ARTIFACT_TYPE = "understanding-export-diff"
 REQUIRED_VERSION = "1.0.0"
@@ -71,9 +69,7 @@ def _load_diff(path: Path) -> dict[str, Any]:
         )
     ver = data.get("version", "")
     if ver != REQUIRED_VERSION:
-        raise ValueError(
-            f"Version mismatch in {path}: expected {REQUIRED_VERSION!r}, got {ver!r}"
-        )
+        raise ValueError(f"Version mismatch in {path}: expected {REQUIRED_VERSION!r}, got {ver!r}")
     for key in ("status", "generated_at", "baseline", "current", "runs"):
         if key not in data:
             raise ValueError(f"Missing required key {key!r} in {path}")

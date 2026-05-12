@@ -328,6 +328,7 @@ def test_subprocess_invocation(tmp_path: Path) -> None:
     diff_path.write_text(json.dumps(diff), encoding="utf-8")
 
     import subprocess
+
     result = subprocess.run(
         [
             sys.executable,
