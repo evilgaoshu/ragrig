@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -1369,4 +1370,732 @@ def get_sanitizer_contract_status() -> dict[str, Any]:
 
     _assert_console_no_secrets(summary, "sanitizer-contract-matrix-console")
     return summary
-    return summary
+
+
+# ── Source Config Validation ────────────────────────────────────────────────
+
+_SOURCE_SECRET_FIELDS = {
+    "source.local": [],
+    "source.s3": ["access_key", "secret_key", "session_token"],
+    "source.fileshare": ["username", "password", "private_key"],
+}
+
+
+def validate_source_config(
+    plugin_id: str, config: dict[str, Any], env: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """Validate a source config draft with dependency/credential checks.
+
+    Returns a status dict::
+      {"valid": True, "status": "ready", ...}
+      {"valid": True, "status": "degraded", "reason": "...", ...}
+      {"valid": False, "status": "disabled", "reason": "...", ...}
+    """
+    if plugin_id not in ("source.local", "source.s3", "source.fileshare"):
+        return {
+            "valid": False,
+            "status": "disabled",
+            "reason": f"unsupported source plugin: {plugin_id}",
+        }
+
+    registry = get_plugin_registry()
+    discovery_by_id = {item["plugin_id"]: item for item in registry.list_discovery()}
+    discovery = discovery_by_id.get(plugin_id)
+    if discovery is None:
+        return {
+            "valid": False,
+            "status": "disabled",
+            "reason": f"plugin '{plugin_id}' is not registered",
+        }
+
+    raw_secret_paths = _find_raw_secret_values(config)
+    if raw_secret_paths:
+        return {
+            "valid": False,
+            "status": "disabled",
+            "reason": (
+                "raw secret-like values not accepted; "
+                f"use env:VARIABLE_NAME references for {', '.join(raw_secret_paths)}"
+            ),
+        }
+
+    # Dependency check
+    missing_deps = list(discovery.get("missing_dependencies", []))
+    dep_status = "ready"
+    dep_reason = None
+    if missing_deps:
+        dep_status = "degraded"
+        dep_reason = f"missing dependencies: {', '.join(missing_deps)}"
+
+    # Credential check (env refs)
+    env = env or {}
+    credential_issues = []
+    for field in _SOURCE_SECRET_FIELDS.get(plugin_id, []):
+        value = config.get(field) if isinstance(config, dict) else None
+        if isinstance(value, str) and value.startswith("env:"):
+            env_name = value.removeprefix("env:")
+            if env_name not in env or not env[env_name]:
+                credential_issues.append(f"{field}: env:{env_name} not set")
+
+    cred_status = "ready"
+    cred_reason = None
+    if credential_issues:
+        cred_status = "degraded"
+        cred_reason = f"unresolved credential refs: {'; '.join(credential_issues)}"
+
+    # Config validation
+    try:
+        validated = registry.validate_config(plugin_id, config)
+    except PluginConfigValidationError as exc:
+        return {
+            "valid": False,
+            "status": "disabled",
+            "reason": str(exc),
+        }
+
+    overall_status = "ready"
+    overall_reason = None
+    if dep_status != "ready" and cred_status != "ready":
+        overall_status = "disabled"
+        overall_reason = f"{dep_reason}; {cred_reason}"
+    elif dep_status != "ready":
+        overall_status = dep_status
+        overall_reason = dep_reason
+    elif cred_status != "ready":
+        overall_status = cred_status
+        overall_reason = cred_reason
+
+    return {
+        "valid": True,
+        "status": overall_status,
+        "reason": overall_reason,
+        "plugin_id": plugin_id,
+        "display_name": discovery.get("display_name"),
+        "config": validated,
+        "missing_dependencies": missing_deps,
+        "credential_issues": credential_issues,
+        "secret_requirements": discovery.get("secret_requirements", []),
+        "next_steps": _plugin_next_steps(discovery),
+    }
+
+
+# ── Dry-run source ingestion ────────────────────────────────────────────────
+
+@dataclass
+class DryRunFile:
+    path: str
+    status: str  # "discovered" | "skipped" | "failed"
+    reason: str | None = None
+    parser: str | None = None
+
+
+@dataclass
+class DryRunReport:
+    source_id: str | None
+    source_kind: str
+    total: int
+    discovered: list[DryRunFile]
+    skipped: list[DryRunFile]
+    failed: list[DryRunFile]
+    dry_run: bool = True
+
+
+def _dry_run_local_directory(
+    session: Session,
+    config: dict[str, Any],
+) -> DryRunReport:
+    from ragrig.ingestion.pipeline import _select_parser
+    from ragrig.ingestion.scanner import scan_paths
+
+    root_path = Path(str(config["root_path"]))
+    include_patterns = config.get("include_patterns")
+    exclude_patterns = config.get("exclude_patterns")
+    max_size = int(config.get("max_file_size_bytes", 10 * 1024 * 1024))
+
+    scan_result = scan_paths(
+        root_path=root_path,
+        include_patterns=include_patterns,
+        exclude_patterns=exclude_patterns,
+        max_file_size_bytes=max_size,
+    )
+
+    discovered: list[DryRunFile] = []
+    skipped: list[DryRunFile] = []
+    failed: list[DryRunFile] = []
+
+    for sk in scan_result.skipped:
+        skipped.append(DryRunFile(path=str(sk.path), status="skipped", reason=sk.reason))
+
+    for cand in scan_result.discovered:
+        try:
+            parser = _select_parser(cand.path)
+            _ = parser.parse(cand.path)
+            discovered.append(
+                DryRunFile(
+                    path=str(cand.path),
+                    status="discovered",
+                    parser=parser.__class__.__name__,
+                )
+            )
+        except Exception as exc:
+            failed.append(
+                DryRunFile(path=str(cand.path), status="failed", reason=str(exc))
+            )
+
+    return DryRunReport(
+        source_id=None,
+        source_kind="local_directory",
+        total=len(discovered) + len(skipped) + len(failed),
+        discovered=discovered,
+        skipped=skipped,
+        failed=failed,
+    )
+
+
+def _dry_run_s3_source(
+    session: Session,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+    client=None,
+) -> DryRunReport:
+    from ragrig.plugins.sources.s3.client import build_boto3_client
+    from ragrig.plugins.sources.s3.connector import _resolve_secrets
+    from ragrig.plugins.sources.s3.scanner import scan_objects
+
+    secrets = _resolve_secrets(config, env=env or {})
+    active_client = client or build_boto3_client({**config, **secrets.__dict__})
+
+    try:
+        scan_result = scan_objects(active_client, config=config)
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="s3",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[DryRunFile(path="s3://scan", status="failed", reason=str(exc))],
+        )
+
+    discovered: list[DryRunFile] = []
+    skipped: list[DryRunFile] = []
+    for sk in scan_result.skipped:
+        skipped.append(
+            DryRunFile(
+                path=sk.object_metadata.key,
+                status="skipped",
+                reason=sk.reason,
+            )
+        )
+    for cand in scan_result.discovered:
+        discovered.append(
+            DryRunFile(
+                path=cand.object_metadata.key,
+                status="discovered",
+                parser=f"s3:{cand.object_metadata.content_type or 'unknown'}",
+            )
+        )
+
+    return DryRunReport(
+        source_id=None,
+        source_kind="s3",
+        total=len(discovered) + len(skipped),
+        discovered=discovered,
+        skipped=skipped,
+        failed=[],
+    )
+
+
+def _dry_run_fileshare_source(
+    session: Session,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+) -> DryRunReport:
+    from ragrig.plugins.sources.fileshare.connector import (
+        _build_client,
+        _resolve_fileshare_secrets,
+    )
+    from ragrig.plugins.sources.fileshare.scanner import scan_files
+
+    try:
+        secrets = _resolve_fileshare_secrets(config, env=env or {})
+        client = _build_client(config, secrets)
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="fileshare",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[DryRunFile(path="fileshare://scan", status="failed", reason=str(exc))],
+        )
+
+    try:
+        scan_result = scan_files(client, config=config)
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="fileshare",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[DryRunFile(path="fileshare://scan", status="failed", reason=str(exc))],
+        )
+
+    discovered: list[DryRunFile] = []
+    skipped: list[DryRunFile] = []
+    for sk in scan_result.skipped:
+        skipped.append(
+            DryRunFile(path=sk.path, status="skipped", reason=sk.reason)
+        )
+    for cand in scan_result.discovered:
+        discovered.append(
+            DryRunFile(path=cand.path, status="discovered", parser=cand.content_type)
+        )
+
+    return DryRunReport(
+        source_id=None,
+        source_kind="fileshare",
+        total=len(discovered) + len(skipped),
+        discovered=discovered,
+        skipped=skipped,
+        failed=[],
+    )
+
+
+def _serialize_dry_run(report: DryRunReport) -> dict[str, Any]:
+    return {
+        "dry_run": True,
+        "source_kind": report.source_kind,
+        "total": report.total,
+        "discovered_count": len(report.discovered),
+        "skipped_count": len(report.skipped),
+        "failed_count": len(report.failed),
+        "discovered": [
+            {"path": f.path, "status": f.status, "parser": f.parser} for f in report.discovered
+        ],
+        "skipped": [
+            {"path": f.path, "reason": f.reason} for f in report.skipped
+        ],
+        "failed": [
+            {"path": f.path, "reason": f.reason} for f in report.failed
+        ],
+    }
+
+
+def dry_run_source(
+    session: Session,
+    plugin_id: str,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+    client=None,
+) -> dict[str, Any]:
+    """Run a dry-run ingestion scan for a source plugin.
+
+    Scans the source and returns candidate files without writing any
+    document_versions, chunks, or embeddings to the database.
+    """
+    registry = get_plugin_registry()
+    validated = registry.validate_config(plugin_id, config)
+
+    if plugin_id == "source.local":
+        report = _dry_run_local_directory(session, validated)
+    elif plugin_id == "source.s3":
+        report = _dry_run_s3_source(session, validated, env=env, client=client)
+    elif plugin_id == "source.fileshare":
+        report = _dry_run_fileshare_source(session, validated, env=env)
+    else:
+        return {"dry_run": False, "error": f"unsupported source plugin: {plugin_id}"}
+
+    return _serialize_dry_run(report)
+
+
+# ── Source Config Save ──────────────────────────────────────────────────────
+
+def save_source_config(
+    session: Session,
+    *,
+    plugin_id: str,
+    config: dict[str, Any],
+    knowledge_base_name: str,
+    operator: str | None = None,
+) -> dict[str, Any]:
+    """Validate and save a source configuration.
+
+    Creates or updates a Source record with validated config.
+    Returns the source details.
+    """
+    registry = get_plugin_registry()
+    validated = registry.validate_config(plugin_id, config)
+
+    source_kind = plugin_id.removeprefix("source.")
+    if source_kind == "local":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _get_or_create_kb(session, knowledge_base_name)
+        root_path = Path(str(validated.get("root_path", "")))
+        source_uri = str(root_path.resolve()) if root_path else "local://unspecified"
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    elif source_kind == "s3":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _get_or_create_kb(session, knowledge_base_name)
+        bucket = str(validated.get("bucket", ""))
+        prefix = str(validated.get("prefix", ""))
+        source_uri = f"s3://{bucket}/{prefix}" if prefix else f"s3://{bucket}"
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    elif source_kind == "fileshare":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _get_or_create_kb(session, knowledge_base_name)
+        protocol = str(validated.get("protocol", "smb"))
+        host = str(validated.get("host", ""))
+        share = str(validated.get("share", ""))
+        source_uri = f"{protocol}://{host}/{share}"
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    else:
+        return {"error": f"unsupported source kind: {source_kind}"}
+
+    session.commit()
+
+    return {
+        "id": str(source.id),
+        "knowledge_base": knowledge_base_name,
+        "kind": source_kind,
+        "uri": source.uri,
+        "config": validated,
+        "created_at": _isoformat(source.created_at),
+        "updated_at": _isoformat(source.updated_at),
+    }
+
+
+# ── Pipeline Run Item Inspect & Retry ───────────────────────────────────────
+
+def get_pipeline_run_item_detail(
+    session: Session, item_id: str
+) -> dict[str, Any] | None:
+    """Return detail for a single pipeline run item."""
+    item_uuid = uuid.UUID(item_id)
+    row = session.execute(
+        select(PipelineRunItem, Document, PipelineRun)
+        .join(Document, Document.id == PipelineRunItem.document_id)
+        .join(PipelineRun, PipelineRun.id == PipelineRunItem.pipeline_run_id)
+        .where(PipelineRunItem.id == item_uuid)
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    item, document, run = row
+    return {
+        "id": str(item.id),
+        "pipeline_run_id": str(run.id),
+        "run_type": run.run_type,
+        "status": item.status,
+        "document_id": str(document.id),
+        "document_uri": document.uri,
+        "error_message": item.error_message,
+        "metadata": item.metadata_json,
+        "config_snapshot": run.config_snapshot_json,
+        "started_at": _isoformat(item.started_at),
+        "finished_at": _isoformat(item.finished_at),
+    }
+
+
+def retry_pipeline_run_item(
+    session: Session,
+    *,
+    item_id: str,
+    operator: str | None = None,
+) -> dict[str, Any] | None:
+    """Retry a single failed pipeline run item.
+
+    Re-processes the failed document using the same run's config snapshot.
+    Returns the new item status, or None if the item is not found.
+    """
+    item_uuid = uuid.UUID(item_id)
+    row = session.execute(
+        select(PipelineRunItem, PipelineRun, Document, Source, KnowledgeBase)
+        .join(PipelineRun, PipelineRun.id == PipelineRunItem.pipeline_run_id)
+        .join(Document, Document.id == PipelineRunItem.document_id)
+        .outerjoin(Source, Source.id == PipelineRun.source_id)
+        .join(KnowledgeBase, KnowledgeBase.id == PipelineRun.knowledge_base_id)
+        .where(PipelineRunItem.id == item_uuid)
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+
+    item, run, document, source, kb = row
+
+    from ragrig.db.models import DocumentVersion
+    from ragrig.ingestion.pipeline import _select_parser
+    from ragrig.parsers.base import parse_with_timeout
+
+    config_snapshot = run.config_snapshot_json or {}
+
+    # Determine file path from metadata or config
+    file_path = None
+    metadata_path = (item.metadata_json or {}).get("object_key") or (
+        item.metadata_json or {}
+    ).get("file_name")
+    doc_uri = document.uri
+
+    if run.run_type == "s3_ingest":
+        # S3 items need to be re-downloaded
+        from ragrig.plugins.sources.s3.client import build_boto3_client
+        from ragrig.plugins.sources.s3.connector import _resolve_secrets
+
+        try:
+            secrets = _resolve_secrets(config_snapshot, env={})
+            client = build_boto3_client({**config_snapshot, **secrets.__dict__})
+            from tempfile import NamedTemporaryFile
+
+            bucket = str(config_snapshot.get("bucket", ""))
+            key = metadata_path or ""
+            body = client.download_object(bucket=bucket, key=key)
+            suffix = Path(key).suffix
+            tmp = NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp.write(body)
+            tmp.close()
+            file_path = Path(tmp.name)
+        except Exception as exc:
+            error_msg = _sanitize_retry_error(str(exc))
+            item.status = "failed"
+            item.error_message = error_msg
+            item.finished_at = datetime.now(timezone.utc)
+            session.commit()
+            return {
+                "id": str(item.id),
+                "pipeline_run_id": str(run.id),
+                "document_uri": doc_uri,
+                "status": "failed",
+                "error_message": error_msg,
+                "retried": True,
+            }
+
+    elif run.run_type == "fileshare_ingest":
+        from ragrig.plugins.sources.fileshare.connector import (
+            _build_client,
+            _resolve_fileshare_secrets,
+        )
+
+        try:
+            secrets = _resolve_fileshare_secrets(config_snapshot, env={})
+            client = _build_client(config_snapshot, secrets)
+        except Exception as exc:
+            error_msg = _sanitize_retry_error(str(exc))
+            item.status = "failed"
+            item.error_message = error_msg
+            item.finished_at = datetime.now(timezone.utc)
+            session.commit()
+            return {
+                "id": str(item.id),
+                "pipeline_run_id": str(run.id),
+                "document_uri": doc_uri,
+                "status": "failed",
+                "error_message": error_msg,
+                "retried": True,
+            }
+        try:
+            from tempfile import NamedTemporaryFile
+
+            remote_path = metadata_path or ""
+            body = client.download_file(remote_path)
+            suffix = Path(remote_path).suffix
+            tmp = NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp.write(body)
+            tmp.close()
+            file_path = Path(tmp.name)
+        except Exception as exc:
+            error_msg = _sanitize_retry_error(str(exc))
+            item.status = "failed"
+            item.error_message = error_msg
+            item.finished_at = datetime.now(timezone.utc)
+            session.commit()
+            return {
+                "id": str(item.id),
+                "pipeline_run_id": str(run.id),
+                "document_uri": doc_uri,
+                "status": "failed",
+                "error_message": error_msg,
+                "retried": True,
+            }
+    else:
+        # Local ingestion - file path from document URI
+        file_path = Path(document.uri)
+
+    if file_path is None or not file_path.exists():
+        error_msg = "file not found for retry"
+        item.status = "failed"
+        item.error_message = error_msg
+        item.finished_at = datetime.now(timezone.utc)
+        session.commit()
+        return {
+            "id": str(item.id),
+            "pipeline_run_id": str(run.id),
+            "document_uri": doc_uri,
+            "status": "failed",
+            "error_message": error_msg,
+            "retried": True,
+        }
+
+    # Re-process the file
+    try:
+        parser = _select_parser(file_path)
+        parse_result = parse_with_timeout(parser, file_path, timeout_seconds=30.0)
+
+        document.content_hash = parse_result.content_hash
+        document.mime_type = parse_result.mime_type
+        document.metadata_json = parse_result.metadata
+
+        version = DocumentVersion(
+            document_id=document.id,
+            version_number=0,  # will be set by _get_next_version
+            content_hash=parse_result.content_hash,
+            parser_name=parse_result.parser_name,
+            parser_config_json={"plugin_id": _parser_plugin_id(parse_result.parser_name)},
+            extracted_text=parse_result.extracted_text,
+            metadata_json=parse_result.metadata,
+        )
+        from ragrig.repositories import get_next_version_number
+
+        version.version_number = get_next_version_number(session, document_id=document.id)
+        session.add(version)
+        session.flush()
+
+        item.status = "success"
+        item.error_message = None
+        item.metadata_json = {
+            **(item.metadata_json or {}),
+            "retry_version_number": version.version_number,
+        }
+        item.finished_at = datetime.now(timezone.utc)
+
+        # Update run counts
+        run.failure_count = max(0, (run.failure_count or 0) - 1)
+        run.success_count = (run.success_count or 0) + 1
+
+        session.commit()
+
+        return {
+            "id": str(item.id),
+            "pipeline_run_id": str(run.id),
+            "document_uri": doc_uri,
+            "status": "success",
+            "retried": True,
+            "new_version_number": version.version_number,
+        }
+    except Exception as exc:
+        error_msg = _sanitize_retry_error(str(exc))
+        item.status = "failed"
+        item.error_message = error_msg
+        item.finished_at = datetime.now(timezone.utc)
+        session.commit()
+        return {
+            "id": str(item.id),
+            "pipeline_run_id": str(run.id),
+            "document_uri": doc_uri,
+            "status": "failed",
+            "error_message": error_msg,
+            "retried": True,
+        }
+    finally:
+        if file_path and run.run_type in ("s3_ingest", "fileshare_ingest"):
+            try:
+                file_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def retry_pipeline_run(
+    session: Session,
+    *,
+    run_id: str,
+    operator: str | None = None,
+    new_snapshot: bool = False,
+) -> dict[str, Any] | None:
+    """Retry all failed items in a pipeline run.
+
+    If new_snapshot is False, reuses the original config_snapshot_json.
+    If new_snapshot is True, creates a new snapshot from current config.
+    Returns a summary of retry results.
+    """
+    run_uuid = uuid.UUID(run_id)
+    run = session.get(PipelineRun, run_uuid)
+    if run is None:
+        return None
+
+    # Collect failed items
+    failed_items = (
+        session.query(PipelineRunItem)
+        .filter(
+            PipelineRunItem.pipeline_run_id == run_uuid,
+            PipelineRunItem.status == "failed",
+        )
+        .all()
+    )
+
+    if not failed_items:
+        return {
+            "run_id": run_id,
+            "status": "no_failed_items",
+            "message": "No failed items to retry.",
+            "retried": 0,
+            "succeeded": 0,
+            "failed": 0,
+        }
+
+    results: list[dict[str, Any]] = []
+    for item in failed_items:
+        result = retry_pipeline_run_item(session, item_id=str(item.id), operator=operator)
+        if result is not None:
+            results.append(result)
+
+    succeeded = sum(1 for r in results if r.get("status") == "success")
+    still_failed = sum(1 for r in results if r.get("status") == "failed")
+
+    return {
+        "run_id": run_id,
+        "status": "completed",
+        "retried": len(results),
+        "succeeded": succeeded,
+        "failed": still_failed,
+        "items": results,
+    }
+
+
+def _sanitize_retry_error(message: str) -> str:
+    """Remove secret-like patterns from error messages."""
+    for fragment in _CONSOLE_FORBIDDEN_FRAGMENTS:
+        message = message.replace(fragment, "[redacted]")
+    return message
+
+
+def _parser_plugin_id(parser_name: str) -> str:
+    if parser_name == "plaintext":
+        return "parser.text"
+    return f"parser.{parser_name}"

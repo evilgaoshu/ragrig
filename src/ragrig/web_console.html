@@ -1393,6 +1393,7 @@
         models: null,
         providerProbes: {},
         system: null,
+        sourceFormPlugin: null,
         evaluation: {
           runs: [],
           latest: null,
@@ -1459,6 +1460,20 @@
 
       function empty(message) {
         return `<div class="empty">${escapeHtml(message)}</div>`;
+      }
+
+      function showToast(msg) {
+        let el = document.getElementById('toast');
+        if (!el) {
+          el = document.createElement('div');
+          el.id = 'toast';
+          el.style.cssText = 'position:fixed;bottom:16px;right:16px;background:var(--bg-card,#222);color:var(--text,#eee);padding:8px 16px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:9999;font-size:13px;max-width:400px;';
+          document.body.appendChild(el);
+        }
+        el.textContent = msg;
+        el.style.opacity = '1';
+        clearTimeout(el._timer);
+        el._timer = setTimeout(() => { el.style.opacity = '0'; }, 4000);
       }
 
       async function getJson(url, options) {
@@ -1606,40 +1621,260 @@
       function renderSources() {
         const root = document.getElementById('sources-list');
         if (!state.sources.length) {
-          root.innerHTML = empty('No sources configured. The MVP reads existing local_directory sources from the DB only.');
-          return;
+          root.innerHTML = empty('No sources configured. Configure one below.');
+        } else {
+          root.innerHTML = state.sources.map((source) => `
+            <div class="card">
+              <div class="name">${escapeHtml(source.knowledge_base)}</div>
+              <div class="sub">${escapeHtml(source.kind)} · ${escapeHtml(source.uri)}</div>
+              <div class="sub">include: ${escapeHtml((source.config.include_patterns || []).join(', ') || '.md,.txt (default)')}</div>
+              <div class="sub">exclude: ${escapeHtml((source.config.exclude_patterns || []).join(', ') || 'none')}</div>
+              <div class="sub">max size: ${escapeHtml(source.config.max_file_size_bytes || 'unknown')} bytes · schedule: manual only</div>
+              <div class="sub"><button class="btn small" onclick="dryRunSource('${escapeHtml(source.id)}', '${escapeHtml(source.kind)}')">Dry-run</button></div>
+            </div>
+          `).join('');
         }
-        root.innerHTML = state.sources.map((source) => `
-          <div class="card">
-            <div class="name">${escapeHtml(source.knowledge_base)}</div>
-            <div class="sub">${escapeHtml(source.kind)} · ${escapeHtml(source.uri)}</div>
-            <div class="sub">include: ${escapeHtml((source.config.include_patterns || []).join(', ') || '.md,.txt (default)')}</div>
-            <div class="sub">exclude: ${escapeHtml((source.config.exclude_patterns || []).join(', ') || 'none')}</div>
-            <div class="sub">max size: ${escapeHtml(source.config.max_file_size_bytes || 'unknown')} bytes · schedule: manual only</div>
+        root.innerHTML += \`
+          <div class="card" style="margin-top:12px">
+            <div class="name">Configure New Source</div>
+            <div class="sub">Select type:</div>
+            <div class="flex-row" style="gap:8px;margin:8px 0">
+              <button class="btn small" onclick="showSourceForm('source.local')">Local Directory</button>
+              <button class="btn small" onclick="showSourceForm('source.s3')">S3</button>
+              <button class="btn small" onclick="showSourceForm('source.fileshare')">Fileshare</button>
+            </div>
+            <div id="source-form-area"></div>
+            <div id="source-form-result"></div>
           </div>
-        `).join('');
+        \`;
       }
 
-      function renderIngestionPanel() {
-        const root = document.getElementById('ingestion-panel');
-        const source = state.sources[0];
-        if (!source) {
-          root.innerHTML = empty('Write path is intentionally disabled until a browser-triggered ingestion API exists. Use make ingest-local or make ingest-local-dry-run.');
-          return;
+      function showSourceForm(pluginId) {
+        const area = document.getElementById('source-form-area');
+        state.sourceFormPlugin = pluginId;
+        if (pluginId === 'source.local') {
+          area.innerHTML = \`
+            <div class="sub">Knowledge base name:</div>
+            <input id="src-local-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Root path:</div>
+            <input id="src-local-path" class="input" value="" placeholder="/path/to/documents" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Include patterns (comma-sep):</div>
+            <input id="src-local-include" class="input" value=".md,.txt" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Exclude patterns (comma-sep):</div>
+            <input id="src-local-exclude" class="input" value="" placeholder="optional" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Max file size (bytes):</div>
+            <input id="src-local-maxsize" class="input" value="10485760" style="width:100%;margin-bottom:8px" />
+            <div class="flex-row" style="gap:8px;margin-top:8px">
+              <button class="btn" onclick="validateSourceForm()">Validate</button>
+              <button class="btn" onclick="saveSourceForm()">Save</button>
+              <button class="btn" onclick="dryRunForm()">Dry-run</button>
+            </div>
+          \`;
+        } else if (pluginId === 'source.s3') {
+          area.innerHTML = \`
+            <div class="sub">Knowledge base name:</div>
+            <input id="src-s3-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Bucket:</div>
+            <input id="src-s3-bucket" class="input" value="" placeholder="my-bucket" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Prefix (optional):</div>
+            <input id="src-s3-prefix" class="input" value="" placeholder="path/prefix" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Access key (env:VAR):</div>
+            <input id="src-s3-access" class="input" value="env:AWS_ACCESS_KEY_ID" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Secret key (env:VAR):</div>
+            <input id="src-s3-secret" class="input" value="env:AWS_SECRET_ACCESS_KEY" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Endpoint URL (optional):</div>
+            <input id="src-s3-endpoint" class="input" value="" placeholder="https://s3.amazonaws.com" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Region (optional):</div>
+            <input id="src-s3-region" class="input" value="" placeholder="us-east-1" style="width:100%;margin-bottom:8px" />
+            <div class="flex-row" style="gap:8px;margin-top:8px">
+              <button class="btn" onclick="validateSourceForm()">Validate</button>
+              <button class="btn" onclick="saveSourceForm()">Save</button>
+              <button class="btn" onclick="dryRunForm()">Dry-run</button>
+            </div>
+          \`;
+        } else if (pluginId === 'source.fileshare') {
+          area.innerHTML = \`
+            <div class="sub">Knowledge base name:</div>
+            <input id="src-fs-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Protocol:</div>
+            <select id="src-fs-protocol" class="input" style="width:100%;margin-bottom:8px">
+              <option value="smb">SMB</option>
+              <option value="webdav">WebDAV</option>
+              <option value="sftp">SFTP</option>
+              <option value="nfs">NFS (mounted path)</option>
+            </select>
+            <div class="sub">Host:</div>
+            <input id="src-fs-host" class="input" value="" placeholder="hostname" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Share/Path:</div>
+            <input id="src-fs-share" class="input" value="" placeholder="share_name" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Username (env:VAR):</div>
+            <input id="src-fs-user" class="input" value="env:FILESHARE_USERNAME" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Password (env:VAR):</div>
+            <input id="src-fs-pass" class="input" value="env:FILESHARE_PASSWORD" style="width:100%;margin-bottom:8px" />
+            <div class="flex-row" style="gap:8px;margin-top:8px">
+              <button class="btn" onclick="validateSourceForm()">Validate</button>
+              <button class="btn" onclick="saveSourceForm()">Save</button>
+              <button class="btn" onclick="dryRunForm()">Dry-run</button>
+            </div>
+          \`;
         }
-        root.innerHTML = `
-          <div class="card">
-            <div class="name">Real write path is CLI-first</div>
-            <div class="sub">Knowledge base: ${escapeHtml(source.knowledge_base)}</div>
-            <div class="sub">Source root: ${escapeHtml(source.uri)}</div>
-            <div class="sub">Dry run: <span class="pill warn">available via make ingest-local-dry-run</span></div>
-            <div class="sub code">make ingest-local INGEST_KB=${escapeHtml(source.knowledge_base)} INGEST_ROOT=${escapeHtml(source.uri)}</div>
-          </div>
-          <div class="card">
-            <div class="name">Current limitation</div>
-            <div class="sub">This MVP does not fake browser writes. It only exposes the real command path and persisted run evidence.</div>
-          </div>
-        `;
+      }
+
+      function getSourceFormConfig() {
+        const pid = state.sourceFormPlugin;
+        if (pid === 'source.local') {
+          return {
+            root_path: document.getElementById('src-local-path').value,
+            include_patterns: (document.getElementById('src-local-include').value || '').split(',').map(s => s.trim()).filter(Boolean),
+            exclude_patterns: (document.getElementById('src-local-exclude').value || '').split(',').map(s => s.trim()).filter(Boolean),
+            max_file_size_bytes: parseInt(document.getElementById('src-local-maxsize').value) || 10485760,
+          };
+        } else if (pid === 'source.s3') {
+          return {
+            bucket: document.getElementById('src-s3-bucket').value,
+            prefix: document.getElementById('src-s3-prefix').value || undefined,
+            access_key: document.getElementById('src-s3-access').value,
+            secret_key: document.getElementById('src-s3-secret').value,
+            endpoint_url: document.getElementById('src-s3-endpoint').value || undefined,
+            region: document.getElementById('src-s3-region').value || undefined,
+          };
+        } else if (pid === 'source.fileshare') {
+          return {
+            protocol: document.getElementById('src-fs-protocol').value,
+            host: document.getElementById('src-fs-host').value,
+            share: document.getElementById('src-fs-share').value,
+            username: document.getElementById('src-fs-user').value,
+            password: document.getElementById('src-fs-pass').value,
+          };
+        }
+        return {};
+      }
+
+      function getSourceFormKb() {
+        const pid = state.sourceFormPlugin;
+        if (pid === 'source.local') return document.getElementById('src-local-kb').value || 'default';
+        if (pid === 'source.s3') return document.getElementById('src-s3-kb').value || 'default';
+        if (pid === 'source.fileshare') return document.getElementById('src-fs-kb').value || 'default';
+        return 'default';
+      }
+
+      async function validateSourceForm() {
+        const resultArea = document.getElementById('source-form-result');
+        const pid = state.sourceFormPlugin;
+        const config = getSourceFormConfig();
+        resultArea.innerHTML = '<div class="sub">Validating...</div>';
+        try {
+          const resp = await fetch('/sources/validate-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_id: pid, config }),
+          });
+          const data = await resp.json();
+          if (data.valid) {
+            const statusPill = data.status === 'ready' ? 'success' : data.status === 'degraded' ? 'warn' : 'error';
+            resultArea.innerHTML = \`
+              <div class="card">
+                <div class="name">Validation: <span class="pill \${statusPill}">\${escapeHtml(data.status)}</span></div>
+                \${data.reason ? '<div class="sub">' + escapeHtml(data.reason) + '</div>' : ''}
+                \${data.missing_dependencies && data.missing_dependencies.length ? '<div class="sub">Missing deps: ' + escapeHtml(data.missing_dependencies.join(', ')) + '</div>' : ''}
+                \${data.credential_issues && data.credential_issues.length ? '<div class="sub">Credential issues: ' + escapeHtml(data.credential_issues.join('; ')) + '</div>' : ''}
+                \${data.next_steps && data.next_steps.length ? '<div class="sub">Next: ' + escapeHtml(data.next_steps.join(' ')) + '</div>' : ''}
+              </div>
+            \`;
+          } else {
+            resultArea.innerHTML = \`
+              <div class="card">
+                <div class="name">Validation: <span class="pill error">invalid</span></div>
+                <div class="sub">\${escapeHtml(data.reason || data.error?.message || 'unknown error')}</div>
+              </div>
+            \`;
+          }
+        } catch (err) {
+          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+        }
+      }
+
+      async function saveSourceForm() {
+        const resultArea = document.getElementById('source-form-result');
+        const pid = state.sourceFormPlugin;
+        const config = getSourceFormConfig();
+        const kb = getSourceFormKb();
+        resultArea.innerHTML = '<div class="sub">Saving...</div>';
+        try {
+          const resp = await fetch('/sources', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_id: pid, config, knowledge_base: kb }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            resultArea.innerHTML = \`<div class="card"><div class="name">Save failed</div><div class="sub">\${escapeHtml(err.error || 'unknown error')}</div></div>\`;
+            return;
+          }
+          const data = await resp.json();
+          resultArea.innerHTML = \`<div class="card"><div class="name">Saved: <span class="pill success">\${escapeHtml(data.kind)}</span></div><div class="sub">URI: \${escapeHtml(data.uri)}</div></div>\`;
+          await loadAll();
+        } catch (err) {
+          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+        }
+      }
+
+      async function dryRunForm() {
+        const resultArea = document.getElementById('source-form-result');
+        const pid = state.sourceFormPlugin;
+        const config = getSourceFormConfig();
+        resultArea.innerHTML = '<div class="sub">Running dry-run scan...</div>';
+        try {
+          const resp = await fetch('/sources/dry-run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_id: pid, config }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            resultArea.innerHTML = \`<div class="card"><div class="name">Dry-run failed</div><div class="sub">\${escapeHtml(err.error || 'unknown error')}</div></div>\`;
+            return;
+          }
+          const data = await resp.json();
+          let filesHtml = '';
+          const allFiles = [...(data.discovered || []), ...(data.skipped || []), ...(data.failed || [])];
+          if (allFiles.length > 0) {
+            filesHtml = '<div class="sub" style="max-height:200px;overflow-y:auto">' +
+              allFiles.slice(0, 50).map(f => {
+                const statusPill = f.status === 'discovered' ? 'success' : f.status === 'skipped' ? 'warn' : 'error';
+                return '<div><span class="pill ' + statusPill + '">' + escapeHtml(f.status) + '</span> ' + escapeHtml(f.path) + (f.reason ? ' · ' + escapeHtml(f.reason) : '') + (f.parser ? ' · parser: ' + escapeHtml(f.parser) : '') + '</div>';
+              }).join('') +
+              (allFiles.length > 50 ? '<div class="sub">... and ' + (allFiles.length - 50) + ' more</div>' : '') +
+              '</div>';
+          }
+          resultArea.innerHTML = \`
+            <div class="card">
+              <div class="name">Dry-run: <span class="pill success">\${escapeHtml(data.source_kind)}</span></div>
+              <div class="sub">Total: \${data.total} files · Discovered: \${data.discovered_count} · Skipped: \${data.skipped_count} · Failed: \${data.failed_count}</div>
+              \${filesHtml}
+              <div class="sub" style="margin-top:4px"><em>dry-run does not write documents, chunks, or embeddings</em></div>
+            </div>
+          \`;
+        } catch (err) {
+          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+        }
+      }
+
+      async function dryRunSource(sourceId, sourceKind) {
+        const resultArea = document.createElement('div');
+        resultArea.innerHTML = '<div class="sub">Running dry-run...</div>';
+        const card = document.querySelector(\`[data-source-id="\${sourceId}"]\`);
+        try {
+          const resp = await fetch('/sources/dry-run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_id: 'source.' + sourceKind, config: {} }),
+          });
+          const data = await resp.json();
+          resultArea.innerHTML = \`<div class="sub">Dry-run: \${data.total || 0} files found</div>\`;
+        } catch (err) {
+          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+        }
       }
 
       async function renderPipelineRuns() {
@@ -1648,34 +1883,76 @@
           root.innerHTML = empty('No pipeline runs recorded yet.');
           return;
         }
-        const latest = state.pipelineRuns.slice(0, 4);
+        const latest = state.pipelineRuns.slice(0, 8);
         const items = await Promise.all(latest.map(async (run) => {
           const detail = await getJson(`/pipeline-runs/${run.id}/items`);
-          const firstItem = detail.items[0];
-          let itemDetail = 'No item detail';
-          if (firstItem) {
-            const meta = firstItem.metadata || {};
+          const failedItems = detail.items.filter(i => i.status === 'failed');
+          let itemHtml = '';
+          const shown = detail.items.slice(0, 3);
+          for (const item of shown) {
+            const meta = item.metadata || {};
             const parserInfo = meta.parser_id ? `parser: ${escapeHtml(meta.parser_id)}` : '';
             const degraded = meta.degraded_reason ? `degraded: ${escapeHtml(meta.degraded_reason)}` : '';
-            const redactionInfo = meta.redaction_count != null ? `redactions: ${meta.redaction_count}` : '';
-            const err = firstItem.error_message ? `error: ${escapeHtml(firstItem.error_message)}` : '';
-            itemDetail = [
-              `item: ${escapeHtml(firstItem.document_uri)} · ${escapeHtml(firstItem.status)}`,
-              parserInfo,
-              degraded,
-              redactionInfo,
-              err,
-            ].filter(Boolean).join(' · ');
+            const err = item.error_message ? `error: ${escapeHtml(item.error_message)}` : '';
+            const retryBtn = item.status === 'failed'
+              ? `<button class="btn small" onclick="retryPipelineItem('${escapeHtml(item.id)}')">Retry</button>`
+              : '';
+            itemHtml += `<div class="sub">[${escapeHtml(item.status)}] ${escapeHtml(item.document_uri)} ${parserInfo} ${degraded} ${err} ${retryBtn}</div>`;
           }
+          if (detail.items.length > 3) {
+            itemHtml += `<div class="sub">... and ${detail.items.length - 3} more items</div>`;
+          }
+          const retryAllBtn = run.failure_count > 0
+            ? `<button class="btn small" onclick="retryPipelineRun('${escapeHtml(run.id)}')">Retry all failed (${run.failure_count})</button>`
+            : '';
           return `
             <div class="card">
               <div class="name">${escapeHtml(run.run_type)} <span class="${pillClass(run.status)}">${escapeHtml(run.status)}</span></div>
               <div class="sub">KB: ${escapeHtml(run.knowledge_base)} · total ${run.total_items} · success ${run.success_count} · skipped ${run.skipped_count} · failed ${run.failure_count}</div>
-              <div class="sub">${itemDetail}</div>
+              ${itemHtml}
+              <div class="sub" style="margin-top:4px">${retryAllBtn}</div>
             </div>
           `;
         }));
         root.innerHTML = items.join('');
+      }
+
+      async function retryPipelineItem(itemId) {
+        try {
+          const resp = await fetch('/pipeline-run-items/' + itemId + '/retry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          const data = await resp.json();
+          if (data.status === 'success') {
+            showToast('Item retried successfully');
+          } else {
+            showToast('Retry failed: ' + (data.error_message || 'unknown error'));
+          }
+          await loadAll();
+        } catch (err) {
+          showToast('Error: ' + err.message);
+        }
+      }
+
+      async function retryPipelineRun(runId) {
+        try {
+          const resp = await fetch('/pipeline-runs/' + runId + '/retry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          const data = await resp.json();
+          if (data.status === 'completed') {
+            showToast('Retried ' + data.retried + ' items: ' + data.succeeded + ' succeeded, ' + data.failed + ' failed');
+          } else {
+            showToast('Retry result: ' + (data.message || data.error || 'unknown'));
+          }
+          await loadAll();
+        } catch (err) {
+          showToast('Error: ' + err.message);
+        }
       }
 
       async function renderUnderstandingCoverage() {
@@ -4178,32 +4455,23 @@
         }
       }
 
+      async function loadAll() {
+        try {
+          const [sourcesResp, pipelineRunsResp] = await Promise.all([
+            getJson('/sources'),
+            getJson('/pipeline-runs'),
+          ]);
+          state.sources = sourcesResp.items;
+          state.pipelineRuns = pipelineRunsResp.items;
+          renderSources();
+          await renderPipelineRuns();
+        } catch (e) {
+          console.error('loadAll error', e);
+        }
+      }
+
       async function boot() {
         try {
-          // Restore filter state from URL query params
-          var urlParams = new URLSearchParams(window.location.search);
-          if (urlParams.has('provider')) state.runsFilter.provider = urlParams.get('provider');
-          if (urlParams.has('model')) state.runsFilter.model = urlParams.get('model');
-          if (urlParams.has('profile_id')) state.runsFilter.profile_id = urlParams.get('profile_id');
-          if (urlParams.has('status')) state.runsFilter.status = urlParams.get('status');
-          if (urlParams.has('started_after')) state.runsFilter.started_after = urlParams.get('started_after');
-          if (urlParams.has('started_before')) state.runsFilter.started_before = urlParams.get('started_before');
-          if (urlParams.has('limit')) state.runsFilter.limit = parseInt(urlParams.get('limit'), 10) || 10;
-
-          // Listen for browser back/forward to re-apply URL filters
-          window.addEventListener('popstate', function() {
-            var p = new URLSearchParams(window.location.search);
-            state.runsFilter.provider = p.get('provider') || '';
-            state.runsFilter.model = p.get('model') || '';
-            state.runsFilter.profile_id = p.get('profile_id') || '';
-            state.runsFilter.status = p.get('status') || '';
-            state.runsFilter.started_after = p.get('started_after') || '';
-            state.runsFilter.started_before = p.get('started_before') || '';
-            if (p.has('limit')) state.runsFilter.limit = parseInt(p.get('limit'), 10) || 10;
-            renderRunsFilterBar();
-            renderUnderstandingRuns();
-          });
-
           await loadInitialData();
           await loadFormats();
           await loadFormats();
@@ -4218,7 +4486,6 @@
           renderStatusStrip();
           renderKnowledgeBases();
           renderSources();
-          renderIngestionPanel();
           await renderPipelineRuns();
           await renderUnderstandingCoverage();
           renderRunsFilterBar();
