@@ -237,6 +237,37 @@ jobs:
             echo "Drift diff artifact not generated." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Generate drift history
+        run: |
+          cd head
+          uv run python -m scripts.sanitizer_drift_history \
+            --artifacts-dir docs/operations/artifacts \
+            --output docs/operations/artifacts/sanitizer-drift-history.json \
+            --markdown-output docs/operations/artifacts/sanitizer-drift-history.md \
+            --stdout || true
+
+      - name: Generate drift history summary
+        run: |
+          cd head
+          uv run python -m scripts.sanitizer_drift_history_summary \
+            --history docs/operations/artifacts/sanitizer-drift-history.json \
+            --output docs/operations/artifacts/sanitizer-drift-history-summary.md \
+            --json \
+            --stdout || true
+        continue-on-error: true
+
+      - name: Upload drift history artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sanitizer-drift-history
+          path: head/docs/operations/artifacts/sanitizer-drift-history.*
+
+      - name: Upload drift history summary artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sanitizer-drift-history-summary
+          path: head/docs/operations/artifacts/sanitizer-drift-history-summary.*
+
   supply-chain:
     name: RAGRig CI / supply-chain
     runs-on: ubuntu-latest
