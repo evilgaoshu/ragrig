@@ -874,6 +874,7 @@
         <div class="nav-item" data-section="sanitizer-drift">Sanitizer Drift</div>
         <div class="nav-item" data-section="retrieval-benchmark">Retrieval Benchmark</div>
         <div class="nav-item" data-section="retrieval-benchmark-integrity">Baseline Integrity</div>
+        <div class="nav-item" data-section="answer-live-smoke">Answer Live Smoke</div>
         <div class="nav-item">Documents</div>
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
@@ -906,6 +907,7 @@
           <div class="status-card"><div class="status-head">Embedding Profiles</div><strong id="model-count">0</strong><span id="model-subtext">Real indexed model profiles</span></div>
           <div class="status-card"><div class="status-head">Sanitizer Drift</div><strong id="drift-risk">—</strong><span id="drift-subtext">Latest drift risk</span></div>
           <div class="status-card"><div class="status-head">Baseline Integrity</div><strong id="baseline-integrity-status">—</strong><span id="baseline-integrity-subtext">Retrieval benchmark health</span></div>
+          <div class="status-card"><div class="status-head">LLM Smoke</div><strong id="answer-smoke-status">—</strong><span id="answer-smoke-subtext">Answer live smoke health</span></div>
         </section>
 
         <section class="panel">
@@ -986,6 +988,21 @@
             <div id="retrieval-integrity-status" style="margin-bottom:12px"></div>
             <div class="facts" id="retrieval-integrity-facts"></div>
             <div id="retrieval-integrity-reasons" style="margin-top:12px"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="answer-live-smoke-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Answer Live Smoke Diagnostics</div>
+              <div class="panel-meta">Provider health · GET /answer/live-smoke · make answer-live-smoke</div>
+            </div>
+            <div id="answer-smoke-panel-status" class="pill neutral">Loading</div>
+          </div>
+          <div class="panel-body stack">
+            <div id="answer-smoke-status" style="margin-bottom:12px"></div>
+            <div class="facts" id="answer-smoke-facts"></div>
+            <div id="answer-smoke-detail" style="margin-top:12px"></div>
           </div>
         </section>
 
@@ -1371,6 +1388,7 @@
           limit: 10,
         },
         retrievalBenchmarkIntegrity: null,
+        answerLiveSmoke: null,
       };
 
       const WIZARD_FILTERS = [
@@ -1464,6 +1482,16 @@
         } else {
           document.getElementById('baseline-integrity-status').textContent = '—';
           document.getElementById('baseline-integrity-subtext').textContent = 'No data';
+        }
+
+        var smoke = state.answerLiveSmoke;
+        if (smoke && smoke.available) {
+          var s = smoke.display_status || 'unknown';
+          document.getElementById('answer-smoke-status').textContent = s;
+          document.getElementById('answer-smoke-subtext').textContent = smoke.provider ? (smoke.provider + ' · ' + (smoke.is_stale ? 'stale' : 'latest')) : 'No provider';
+        } else {
+          document.getElementById('answer-smoke-status').textContent = '—';
+          document.getElementById('answer-smoke-subtext').textContent = 'No data';
         }
       }
 
@@ -3239,6 +3267,69 @@
         }
       }
 
+      async function loadAnswerLiveSmoke() {
+        try {
+          state.answerLiveSmoke = await getJson('/answer/live-smoke');
+        } catch {
+          state.answerLiveSmoke = null;
+        }
+      }
+
+      function renderAnswerLiveSmoke() {
+        const panelStatus = document.getElementById('answer-smoke-panel-status');
+        const statusEl = document.getElementById('answer-smoke-status');
+        const factsEl = document.getElementById('answer-smoke-facts');
+        const detailEl = document.getElementById('answer-smoke-detail');
+        const data = state.answerLiveSmoke;
+
+        if (!data || !data.available) {
+          panelStatus.className = 'pill neutral';
+          panelStatus.textContent = 'No data';
+          statusEl.innerHTML = '<span class="pill neutral">No diagnostics data</span>';
+          factsEl.innerHTML = '<div class="empty">No artifact found. Run make answer-live-smoke to generate one.</div>';
+          detailEl.innerHTML = '';
+          document.getElementById('answer-smoke-status').textContent = '—';
+          document.getElementById('answer-smoke-subtext').textContent = 'No data';
+          return;
+        }
+
+        var s = data.display_status || 'unknown';
+        var statusClass = s === 'healthy' ? 'good' : s === 'degraded' || s === 'skip' ? 'warn' : 'error';
+        panelStatus.className = 'pill ' + statusClass;
+        panelStatus.textContent = s;
+
+        document.getElementById('answer-smoke-status').textContent = s;
+        document.getElementById('answer-smoke-subtext').textContent = data.provider ? (data.provider + ' · ' + (data.is_stale ? 'stale' : 'latest')) : 'No provider';
+
+        var staleTag = data.is_stale ? '<span class="pill warn">stale</span>' : '';
+        statusEl.innerHTML = [
+          '<span class="pill ' + statusClass + '">' + escapeHtml(s) + '</span>',
+          staleTag,
+          '<span class="pill neutral">' + escapeHtml(data.provider || '—') + '</span>',
+          '<span class="pill neutral">cites: ' + escapeHtml(formatValue(data.citation_count)) + '</span>',
+        ].join('');
+
+        factsEl.innerHTML = [
+          '<div class="card"><div class="fact-label">Provider</div><div class="fact-value">' + escapeHtml(data.provider || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Model</div><div class="fact-value code">' + escapeHtml(data.model || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Base URL</div><div class="fact-value code" style="font-size:11px">' + escapeHtml(data.base_url_redacted || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Status</div><div class="fact-value"><span class="pill ' + statusClass + '">' + escapeHtml(s) + '</span></div></div>',
+          '<div class="card"><div class="fact-label">Reason</div><div class="fact-value" style="font-size:12px">' + escapeHtml(data.reason || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Citations</div><div class="fact-value">' + escapeHtml(formatValue(data.citation_count)) + '</div></div>',
+          '<div class="card"><div class="fact-label">Timing</div><div class="fact-value">' + (data.timing_ms != null ? escapeHtml(data.timing_ms) + ' ms' : '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Generated At</div><div class="fact-value" title="' + escapeHtml(data.generated_at || '') + '">' + (data.generated_at ? new Date(data.generated_at).toLocaleString() : '—') + '</div></div>',
+        ].join('');
+
+        if (data.report_path) {
+          detailEl.innerHTML = [
+            '<div class="meta">Artifact: <code style="font-size:11px">' + escapeHtml(data.report_path) + '</code></div>',
+            '<div class="meta">Run <code>make answer-live-smoke</code> to refresh.</div>',
+          ].join('');
+        } else {
+          detailEl.innerHTML = '<div class="meta">Run <code>make answer-live-smoke</code> to generate an artifact.</div>';
+        }
+      }
+
       async function loadSanitizerCoverage() {
         try {
           state.sanitizerCoverage = await getJson('/sanitizer-coverage');
@@ -3940,6 +4031,7 @@
           await loadSanitizerDriftHistory();
           await loadRetrievalBenchmark();
           await loadRetrievalBenchmarkIntegrity();
+          await loadAnswerLiveSmoke();
           await loadUnderstandingExportDiff();
           renderStatusStrip();
           renderKnowledgeBases();
@@ -3968,6 +4060,7 @@
           renderSanitizerDriftHistory();
           renderRetrievalBenchmark();
           renderRetrievalBenchmarkIntegrity();
+          renderAnswerLiveSmoke();
           renderUnderstandingExportDiffBadge();
           renderUploadKBSelect();
         } catch (error) {

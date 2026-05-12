@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ragrig import __version__
 from ragrig.acl import acl_summary_from_metadata
+from ragrig.answer.diagnostics import get_diagnostics_summary as _get_answer_diagnostics_summary
 from ragrig.config import Settings
 from ragrig.db.models import (
     Chunk,
@@ -1186,3 +1187,24 @@ def get_retrieval_benchmark_integrity() -> dict[str, Any]:
     Never includes raw secret fragments.
     """
     return _get_integrity_summary()
+
+
+# ── Answer Live Smoke Diagnostics ──────────────────────────────────────────
+
+
+def get_answer_live_smoke() -> dict[str, Any]:
+    """Return the latest answer live smoke diagnostics for Web Console display.
+
+    Reads the artifact at docs/operations/artifacts/answer-live-smoke.json.
+    Returns a lightweight summary with provider, model, status, reason,
+    citation count, timing, and artifact path.
+
+    Missing, corrupt, or stale artifacts are reported as degraded/failure —
+    never as healthy.
+
+    Never includes raw secret fragments.
+    """
+    summary = _get_answer_diagnostics_summary()
+    summary = _redact_console_output(summary)
+    _assert_console_no_secrets(summary, "answer-live-smoke-console")
+    return summary
