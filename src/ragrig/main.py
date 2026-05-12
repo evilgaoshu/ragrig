@@ -87,6 +87,7 @@ from ragrig.web_console import (
     get_sanitizer_contract_status,
     get_sanitizer_coverage,
     get_sanitizer_drift_history,
+    get_sanitizer_drift_history_summary,
     get_understanding_export_diff,
     get_understanding_run_detail,
     list_document_version_chunks,
@@ -747,6 +748,19 @@ def create_app(
         Never includes raw secret fragments.
         """
         return get_sanitizer_drift_history()
+
+    @app.get("/sanitizer-drift-history-summary", response_model=None)
+    def sanitizer_drift_history_summary() -> dict[str, Any]:
+        """Return the sanitizer drift history summary for Web Console display.
+
+        Reads the summary artifact from docs/operations/artifacts/ and
+        returns latest status, risk, parser counts, degraded reports count,
+        and summary path.
+
+        Missing/corrupt artifacts are reported as degraded/failure.
+        Never includes raw secret fragments.
+        """
+        return get_sanitizer_drift_history_summary()
 
     @app.get("/understanding-export-diff", response_model=None)
     def understanding_export_diff() -> dict[str, Any]:

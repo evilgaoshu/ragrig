@@ -247,7 +247,11 @@ sanitizer-drift-history:
 sanitizer-drift-history-summary:
 	$(UV) run python -m scripts.sanitizer_drift_history_summary \
 		--history $(ARTIFACTS_DIR)/sanitizer-drift-history.json \
-		--stdout
+		--output $(ARTIFACTS_DIR)/sanitizer-drift-history-summary.md \
+		--stdout; \
+	$(UV) run python -m scripts.sanitizer_drift_history_summary \
+		--history $(ARTIFACTS_DIR)/sanitizer-drift-history.json \
+		--json > $(ARTIFACTS_DIR)/sanitizer-drift-history-summary.json
 
 # ── Artifact retention / cleanup ──────────────────────────────
 # Dry-run by default.  Lists files that would be removed.

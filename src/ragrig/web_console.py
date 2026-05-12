@@ -1112,7 +1112,85 @@ def get_understanding_export_diff() -> dict[str, Any]:
     return summary
 
 
-# ── Retrieval Benchmark ────────────────────────────────────────────────────
+# ── Sanitizer Drift History Summary ────────────────────────────────────────
+
+_SANITIZER_DRIFT_HISTORY_SUMMARY_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "operations"
+    / "artifacts"
+    / "sanitizer-drift-history-summary.md"
+)
+
+
+def get_sanitizer_drift_history_summary() -> dict[str, Any]:
+    """Return the sanitizer drift history summary for Web Console display.
+
+    Reads the summary artifact from docs/operations/artifacts/ and returns
+    a lightweight dict safe for browser rendering.  Never includes raw
+    secret fragments.  Reports degraded status for missing/corrupt artifacts.
+    """
+    import json as _json
+
+    summary_md = _SANITIZER_DRIFT_HISTORY_SUMMARY_PATH
+    summary_json = summary_md.with_suffix(".json")
+
+    def _relative(p: Path) -> str:
+        try:
+            return str(p.relative_to(Path(__file__).resolve().parents[2]))
+        except ValueError:
+            return str(p)
+
+    if not summary_json.exists() and not summary_md.exists():
+        return {
+            "available": False,
+            "status": "no_history",
+            "reason": "summary artifact not found at " + _relative(summary_md),
+            "summary_path": _relative(summary_md),
+        }
+
+    result: dict[str, Any] = {
+        "available": True,
+        "status": "success",
+        "summary_path": _relative(summary_md),
+        "summary_json_path": _relative(summary_json) if summary_json.exists() else None,
+    }
+
+    # Load JSON summary if available
+    if summary_json.exists():
+        try:
+            summary = _json.loads(summary_json.read_text(encoding="utf-8"))
+            result.update(summary)
+        except (OSError, ValueError, _json.JSONDecodeError) as exc:
+            result["status"] = "failure"
+            result["reason"] = f"corrupt summary JSON: {exc}"
+            result["latest_risk"] = "unknown"
+            result["changed_parser_count"] = 0
+            result["degraded_reports_count"] = 0
+
+    # Load markdown summary path
+    if summary_md.exists():
+        result["summary_md_exists"] = True
+    else:
+        result["summary_md_exists"] = False
+
+    # Ensure consistent fields missing/corrupt are set
+    result.setdefault("latest_risk", "unknown")
+    result.setdefault("changed_parser_count", 0)
+    result.setdefault("degraded_reports_count", 0)
+    result.setdefault("base_golden_hash", "")
+    result.setdefault("head_golden_hash", "")
+    result.setdefault("valid_report_count", 0)
+    result.setdefault("total_report_count", 0)
+    result.setdefault("generated_at", "")
+
+    # Safety audit
+    _assert_console_no_secrets(result, "sanitizer-drift-history-summary-console")
+
+    return result
+
+
+# ── Understanding Export Diff ──────────────────────────────────────────────
 
 _BENCHMARK_ARTIFACT_PATH = (
     Path(__file__).resolve().parents[2]
