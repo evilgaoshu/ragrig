@@ -83,8 +83,10 @@ from ragrig.web_console import (
     build_permission_preview,
     build_system_status,
     check_format,
+    dry_run_source,
     get_answer_live_smoke,
     get_pipeline_run_detail,
+    get_pipeline_run_item_detail,
     get_recent_benchmark,
     get_retrieval_benchmark_integrity,
     get_sanitizer_contract_status,
@@ -104,7 +106,11 @@ from ragrig.web_console import (
     list_supported_formats,
     list_understanding_runs,
     load_console_html,
+    retry_pipeline_run,
+    retry_pipeline_run_item,
+    save_source_config,
     validate_plugin_config_for_wizard,
+    validate_source_config,
 )
 from ragrig.workflows import (
     WorkflowDefinition,
@@ -1547,6 +1553,137 @@ def create_app(
         entry = profile.to_api_dict()
         entry["provider_available"] = resolve_provider_availability(profile.provider)
         return entry
+
+    # ── Source Config Validation & Save ────────────────────────────────────
+
+    class SourceConfigValidateRequest(BaseModel):
+        plugin_id: str
+        config: dict[str, Any] = Field(default_factory=dict)
+        knowledge_base: str = "default"
+
+    class SourceConfigSaveRequest(BaseModel):
+        plugin_id: str
+        config: dict[str, Any] = Field(default_factory=dict)
+        knowledge_base: str = "default"
+        operator: str | None = None
+
+    @app.post("/sources/validate-config", response_model=None)
+    def source_validate_config(
+        request: SourceConfigValidateRequest,
+    ) -> dict[str, Any]:
+        """Validate a source configuration draft with dependency/credential checks."""
+        return validate_source_config(
+            plugin_id=request.plugin_id,
+            config=request.config,
+        )
+
+    @app.post("/sources", response_model=None)
+    def source_save_config(
+        request: SourceConfigSaveRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Validate and save a source configuration."""
+        try:
+            result = save_source_config(
+                session,
+                plugin_id=request.plugin_id,
+                config=request.config,
+                knowledge_base_name=request.knowledge_base,
+                operator=request.operator,
+            )
+        except Exception as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": str(exc)},
+            )
+        return result
+
+    # ── Dry-run Ingestion ──────────────────────────────────────────────────
+
+    class SourceDryRunRequest(BaseModel):
+        plugin_id: str
+        config: dict[str, Any] = Field(default_factory=dict)
+
+    @app.post("/sources/dry-run", response_model=None)
+    def source_dry_run(
+        request: SourceDryRunRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Dry-run ingestion scan for a source.
+
+        Lists candidate files, skip reasons, and expected pipeline_run
+        without writing document_versions/chunks/embeddings.
+        """
+        try:
+            result = dry_run_source(
+                session,
+                plugin_id=request.plugin_id,
+                config=request.config,
+            )
+        except Exception as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": str(exc)},
+            )
+        return result
+
+    # ── Pipeline Run Item Inspect & Retry ──────────────────────────────────
+
+    @app.get("/pipeline-run-items/{item_id}", response_model=None)
+    def pipeline_run_item_detail(
+        item_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Inspect a single pipeline run item."""
+        detail = get_pipeline_run_item_detail(session, item_id)
+        if detail is None:
+            return JSONResponse(status_code=404, content={"error": "pipeline_run_item_not_found"})
+        return detail
+
+    class RetryRequest(BaseModel):
+        operator: str | None = None
+        new_snapshot: bool = False
+
+    @app.post("/pipeline-run-items/{item_id}/retry", response_model=None)
+    def pipeline_run_item_retry(
+        item_id: str,
+        request: RetryRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Retry a single failed pipeline run item.
+
+        Re-processes the failed document using the same run's config snapshot.
+        Does not modify historical run data.
+        """
+        result = retry_pipeline_run_item(
+            session,
+            item_id=item_id,
+            operator=request.operator,
+        )
+        if result is None:
+            return JSONResponse(status_code=404, content={"error": "pipeline_run_item_not_found"})
+        return result
+
+    @app.post("/pipeline-runs/{run_id}/retry", response_model=None)
+    def pipeline_run_retry(
+        run_id: str,
+        request: RetryRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Retry all failed items in a pipeline run.
+
+        Reuses the same config snapshot by default.
+        Set new_snapshot=True to create a new snapshot from current config.
+        """
+        result = retry_pipeline_run(
+            session,
+            run_id=run_id,
+            operator=request.operator,
+            new_snapshot=request.new_snapshot,
+        )
+        if result is None:
+            return JSONResponse(status_code=404, content={"error": "pipeline_run_not_found"})
+        return result
 
     return app
 
