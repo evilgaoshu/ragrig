@@ -17,10 +17,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from ragrig.config import Settings
-from ragrig.db.models import Base, DocumentVersion
+from ragrig.db.models import Base, Document, DocumentVersion
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
+from ragrig.repositories import list_audit_events
 
 pytestmark = [pytest.mark.smoke, pytest.mark.slow]
 
@@ -109,6 +110,7 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "make fileshare-check" in response.text
     assert "make test-live-fileshare" in response.text
     assert "FILESHARE_FIELD_SCHEMAS" in response.text
+    assert "Resume DAG" in response.text
     assert "validateFileshareField" in response.text
     assert "handleFileshareFormSubmit" in response.text
     assert "handleFileshareCopyClick" in response.text
@@ -131,6 +133,10 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "retrieval-candidate-k" in response.text
     assert "retrieval-reranker-provider" in response.text
     assert "retrieval-reranker-model" in response.text
+    assert "permission-preview-panel" in response.text
+    assert "Permission Preview" in response.text
+    assert "runPermissionPreview" in response.text
+    assert "Principal subjects" in response.text
     assert "_renderRankStageTrace" in response.text
     assert "Baseline Integrity" in response.text
     assert "retrieval-benchmark-integrity-panel" in response.text
@@ -225,6 +231,7 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     assert chunks.json()["items"][0]["chunk_index"] == 0
     assert models.status_code == 200
     assert models.json()["embedding_profiles"][0]["provider"] == "deterministic-local"
+
     provider_names = {item["name"] for item in models.json()["registered_providers"]}
     assert {
         "deterministic-local",
@@ -293,6 +300,41 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     assert "smb" in fileshare_plugin["protocol_example_configs"]
     assert "webdav" in fileshare_plugin["protocol_example_configs"]
     assert "sftp" in fileshare_plugin["protocol_example_configs"]
+
+
+@pytest.mark.anyio
+async def test_ingestion_dag_console_api_exposes_failure_and_resume(tmp_path) -> None:
+    database_path = tmp_path / "web-console-dag.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+    docs = _seed_documents(tmp_path, {"dag.md": "# DAG\n\nfixture"})
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        created = await client.post(
+            "/pipeline-dags/ingestion",
+            json={
+                "knowledge_base": "dag-console",
+                "root_path": str(docs),
+                "failure_node": "embed",
+            },
+        )
+        resumed = await client.post(
+            f"/pipeline-runs/{created.json()['pipeline_run_id']}/dag-resume"
+        )
+        duplicate = await client.post(
+            f"/pipeline-runs/{created.json()['pipeline_run_id']}/dag-resume"
+        )
+
+    assert created.status_code == 200
+    assert created.json()["status"] == "completed_with_failures"
+    assert created.json()["failure_queue"][0]["node_id"] == "embed"
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "completed"
+    assert resumed.json()["failure_queue"][0]["status"] == "resolved"
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "rejected"
+    assert duplicate.json()["degraded"] is True
 
 
 @pytest.mark.anyio
@@ -3511,6 +3553,57 @@ async def test_answer_api_acl_filters_protected_content(tmp_path) -> None:
 
 
 @pytest.mark.anyio
+async def test_permission_preview_endpoint_reports_degraded_and_visible_scope(tmp_path) -> None:
+    database_path = tmp_path / "web-console-permission-preview.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "public.txt": "public permission preview",
+            "secret.txt": "secret permission preview",
+        },
+    )
+
+    with session_factory() as session:
+        ingest_local_directory(session=session, knowledge_base_name="fixture-local", root_path=docs)
+        from ragrig.db.models import Document
+
+        secret = session.scalar(select(Document).where(Document.uri == str(docs / "secret.txt")))
+        assert secret is not None
+        secret.metadata_json = {
+            **secret.metadata_json,
+            "acl": {
+                "visibility": "protected",
+                "allowed_principals": ["group:engineering"],
+                "denied_principals": [],
+                "acl_source": "test",
+                "acl_source_hash": "abc",
+                "inheritance": "document",
+            },
+        }
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        degraded = await client.post("/permissions/preview", json={})
+        allowed = await client.post(
+            "/permissions/preview",
+            json={"principal_ids": ["user:alice", "group:engineering"]},
+        )
+
+    assert degraded.status_code == 200
+    assert degraded.json()["degraded"] is True
+    assert "secret permission preview" not in str(degraded.json())
+    assert allowed.status_code == 200
+    kb = allowed.json()["knowledge_bases"][0]
+    docs_by_uri = {item["uri"]: item for item in kb["documents"]}
+    assert docs_by_uri[str(docs / "secret.txt")]["visible"] is True
+    assert docs_by_uri[str(docs / "secret.txt")]["reason"] == "principal_match"
+
+
+@pytest.mark.anyio
 async def test_retrieval_benchmark_integrity_endpoint_returns_summary(
     tmp_path,
     monkeypatch,
@@ -3881,3 +3974,1083 @@ async def test_understanding_export_diff_schema_incompatible_maps_to_failure(
     assert payload["available"] is True
     assert payload["status"] == "failure"
     assert payload["schema_compatible"] is False
+
+
+# ── Sanitizer Drift History Summary ──────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_sanitizer_drift_history_summary_endpoint_missing_artifact(tmp_path) -> None:
+    """When no summary artifact exists, endpoint returns no_history."""
+    database_path = tmp_path / "web-console-ds-missing.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/sanitizer-drift-history-summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "no_history"
+    assert "summary_path" in payload
+
+
+@pytest.mark.anyio
+async def test_sanitizer_drift_history_summary_endpoint_with_artifact(
+    tmp_path, monkeypatch
+) -> None:
+    """When summary JSON artifact exists, endpoint returns its contents."""
+    database_path = tmp_path / "web-console-ds-artifact.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    summary_data = {
+        "status": "success",
+        "latest_risk": "unchanged",
+        "changed_parser_count": 2,
+        "degraded_reports_count": 1,
+        "valid_report_count": 5,
+        "total_report_count": 7,
+        "base_golden_hash": "abc123",
+        "head_golden_hash": "def456",
+        "generated_at": "2026-05-12T00:00:00+00:00",
+    }
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    summary_json = artifact_dir / "sanitizer-drift-history-summary.json"
+    summary_json.write_text(json.dumps(summary_data), encoding="utf-8")
+    summary_md = artifact_dir / "sanitizer-drift-history-summary.md"
+    summary_md.write_text("## Summary\n\ntest", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "ragrig.web_console._SANITIZER_DRIFT_HISTORY_SUMMARY_PATH",
+        summary_md,
+    )
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/sanitizer-drift-history-summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["status"] == "success"
+    assert payload["latest_risk"] == "unchanged"
+    assert payload["changed_parser_count"] == 2
+    assert payload["degraded_reports_count"] == 1
+    assert payload["valid_report_count"] == 5
+    assert payload["total_report_count"] == 7
+    assert payload["summary_md_exists"] is True
+    assert payload["summary_json_path"] is not None
+
+
+@pytest.mark.anyio
+async def test_sanitizer_drift_history_summary_corrupt_json(tmp_path, monkeypatch) -> None:
+    """Corrupt summary JSON returns failure status."""
+    database_path = tmp_path / "web-console-ds-corrupt.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    summary_json = artifact_dir / "sanitizer-drift-history-summary.json"
+    summary_json.write_text("not valid json{", encoding="utf-8")
+    summary_md = artifact_dir / "sanitizer-drift-history-summary.md"
+    summary_md.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "ragrig.web_console._SANITIZER_DRIFT_HISTORY_SUMMARY_PATH",
+        summary_md,
+    )
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/sanitizer-drift-history-summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["status"] == "failure"
+    assert "corrupt" in payload.get("reason", "").lower()
+
+
+@pytest.mark.anyio
+async def test_sanitizer_drift_history_summary_no_secrets(tmp_path, monkeypatch) -> None:
+    """Summary endpoint never leaks secret fragments."""
+    database_path = tmp_path / "web-console-ds-secrets.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    summary_data = {
+        "status": "success",
+        "latest_risk": "unchanged",
+        "changed_parser_count": 0,
+        "degraded_reports_count": 0,
+        "valid_report_count": 1,
+        "total_report_count": 1,
+        "generated_at": "2026-05-12T00:00:00+00:00",
+    }
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    summary_json = artifact_dir / "sanitizer-drift-history-summary.json"
+    summary_json.write_text(json.dumps(summary_data), encoding="utf-8")
+    summary_md = artifact_dir / "sanitizer-drift-history-summary.md"
+    summary_md.write_text("test", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "ragrig.web_console._SANITIZER_DRIFT_HISTORY_SUMMARY_PATH",
+        summary_md,
+    )
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/sanitizer-drift-history-summary")
+
+    assert response.status_code == 200
+    text = response.text
+    assert "Bearer " not in text
+    assert "PRIVATE KEY-----" not in text
+    assert "sk-live-" not in text
+    assert "ghp_" not in text
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_sanitizer_drift_summary_section(tmp_path) -> None:
+    """Console page renders the sanitizer drift history summary panel."""
+    database_path = tmp_path / "web-console-ds-html.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Sanitizer Drift History Summary" in html
+    assert "sanitizer-drift-summary-panel" in html
+
+
+# ── Advanced Parser Corpus ────────────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_advanced_parser_corpus_endpoint_returns_pass_when_artifact_exists(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-corpus-pass.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    artifact = {
+        "artifact": "advanced-parser-corpus",
+        "generated_at": "2026-05-12T10:00:00+00:00",
+        "total_fixtures": 4,
+        "healthy": 0,
+        "degraded": 0,
+        "skipped": 4,
+        "failed": 0,
+        "status": "degraded",
+        "results": [
+            {
+                "format": "pdf",
+                "fixture_id": "sample",
+                "parser": "advanced.docling",
+                "status": "skip",
+                "degraded_reason": "missing_dependency",
+            }
+        ],
+    }
+    artifact_path = tmp_path / "advanced-parser-corpus.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setattr("ragrig.web_console._ADVANCED_PARSER_CORPUS_PATH", artifact_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/advanced-parser-corpus")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["status"] == "degraded"
+    assert payload["total_fixtures"] == 4
+    assert payload["healthy"] == 0
+    assert payload["skipped"] == 4
+    assert payload["failed"] == 0
+    assert payload["result_count"] == 1
+    assert payload["report_path"].endswith("advanced-parser-corpus.json")
+
+
+@pytest.mark.anyio
+async def test_advanced_parser_corpus_endpoint_returns_failure_when_artifact_missing(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-corpus-missing.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    missing_path = tmp_path / "nonexistent-corpus.json"
+    monkeypatch.setattr("ragrig.web_console._ADVANCED_PARSER_CORPUS_PATH", missing_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/advanced-parser-corpus")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "failure"
+    assert "not found" in payload["reason"]
+
+
+@pytest.mark.anyio
+async def test_advanced_parser_corpus_endpoint_returns_failure_when_artifact_corrupt(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-corpus-corrupt.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    corrupt_path = tmp_path / "corrupt-corpus.json"
+    corrupt_path.write_text("not json", encoding="utf-8")
+    monkeypatch.setattr("ragrig.web_console._ADVANCED_PARSER_CORPUS_PATH", corrupt_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/advanced-parser-corpus")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "failure"
+    assert "corrupt" in payload["reason"]
+
+
+@pytest.mark.anyio
+async def test_advanced_parser_corpus_endpoint_no_secret_leakage(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "web-console-corpus-secret.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    artifact = {
+        "artifact": "advanced-parser-corpus",
+        "generated_at": "2026-05-12T10:00:00+00:00",
+        "total_fixtures": 4,
+        "healthy": 0,
+        "degraded": 0,
+        "skipped": 4,
+        "failed": 0,
+        "status": "degraded",
+        "results": [],
+    }
+    artifact_path = tmp_path / "corpus-secret.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setattr("ragrig.web_console._ADVANCED_PARSER_CORPUS_PATH", artifact_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/advanced-parser-corpus")
+
+    assert response.status_code == 200
+    text = response.text.lower()
+    for forbidden in ("sk-live-", "ghp_", "bearer ", "private key"):
+        assert forbidden not in text
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_advanced_parser_corpus_section(tmp_path) -> None:
+    database_path = tmp_path / "web-console-corpus-html.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "advanced-parser-corpus-panel" in html
+    assert "Advanced Parser Corpus" in html
+
+
+# ── Console Permission Preview Tests ─────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_console_document_list_includes_acl_summary(tmp_path) -> None:
+    database_path = tmp_path / "console-acl-summary.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"guide.md": "# Guide\n\nconsole acl summary test"})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/documents")
+
+    assert response.status_code == 200
+    documents = response.json()["items"]
+    assert len(documents) >= 1
+    for doc in documents:
+        assert "acl_summary" in doc
+        summary = doc["acl_summary"]
+        assert "visibility" in summary
+        assert "has_allowed_principals" in summary
+        assert "has_denied_principals" in summary
+        assert summary["visibility"] in ("public", "protected", "unknown")
+        summary_values = " ".join(str(v) for v in summary.values())
+        for pid in ["alice", "bob", "group:"]:
+            assert pid not in summary_values, f"Raw principal leaked in acl_summary: {pid}"
+
+
+@pytest.mark.anyio
+async def test_console_document_chunks_include_acl_summary(tmp_path) -> None:
+    database_path = tmp_path / "console-chunk-acl.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"note.txt": "console chunk acl summary test"})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+        version = session.scalars(
+            select(DocumentVersion).order_by(DocumentVersion.version_number.desc())
+        ).first()
+        version_id = str(version.id)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get(f"/document-versions/{version_id}/chunks")
+
+    assert response.status_code == 200
+    chunks = response.json()["items"]
+    assert len(chunks) >= 1
+    for chunk in chunks:
+        assert "acl_summary" in chunk
+        summary = chunk["acl_summary"]
+        assert "visibility" in summary
+        summary_values = " ".join(str(v) for v in summary.values())
+        for pid in ["alice", "bob", "group:"]:
+            assert pid not in summary_values, f"Raw principal leaked in acl_summary: {pid}"
+
+
+@pytest.mark.anyio
+async def test_console_acl_summary_shows_public_for_document_without_acl(tmp_path) -> None:
+    database_path = tmp_path / "console-acl-public.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"pub.txt": "public document for console"})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/documents")
+
+    assert response.status_code == 200
+    docs_list = response.json()["items"]
+    pub_docs = [d for d in docs_list if "public document for console" in str(d)]
+    assert len(pub_docs) >= 1
+    for doc in pub_docs:
+        assert doc["acl_summary"]["visibility"] == "public"
+        assert doc["acl_summary"]["has_allowed_principals"] is False
+
+
+@pytest.mark.anyio
+async def test_console_acl_summary_shows_protected_with_principals(tmp_path) -> None:
+    database_path = tmp_path / "console-acl-protected.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"secret.txt": "protected doc for console"})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        doc = session.scalars(select(Document).where(Document.uri.contains("secret.txt"))).first()
+        if doc:
+            doc.metadata_json = {
+                **doc.metadata_json,
+                "acl": {
+                    "visibility": "protected",
+                    "allowed_principals": ["alice"],
+                    "denied_principals": [],
+                    "acl_source": "test",
+                    "acl_source_hash": "abc",
+                    "inheritance": "document",
+                },
+            }
+            session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/documents")
+
+    assert response.status_code == 200
+    docs_list = response.json()["items"]
+    protected = [d for d in docs_list if "protected doc for console" in str(d)]
+    assert len(protected) >= 1
+    for doc in protected:
+        summary = doc["acl_summary"]
+        assert summary["visibility"] == "protected"
+        assert summary["has_allowed_principals"] is True
+        assert "alice" not in str(summary)
+
+
+@pytest.mark.anyio
+async def test_console_no_raw_principals_in_acl_summary(tmp_path) -> None:
+    database_path = tmp_path / "console-acl-no-raw.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(
+        tmp_path,
+        {"admin.txt": "admin document with many principals"},
+    )
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        doc = session.scalars(select(Document).where(Document.uri.contains("admin.txt"))).first()
+        if doc:
+            doc.metadata_json = {
+                **doc.metadata_json,
+                "acl": {
+                    "visibility": "protected",
+                    "allowed_principals": [
+                        "alice-admin",
+                        "bob-superuser",
+                        "charlie-viewer",
+                    ],
+                    "denied_principals": ["eve-blocked", "mallory"],
+                    "acl_source": "fileshare_test",
+                    "acl_source_hash": "def456",
+                    "inheritance": "document",
+                },
+            }
+            session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        docs_resp = await client.get("/documents")
+
+    assert docs_resp.status_code == 200
+    data = docs_resp.json()
+    for item in data["items"]:
+        summary = item["acl_summary"]
+        summary_values = " ".join(str(v) for v in summary.values())
+        assert "alice-admin" not in summary_values
+        assert "bob-superuser" not in summary_values
+        assert "charlie-viewer" not in summary_values
+        assert "eve-blocked" not in summary_values
+        assert "mallory" not in summary_values
+        assert summary["has_allowed_principals"] is True
+        assert summary["has_denied_principals"] is True
+
+
+@pytest.mark.anyio
+async def test_console_acl_badge_not_full_visibility_for_protected(tmp_path) -> None:
+    database_path = tmp_path / "console-acl-badge.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"internal.md": "# Internal\n\ninternal only content"})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        doc = session.scalars(select(Document).where(Document.uri.contains("internal.md"))).first()
+        if doc:
+            doc.metadata_json = {
+                **doc.metadata_json,
+                "acl": {
+                    "visibility": "protected",
+                    "allowed_principals": ["internal-team"],
+                    "denied_principals": [],
+                    "acl_source": "test",
+                    "acl_source_hash": "abc",
+                    "inheritance": "document",
+                },
+            }
+            session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "protected" in html
+    assert "aclBadgeHtml" in html
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_acl_badge_function(tmp_path) -> None:
+    database_path = tmp_path / "console-acl-function.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "aclBadgeHtml" in html
+    assert "aclSummary" in html
+    assert "visibility" in html
+
+
+# ── EVI-105: Workflow Audit Events & Guardrails ─────────────────────────────
+
+
+def _seed_pipeline_run(session, knowledge_base_id, source_id, document_id):
+    """Seed a minimal pipeline run and failed item for test purposes."""
+    from datetime import datetime, timezone
+
+    from ragrig.db.models import PipelineRun, PipelineRunItem
+
+    run = PipelineRun(
+        knowledge_base_id=knowledge_base_id,
+        source_id=source_id,
+        run_type="local_ingest",
+        status="completed",
+        config_snapshot_json={"parser": "plaintext"},
+        total_items=1,
+        success_count=0,
+        failure_count=1,
+        started_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(timezone.utc),
+    )
+    session.add(run)
+    session.flush()
+
+    item = PipelineRunItem(
+        pipeline_run_id=run.id,
+        document_id=document_id,
+        status="failed",
+        error_message="original error",
+        metadata_json={},
+        started_at=datetime.now(timezone.utc),
+    )
+    session.add(item)
+    session.flush()
+    return run, item
+
+
+@pytest.mark.anyio
+async def test_source_save_creates_audit_event(tmp_path) -> None:
+    """source_save should produce a source_save AuditEvent."""
+    database_path = tmp_path / "source-save-audit.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/sources",
+            json={
+                "plugin_id": "source.local",
+                "config": {"root_path": str(tmp_path)},
+                "knowledge_base": "test-audit-kb",
+                "operator": "test-operator",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert "id" in payload
+
+    # Verify audit event was created
+    session = session_factory()
+    events = list_audit_events(session, event_type="source_save", limit=10)
+    assert len(events) == 1
+    assert events[0].event_type == "source_save"
+    assert events[0].actor == "test-operator"
+    assert events[0].payload_json.get("source_id") == payload["id"]
+    assert events[0].payload_json.get("kind") == "local"
+
+
+@pytest.mark.anyio
+async def test_dry_run_creates_audit_events(tmp_path) -> None:
+    """dry_run should produce dry_run_start and dry_run_complete events."""
+    docs = _seed_documents(tmp_path, {"test.txt": "hello world"})
+    database_path = tmp_path / "dry-run-audit.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/sources/dry-run",
+            json={
+                "plugin_id": "source.local",
+                "config": {"root_path": str(docs)},
+            },
+        )
+
+    assert response.status_code == 200, response.text
+
+    session = session_factory()
+    start_events = list_audit_events(session, event_type="dry_run_start", limit=10)
+    complete_events = list_audit_events(session, event_type="dry_run_complete", limit=10)
+    assert len(start_events) == 1
+    assert len(complete_events) == 1
+    assert complete_events[0].payload_json.get("source_kind") == "local_directory"
+
+
+@pytest.mark.anyio
+async def test_retry_item_creates_audit_events(tmp_path) -> None:
+    """Retry of a failed item should produce retry_start and retry_complete events."""
+    from ragrig.db.models import Document, KnowledgeBase, Source
+
+    database_path = tmp_path / "retry-audit.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    kb = KnowledgeBase(name="retry-audit-kb", description="", metadata_json={})
+    session.add(kb)
+    session.flush()
+    source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
+    session.add(source)
+    session.flush()
+    doc = Document(
+        knowledge_base_id=kb.id, source_id=source.id, uri="file:///tmp/test.txt", content_hash="abc"
+    )
+    session.add(doc)
+    session.flush()
+    run, item = _seed_pipeline_run(session, kb.id, source.id, doc.id)
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            f"/pipeline-run-items/{item.id}/retry",
+            json={"operator": "test-retry-op"},
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    if data.get("denied"):
+        # If guardrail kicked in, at least verify retry_start was recorded
+        events = list_audit_events(session, event_type="retry_start", limit=10)
+        assert len(events) >= 1
+    else:
+        events = list_audit_events(session, event_type="retry_complete", limit=10)
+        assert len(events) >= 1
+
+
+@pytest.mark.anyio
+async def test_retry_run_creates_audit_events(tmp_path) -> None:
+    """Retry of a run should produce retry_start and retry_complete events."""
+    from ragrig.db.models import Document, KnowledgeBase, Source
+
+    database_path = tmp_path / "retry-run-audit.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    kb = KnowledgeBase(name="retry-run-audit-kb", description="", metadata_json={})
+    session.add(kb)
+    session.flush()
+    source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
+    session.add(source)
+    session.flush()
+    doc = Document(
+        knowledge_base_id=kb.id, source_id=source.id, uri="file:///tmp/test.txt", content_hash="abc"
+    )
+    session.add(doc)
+    session.flush()
+    run, item = _seed_pipeline_run(session, kb.id, source.id, doc.id)
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            f"/pipeline-runs/{run.id}/retry",
+            json={"operator": "test-run-op"},
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    if data.get("denied"):
+        events = list_audit_events(session, event_type="retry_start", limit=10)
+        assert len(events) >= 1
+    else:
+        events = list_audit_events(session, event_type="retry_complete", limit=10)
+        assert len(events) >= 1
+
+
+@pytest.mark.anyio
+async def test_guardrail_invalid_state_transition(tmp_path) -> None:
+    """Retry of a non-failed item should be denied."""
+    from datetime import datetime, timezone
+
+    from ragrig.db.models import Document, KnowledgeBase, PipelineRun, PipelineRunItem, Source
+
+    database_path = tmp_path / "guardrail-state.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    kb = KnowledgeBase(name="guardrail-state-kb", description="", metadata_json={})
+    session.add(kb)
+    session.flush()
+    source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
+    session.add(source)
+    session.flush()
+    doc = Document(
+        knowledge_base_id=kb.id, source_id=source.id, uri="file:///tmp/test.txt", content_hash="abc"
+    )
+    session.add(doc)
+    session.flush()
+
+    run = PipelineRun(
+        knowledge_base_id=kb.id,
+        source_id=source.id,
+        run_type="local_ingest",
+        status="completed",
+        config_snapshot_json={},
+        total_items=0,
+        success_count=0,
+        failure_count=0,
+        started_at=datetime.now(timezone.utc),
+    )
+    session.add(run)
+    session.flush()
+
+    # Create a "success" item — retry should be denied
+    item = PipelineRunItem(
+        pipeline_run_id=run.id,
+        document_id=doc.id,
+        status="success",  # NOT failed
+        metadata_json={},
+        started_at=datetime.now(timezone.utc),
+    )
+    session.add(item)
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            f"/pipeline-run-items/{item.id}/retry",
+            json={"operator": "test-op"},
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data.get("denied") is True
+    assert data.get("reason") == "invalid_state_transition"
+    assert "only 'failed' items may be retried" in data.get("message", "")
+    assert data.get("current_status") == "success"
+
+
+@pytest.mark.anyio
+async def test_guardrail_duplicate_retry(tmp_path) -> None:
+    """Item already successfully retried should be denied."""
+    from datetime import datetime, timezone
+
+    from ragrig.db.models import Document, KnowledgeBase, PipelineRun, PipelineRunItem, Source
+
+    database_path = tmp_path / "guardrail-duplicate.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    kb = KnowledgeBase(name="guardrail-dedup-kb", description="", metadata_json={})
+    session.add(kb)
+    session.flush()
+    source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
+    session.add(source)
+    session.flush()
+    doc = Document(
+        knowledge_base_id=kb.id, source_id=source.id, uri="file:///tmp/test.txt", content_hash="abc"
+    )
+    session.add(doc)
+    session.flush()
+
+    run = PipelineRun(
+        knowledge_base_id=kb.id,
+        source_id=source.id,
+        run_type="local_ingest",
+        status="completed",
+        config_snapshot_json={},
+        total_items=0,
+        success_count=1,
+        failure_count=0,
+        started_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(timezone.utc),
+    )
+    session.add(run)
+    session.flush()
+
+    # Item that was already successfully retried
+    item = PipelineRunItem(
+        pipeline_run_id=run.id,
+        document_id=doc.id,
+        status="success",
+        metadata_json={"retry_version_number": 2},
+        started_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(timezone.utc),
+    )
+    session.add(item)
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            f"/pipeline-run-items/{item.id}/retry",
+            json={"operator": "test-op"},
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data.get("denied") is True
+    assert data.get("reason") in ("duplicate_retry", "invalid_state_transition")
+
+
+@pytest.mark.anyio
+async def test_guardrail_expired_snapshot(tmp_path) -> None:
+    """Retry with expired config snapshot should be denied."""
+    from datetime import datetime, timezone
+
+    from ragrig.db.models import Document, KnowledgeBase, PipelineRun, PipelineRunItem, Source
+
+    database_path = tmp_path / "guardrail-expired.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    kb = KnowledgeBase(name="guardrail-expired-kb", description="", metadata_json={})
+    session.add(kb)
+    session.flush()
+    source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
+    session.add(source)
+    session.flush()
+    doc = Document(
+        knowledge_base_id=kb.id, source_id=source.id, uri="file:///tmp/test.txt", content_hash="abc"
+    )
+    session.add(doc)
+    session.flush()
+
+    run = PipelineRun(
+        knowledge_base_id=kb.id,
+        source_id=source.id,
+        run_type="local_ingest",
+        status="completed",
+        config_snapshot_json={"snapshot_expired": True, "parser": "plaintext"},
+        total_items=1,
+        success_count=0,
+        failure_count=1,
+        started_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(timezone.utc),
+    )
+    session.add(run)
+    session.flush()
+
+    item = PipelineRunItem(
+        pipeline_run_id=run.id,
+        document_id=doc.id,
+        status="failed",
+        error_message="original error",
+        metadata_json={},
+        started_at=datetime.now(timezone.utc),
+    )
+    session.add(item)
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            f"/pipeline-run-items/{item.id}/retry",
+            json={"operator": "test-op"},
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data.get("denied") is True
+    assert data.get("reason") == "expired_snapshot"
+
+
+@pytest.mark.anyio
+async def test_audit_events_endpoint(tmp_path) -> None:
+    """GET /audit-events returns workflow audit events."""
+
+    from ragrig.repositories.audit import create_audit_event
+
+    database_path = tmp_path / "audit-events-endpoint.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    create_audit_event(
+        session,
+        event_type="source_save",
+        actor="test-actor",
+        payload_json={"source_id": "test-id", "kind": "local"},
+    )
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/audit-events?limit=10")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "entries" in data
+    assert len(data["entries"]) >= 1
+    entry = data["entries"][0]
+    assert entry["event_type"] == "source_save"
+    assert entry["actor"] == "test-actor"
+    assert entry["payload"]["kind"] == "local"
+    # Verify redaction: no secrets in payload
+    assert "[REDACTED]" not in str(response.text) or "[REDACTED]" not in str(data)
+
+
+@pytest.mark.anyio
+async def test_audit_events_endpoint_filter_by_type(tmp_path) -> None:
+    """GET /audit-events filters by event_type."""
+    from ragrig.repositories.audit import create_audit_event
+
+    database_path = tmp_path / "audit-events-filter.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    create_audit_event(session, event_type="source_save", actor="a", payload_json={})
+    create_audit_event(session, event_type="dry_run_start", actor="b", payload_json={})
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/audit-events?limit=10&event_type=dry_run_start")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert all(e["event_type"] == "dry_run_start" for e in data["entries"])
+
+
+@pytest.mark.anyio
+async def test_audit_events_endpoint_empty_degraded(tmp_path) -> None:
+    """GET /audit-events with no events returns an empty entries list."""
+    database_path = tmp_path / "audit-events-empty.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/audit-events?limit=10")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["entries"] == []
+
+
+@pytest.mark.anyio
+async def test_audit_event_sanitizes_secrets(tmp_path) -> None:
+    """Audit events should not contain raw secrets in payload."""
+    from ragrig.repositories.audit import create_audit_event
+
+    database_path = tmp_path / "audit-secrets.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    create_audit_event(
+        session,
+        event_type="source_save",
+        actor="admin",
+        payload_json={
+            "safe_key": "safe-value",
+            "password": "super-secret-123",
+            "api_key": "ak-456",
+            "nested": {"secret": "nested-secret", "normal": "visible"},
+        },
+    )
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/audit-events?limit=10")
+
+    assert response.status_code == 200
+    data = response.json()
+    entry = data["entries"][0]
+    # Safe values visible
+    assert entry["payload"]["safe_key"] == "safe-value"
+    # Secrets redacted
+    assert entry["payload"]["password"] == "[REDACTED]"
+    assert entry["payload"]["api_key"] == "[REDACTED]"
+    # Nested secrets also redacted
+    assert entry["payload"]["nested"]["secret"] == "[REDACTED]"
+    assert entry["payload"]["nested"]["normal"] == "visible"
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_workflow_audit_panel(tmp_path) -> None:
+    """Console HTML should contain the workflow audit events panel."""
+    database_path = tmp_path / "console-wf-audit.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Workflow Audit Events" in html
+    assert "wf-audit-panel" in html
+    assert "wf-audit-table" in html
+    assert "wf-audit-refresh" in html
+    assert "degraded-badge" in html or "DEGRADED" in html

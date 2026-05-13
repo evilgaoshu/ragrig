@@ -34,6 +34,11 @@ DEFAULT_MANIFEST_PATH = Path("docs/benchmarks/retrieval-benchmark-baseline.manif
 SCHEMA_VERSION = "1.0"
 
 
+def _iter_fixture_files(fixture_root: Path) -> list[Path]:
+    """Return fixture files in deterministic order for identity hashing."""
+    return sorted(path for path in fixture_root.rglob("*") if path.is_file())
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Refresh the retrieval benchmark baseline from fixture data."
@@ -79,19 +84,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _compute_fixture_id(fixture_root: Path) -> str:
-    """Compute a stable fixture identifier from the fixture directory."""
+    """Compute a stable fixture identifier from fixture file names and bytes."""
     if not fixture_root.exists():
-        return hashlib.sha256(str(fixture_root).encode()).hexdigest()[:16]
+        return hashlib.sha256(b"missing-fixture-root").hexdigest()[:16]
 
     hasher = hashlib.sha256()
-    hasher.update(str(fixture_root.resolve()).encode())
+    hasher.update(b"fixture-v2")
 
-    files = sorted(fixture_root.rglob("*"))
-    for f in files:
-        if f.is_file():
-            rel = f.relative_to(fixture_root).as_posix()
-            hasher.update(rel.encode())
-            hasher.update(str(f.stat().st_size).encode())
+    for fixture_file in _iter_fixture_files(fixture_root):
+        rel = fixture_file.relative_to(fixture_root).as_posix()
+        hasher.update(rel.encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(hashlib.sha256(fixture_file.read_bytes()).digest())
 
     return hasher.hexdigest()[:16]
 

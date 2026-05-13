@@ -77,6 +77,12 @@ jobs:
       - name: Generate sanitizer coverage summary
         run: make sanitizer-coverage-summary
 
+      - name: Generate retrieval benchmark integrity artifact
+        run: make retrieval-benchmark-integrity-artifact
+
+      - name: Generate retrieval benchmark integrity summary
+        run: make retrieval-benchmark-integrity-summary
+
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
         with:
@@ -88,6 +94,14 @@ jobs:
         with:
           name: sanitizer-coverage-summary
           path: docs/operations/artifacts/sanitizer-coverage-summary.json
+
+      - name: Upload retrieval benchmark integrity summary
+        uses: actions/upload-artifact@v7
+        with:
+          name: retrieval-benchmark-integrity-summary
+          path: |
+            docs/operations/artifacts/retrieval-benchmark-integrity_summary.json
+            docs/operations/artifacts/retrieval-benchmark-integrity_summary.md
 
       - name: Generate latest evaluation report
         run: make eval-local --output evaluation_runs/latest-ci-report.json || true
@@ -236,6 +250,37 @@ jobs:
           else
             echo "Drift diff artifact not generated." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Generate drift history
+        run: |
+          cd head
+          uv run python -m scripts.sanitizer_drift_history \
+            --artifacts-dir docs/operations/artifacts \
+            --output docs/operations/artifacts/sanitizer-drift-history.json \
+            --markdown-output docs/operations/artifacts/sanitizer-drift-history.md \
+            --stdout || true
+
+      - name: Generate drift history summary
+        run: |
+          cd head
+          uv run python -m scripts.sanitizer_drift_history_summary \
+            --history docs/operations/artifacts/sanitizer-drift-history.json \
+            --output docs/operations/artifacts/sanitizer-drift-history-summary.md \
+            --json \
+            --stdout || true
+        continue-on-error: true
+
+      - name: Upload drift history artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sanitizer-drift-history
+          path: head/docs/operations/artifacts/sanitizer-drift-history.*
+
+      - name: Upload drift history summary artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sanitizer-drift-history-summary
+          path: head/docs/operations/artifacts/sanitizer-drift-history-summary.*
 
   supply-chain:
     name: RAGRig CI / supply-chain

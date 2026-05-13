@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,8 @@ from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
 
 from ragrig import __version__
-from ragrig.acl import acl_summary_from_metadata
+from ragrig.acl import AclMetadata, acl_summary_from_metadata, normalize_principal_ids
+from ragrig.answer.diagnostics import get_diagnostics_summary as _get_answer_diagnostics_summary
 from ragrig.config import Settings
 from ragrig.db.models import (
     Chunk,
@@ -27,8 +29,10 @@ from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
 from ragrig.providers import get_provider_registry
 from ragrig.providers.model_catalog import serialize_provider_catalog
+from ragrig.repositories.audit import create_audit_event
 from ragrig.retrieval_benchmark_integrity import get_integrity_summary as _get_integrity_summary
 from ragrig.vectorstore.base import VectorBackendHealth
+from ragrig.workflows.ingestion_dag import dag_snapshot, resume_ingestion_dag
 
 
 def _plugin_discovery_by_id() -> dict[str, dict[str, Any]]:
@@ -211,6 +215,64 @@ def list_knowledge_bases(session: Session, *, settings: Settings) -> list[dict[s
     return items
 
 
+def build_permission_preview(
+    session: Session,
+    *,
+    principal_ids: list[str] | None,
+) -> dict[str, Any]:
+    principals = normalize_principal_ids(principal_ids)
+    degraded = len(principals) == 0
+    latest_versions = _latest_versions_subquery()
+    rows = session.execute(
+        select(KnowledgeBase, Document, DocumentVersion)
+        .join(Document, Document.knowledge_base_id == KnowledgeBase.id)
+        .join(latest_versions, latest_versions.c.document_id == Document.id)
+        .join(DocumentVersion, DocumentVersion.id == latest_versions.c.document_version_id)
+        .order_by(KnowledgeBase.name, Document.uri)
+    ).all()
+
+    kb_map: dict[str, dict[str, Any]] = {}
+    for knowledge_base, document, version in rows:
+        doc_acl = AclMetadata.from_metadata(document.metadata_json or version.metadata_json)
+        visible = doc_acl.permits(principals if principals else None)
+        reason = doc_acl.decision_reason(principals if principals else None)
+        kb_entry = kb_map.setdefault(
+            str(knowledge_base.id),
+            {
+                "id": str(knowledge_base.id),
+                "name": knowledge_base.name,
+                "visible_documents": 0,
+                "filtered_documents": 0,
+                "documents": [],
+            },
+        )
+        chunk_count = session.scalar(
+            select(func.count(Chunk.id)).where(Chunk.document_version_id == version.id)
+        )
+        kb_entry["documents"].append(
+            {
+                "id": str(document.id),
+                "uri": document.uri,
+                "visible": visible,
+                "reason": reason,
+                "chunk_count": chunk_count or 0,
+                "acl_summary": doc_acl.summary(),
+            }
+        )
+        if visible:
+            kb_entry["visible_documents"] += 1
+        else:
+            kb_entry["filtered_documents"] += 1
+
+    return {
+        "principal_context": "present" if principals else "missing",
+        "principal_count": len(principals),
+        "degraded": degraded,
+        "degraded_reason": "missing_principal_context" if degraded else "",
+        "knowledge_bases": list(kb_map.values()),
+    }
+
+
 def list_sources(session: Session) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     statement = (
@@ -278,6 +340,7 @@ def list_pipeline_runs(session: Session) -> list[dict[str, Any]]:
                 "config_snapshot": run.config_snapshot_json,
                 "started_at": _isoformat(run.started_at),
                 "finished_at": _isoformat(run.finished_at),
+                "dag": dag_snapshot(run),
             }
         )
     return items
@@ -315,6 +378,7 @@ def get_pipeline_run_detail(session: Session, pipeline_run_id: str) -> dict[str,
         "config_snapshot": run.config_snapshot_json,
         "started_at": _isoformat(run.started_at),
         "finished_at": _isoformat(run.finished_at),
+        "dag": dag_snapshot(run),
     }
 
 
@@ -1112,7 +1176,85 @@ def get_understanding_export_diff() -> dict[str, Any]:
     return summary
 
 
-# ── Retrieval Benchmark ────────────────────────────────────────────────────
+# ── Sanitizer Drift History Summary ────────────────────────────────────────
+
+_SANITIZER_DRIFT_HISTORY_SUMMARY_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "operations"
+    / "artifacts"
+    / "sanitizer-drift-history-summary.md"
+)
+
+
+def get_sanitizer_drift_history_summary() -> dict[str, Any]:
+    """Return the sanitizer drift history summary for Web Console display.
+
+    Reads the summary artifact from docs/operations/artifacts/ and returns
+    a lightweight dict safe for browser rendering.  Never includes raw
+    secret fragments.  Reports degraded status for missing/corrupt artifacts.
+    """
+    import json as _json
+
+    summary_md = _SANITIZER_DRIFT_HISTORY_SUMMARY_PATH
+    summary_json = summary_md.with_suffix(".json")
+
+    def _relative(p: Path) -> str:
+        try:
+            return str(p.relative_to(Path(__file__).resolve().parents[2]))
+        except ValueError:
+            return str(p)
+
+    if not summary_json.exists() and not summary_md.exists():
+        return {
+            "available": False,
+            "status": "no_history",
+            "reason": "summary artifact not found at " + _relative(summary_md),
+            "summary_path": _relative(summary_md),
+        }
+
+    result: dict[str, Any] = {
+        "available": True,
+        "status": "success",
+        "summary_path": _relative(summary_md),
+        "summary_json_path": _relative(summary_json) if summary_json.exists() else None,
+    }
+
+    # Load JSON summary if available
+    if summary_json.exists():
+        try:
+            summary = _json.loads(summary_json.read_text(encoding="utf-8"))
+            result.update(summary)
+        except (OSError, ValueError, _json.JSONDecodeError) as exc:
+            result["status"] = "failure"
+            result["reason"] = f"corrupt summary JSON: {exc}"
+            result["latest_risk"] = "unknown"
+            result["changed_parser_count"] = 0
+            result["degraded_reports_count"] = 0
+
+    # Load markdown summary path
+    if summary_md.exists():
+        result["summary_md_exists"] = True
+    else:
+        result["summary_md_exists"] = False
+
+    # Ensure consistent fields missing/corrupt are set
+    result.setdefault("latest_risk", "unknown")
+    result.setdefault("changed_parser_count", 0)
+    result.setdefault("degraded_reports_count", 0)
+    result.setdefault("base_golden_hash", "")
+    result.setdefault("head_golden_hash", "")
+    result.setdefault("valid_report_count", 0)
+    result.setdefault("total_report_count", 0)
+    result.setdefault("generated_at", "")
+
+    # Safety audit
+    _assert_console_no_secrets(result, "sanitizer-drift-history-summary-console")
+
+    return result
+
+
+# ── Understanding Export Diff ──────────────────────────────────────────────
 
 _BENCHMARK_ARTIFACT_PATH = (
     Path(__file__).resolve().parents[2]
@@ -1186,3 +1328,1316 @@ def get_retrieval_benchmark_integrity() -> dict[str, Any]:
     Never includes raw secret fragments.
     """
     return _get_integrity_summary()
+
+
+# ── Answer Live Smoke Diagnostics ──────────────────────────────────────────
+
+
+def get_answer_live_smoke() -> dict[str, Any]:
+    """Return the latest answer live smoke diagnostics for Web Console display.
+
+    Reads the artifact at docs/operations/artifacts/answer-live-smoke.json.
+    Returns a lightweight summary with provider, model, status, reason,
+    citation count, timing, and artifact path.
+
+    Missing, corrupt, or stale artifacts are reported as degraded/failure —
+    never as healthy.
+
+    Never includes raw secret fragments.
+    """
+    summary = _get_answer_diagnostics_summary()
+    summary = _redact_console_output(summary)
+    _assert_console_no_secrets(summary, "answer-live-smoke-console")
+    return summary
+
+
+# ── Sanitizer Contract Matrix ───────────────────────────────────────────────
+
+_SANITIZER_CONTRACT_MATRIX_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "operations"
+    / "artifacts"
+    / "sanitizer-contract-matrix.json"
+)
+
+
+def get_sanitizer_contract_status() -> dict[str, Any]:
+    """Return the latest sanitizer contract matrix status for Web Console display.
+
+    Reads the artifact at docs/operations/artifacts/sanitizer-contract-matrix.json.
+    Returns a lightweight summary safe for browser rendering.
+
+    Missing, corrupt, or schema-incompatible artifacts are reported as
+    degraded/failure — never as pass.
+
+    Never includes raw secret fragments.
+    """
+    import json as _json
+
+    artifact_path = _SANITIZER_CONTRACT_MATRIX_PATH
+
+    def _artifact_relative() -> str:
+        try:
+            return str(artifact_path.relative_to(Path(__file__).resolve().parents[2]))
+        except ValueError:
+            return str(artifact_path)
+
+    if not artifact_path.exists():
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": "artifact not found",
+            "artifact_path": _artifact_relative(),
+        }
+
+    try:
+        raw = _json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, _json.JSONDecodeError) as exc:
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": f"corrupt artifact: {exc}",
+            "artifact_path": _artifact_relative(),
+        }
+
+    if raw.get("artifact") != "sanitizer-contract-matrix":
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": "invalid artifact type",
+            "artifact_path": _artifact_relative(),
+        }
+
+    status = raw.get("status", "unknown")
+    exit_code = raw.get("exit_code", 1)
+    generated_at = raw.get("generated_at", "")
+    totals = raw.get("totals", {})
+    registered_callsite_count = totals.get("registered", 0)
+    matrix = raw.get("matrix", [])
+
+    summary: dict[str, Any] = {
+        "available": True,
+        "status": status,
+        "exit_code": exit_code,
+        "registered_callsite_count": registered_callsite_count,
+        "report_path": _artifact_relative(),
+        "generated_at": generated_at,
+        "unregistered_count": totals.get("unregistered", 0),
+        "summary_fields_ok": totals.get("summary_fields_ok", False),
+        "no_duplicate_impls": totals.get("no_duplicate_impls", False),
+        "fixture_ok": totals.get("fixture_ok", False),
+        "total_callsites": len(matrix),
+    }
+
+    _assert_console_no_secrets(summary, "sanitizer-contract-matrix-console")
+    return summary
+
+
+# ── Advanced Parser Corpus ──────────────────────────────────────────────────
+
+
+_ADVANCED_PARSER_CORPUS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "operations"
+    / "artifacts"
+    / "advanced-parser-corpus.json"
+)
+
+
+def get_advanced_parser_corpus() -> dict[str, Any]:
+    import json as _json
+
+    artifact_path = _ADVANCED_PARSER_CORPUS_PATH
+
+    def _artifact_relative() -> str:
+        try:
+            return str(artifact_path.relative_to(Path(__file__).resolve().parents[2]))
+        except ValueError:
+            return str(artifact_path)
+
+    if not artifact_path.exists():
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": "artifact not found",
+            "artifact_path": _artifact_relative(),
+        }
+
+    try:
+        raw = _json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, _json.JSONDecodeError) as exc:
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": f"corrupt artifact: {exc}",
+            "artifact_path": _artifact_relative(),
+        }
+
+    if raw.get("artifact") != "advanced-parser-corpus":
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": "invalid artifact type",
+            "artifact_path": _artifact_relative(),
+        }
+
+    status = raw.get("status", "unknown")
+    results = raw.get("results", [])
+
+    summary: dict[str, Any] = {
+        "available": True,
+        "status": status,
+        "total_fixtures": raw.get("total_fixtures", 0),
+        "healthy": raw.get("healthy", 0),
+        "degraded": raw.get("degraded", 0),
+        "skipped": raw.get("skipped", 0),
+        "failed": raw.get("failed", 0),
+        "result_count": len(results),
+        "report_path": _artifact_relative(),
+        "generated_at": raw.get("generated_at", ""),
+        "results": [
+            {
+                "format": r.get("format", ""),
+                "fixture_id": r.get("fixture_id", ""),
+                "parser": r.get("parser", ""),
+                "status": r.get("status", ""),
+                "degraded_reason": r.get("degraded_reason"),
+            }
+            for r in results
+        ],
+    }
+
+    _assert_console_no_secrets(summary, "advanced-parser-corpus-console")
+    return summary
+
+
+# ── Source Config Validation ────────────────────────────────────────────────
+
+_SOURCE_SECRET_FIELDS = {
+    "source.local": [],
+    "source.s3": ["access_key", "secret_key", "session_token"],
+    "source.fileshare": ["username", "password", "private_key"],
+}
+
+
+def validate_source_config(
+    plugin_id: str, config: dict[str, Any], env: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """Validate a source config draft with dependency/credential checks.
+
+    Returns a status dict::
+      {"valid": True, "status": "ready", ...}
+      {"valid": True, "status": "degraded", "reason": "...", ...}
+      {"valid": False, "status": "disabled", "reason": "...", ...}
+    """
+    if plugin_id not in ("source.local", "source.s3", "source.fileshare"):
+        return {
+            "valid": False,
+            "status": "disabled",
+            "reason": f"unsupported source plugin: {plugin_id}",
+        }
+
+    registry = get_plugin_registry()
+    discovery_by_id = {item["plugin_id"]: item for item in registry.list_discovery()}
+    discovery = discovery_by_id.get(plugin_id)
+    if discovery is None:
+        return {
+            "valid": False,
+            "status": "disabled",
+            "reason": f"plugin '{plugin_id}' is not registered",
+        }
+
+    raw_secret_paths = _find_raw_secret_values(config)
+    if raw_secret_paths:
+        return {
+            "valid": False,
+            "status": "disabled",
+            "reason": (
+                "raw secret-like values not accepted; "
+                f"use env:VARIABLE_NAME references for {', '.join(raw_secret_paths)}"
+            ),
+        }
+
+    # Dependency check
+    missing_deps = list(discovery.get("missing_dependencies", []))
+    dep_status = "ready"
+    dep_reason = None
+    if missing_deps:
+        dep_status = "degraded"
+        dep_reason = f"missing dependencies: {', '.join(missing_deps)}"
+
+    # Credential check (env refs)
+    env = env or {}
+    credential_issues = []
+    for field in _SOURCE_SECRET_FIELDS.get(plugin_id, []):
+        value = config.get(field) if isinstance(config, dict) else None
+        if isinstance(value, str) and value.startswith("env:"):
+            env_name = value.removeprefix("env:")
+            if env_name not in env or not env[env_name]:
+                credential_issues.append(f"{field}: env:{env_name} not set")
+
+    cred_status = "ready"
+    cred_reason = None
+    if credential_issues:
+        cred_status = "degraded"
+        cred_reason = f"unresolved credential refs: {'; '.join(credential_issues)}"
+
+    # Config validation
+    try:
+        validated = registry.validate_config(plugin_id, config)
+    except PluginConfigValidationError as exc:
+        return {
+            "valid": False,
+            "status": "disabled",
+            "reason": str(exc),
+        }
+
+    overall_status = "ready"
+    overall_reason = None
+    if dep_status != "ready" and cred_status != "ready":
+        overall_status = "disabled"
+        overall_reason = f"{dep_reason}; {cred_reason}"
+    elif dep_status != "ready":
+        overall_status = dep_status
+        overall_reason = dep_reason
+    elif cred_status != "ready":
+        overall_status = cred_status
+        overall_reason = cred_reason
+
+    return {
+        "valid": True,
+        "status": overall_status,
+        "reason": overall_reason,
+        "plugin_id": plugin_id,
+        "display_name": discovery.get("display_name"),
+        "config": validated,
+        "missing_dependencies": missing_deps,
+        "credential_issues": credential_issues,
+        "secret_requirements": discovery.get("secret_requirements", []),
+        "next_steps": _plugin_next_steps(discovery),
+    }
+
+
+# ── Dry-run source ingestion ────────────────────────────────────────────────
+
+
+@dataclass
+class DryRunFile:
+    path: str
+    status: str  # "discovered" | "skipped" | "failed"
+    reason: str | None = None
+    parser: str | None = None
+
+
+@dataclass
+class DryRunReport:
+    source_id: str | None
+    source_kind: str
+    total: int
+    discovered: list[DryRunFile]
+    skipped: list[DryRunFile]
+    failed: list[DryRunFile]
+    dry_run: bool = True
+
+
+def _dry_run_local_directory(
+    session: Session,
+    config: dict[str, Any],
+) -> DryRunReport:
+    from ragrig.ingestion.pipeline import _select_parser
+    from ragrig.ingestion.scanner import scan_paths
+
+    root_path = Path(str(config["root_path"]))
+    include_patterns = config.get("include_patterns")
+    exclude_patterns = config.get("exclude_patterns")
+    max_size = int(config.get("max_file_size_bytes", 10 * 1024 * 1024))
+
+    scan_result = scan_paths(
+        root_path=root_path,
+        include_patterns=include_patterns,
+        exclude_patterns=exclude_patterns,
+        max_file_size_bytes=max_size,
+    )
+
+    discovered: list[DryRunFile] = []
+    skipped: list[DryRunFile] = []
+    failed: list[DryRunFile] = []
+
+    for sk in scan_result.skipped:
+        skipped.append(DryRunFile(path=str(sk.path), status="skipped", reason=sk.reason))
+
+    for cand in scan_result.discovered:
+        try:
+            parser = _select_parser(cand.path)
+            _ = parser.parse(cand.path)
+            discovered.append(
+                DryRunFile(
+                    path=str(cand.path),
+                    status="discovered",
+                    parser=parser.__class__.__name__,
+                )
+            )
+        except Exception as exc:
+            failed.append(DryRunFile(path=str(cand.path), status="failed", reason=str(exc)))
+
+    return DryRunReport(
+        source_id=None,
+        source_kind="local_directory",
+        total=len(discovered) + len(skipped) + len(failed),
+        discovered=discovered,
+        skipped=skipped,
+        failed=failed,
+    )
+
+
+def _dry_run_s3_source(
+    session: Session,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+    client=None,
+) -> DryRunReport:
+    from ragrig.plugins.sources.s3.client import build_boto3_client
+    from ragrig.plugins.sources.s3.connector import _resolve_secrets
+    from ragrig.plugins.sources.s3.scanner import scan_objects
+
+    secrets = _resolve_secrets(config, env=env or {})
+    active_client = client or build_boto3_client({**config, **secrets.__dict__})
+
+    try:
+        scan_result = scan_objects(active_client, config=config)
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="s3",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[DryRunFile(path="s3://scan", status="failed", reason=str(exc))],
+        )
+
+    discovered: list[DryRunFile] = []
+    skipped: list[DryRunFile] = []
+    for sk in scan_result.skipped:
+        skipped.append(
+            DryRunFile(
+                path=sk.object_metadata.key,
+                status="skipped",
+                reason=sk.reason,
+            )
+        )
+    for cand in scan_result.discovered:
+        discovered.append(
+            DryRunFile(
+                path=cand.object_metadata.key,
+                status="discovered",
+                parser=f"s3:{cand.object_metadata.content_type or 'unknown'}",
+            )
+        )
+
+    return DryRunReport(
+        source_id=None,
+        source_kind="s3",
+        total=len(discovered) + len(skipped),
+        discovered=discovered,
+        skipped=skipped,
+        failed=[],
+    )
+
+
+def _dry_run_fileshare_source(
+    session: Session,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+) -> DryRunReport:
+    from ragrig.plugins.sources.fileshare.connector import (
+        _build_client,
+        _resolve_fileshare_secrets,
+    )
+    from ragrig.plugins.sources.fileshare.scanner import scan_files
+
+    try:
+        secrets = _resolve_fileshare_secrets(config, env=env or {})
+        client = _build_client(config, secrets)
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="fileshare",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[DryRunFile(path="fileshare://scan", status="failed", reason=str(exc))],
+        )
+
+    try:
+        scan_result = scan_files(client, config=config)
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="fileshare",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[DryRunFile(path="fileshare://scan", status="failed", reason=str(exc))],
+        )
+
+    discovered: list[DryRunFile] = []
+    skipped: list[DryRunFile] = []
+    for sk in scan_result.skipped:
+        skipped.append(DryRunFile(path=sk.path, status="skipped", reason=sk.reason))
+    for cand in scan_result.discovered:
+        discovered.append(DryRunFile(path=cand.path, status="discovered", parser=cand.content_type))
+
+    return DryRunReport(
+        source_id=None,
+        source_kind="fileshare",
+        total=len(discovered) + len(skipped),
+        discovered=discovered,
+        skipped=skipped,
+        failed=[],
+    )
+
+
+def _serialize_dry_run(report: DryRunReport) -> dict[str, Any]:
+    return {
+        "dry_run": True,
+        "source_kind": report.source_kind,
+        "total": report.total,
+        "discovered_count": len(report.discovered),
+        "skipped_count": len(report.skipped),
+        "failed_count": len(report.failed),
+        "discovered": [
+            {"path": f.path, "status": f.status, "parser": f.parser} for f in report.discovered
+        ],
+        "skipped": [{"path": f.path, "reason": f.reason} for f in report.skipped],
+        "failed": [{"path": f.path, "reason": f.reason} for f in report.failed],
+    }
+
+
+def dry_run_source(
+    session: Session,
+    plugin_id: str,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+    client=None,
+) -> dict[str, Any]:
+    """Run a dry-run ingestion scan for a source plugin.
+
+    Scans the source and returns candidate files without writing any
+    document_versions, chunks, or embeddings to the database.
+    """
+    registry = get_plugin_registry()
+    validated = registry.validate_config(plugin_id, config)
+
+    create_audit_event(
+        session,
+        event_type="dry_run_start",
+        payload_json=_safe_payload({"plugin_id": plugin_id}),
+    )
+    session.commit()
+
+    if plugin_id == "source.local":
+        report = _dry_run_local_directory(session, validated)
+    elif plugin_id == "source.s3":
+        report = _dry_run_s3_source(session, validated, env=env, client=client)
+    elif plugin_id == "source.fileshare":
+        report = _dry_run_fileshare_source(session, validated, env=env)
+    else:
+        create_audit_event(
+            session,
+            event_type="dry_run_complete",
+            payload_json={"plugin_id": plugin_id, "error": "unsupported source plugin"},
+        )
+        session.commit()
+        return {"dry_run": False, "error": f"unsupported source plugin: {plugin_id}"}
+
+    serialized = _serialize_dry_run(report)
+    create_audit_event(
+        session,
+        event_type="dry_run_complete",
+        payload_json=_safe_payload(
+            {
+                "plugin_id": plugin_id,
+                "source_kind": report.source_kind,
+                "total": report.total,
+                "discovered_count": len(report.discovered),
+                "skipped_count": len(report.skipped),
+                "failed_count": len(report.failed),
+            }
+        ),
+    )
+    session.commit()
+    return serialized
+
+
+# ── Source Config Save ──────────────────────────────────────────────────────
+
+
+def save_source_config(
+    session: Session,
+    *,
+    plugin_id: str,
+    config: dict[str, Any],
+    knowledge_base_name: str,
+    operator: str | None = None,
+) -> dict[str, Any]:
+    """Validate and save a source configuration.
+
+    Creates or updates a Source record with validated config.
+    Returns the source details.
+    """
+    registry = get_plugin_registry()
+    validated = registry.validate_config(plugin_id, config)
+
+    source_kind = plugin_id.removeprefix("source.")
+    if source_kind == "local":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _get_or_create_kb(session, knowledge_base_name)
+        root_path = Path(str(validated.get("root_path", "")))
+        source_uri = str(root_path.resolve()) if root_path else "local://unspecified"
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    elif source_kind == "s3":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _get_or_create_kb(session, knowledge_base_name)
+        bucket = str(validated.get("bucket", ""))
+        prefix = str(validated.get("prefix", ""))
+        source_uri = f"s3://{bucket}/{prefix}" if prefix else f"s3://{bucket}"
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    elif source_kind == "fileshare":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _get_or_create_kb(session, knowledge_base_name)
+        protocol = str(validated.get("protocol", "smb"))
+        host = str(validated.get("host", ""))
+        share = str(validated.get("share", ""))
+        source_uri = f"{protocol}://{host}/{share}"
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    else:
+        return {"error": f"unsupported source kind: {source_kind}"}
+
+    session.commit()
+
+    summary = _safe_payload(
+        {
+            "source_id": str(source.id),
+            "kind": source_kind,
+            "uri": source.uri,
+        }
+    )
+    create_audit_event(
+        session,
+        event_type="source_save",
+        actor=operator,
+        knowledge_base_id=kb.id,
+        payload_json=summary,
+    )
+    session.commit()
+
+    return {
+        "id": str(source.id),
+        "knowledge_base": knowledge_base_name,
+        "kind": source_kind,
+        "uri": source.uri,
+        "config": validated,
+        "created_at": _isoformat(source.created_at),
+        "updated_at": _isoformat(source.updated_at),
+    }
+
+
+def _check_retry_guardrails(
+    session: Session,
+    *,
+    item: PipelineRunItem,
+    run: PipelineRun,
+) -> dict[str, Any] | None:
+    """Check guardrails before allowing a retry.
+
+    Returns a deny response dict if a guardrail blocks the retry,
+    or None if the retry may proceed.
+    """
+    if item.status != "failed":
+        return {
+            "denied": True,
+            "reason": "invalid_state_transition",
+            "message": (
+                f"Cannot retry item with status '{item.status}';"
+                " only 'failed' items may be retried."
+            ),
+            "item_id": str(item.id),
+            "current_status": item.status,
+        }
+
+    # Check for existing successful retry
+    if (
+        item.metadata_json
+        and item.metadata_json.get("retry_version_number") is not None
+        and item.status == "success"
+    ):
+        return {
+            "denied": True,
+            "reason": "duplicate_retry",
+            "message": "Item has already been successfully retried.",
+            "item_id": str(item.id),
+        }
+
+    # Check concurrent retry (item already being retried in another session)
+    if item.metadata_json and item.metadata_json.get("retry_in_progress"):
+        return {
+            "denied": True,
+            "reason": "concurrent_retry",
+            "message": "Item retry is already in progress.",
+            "item_id": str(item.id),
+        }
+
+    # Check for expired config snapshot
+    snapshot = run.config_snapshot_json or {}
+    snapshot_age = None
+    if run.finished_at:
+        now = datetime.now(timezone.utc)
+        finished = run.finished_at
+        if finished.tzinfo is None:
+            finished = finished.replace(tzinfo=timezone.utc)
+        snapshot_age = (now - finished).total_seconds()
+    if snapshot.get("snapshot_expired"):
+        return {
+            "denied": True,
+            "reason": "expired_snapshot",
+            "message": "Config snapshot has been marked as expired.",
+            "item_id": str(item.id),
+            "run_id": str(run.id),
+        }
+    if snapshot_age is not None and snapshot_age > 86400:
+        return {
+            "denied": True,
+            "reason": "expired_snapshot",
+            "message": f"Config snapshot is too old ({snapshot_age:.0f}s > 86400s threshold).",
+            "item_id": str(item.id),
+            "run_id": str(run.id),
+            "snapshot_age_seconds": snapshot_age,
+        }
+
+    return None
+
+
+def _check_run_retry_guardrails(
+    session: Session,
+    *,
+    run: PipelineRun,
+) -> dict[str, Any] | None:
+    """Check guardrails before retrying all failed items in a run."""
+    failed_items = (
+        session.query(PipelineRunItem)
+        .filter(
+            PipelineRunItem.pipeline_run_id == run.id,
+            PipelineRunItem.status == "failed",
+        )
+        .all()
+    )
+
+    if not failed_items:
+        return None
+
+    snapshot = run.config_snapshot_json or {}
+    snapshot_age = None
+    if run.finished_at:
+        now = datetime.now(timezone.utc)
+        finished = run.finished_at
+        if finished.tzinfo is None:
+            finished = finished.replace(tzinfo=timezone.utc)
+        snapshot_age = (now - finished).total_seconds()
+    if snapshot.get("snapshot_expired"):
+        return {
+            "denied": True,
+            "reason": "expired_snapshot",
+            "message": "Config snapshot has been marked as expired.",
+            "run_id": str(run.id),
+        }
+    if snapshot_age is not None and snapshot_age > 86400:
+        return {
+            "denied": True,
+            "reason": "expired_snapshot",
+            "message": f"Config snapshot is too old ({snapshot_age:.0f}s > 86400s threshold).",
+            "run_id": str(run.id),
+            "snapshot_age_seconds": snapshot_age,
+        }
+
+    return None
+
+
+def _safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Redact sensitive keys from a payload dict.
+
+    Mirrors the pattern from ragrig.repositories.audit._safe_payload.
+    """
+    _forbidden_keys = {
+        "password",
+        "api_key",
+        "token",
+        "secret",
+        "raw_secret",
+        "private_key",
+        "access_key",
+        "session_token",
+    }
+    safe: dict[str, Any] = {}
+    for key, value in payload.items():
+        key_text = str(key)
+        if key_text.lower() in _forbidden_keys:
+            safe[key_text] = "[REDACTED]"
+        elif isinstance(value, dict):
+            safe[key_text] = _safe_payload(value)
+        elif isinstance(value, list):
+            safe[key_text] = [
+                _safe_payload(item) if isinstance(item, dict) else item for item in value[:50]
+            ]
+        elif isinstance(value, str) and len(value) > 240:
+            safe[key_text] = value[:237] + "..."
+        else:
+            safe[key_text] = value
+    return safe
+
+
+# ── Pipeline Run Item Inspect & Retry ───────────────────────────────────────
+
+
+def get_pipeline_run_item_detail(session: Session, item_id: str) -> dict[str, Any] | None:
+    """Return detail for a single pipeline run item."""
+    item_uuid = uuid.UUID(item_id)
+    row = session.execute(
+        select(PipelineRunItem, Document, PipelineRun)
+        .join(Document, Document.id == PipelineRunItem.document_id)
+        .join(PipelineRun, PipelineRun.id == PipelineRunItem.pipeline_run_id)
+        .where(PipelineRunItem.id == item_uuid)
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    item, document, run = row
+    return {
+        "id": str(item.id),
+        "pipeline_run_id": str(run.id),
+        "run_type": run.run_type,
+        "status": item.status,
+        "document_id": str(document.id),
+        "document_uri": document.uri,
+        "error_message": item.error_message,
+        "metadata": item.metadata_json,
+        "config_snapshot": run.config_snapshot_json,
+        "started_at": _isoformat(item.started_at),
+        "finished_at": _isoformat(item.finished_at),
+    }
+
+
+def retry_pipeline_run_item(
+    session: Session,
+    *,
+    item_id: str,
+    operator: str | None = None,
+) -> dict[str, Any] | None:
+    """Retry a single failed pipeline run item.
+
+    Re-processes the failed document using the same run's config snapshot.
+    Returns the new item status, or None if the item is not found.
+    """
+    item_uuid = uuid.UUID(item_id)
+    row = session.execute(
+        select(PipelineRunItem, PipelineRun, Document, Source, KnowledgeBase)
+        .join(PipelineRun, PipelineRun.id == PipelineRunItem.pipeline_run_id)
+        .join(Document, Document.id == PipelineRunItem.document_id)
+        .outerjoin(Source, Source.id == PipelineRun.source_id)
+        .join(KnowledgeBase, KnowledgeBase.id == PipelineRun.knowledge_base_id)
+        .where(PipelineRunItem.id == item_uuid)
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+
+    item, run, document, source, kb = row
+
+    # Guardrail check
+    guardrail = _check_retry_guardrails(session, item=item, run=run)
+    if guardrail is not None:
+        return {**guardrail, "retried": False}
+
+    create_audit_event(
+        session,
+        event_type="retry_start",
+        actor=operator,
+        knowledge_base_id=kb.id,
+        document_id=document.id,
+        run_id=run.id,
+        item_id=item.id,
+        payload_json={"document_uri": document.uri, "run_type": run.run_type},
+    )
+    session.commit()
+
+    from ragrig.db.models import DocumentVersion
+    from ragrig.ingestion.pipeline import _select_parser
+    from ragrig.parsers.base import parse_with_timeout
+
+    config_snapshot = run.config_snapshot_json or {}
+
+    # Determine file path from metadata or config
+    file_path = None
+    metadata_path = (item.metadata_json or {}).get("object_key") or (item.metadata_json or {}).get(
+        "file_name"
+    )
+    doc_uri = document.uri
+
+    if run.run_type == "s3_ingest":
+        # S3 items need to be re-downloaded
+        from ragrig.plugins.sources.s3.client import build_boto3_client
+        from ragrig.plugins.sources.s3.connector import _resolve_secrets
+
+        try:
+            secrets = _resolve_secrets(config_snapshot, env={})
+            client = build_boto3_client({**config_snapshot, **secrets.__dict__})
+            from tempfile import NamedTemporaryFile
+
+            bucket = str(config_snapshot.get("bucket", ""))
+            key = metadata_path or ""
+            body = client.download_object(bucket=bucket, key=key)
+            suffix = Path(key).suffix
+            tmp = NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp.write(body)
+            tmp.close()
+            file_path = Path(tmp.name)
+        except Exception as exc:
+            error_msg = _sanitize_retry_error(str(exc))
+            item.status = "failed"
+            item.error_message = error_msg
+            item.finished_at = datetime.now(timezone.utc)
+            session.commit()
+            create_audit_event(
+                session,
+                event_type="retry_complete",
+                actor=operator,
+                knowledge_base_id=kb.id,
+                document_id=document.id,
+                run_id=run.id,
+                item_id=item.id,
+                payload_json={"status": "failed", "error_message": error_msg},
+            )
+            session.commit()
+            return {
+                "id": str(item.id),
+                "pipeline_run_id": str(run.id),
+                "document_uri": doc_uri,
+                "status": "failed",
+                "error_message": error_msg,
+                "retried": True,
+            }
+
+    elif run.run_type == "fileshare_ingest":
+        from ragrig.plugins.sources.fileshare.connector import (
+            _build_client,
+            _resolve_fileshare_secrets,
+        )
+
+        try:
+            secrets = _resolve_fileshare_secrets(config_snapshot, env={})
+            client = _build_client(config_snapshot, secrets)
+        except Exception as exc:
+            error_msg = _sanitize_retry_error(str(exc))
+            item.status = "failed"
+            item.error_message = error_msg
+            item.finished_at = datetime.now(timezone.utc)
+            session.commit()
+            create_audit_event(
+                session,
+                event_type="retry_complete",
+                actor=operator,
+                knowledge_base_id=kb.id,
+                document_id=document.id,
+                run_id=run.id,
+                item_id=item.id,
+                payload_json={"status": "failed", "error_message": error_msg},
+            )
+            session.commit()
+            return {
+                "id": str(item.id),
+                "pipeline_run_id": str(run.id),
+                "document_uri": doc_uri,
+                "status": "failed",
+                "error_message": error_msg,
+                "retried": True,
+            }
+        try:
+            from tempfile import NamedTemporaryFile
+
+            remote_path = metadata_path or ""
+            body = client.download_file(remote_path)
+            suffix = Path(remote_path).suffix
+            tmp = NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp.write(body)
+            tmp.close()
+            file_path = Path(tmp.name)
+        except Exception as exc:
+            error_msg = _sanitize_retry_error(str(exc))
+            item.status = "failed"
+            item.error_message = error_msg
+            item.finished_at = datetime.now(timezone.utc)
+            session.commit()
+            create_audit_event(
+                session,
+                event_type="retry_complete",
+                actor=operator,
+                knowledge_base_id=kb.id,
+                document_id=document.id,
+                run_id=run.id,
+                item_id=item.id,
+                payload_json={"status": "failed", "error_message": error_msg},
+            )
+            session.commit()
+            return {
+                "id": str(item.id),
+                "pipeline_run_id": str(run.id),
+                "document_uri": doc_uri,
+                "status": "failed",
+                "error_message": error_msg,
+                "retried": True,
+            }
+    else:
+        # Local ingestion - file path from document URI
+        file_path = Path(document.uri)
+
+    if file_path is None or not file_path.exists():
+        error_msg = "file not found for retry"
+        item.status = "failed"
+        item.error_message = error_msg
+        item.finished_at = datetime.now(timezone.utc)
+        session.commit()
+        create_audit_event(
+            session,
+            event_type="retry_complete",
+            actor=operator,
+            knowledge_base_id=kb.id,
+            document_id=document.id,
+            run_id=run.id,
+            item_id=item.id,
+            payload_json={"status": "failed", "error_message": error_msg},
+        )
+        session.commit()
+        return {
+            "id": str(item.id),
+            "pipeline_run_id": str(run.id),
+            "document_uri": doc_uri,
+            "status": "failed",
+            "error_message": error_msg,
+            "retried": True,
+        }
+
+    # Re-process the file
+    try:
+        parser = _select_parser(file_path)
+        parse_result = parse_with_timeout(parser, file_path, timeout_seconds=30.0)
+
+        document.content_hash = parse_result.content_hash
+        document.mime_type = parse_result.mime_type
+        document.metadata_json = parse_result.metadata
+
+        version = DocumentVersion(
+            document_id=document.id,
+            version_number=0,  # will be set by _get_next_version
+            content_hash=parse_result.content_hash,
+            parser_name=parse_result.parser_name,
+            parser_config_json={"plugin_id": _parser_plugin_id(parse_result.parser_name)},
+            extracted_text=parse_result.extracted_text,
+            metadata_json=parse_result.metadata,
+        )
+        from ragrig.repositories import get_next_version_number
+
+        version.version_number = get_next_version_number(session, document_id=document.id)
+        session.add(version)
+        session.flush()
+
+        item.status = "success"
+        item.error_message = None
+        item.metadata_json = {
+            **(item.metadata_json or {}),
+            "retry_version_number": version.version_number,
+        }
+        item.finished_at = datetime.now(timezone.utc)
+
+        # Update run counts
+        run.failure_count = max(0, (run.failure_count or 0) - 1)
+        run.success_count = (run.success_count or 0) + 1
+
+        session.commit()
+
+        create_audit_event(
+            session,
+            event_type="retry_complete",
+            actor=operator,
+            knowledge_base_id=kb.id,
+            document_id=document.id,
+            run_id=run.id,
+            item_id=item.id,
+            payload_json={
+                "status": "success",
+                "new_version_number": version.version_number,
+            },
+        )
+        session.commit()
+
+        return {
+            "id": str(item.id),
+            "pipeline_run_id": str(run.id),
+            "document_uri": doc_uri,
+            "status": "success",
+            "retried": True,
+            "new_version_number": version.version_number,
+        }
+    except Exception as exc:
+        error_msg = _sanitize_retry_error(str(exc))
+        item.status = "failed"
+        item.error_message = error_msg
+        item.finished_at = datetime.now(timezone.utc)
+        session.commit()
+        create_audit_event(
+            session,
+            event_type="retry_complete",
+            actor=operator,
+            knowledge_base_id=kb.id,
+            document_id=document.id,
+            run_id=run.id,
+            item_id=item.id,
+            payload_json={"status": "failed", "error_message": error_msg},
+        )
+        session.commit()
+        return {
+            "id": str(item.id),
+            "pipeline_run_id": str(run.id),
+            "document_uri": doc_uri,
+            "status": "failed",
+            "error_message": error_msg,
+            "retried": True,
+        }
+    finally:
+        if file_path and run.run_type in ("s3_ingest", "fileshare_ingest"):
+            try:
+                file_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def retry_pipeline_run(
+    session: Session,
+    *,
+    run_id: str,
+    operator: str | None = None,
+    new_snapshot: bool = False,
+) -> dict[str, Any] | None:
+    """Retry all failed items in a pipeline run.
+
+    If new_snapshot is False, reuses the original config_snapshot_json.
+    If new_snapshot is True, creates a new snapshot from current config.
+    Returns a summary of retry results.
+    """
+    run_uuid = uuid.UUID(run_id)
+    run = session.get(PipelineRun, run_uuid)
+    if run is None:
+        return None
+
+    # Run-level guardrail check
+    guardrail = _check_run_retry_guardrails(session, run=run)
+    if guardrail is not None:
+        return {**guardrail, "retried": False}
+
+    create_audit_event(
+        session,
+        event_type="retry_start",
+        actor=operator,
+        knowledge_base_id=run.knowledge_base_id,
+        run_id=run.id,
+        payload_json={"run_type": run.run_type},
+    )
+    session.commit()
+
+    # Collect failed items
+    failed_items = (
+        session.query(PipelineRunItem)
+        .filter(
+            PipelineRunItem.pipeline_run_id == run_uuid,
+            PipelineRunItem.status == "failed",
+        )
+        .all()
+    )
+
+    if not failed_items:
+        create_audit_event(
+            session,
+            event_type="retry_complete",
+            actor=operator,
+            knowledge_base_id=run.knowledge_base_id,
+            run_id=run.id,
+            payload_json={"status": "no_failed_items"},
+        )
+        session.commit()
+        return {
+            "run_id": run_id,
+            "status": "no_failed_items",
+            "message": "No failed items to retry.",
+            "retried": 0,
+            "succeeded": 0,
+            "failed": 0,
+        }
+
+    results: list[dict[str, Any]] = []
+    for item in failed_items:
+        result = retry_pipeline_run_item(session, item_id=str(item.id), operator=operator)
+        if result is not None:
+            results.append(result)
+
+    succeeded = sum(1 for r in results if r.get("status") == "success")
+    still_failed = sum(1 for r in results if r.get("status") == "failed")
+
+    create_audit_event(
+        session,
+        event_type="retry_complete",
+        actor=operator,
+        knowledge_base_id=run.knowledge_base_id,
+        run_id=run.id,
+        payload_json={
+            "status": "completed",
+            "retried": len(results),
+            "succeeded": succeeded,
+            "failed": still_failed,
+        },
+    )
+    session.commit()
+
+    return {
+        "run_id": run_id,
+        "status": "completed",
+        "retried": len(results),
+        "succeeded": succeeded,
+        "failed": still_failed,
+        "items": results,
+    }
+
+
+def resume_pipeline_dag(
+    session: Session,
+    *,
+    run_id: str,
+) -> dict[str, Any] | None:
+    """Resume a persisted ingestion DAG from its first incomplete node."""
+    return resume_ingestion_dag(session, pipeline_run_id=run_id)
+
+
+def _sanitize_retry_error(message: str) -> str:
+    """Remove secret-like patterns from error messages."""
+    for fragment in _CONSOLE_FORBIDDEN_FRAGMENTS:
+        message = message.replace(fragment, "[redacted]")
+    return message
+
+
+def _parser_plugin_id(parser_name: str) -> str:
+    if parser_name == "plaintext":
+        return "parser.text"
+    return f"parser.{parser_name}"
+
+
+# ── Ops Diagnostics ────────────────────────────────────────────────────
+
+_OPS_ARTIFACTS_DIR = Path(__file__).resolve().parents[2] / "docs" / "operations" / "artifacts"
+
+
+def _load_ops_artifact(name: str) -> dict[str, Any] | None:
+    """Load an ops summary artifact, returning None if missing or corrupt."""
+    import json as _json
+
+    path = _OPS_ARTIFACTS_DIR / f"{name}.json"
+    if not path.exists():
+        return None
+    try:
+        data = _json.loads(path.read_text(encoding="utf-8"))
+        _assert_console_no_secrets(data, f"ops-{name}")
+        return data
+    except (OSError, ValueError, _json.JSONDecodeError):
+        return None
+
+
+def get_ops_diagnostics() -> dict[str, Any]:
+    """Return ops diagnostics summary for Web Console display.
+
+    Reads artifacts from docs/operations/artifacts/ and returns:
+    - deploy summary
+    - backup summary
+    - restore summary
+    - upgrade summary
+
+    Missing/corrupt artifacts are reported as degraded/failure.
+    Never includes plaintext DSN, token, API key, or object storage secret.
+    """
+    artifacts: list[str] = [
+        "ops-deploy-summary",
+        "ops-backup-summary",
+        "ops-restore-summary",
+        "ops-upgrade-summary",
+    ]
+
+    summaries: dict[str, Any] = {}
+    overall_status = "success"
+
+    for name in artifacts:
+        data = _load_ops_artifact(name)
+        if data is None:
+            summaries[name] = {
+                "available": False,
+                "artifact": name,
+                "status": "failure",
+                "reason": "artifact not found or corrupt",
+            }
+            overall_status = "degraded"
+        else:
+            op_status = data.get("operation_status", "unknown")
+            summaries[name] = {
+                "available": True,
+                "artifact": data.get("artifact", name),
+                "version": data.get("version", ""),
+                "snapshot_id": data.get("snapshot_id"),
+                "schema_revision": data.get("schema_revision"),
+                "status": op_status,
+                "generated_at": data.get("generated_at"),
+                "check_count": len(data.get("verification_checks", [])),
+            }
+            if op_status != "success":
+                overall_status = "degraded"
+
+    result: dict[str, Any] = {
+        "overall_status": overall_status,
+        "summaries": summaries,
+        "artifacts_dir": str(_OPS_ARTIFACTS_DIR),
+    }
+
+    _assert_console_no_secrets(result, "ops-diagnostics")
+    return result

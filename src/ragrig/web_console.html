@@ -717,6 +717,44 @@
       .audit-action-update { color: #1565c0; font-weight: 700; }
       .audit-action-delete { color: #c62828; font-weight: 700; }
 
+      .wf-audit-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .wf-audit-table th,
+      .wf-audit-table td {
+        padding: 5px 8px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+      .wf-audit-table th {
+        background: #f5f7f4;
+        font-weight: 800;
+        font-size: 11px;
+        text-transform: uppercase;
+        color: var(--muted);
+        position: sticky;
+        top: 0;
+      }
+      .wf-event-source_save { color: #1565c0; font-weight: 700; }
+      .wf-event-dry_run_start { color: #e65100; font-weight: 700; }
+      .wf-event-dry_run_complete { color: #1b6e3a; font-weight: 700; }
+      .wf-event-retry_start { color: #e65100; font-weight: 700; }
+      .wf-event-retry_complete { color: #1b6e3a; font-weight: 700; }
+      .wf-event-resume_start { color: #e65100; font-weight: 700; }
+      .wf-event-resume_complete { color: #1b6e3a; font-weight: 700; }
+      .degraded-badge {
+        display: inline-block;
+        background: #fff3e0;
+        color: #e65100;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-weight: 700;
+        font-size: 11px;
+      }
+
       .upload-drop-zone {
         padding: 24px;
         border: 2px dashed #c7cdbf;
@@ -874,6 +912,9 @@
         <div class="nav-item" data-section="sanitizer-drift">Sanitizer Drift</div>
         <div class="nav-item" data-section="retrieval-benchmark">Retrieval Benchmark</div>
         <div class="nav-item" data-section="retrieval-benchmark-integrity">Baseline Integrity</div>
+        <div class="nav-item" data-section="answer-live-smoke">Answer Live Smoke</div>
+        <div class="nav-item" data-section="advanced-parser-corpus">Parser Corpus</div>
+        <div class="nav-item" data-section="ops-diagnostics">Ops Diagnostics</div>
         <div class="nav-item">Documents</div>
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
@@ -906,6 +947,9 @@
           <div class="status-card"><div class="status-head">Embedding Profiles</div><strong id="model-count">0</strong><span id="model-subtext">Real indexed model profiles</span></div>
           <div class="status-card"><div class="status-head">Sanitizer Drift</div><strong id="drift-risk">—</strong><span id="drift-subtext">Latest drift risk</span></div>
           <div class="status-card"><div class="status-head">Baseline Integrity</div><strong id="baseline-integrity-status">—</strong><span id="baseline-integrity-subtext">Retrieval benchmark health</span></div>
+          <div class="status-card"><div class="status-head">LLM Smoke</div><strong id="answer-smoke-status">—</strong><span id="answer-smoke-subtext">Answer live smoke health</span></div>
+          <div class="status-card"><div class="status-head">Contract Matrix</div><strong id="contract-matrix-status">—</strong><span id="contract-matrix-subtext">Sanitizer contract badge</span></div>
+          <div class="status-card"><div class="status-head">Parser Corpus</div><strong id="advanced-parser-corpus-status">—</strong><span id="advanced-parser-corpus-subtext">Advanced parser corpus health</span></div>
         </section>
 
         <section class="panel">
@@ -951,6 +995,21 @@
           </div>
         </section>
 
+        <section class="panel" id="sanitizer-drift-summary-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Sanitizer Drift History Summary</div>
+              <div class="panel-meta">CI artifact · GET /sanitizer-drift-history-summary · copy-ready</div>
+            </div>
+            <div id="sanitizer-drift-summary-panel-status" class="pill neutral">Loading</div>
+          </div>
+          <div class="panel-body stack">
+            <div id="sanitizer-drift-summary-status" style="margin-bottom:12px"></div>
+            <div class="facts" id="sanitizer-drift-summary-facts"></div>
+            <div id="sanitizer-drift-summary-actions" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"></div>
+          </div>
+        </section>
+
         <section class="panel" id="retrieval-benchmark-panel">
           <div class="panel-head"><div class="panel-title">Retrieval Benchmark</div><div class="panel-meta">Latency measurement · GET /retrieval/benchmark/recent · make retrieval-benchmark</div></div>
           <div class="panel-body stack">
@@ -986,6 +1045,64 @@
             <div id="retrieval-integrity-status" style="margin-bottom:12px"></div>
             <div class="facts" id="retrieval-integrity-facts"></div>
             <div id="retrieval-integrity-reasons" style="margin-top:12px"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="answer-live-smoke-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Answer Live Smoke Diagnostics</div>
+              <div class="panel-meta">Provider health · GET /answer/live-smoke · make answer-live-smoke</div>
+            </div>
+            <div id="answer-smoke-panel-status" class="pill neutral">Loading</div>
+          </div>
+          <div class="panel-body stack">
+            <div id="answer-smoke-status" style="margin-bottom:12px"></div>
+            <div class="facts" id="answer-smoke-facts"></div>
+            <div id="answer-smoke-detail" style="margin-top:12px"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="sanitizer-contract-matrix-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Sanitizer Contract Matrix</div>
+              <div class="panel-meta">Callsite inventory · GET /sanitizer-contract-status · make sanitizer-contract-check</div>
+            </div>
+            <div id="contract-matrix-panel-status" class="pill neutral">Loading</div>
+          </div>
+          <div class="panel-body stack">
+            <div id="sanitizer-contract-status" style="margin-bottom:12px"></div>
+            <div class="facts" id="sanitizer-contract-facts"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="advanced-parser-corpus-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Advanced Parser Corpus</div>
+              <div class="panel-meta">Corpus health · GET /advanced-parser-corpus · make advanced-parser-corpus-check</div>
+            </div>
+            <div id="advanced-parser-corpus-panel-status" class="pill neutral">Loading</div>
+          </div>
+          <div class="panel-body stack">
+            <div id="advanced-parser-corpus-body" style="margin-bottom:12px"></div>
+            <div class="facts" id="advanced-parser-corpus-facts"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="ops-diagnostics-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Ops Diagnostics</div>
+              <div class="panel-meta">Deploy / Backup / Restore / Upgrade · GET /ops/diagnostics · make ops-*-smoke</div>
+            </div>
+            <div id="ops-diagnostics-panel-status" class="pill neutral">Loading</div>
+          </div>
+          <div class="panel-body stack">
+            <div id="ops-diagnostics-overall" style="margin-bottom:12px"></div>
+            <div class="facts" id="ops-diagnostics-facts"></div>
+            <div id="ops-diagnostics-detail" style="margin-top:12px"></div>
           </div>
         </section>
 
@@ -1118,10 +1235,28 @@
                 </div>
                 <label class="sub" for="retrieval-query">Query</label>
                 <textarea id="retrieval-query" rows="4">RAGRig Guide</textarea>
+                <label class="sub" for="retrieval-principal">Principal subjects</label>
+                <input id="retrieval-principal" type="text" placeholder="user:alice, group:engineering">
                 <label class="sub" for="retrieval-top-k">Top K</label>
                 <input id="retrieval-top-k" type="number" value="3" min="1" max="50">
                 <div class="actions"><button class="button primary" id="run-retrieval" type="button">Run Retrieval</button></div>
                 <div id="retrieval-results"></div>
+              </div>
+            </section>
+
+            <section class="panel" id="permission-preview-panel">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">Permission Preview</div>
+                  <div class="panel-meta">POST /permissions/preview · no restricted text</div>
+                </div>
+                <div id="permission-preview-status" class="pill neutral">Degraded</div>
+              </div>
+              <div class="panel-body stack">
+                <label class="sub" for="permission-preview-principal">Principal subjects</label>
+                <input id="permission-preview-principal" type="text" placeholder="user:alice, group:engineering">
+                <div class="actions"><button class="button primary" id="run-permission-preview" type="button">Preview Permissions</button></div>
+                <div id="permission-preview-results"></div>
               </div>
             </section>
 
@@ -1300,6 +1435,57 @@
               </div>
             </section>
 
+            <section class="panel" id="wf-audit-panel">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">Workflow Audit Events</div>
+                  <div class="panel-meta">Source save · dry-run · retry · resume audit trail</div>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="actions" style="margin-bottom:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                  <label class="sub" style="font-size:12px;">Show last</label>
+                  <select id="wf-audit-limit" class="fileshare-input" style="width:80px;">
+                    <option value="10">10</option>
+                    <option value="25" selected>25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                  <label class="sub" style="font-size:12px;">Type</label>
+                  <select id="wf-audit-type" class="fileshare-input" style="width:140px;">
+                    <option value="">All</option>
+                    <option value="source_save">source_save</option>
+                    <option value="dry_run_start">dry_run_start</option>
+                    <option value="dry_run_complete">dry_run_complete</option>
+                    <option value="retry_start">retry_start</option>
+                    <option value="retry_complete">retry_complete</option>
+                    <option value="resume_start">resume_start</option>
+                    <option value="resume_complete">resume_complete</option>
+                  </select>
+                  <button class="button" id="wf-audit-refresh" type="button">Refresh</button>
+                </div>
+                <div style="overflow-x:auto;">
+                  <table class="wf-audit-table" id="wf-audit-table">
+                    <thead>
+                      <tr>
+                        <th>Timestamp</th>
+                        <th>Event Type</th>
+                        <th>Actor</th>
+                        <th>Run ID</th>
+                        <th>Item ID</th>
+                        <th>Summary</th>
+                      </tr>
+                    </thead>
+                    <tbody id="wf-audit-body"></tbody>
+                  </table>
+                </div>
+                <div id="wf-audit-empty" class="empty" style="display:none;">No workflow audit events yet.</div>
+                <div id="wf-audit-degraded" class="empty" style="display:none;">
+                  <span class="degraded-badge">DEGRADED</span> Audit event recording unavailable or empty.
+                </div>
+              </div>
+            </section>
+
             <section class="panel" id="supported-formats-panel">
               <div class="panel-head">
                 <div>
@@ -1346,6 +1532,7 @@
         models: null,
         providerProbes: {},
         system: null,
+        sourceFormPlugin: null,
         evaluation: {
           runs: [],
           latest: null,
@@ -1371,6 +1558,9 @@
           limit: 10,
         },
         retrievalBenchmarkIntegrity: null,
+        answerLiveSmoke: null,
+        opsDiagnostics: null,
+        permissionPreview: null,
       };
 
       const WIZARD_FILTERS = [
@@ -1411,6 +1601,27 @@
 
       function empty(message) {
         return `<div class="empty">${escapeHtml(message)}</div>`;
+      }
+
+      function parsePrincipalInput(value) {
+        return String(value || '')
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+
+      function showToast(msg) {
+        let el = document.getElementById('toast');
+        if (!el) {
+          el = document.createElement('div');
+          el.id = 'toast';
+          el.style.cssText = 'position:fixed;bottom:16px;right:16px;background:var(--bg-card,#222);color:var(--text,#eee);padding:8px 16px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:9999;font-size:13px;max-width:400px;';
+          document.body.appendChild(el);
+        }
+        el.textContent = msg;
+        el.style.opacity = '1';
+        clearTimeout(el._timer);
+        el._timer = setTimeout(() => { el.style.opacity = '0'; }, 4000);
       }
 
       async function getJson(url, options) {
@@ -1464,6 +1675,16 @@
         } else {
           document.getElementById('baseline-integrity-status').textContent = '—';
           document.getElementById('baseline-integrity-subtext').textContent = 'No data';
+        }
+
+        var smoke = state.answerLiveSmoke;
+        if (smoke && smoke.available) {
+          var s = smoke.display_status || 'unknown';
+          document.getElementById('answer-smoke-status').textContent = s;
+          document.getElementById('answer-smoke-subtext').textContent = smoke.provider ? (smoke.provider + ' · ' + (smoke.is_stale ? 'stale' : 'latest')) : 'No provider';
+        } else {
+          document.getElementById('answer-smoke-status').textContent = '—';
+          document.getElementById('answer-smoke-subtext').textContent = 'No data';
         }
       }
 
@@ -1548,40 +1769,260 @@
       function renderSources() {
         const root = document.getElementById('sources-list');
         if (!state.sources.length) {
-          root.innerHTML = empty('No sources configured. The MVP reads existing local_directory sources from the DB only.');
-          return;
+          root.innerHTML = empty('No sources configured. Configure one below.');
+        } else {
+          root.innerHTML = state.sources.map((source) => `
+            <div class="card">
+              <div class="name">${escapeHtml(source.knowledge_base)}</div>
+              <div class="sub">${escapeHtml(source.kind)} · ${escapeHtml(source.uri)}</div>
+              <div class="sub">include: ${escapeHtml((source.config.include_patterns || []).join(', ') || '.md,.txt (default)')}</div>
+              <div class="sub">exclude: ${escapeHtml((source.config.exclude_patterns || []).join(', ') || 'none')}</div>
+              <div class="sub">max size: ${escapeHtml(source.config.max_file_size_bytes || 'unknown')} bytes · schedule: manual only</div>
+              <div class="sub"><button class="btn small" onclick="dryRunSource('${escapeHtml(source.id)}', '${escapeHtml(source.kind)}')">Dry-run</button></div>
+            </div>
+          `).join('');
         }
-        root.innerHTML = state.sources.map((source) => `
-          <div class="card">
-            <div class="name">${escapeHtml(source.knowledge_base)}</div>
-            <div class="sub">${escapeHtml(source.kind)} · ${escapeHtml(source.uri)}</div>
-            <div class="sub">include: ${escapeHtml((source.config.include_patterns || []).join(', ') || '.md,.txt (default)')}</div>
-            <div class="sub">exclude: ${escapeHtml((source.config.exclude_patterns || []).join(', ') || 'none')}</div>
-            <div class="sub">max size: ${escapeHtml(source.config.max_file_size_bytes || 'unknown')} bytes · schedule: manual only</div>
+        root.innerHTML += \`
+          <div class="card" style="margin-top:12px">
+            <div class="name">Configure New Source</div>
+            <div class="sub">Select type:</div>
+            <div class="flex-row" style="gap:8px;margin:8px 0">
+              <button class="btn small" onclick="showSourceForm('source.local')">Local Directory</button>
+              <button class="btn small" onclick="showSourceForm('source.s3')">S3</button>
+              <button class="btn small" onclick="showSourceForm('source.fileshare')">Fileshare</button>
+            </div>
+            <div id="source-form-area"></div>
+            <div id="source-form-result"></div>
           </div>
-        `).join('');
+        \`;
       }
 
-      function renderIngestionPanel() {
-        const root = document.getElementById('ingestion-panel');
-        const source = state.sources[0];
-        if (!source) {
-          root.innerHTML = empty('Write path is intentionally disabled until a browser-triggered ingestion API exists. Use make ingest-local or make ingest-local-dry-run.');
-          return;
+      function showSourceForm(pluginId) {
+        const area = document.getElementById('source-form-area');
+        state.sourceFormPlugin = pluginId;
+        if (pluginId === 'source.local') {
+          area.innerHTML = \`
+            <div class="sub">Knowledge base name:</div>
+            <input id="src-local-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Root path:</div>
+            <input id="src-local-path" class="input" value="" placeholder="/path/to/documents" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Include patterns (comma-sep):</div>
+            <input id="src-local-include" class="input" value=".md,.txt" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Exclude patterns (comma-sep):</div>
+            <input id="src-local-exclude" class="input" value="" placeholder="optional" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Max file size (bytes):</div>
+            <input id="src-local-maxsize" class="input" value="10485760" style="width:100%;margin-bottom:8px" />
+            <div class="flex-row" style="gap:8px;margin-top:8px">
+              <button class="btn" onclick="validateSourceForm()">Validate</button>
+              <button class="btn" onclick="saveSourceForm()">Save</button>
+              <button class="btn" onclick="dryRunForm()">Dry-run</button>
+            </div>
+          \`;
+        } else if (pluginId === 'source.s3') {
+          area.innerHTML = \`
+            <div class="sub">Knowledge base name:</div>
+            <input id="src-s3-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Bucket:</div>
+            <input id="src-s3-bucket" class="input" value="" placeholder="my-bucket" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Prefix (optional):</div>
+            <input id="src-s3-prefix" class="input" value="" placeholder="path/prefix" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Access key (env:VAR):</div>
+            <input id="src-s3-access" class="input" value="env:AWS_ACCESS_KEY_ID" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Secret key (env:VAR):</div>
+            <input id="src-s3-secret" class="input" value="env:AWS_SECRET_ACCESS_KEY" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Endpoint URL (optional):</div>
+            <input id="src-s3-endpoint" class="input" value="" placeholder="https://s3.amazonaws.com" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Region (optional):</div>
+            <input id="src-s3-region" class="input" value="" placeholder="us-east-1" style="width:100%;margin-bottom:8px" />
+            <div class="flex-row" style="gap:8px;margin-top:8px">
+              <button class="btn" onclick="validateSourceForm()">Validate</button>
+              <button class="btn" onclick="saveSourceForm()">Save</button>
+              <button class="btn" onclick="dryRunForm()">Dry-run</button>
+            </div>
+          \`;
+        } else if (pluginId === 'source.fileshare') {
+          area.innerHTML = \`
+            <div class="sub">Knowledge base name:</div>
+            <input id="src-fs-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Protocol:</div>
+            <select id="src-fs-protocol" class="input" style="width:100%;margin-bottom:8px">
+              <option value="smb">SMB</option>
+              <option value="webdav">WebDAV</option>
+              <option value="sftp">SFTP</option>
+              <option value="nfs">NFS (mounted path)</option>
+            </select>
+            <div class="sub">Host:</div>
+            <input id="src-fs-host" class="input" value="" placeholder="hostname" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Share/Path:</div>
+            <input id="src-fs-share" class="input" value="" placeholder="share_name" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Username (env:VAR):</div>
+            <input id="src-fs-user" class="input" value="env:FILESHARE_USERNAME" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Password (env:VAR):</div>
+            <input id="src-fs-pass" class="input" value="env:FILESHARE_PASSWORD" style="width:100%;margin-bottom:8px" />
+            <div class="flex-row" style="gap:8px;margin-top:8px">
+              <button class="btn" onclick="validateSourceForm()">Validate</button>
+              <button class="btn" onclick="saveSourceForm()">Save</button>
+              <button class="btn" onclick="dryRunForm()">Dry-run</button>
+            </div>
+          \`;
         }
-        root.innerHTML = `
-          <div class="card">
-            <div class="name">Real write path is CLI-first</div>
-            <div class="sub">Knowledge base: ${escapeHtml(source.knowledge_base)}</div>
-            <div class="sub">Source root: ${escapeHtml(source.uri)}</div>
-            <div class="sub">Dry run: <span class="pill warn">available via make ingest-local-dry-run</span></div>
-            <div class="sub code">make ingest-local INGEST_KB=${escapeHtml(source.knowledge_base)} INGEST_ROOT=${escapeHtml(source.uri)}</div>
-          </div>
-          <div class="card">
-            <div class="name">Current limitation</div>
-            <div class="sub">This MVP does not fake browser writes. It only exposes the real command path and persisted run evidence.</div>
-          </div>
-        `;
+      }
+
+      function getSourceFormConfig() {
+        const pid = state.sourceFormPlugin;
+        if (pid === 'source.local') {
+          return {
+            root_path: document.getElementById('src-local-path').value,
+            include_patterns: (document.getElementById('src-local-include').value || '').split(',').map(s => s.trim()).filter(Boolean),
+            exclude_patterns: (document.getElementById('src-local-exclude').value || '').split(',').map(s => s.trim()).filter(Boolean),
+            max_file_size_bytes: parseInt(document.getElementById('src-local-maxsize').value) || 10485760,
+          };
+        } else if (pid === 'source.s3') {
+          return {
+            bucket: document.getElementById('src-s3-bucket').value,
+            prefix: document.getElementById('src-s3-prefix').value || undefined,
+            access_key: document.getElementById('src-s3-access').value,
+            secret_key: document.getElementById('src-s3-secret').value,
+            endpoint_url: document.getElementById('src-s3-endpoint').value || undefined,
+            region: document.getElementById('src-s3-region').value || undefined,
+          };
+        } else if (pid === 'source.fileshare') {
+          return {
+            protocol: document.getElementById('src-fs-protocol').value,
+            host: document.getElementById('src-fs-host').value,
+            share: document.getElementById('src-fs-share').value,
+            username: document.getElementById('src-fs-user').value,
+            password: document.getElementById('src-fs-pass').value,
+          };
+        }
+        return {};
+      }
+
+      function getSourceFormKb() {
+        const pid = state.sourceFormPlugin;
+        if (pid === 'source.local') return document.getElementById('src-local-kb').value || 'default';
+        if (pid === 'source.s3') return document.getElementById('src-s3-kb').value || 'default';
+        if (pid === 'source.fileshare') return document.getElementById('src-fs-kb').value || 'default';
+        return 'default';
+      }
+
+      async function validateSourceForm() {
+        const resultArea = document.getElementById('source-form-result');
+        const pid = state.sourceFormPlugin;
+        const config = getSourceFormConfig();
+        resultArea.innerHTML = '<div class="sub">Validating...</div>';
+        try {
+          const resp = await fetch('/sources/validate-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_id: pid, config }),
+          });
+          const data = await resp.json();
+          if (data.valid) {
+            const statusPill = data.status === 'ready' ? 'success' : data.status === 'degraded' ? 'warn' : 'error';
+            resultArea.innerHTML = \`
+              <div class="card">
+                <div class="name">Validation: <span class="pill \${statusPill}">\${escapeHtml(data.status)}</span></div>
+                \${data.reason ? '<div class="sub">' + escapeHtml(data.reason) + '</div>' : ''}
+                \${data.missing_dependencies && data.missing_dependencies.length ? '<div class="sub">Missing deps: ' + escapeHtml(data.missing_dependencies.join(', ')) + '</div>' : ''}
+                \${data.credential_issues && data.credential_issues.length ? '<div class="sub">Credential issues: ' + escapeHtml(data.credential_issues.join('; ')) + '</div>' : ''}
+                \${data.next_steps && data.next_steps.length ? '<div class="sub">Next: ' + escapeHtml(data.next_steps.join(' ')) + '</div>' : ''}
+              </div>
+            \`;
+          } else {
+            resultArea.innerHTML = \`
+              <div class="card">
+                <div class="name">Validation: <span class="pill error">invalid</span></div>
+                <div class="sub">\${escapeHtml(data.reason || data.error?.message || 'unknown error')}</div>
+              </div>
+            \`;
+          }
+        } catch (err) {
+          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+        }
+      }
+
+      async function saveSourceForm() {
+        const resultArea = document.getElementById('source-form-result');
+        const pid = state.sourceFormPlugin;
+        const config = getSourceFormConfig();
+        const kb = getSourceFormKb();
+        resultArea.innerHTML = '<div class="sub">Saving...</div>';
+        try {
+          const resp = await fetch('/sources', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_id: pid, config, knowledge_base: kb }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            resultArea.innerHTML = \`<div class="card"><div class="name">Save failed</div><div class="sub">\${escapeHtml(err.error || 'unknown error')}</div></div>\`;
+            return;
+          }
+          const data = await resp.json();
+          resultArea.innerHTML = \`<div class="card"><div class="name">Saved: <span class="pill success">\${escapeHtml(data.kind)}</span></div><div class="sub">URI: \${escapeHtml(data.uri)}</div></div>\`;
+          await loadAll();
+        } catch (err) {
+          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+        }
+      }
+
+      async function dryRunForm() {
+        const resultArea = document.getElementById('source-form-result');
+        const pid = state.sourceFormPlugin;
+        const config = getSourceFormConfig();
+        resultArea.innerHTML = '<div class="sub">Running dry-run scan...</div>';
+        try {
+          const resp = await fetch('/sources/dry-run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_id: pid, config }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            resultArea.innerHTML = \`<div class="card"><div class="name">Dry-run failed</div><div class="sub">\${escapeHtml(err.error || 'unknown error')}</div></div>\`;
+            return;
+          }
+          const data = await resp.json();
+          let filesHtml = '';
+          const allFiles = [...(data.discovered || []), ...(data.skipped || []), ...(data.failed || [])];
+          if (allFiles.length > 0) {
+            filesHtml = '<div class="sub" style="max-height:200px;overflow-y:auto">' +
+              allFiles.slice(0, 50).map(f => {
+                const statusPill = f.status === 'discovered' ? 'success' : f.status === 'skipped' ? 'warn' : 'error';
+                return '<div><span class="pill ' + statusPill + '">' + escapeHtml(f.status) + '</span> ' + escapeHtml(f.path) + (f.reason ? ' · ' + escapeHtml(f.reason) : '') + (f.parser ? ' · parser: ' + escapeHtml(f.parser) : '') + '</div>';
+              }).join('') +
+              (allFiles.length > 50 ? '<div class="sub">... and ' + (allFiles.length - 50) + ' more</div>' : '') +
+              '</div>';
+          }
+          resultArea.innerHTML = \`
+            <div class="card">
+              <div class="name">Dry-run: <span class="pill success">\${escapeHtml(data.source_kind)}</span></div>
+              <div class="sub">Total: \${data.total} files · Discovered: \${data.discovered_count} · Skipped: \${data.skipped_count} · Failed: \${data.failed_count}</div>
+              \${filesHtml}
+              <div class="sub" style="margin-top:4px"><em>dry-run does not write documents, chunks, or embeddings</em></div>
+            </div>
+          \`;
+        } catch (err) {
+          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+        }
+      }
+
+      async function dryRunSource(sourceId, sourceKind) {
+        const resultArea = document.createElement('div');
+        resultArea.innerHTML = '<div class="sub">Running dry-run...</div>';
+        const card = document.querySelector(\`[data-source-id="\${sourceId}"]\`);
+        try {
+          const resp = await fetch('/sources/dry-run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_id: 'source.' + sourceKind, config: {} }),
+          });
+          const data = await resp.json();
+          resultArea.innerHTML = \`<div class="sub">Dry-run: \${data.total || 0} files found</div>\`;
+        } catch (err) {
+          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+        }
       }
 
       async function renderPipelineRuns() {
@@ -1590,34 +2031,107 @@
           root.innerHTML = empty('No pipeline runs recorded yet.');
           return;
         }
-        const latest = state.pipelineRuns.slice(0, 4);
+        const latest = state.pipelineRuns.slice(0, 8);
         const items = await Promise.all(latest.map(async (run) => {
           const detail = await getJson(`/pipeline-runs/${run.id}/items`);
-          const firstItem = detail.items[0];
-          let itemDetail = 'No item detail';
-          if (firstItem) {
-            const meta = firstItem.metadata || {};
+          const failedItems = detail.items.filter(i => i.status === 'failed');
+          let itemHtml = '';
+          const shown = detail.items.slice(0, 3);
+          for (const item of shown) {
+            const meta = item.metadata || {};
             const parserInfo = meta.parser_id ? `parser: ${escapeHtml(meta.parser_id)}` : '';
             const degraded = meta.degraded_reason ? `degraded: ${escapeHtml(meta.degraded_reason)}` : '';
-            const redactionInfo = meta.redaction_count != null ? `redactions: ${meta.redaction_count}` : '';
-            const err = firstItem.error_message ? `error: ${escapeHtml(firstItem.error_message)}` : '';
-            itemDetail = [
-              `item: ${escapeHtml(firstItem.document_uri)} · ${escapeHtml(firstItem.status)}`,
-              parserInfo,
-              degraded,
-              redactionInfo,
-              err,
-            ].filter(Boolean).join(' · ');
+            const err = item.error_message ? `error: ${escapeHtml(item.error_message)}` : '';
+            const retryBtn = item.status === 'failed'
+              ? `<button class="btn small" onclick="retryPipelineItem('${escapeHtml(item.id)}')">Retry</button>`
+              : '';
+            itemHtml += `<div class="sub">[${escapeHtml(item.status)}] ${escapeHtml(item.document_uri)} ${parserInfo} ${degraded} ${err} ${retryBtn}</div>`;
           }
+          if (detail.items.length > 3) {
+            itemHtml += `<div class="sub">... and ${detail.items.length - 3} more items</div>`;
+          }
+          const retryAllBtn = run.failure_count > 0
+            ? `<button class="btn small" onclick="retryPipelineRun('${escapeHtml(run.id)}')">Retry all failed (${run.failure_count})</button>`
+            : '';
+          const dag = run.dag || null;
+          const dagNodes = dag
+            ? `<div class="sub">DAG: ${dag.nodes.map(node => `${escapeHtml(node.node_id)}=${escapeHtml(node.status)}`).join(' · ')}</div>`
+            : '';
+          const dagFailures = dag && dag.failure_queue.length
+            ? `<div class="sub">Failure queue: ${dag.failure_queue.map(entry => `${escapeHtml(entry.node_id)} ${escapeHtml(entry.reason)} [${escapeHtml(entry.status)}]`).join(' · ')}</div>`
+            : '';
+          const dagResumeBtn = dag && (run.failure_count > 0 || run.status === 'completed_with_failures')
+            ? `<button class="btn small" onclick="resumePipelineDag('${escapeHtml(run.id)}')">Resume DAG</button>`
+            : '';
           return `
             <div class="card">
               <div class="name">${escapeHtml(run.run_type)} <span class="${pillClass(run.status)}">${escapeHtml(run.status)}</span></div>
               <div class="sub">KB: ${escapeHtml(run.knowledge_base)} · total ${run.total_items} · success ${run.success_count} · skipped ${run.skipped_count} · failed ${run.failure_count}</div>
-              <div class="sub">${itemDetail}</div>
+              ${dagNodes}
+              ${dagFailures}
+              ${itemHtml}
+              <div class="sub" style="margin-top:4px">${retryAllBtn} ${dagResumeBtn}</div>
             </div>
           `;
         }));
         root.innerHTML = items.join('');
+      }
+
+      async function retryPipelineItem(itemId) {
+        try {
+          const resp = await fetch('/pipeline-run-items/' + itemId + '/retry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          const data = await resp.json();
+          if (data.status === 'success') {
+            showToast('Item retried successfully');
+          } else {
+            showToast('Retry failed: ' + (data.error_message || 'unknown error'));
+          }
+          await loadAll();
+        } catch (err) {
+          showToast('Error: ' + err.message);
+        }
+      }
+
+      async function retryPipelineRun(runId) {
+        try {
+          const resp = await fetch('/pipeline-runs/' + runId + '/retry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          const data = await resp.json();
+          if (data.status === 'completed') {
+            showToast('Retried ' + data.retried + ' items: ' + data.succeeded + ' succeeded, ' + data.failed + ' failed');
+          } else {
+            showToast('Retry result: ' + (data.message || data.error || 'unknown'));
+          }
+          await loadAll();
+        } catch (err) {
+          showToast('Error: ' + err.message);
+        }
+      }
+
+      async function resumePipelineDag(runId) {
+        try {
+          const resp = await fetch('/pipeline-runs/' + runId + '/dag-resume', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          const data = await resp.json();
+          if (data.status === 'rejected') {
+            showToast('Resume rejected: ' + (data.reason || 'invalid state'));
+          } else {
+            showToast('DAG resume ' + data.status);
+          }
+          await loadAll();
+        } catch (err) {
+          showToast('Error: ' + err.message);
+        }
       }
 
       async function renderUnderstandingCoverage() {
@@ -3125,6 +3639,120 @@
         }
       }
 
+      async function loadSanitizerContractMatrix() {
+        try {
+          state.sanitizerContractMatrix = await getJson('/sanitizer-contract-status');
+        } catch {
+          state.sanitizerContractMatrix = { available: false, status: 'failure', reason: 'network error' };
+        }
+      }
+
+      function renderSanitizerContractMatrix() {
+        const panelStatus = document.getElementById('contract-matrix-panel-status');
+        const statusEl = document.getElementById('sanitizer-contract-status');
+        const factsEl = document.getElementById('sanitizer-contract-facts');
+        const data = state.sanitizerContractMatrix || { available: false, status: 'failure', reason: 'not loaded' };
+
+        if (!data.available) {
+          var reason = data.reason || 'artifact not found';
+          panelStatus.className = 'pill error';
+          panelStatus.textContent = 'failure';
+          statusEl.innerHTML = '<span class="pill error">failure</span> ' + escapeHtml(reason);
+          factsEl.innerHTML = '';
+          document.getElementById('contract-matrix-status').textContent = '—';
+          document.getElementById('contract-matrix-subtext').textContent = reason;
+          return;
+        }
+
+        var status = data.status || 'unknown';
+        var statusClass = status === 'pass' ? 'good' : status === 'degraded' ? 'warn' : 'error';
+        panelStatus.className = 'pill ' + statusClass;
+        panelStatus.textContent = status;
+
+        document.getElementById('contract-matrix-status').textContent = status;
+        document.getElementById('contract-matrix-subtext').textContent = data.registered_callsite_count + ' registered · ' + (data.unregistered_count || 0) + ' unregistered';
+
+        statusEl.innerHTML = [
+          '<span class="pill ' + statusClass + '">' + escapeHtml(status) + '</span>',
+          '<span class="pill neutral">' + escapeHtml(data.registered_callsite_count) + ' registered</span>',
+          '<span class="pill neutral">' + escapeHtml(data.unregistered_count || 0) + ' unregistered</span>',
+          data.summary_fields_ok ? '<span class="pill">summary fields ok</span>' : '<span class="pill error">summary fields FAIL</span>',
+          data.no_duplicate_impls ? '<span class="pill">no duplicate impls</span>' : '<span class="pill error">duplicate impls detected</span>',
+        ].join(' ');
+
+        factsEl.innerHTML = [
+          '<div class="card"><div class="fact-label">Status</div><div class="fact-value code">' + escapeHtml(status) + '</div></div>',
+          '<div class="card"><div class="fact-label">Exit Code</div><div class="fact-value">' + escapeHtml(data.exit_code) + '</div></div>',
+          '<div class="card"><div class="fact-label">Registered Callsites</div><div class="fact-value">' + escapeHtml(data.registered_callsite_count) + '</div></div>',
+          '<div class="card"><div class="fact-label">Unregistered</div><div class="fact-value">' + escapeHtml(data.unregistered_count || 0) + '</div></div>',
+          '<div class="card"><div class="fact-label">Fixture OK</div><div class="fact-value">' + (data.fixture_ok ? 'true' : 'false') + '</div></div>',
+          '<div class="card"><div class="fact-label">Generated At</div><div class="fact-value">' + escapeHtml(data.generated_at || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Report Path</div><div class="fact-value code" style="font-size:11px">' + escapeHtml(data.report_path || '') + '</div></div>',
+        ].join('');
+      }
+
+      async function loadAdvancedParserCorpus() {
+        try {
+          state.advancedParserCorpus = await getJson('/advanced-parser-corpus');
+        } catch {
+          state.advancedParserCorpus = { available: false, status: 'failure', reason: 'network error' };
+        }
+      }
+
+      function renderAdvancedParserCorpus() {
+        const panelStatus = document.getElementById('advanced-parser-corpus-panel-status');
+        const bodyEl = document.getElementById('advanced-parser-corpus-body');
+        const factsEl = document.getElementById('advanced-parser-corpus-facts');
+        const data = state.advancedParserCorpus || { available: false, status: 'failure', reason: 'not loaded' };
+
+        if (!data.available) {
+          var reason = data.reason || 'artifact not found';
+          panelStatus.className = 'pill error';
+          panelStatus.textContent = 'failure';
+          bodyEl.innerHTML = '<span class="pill error">failure</span> ' + escapeHtml(reason);
+          factsEl.innerHTML = '';
+          document.getElementById('advanced-parser-corpus-status').textContent = '—';
+          document.getElementById('advanced-parser-corpus-subtext').textContent = reason;
+          return;
+        }
+
+        var status = data.status || 'unknown';
+        var statusClass = status === 'pass' ? 'good' : status === 'degraded' ? 'warn' : 'error';
+        panelStatus.className = 'pill ' + statusClass;
+        panelStatus.textContent = status;
+
+        var subtext = data.total_fixtures + ' fixtures: ' + data.healthy + ' healthy, ' + data.degraded + ' degraded, ' + data.skipped + ' skipped, ' + data.failed + ' failed';
+        document.getElementById('advanced-parser-corpus-status').textContent = status;
+        document.getElementById('advanced-parser-corpus-subtext').textContent = subtext;
+
+        bodyEl.innerHTML = [
+          '<span class="pill ' + statusClass + '">' + escapeHtml(status) + '</span>',
+          '<span class="pill neutral">' + escapeHtml(data.total_fixtures) + ' fixtures</span>',
+          '<span class="pill good">' + escapeHtml(data.healthy) + ' healthy</span>',
+          '<span class="pill warn">' + escapeHtml(data.degraded) + ' degraded</span>',
+          '<span class="pill neutral">' + escapeHtml(data.skipped) + ' skipped</span>',
+          data.failed > 0 ? '<span class="pill error">' + escapeHtml(data.failed) + ' failed</span>' : '',
+        ].join(' ');
+
+        var resultRows = (data.results || []).map(function(r) {
+          var rStatus = r.status || 'unknown';
+          var rClass = rStatus === 'healthy' ? 'good' : rStatus === 'degraded' ? 'warn' : rStatus === 'failure' ? 'error' : 'neutral';
+          return '<div class="card"><div class="fact-label">' + escapeHtml(r.format) + ' / ' + escapeHtml(r.fixture_id) + '</div><div class="fact-value"><span class="pill ' + rClass + '">' + escapeHtml(rStatus) + '</span> ' + escapeHtml(r.parser) + (r.degraded_reason ? ' (' + escapeHtml(r.degraded_reason) + ')' : '') + '</div></div>';
+        }).join('');
+
+        factsEl.innerHTML = [
+          '<div class="card"><div class="fact-label">Status</div><div class="fact-value code">' + escapeHtml(status) + '</div></div>',
+          '<div class="card"><div class="fact-label">Total Fixtures</div><div class="fact-value">' + escapeHtml(data.total_fixtures) + '</div></div>',
+          '<div class="card"><div class="fact-label">Healthy</div><div class="fact-value">' + escapeHtml(data.healthy) + '</div></div>',
+          '<div class="card"><div class="fact-label">Degraded</div><div class="fact-value">' + escapeHtml(data.degraded) + '</div></div>',
+          '<div class="card"><div class="fact-label">Skipped</div><div class="fact-value">' + escapeHtml(data.skipped) + '</div></div>',
+          '<div class="card"><div class="fact-label">Failed</div><div class="fact-value">' + escapeHtml(data.failed) + '</div></div>',
+          '<div class="card"><div class="fact-label">Results</div><div class="fact-value">' + resultRows + '</div></div>',
+          '<div class="card"><div class="fact-label">Generated At</div><div class="fact-value">' + escapeHtml(data.generated_at || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Report Path</div><div class="fact-value code" style="font-size:11px">' + escapeHtml(data.report_path || '') + '</div></div>',
+        ].join('');
+      }
+
       async function loadRetrievalBenchmark() {
         try {
           state.retrievalBenchmark = await getJson('/retrieval/benchmark/recent');
@@ -3236,6 +3864,130 @@
             '</div>';
         } else {
           reasonsEl.innerHTML = '';
+        }
+      }
+
+      async function loadAnswerLiveSmoke() {
+        try {
+          state.answerLiveSmoke = await getJson('/answer/live-smoke');
+        } catch {
+          state.answerLiveSmoke = null;
+        }
+      }
+
+      function renderAnswerLiveSmoke() {
+        const panelStatus = document.getElementById('answer-smoke-panel-status');
+        const statusEl = document.getElementById('answer-smoke-status');
+        const factsEl = document.getElementById('answer-smoke-facts');
+        const detailEl = document.getElementById('answer-smoke-detail');
+        const data = state.answerLiveSmoke;
+
+        if (!data || !data.available) {
+          panelStatus.className = 'pill neutral';
+          panelStatus.textContent = 'No data';
+          statusEl.innerHTML = '<span class="pill neutral">No diagnostics data</span>';
+          factsEl.innerHTML = '<div class="empty">No artifact found. Run make answer-live-smoke to generate one.</div>';
+          detailEl.innerHTML = '';
+          document.getElementById('answer-smoke-status').textContent = '—';
+          document.getElementById('answer-smoke-subtext').textContent = 'No data';
+          return;
+        }
+
+        var s = data.display_status || 'unknown';
+        var statusClass = s === 'healthy' ? 'good' : s === 'degraded' || s === 'skip' ? 'warn' : 'error';
+        panelStatus.className = 'pill ' + statusClass;
+        panelStatus.textContent = s;
+
+        document.getElementById('answer-smoke-status').textContent = s;
+        document.getElementById('answer-smoke-subtext').textContent = data.provider ? (data.provider + ' · ' + (data.is_stale ? 'stale' : 'latest')) : 'No provider';
+
+        var staleTag = data.is_stale ? '<span class="pill warn">stale</span>' : '';
+        statusEl.innerHTML = [
+          '<span class="pill ' + statusClass + '">' + escapeHtml(s) + '</span>',
+          staleTag,
+          '<span class="pill neutral">' + escapeHtml(data.provider || '—') + '</span>',
+          '<span class="pill neutral">cites: ' + escapeHtml(formatValue(data.citation_count)) + '</span>',
+        ].join('');
+
+        factsEl.innerHTML = [
+          '<div class="card"><div class="fact-label">Provider</div><div class="fact-value">' + escapeHtml(data.provider || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Model</div><div class="fact-value code">' + escapeHtml(data.model || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Base URL</div><div class="fact-value code" style="font-size:11px">' + escapeHtml(data.base_url_redacted || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Status</div><div class="fact-value"><span class="pill ' + statusClass + '">' + escapeHtml(s) + '</span></div></div>',
+          '<div class="card"><div class="fact-label">Reason</div><div class="fact-value" style="font-size:12px">' + escapeHtml(data.reason || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Citations</div><div class="fact-value">' + escapeHtml(formatValue(data.citation_count)) + '</div></div>',
+          '<div class="card"><div class="fact-label">Timing</div><div class="fact-value">' + (data.timing_ms != null ? escapeHtml(data.timing_ms) + ' ms' : '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Generated At</div><div class="fact-value" title="' + escapeHtml(data.generated_at || '') + '">' + (data.generated_at ? new Date(data.generated_at).toLocaleString() : '—') + '</div></div>',
+        ].join('');
+
+        if (data.report_path) {
+          detailEl.innerHTML = [
+            '<div class="meta">Artifact: <code style="font-size:11px">' + escapeHtml(data.report_path) + '</code></div>',
+            '<div class="meta">Run <code>make answer-live-smoke</code> to refresh.</div>',
+          ].join('');
+        } else {
+          detailEl.innerHTML = '<div class="meta">Run <code>make answer-live-smoke</code> to generate an artifact.</div>';
+        }
+      }
+
+      async function loadOpsDiagnostics() {
+        try {
+          state.opsDiagnostics = await getJson('/ops/diagnostics');
+        } catch {
+          state.opsDiagnostics = null;
+        }
+      }
+
+      function renderOpsDiagnostics() {
+        const panelStatus = document.getElementById('ops-diagnostics-panel-status');
+        const overallEl = document.getElementById('ops-diagnostics-overall');
+        const factsEl = document.getElementById('ops-diagnostics-facts');
+        const detailEl = document.getElementById('ops-diagnostics-detail');
+        const data = state.opsDiagnostics;
+
+        if (!data || !data.summaries || Object.keys(data.summaries).length === 0) {
+          panelStatus.className = 'pill neutral';
+          panelStatus.textContent = 'No data';
+          overallEl.innerHTML = '<span class="pill neutral">No diagnostics data</span>';
+          factsEl.innerHTML = '<div class="empty">No ops artifacts found. Run make ops-*-smoke to generate them.</div>';
+          detailEl.innerHTML = '';
+          return;
+        }
+
+        var os = data.overall_status || 'unknown';
+        var statusClass = os === 'success' ? 'good' : os === 'degraded' ? 'warn' : 'error';
+        panelStatus.className = 'pill ' + statusClass;
+        panelStatus.textContent = os;
+
+        overallEl.innerHTML = '<span class="pill ' + statusClass + '">Overall: ' + escapeHtml(os) + '</span>';
+
+        var artifactNames = ['ops-deploy-summary', 'ops-backup-summary', 'ops-restore-summary', 'ops-upgrade-summary'];
+        var cards = [];
+        for (var i = 0; i < artifactNames.length; i++) {
+          var key = artifactNames[i];
+          var s = data.summaries[key];
+          if (!s) {
+            cards.push('<div class="card"><div class="fact-label">' + escapeHtml(key) + '</div><div class="fact-value"><span class="pill neutral">No data</span></div></div>');
+            continue;
+          }
+          var sv = s.status || 'unknown';
+          var sc = sv === 'success' ? 'good' : sv === 'degraded' ? 'warn' : 'error';
+          var label = key.replace('ops-', '').replace('-summary', '');
+          cards.push(
+            '<div class="card">' +
+              '<div class="fact-label">' + escapeHtml(label) + '</div>' +
+              '<div class="fact-value"><span class="pill ' + sc + '">' + escapeHtml(sv) + '</span></div>' +
+              '<div style="font-size:11px;color:var(--muted);margin-top:4px">' +
+                (s.snapshot_id ? 'snapshot: ' + escapeHtml(s.snapshot_id) + '<br>' : '') +
+                (s.schema_revision ? 'revision: ' + escapeHtml(s.schema_revision) : '') +
+              '</div>' +
+            '</div>'
+          );
+        }
+        factsEl.innerHTML = cards.join('');
+
+        if (data.artifacts_dir) {
+          detailEl.innerHTML = '<div class="meta">Artifacts: <code style="font-size:11px">' + escapeHtml(data.artifacts_dir) + '</code></div>';
         }
       }
 
@@ -3352,6 +4104,104 @@
         }
       }
 
+      async function loadSanitizerDriftHistorySummary() {
+        try {
+          state.sanitizerDriftHistorySummary = await getJson('/sanitizer-drift-history-summary');
+        } catch {
+          state.sanitizerDriftHistorySummary = null;
+        }
+      }
+
+      function renderSanitizerDriftHistorySummary() {
+        var panelStatus = document.getElementById('sanitizer-drift-summary-panel-status');
+        var statusEl = document.getElementById('sanitizer-drift-summary-status');
+        var factsEl = document.getElementById('sanitizer-drift-summary-facts');
+        var actionsEl = document.getElementById('sanitizer-drift-summary-actions');
+        var data = state.sanitizerDriftHistorySummary;
+
+        if (!data || !data.available || data.status === 'no_history') {
+          panelStatus.className = 'pill neutral';
+          panelStatus.textContent = 'No summary';
+          statusEl.innerHTML = '<span class="pill neutral">No summary artifact</span>';
+          factsEl.innerHTML = empty(data && data.reason ? data.reason : 'Run make sanitizer-drift-history-summary to generate.');
+          actionsEl.innerHTML = '';
+          return;
+        }
+
+        var isDegraded = data.status === 'degraded' || data.status === 'failure';
+        var isFailure = data.status === 'failure';
+        var riskClass = isFailure ? 'error' : isDegraded ? 'warn' : 'good';
+        panelStatus.className = 'pill ' + riskClass;
+        panelStatus.textContent = data.status;
+
+        statusEl.innerHTML = [
+          '<span class="pill ' + riskClass + '">' + escapeHtml(data.status) + '</span>',
+          '<span class="pill neutral">risk: ' + escapeHtml(data.latest_risk || 'unknown') + '</span>',
+          '<span class="pill neutral">changed: ' + escapeHtml(data.changed_parser_count) + '</span>',
+          '<span class="pill neutral">degraded: ' + escapeHtml(data.degraded_reports_count) + '</span>',
+        ].join('');
+
+        var facts = [
+          '<div class="card"><div class="fact-label">Latest Status</div><div class="fact-value">' + escapeHtml(data.status) + '</div></div>',
+          '<div class="card"><div class="fact-label">Latest Risk</div><div class="fact-value">' + escapeHtml(data.latest_risk || 'unknown') + '</div></div>',
+          '<div class="card"><div class="fact-label">Changed Parsers</div><div class="fact-value">' + escapeHtml(data.changed_parser_count) + '</div></div>',
+          '<div class="card"><div class="fact-label">Degraded Reports</div><div class="fact-value">' + escapeHtml(data.degraded_reports_count) + '</div></div>',
+          '<div class="card"><div class="fact-label">Valid / Total</div><div class="fact-value">' + escapeHtml(data.valid_report_count) + ' / ' + escapeHtml(data.total_report_count) + '</div></div>',
+          '<div class="card"><div class="fact-label">Generated At</div><div class="fact-value">' + escapeHtml(data.generated_at || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Summary Path</div><div class="fact-value code" id="sanitizer-summary-path">' + escapeHtml(data.summary_path) + '</div></div>',
+        ];
+        if (data.summary_json_path) {
+          facts.push('<div class="card"><div class="fact-label">JSON Path</div><div class="fact-value code" id="sanitizer-summary-json-path">' + escapeHtml(data.summary_json_path) + '</div></div>');
+        }
+        factsEl.innerHTML = facts.join('');
+
+        actionsEl.innerHTML = [
+          '<button class="button" onclick="copyText(\'sanitizer-summary-path\')">Copy Path</button>',
+          '<button class="button" onclick="copyText(\'sanitizer-summary-json-path\')">Copy JSON Path</button>',
+          '<button class="button" onclick="copySummaryMarkdown()">Copy Summary</button>',
+        ].join('');
+      }
+
+      function copyText(elementId) {
+        var el = document.getElementById(elementId);
+        if (!el) return;
+        var text = el.textContent || el.innerText;
+        navigator.clipboard.writeText(text).catch(function() {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        });
+      }
+
+      function copySummaryMarkdown() {
+        var data = state.sanitizerDriftHistorySummary;
+        if (!data || !data.available) return;
+        var lines = [
+          '## Sanitizer Drift History Summary',
+          '',
+          '- Status: `' + data.status + '`',
+          '- Latest risk: `' + (data.latest_risk || 'unknown') + '`',
+          '- Changed parsers: ' + (data.changed_parser_count || 0),
+          '- Degraded reports: ' + (data.degraded_reports_count || 0),
+          '- Valid / total reports: ' + (data.valid_report_count || 0) + ' / ' + (data.total_report_count || 0),
+          '- Path: `' + data.summary_path + '`',
+          '',
+          '---',
+          '*Generated by sanitizer-drift-history-summary. No raw secrets are included.*',
+        ].join('\n');
+        navigator.clipboard.writeText(lines).catch(function() {
+          var ta = document.createElement('textarea');
+          ta.value = lines;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        });
+      }
+
       function buildRetrievalRequest() {
         const mode = document.getElementById('retrieval-mode').value;
         const req = {
@@ -3360,6 +4210,9 @@
           top_k: Number(document.getElementById('retrieval-top-k').value || 3),
           mode: mode,
         };
+        const principals = parsePrincipalInput(document.getElementById('retrieval-principal').value);
+        req.principal_ids = principals;
+        req.enforce_acl = true;
         if (mode === 'hybrid' || mode === 'hybrid_rerank') {
           req.lexical_weight = Number(document.getElementById('retrieval-lexical-weight').value || 0.3);
           req.vector_weight = Number(document.getElementById('retrieval-vector-weight').value || 0.7);
@@ -3411,6 +4264,42 @@
         }).join('');
       }
 
+      function renderAclExplain(explain) {
+        if (!explain) return '';
+        const cls = explain.principal_context === 'missing' ? 'pill warn' : 'pill';
+        return `<div class="sub" style="margin:8px 0"><span class="${cls}">ACL ${escapeHtml(explain.principal_context)}</span> candidates ${escapeHtml(explain.candidate_count)} · visible ${escapeHtml(explain.visible_count)} · filtered ${escapeHtml(explain.filtered_count)}</div>`;
+      }
+
+      async function runPermissionPreview() {
+        const root = document.getElementById('permission-preview-results');
+        const status = document.getElementById('permission-preview-status');
+        const principal_ids = parsePrincipalInput(document.getElementById('permission-preview-principal').value);
+        root.innerHTML = '<div class="sub">Calculating visibility...</div>';
+        try {
+          const result = await getJson('/permissions/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ principal_ids }),
+          });
+          state.permissionPreview = result;
+          status.className = result.degraded ? 'pill warn' : 'pill';
+          status.textContent = result.degraded ? 'Degraded' : 'Ready';
+          const banner = result.degraded ? '<div class="empty" style="color:var(--warn)">Missing principal context. Preview is restricted to public/no-ACL visibility and is not full access.</div>' : '';
+          const blocks = (result.knowledge_bases || []).map((kb) => {
+            const docs = (kb.documents || []).slice(0, 8).map((doc) => {
+              const cls = doc.visible ? 'pill' : 'pill warn';
+              return `<div class="result"><div class="name">${escapeHtml(doc.uri)} <span class="${cls}">${doc.visible ? 'visible' : 'filtered'}</span></div><div class="sub">reason ${escapeHtml(doc.reason)} · chunks ${escapeHtml(doc.chunk_count)}</div></div>`;
+            }).join('');
+            return `<div><div class="section-title">${escapeHtml(kb.name)} · ${kb.visible_documents} visible · ${kb.filtered_documents} filtered</div>${docs || empty('No documents in this knowledge base.')}</div>`;
+          }).join('');
+          root.innerHTML = banner + (blocks || empty('No knowledge bases to preview.'));
+        } catch (error) {
+          status.className = 'pill error';
+          status.textContent = 'Error';
+          root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
       async function runRetrieval() {
         const resultRoot = document.getElementById('retrieval-results');
         const requestBody = buildRetrievalRequest();
@@ -3422,14 +4311,14 @@
             body: JSON.stringify(requestBody),
           });
           if (!result.results || !result.results.length) {
-            resultRoot.innerHTML = empty('Retrieval returned zero results. This is a real API response.');
+            resultRoot.innerHTML = renderAclExplain(result.acl_explain) + empty('Retrieval returned zero results. This is a real API response.');
             return;
           }
           var degradedBanner = '';
           if (result.degraded) {
             degradedBanner = `<div class="empty" style="color:var(--warn);margin-bottom:8px">⚠ Degraded: ${escapeHtml(result.degraded_reason || 'reranker unavailable')}</div>`;
           }
-          resultRoot.innerHTML = degradedBanner + result.results.map((item) => `
+          resultRoot.innerHTML = degradedBanner + renderAclExplain(result.acl_explain) + result.results.map((item) => `
             <div class="result">
               <div class="name">${escapeHtml(item.document_uri)}</div>
               <div class="sub">chunk ${item.chunk_index} · score ${item.score} · distance ${item.distance}</div>
@@ -3762,6 +4651,44 @@
         }
       }
 
+      async function renderWorkflowAuditEvents() {
+        var limit = parseInt(document.getElementById('wf-audit-limit').value, 10) || 25;
+        var body = document.getElementById('wf-audit-body');
+        var empty = document.getElementById('wf-audit-empty');
+        var degraded = document.getElementById('wf-audit-degraded');
+        var typeFilter = document.getElementById('wf-audit-type').value;
+        var url = '/audit-events?limit=' + limit;
+        if (typeFilter) url += '&event_type=' + encodeURIComponent(typeFilter);
+        try {
+          var response = await fetch(url);
+          var data = await response.json();
+          if (!data.entries || data.entries.length === 0) {
+            empty.style.display = 'none';
+            degraded.style.display = 'block';
+            body.innerHTML = '';
+            return;
+          }
+          degraded.style.display = 'none';
+          empty.style.display = 'none';
+          body.innerHTML = data.entries.map(function(entry) {
+            var eventClass = 'wf-event-' + entry.event_type;
+            var summary = entry.payload ? JSON.stringify(entry.payload) : '—';
+            return '<tr>' +
+              '<td>' + escapeHtml(entry.occurred_at || '') + '</td>' +
+              '<td><span class="' + eventClass + '">' + escapeHtml(entry.event_type) + '</span></td>' +
+              '<td>' + escapeHtml(entry.actor || '—') + '</td>' +
+              '<td style="font-family:monospace;font-size:10px;">' + escapeHtml(entry.run_id ? entry.run_id.substring(0, 8) + '…' : '—') + '</td>' +
+              '<td style="font-family:monospace;font-size:10px;">' + escapeHtml(entry.item_id ? entry.item_id.substring(0, 8) + '…' : '—') + '</td>' +
+              '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;font-size:10px;" title="' + escapeHtml(summary) + '">' + escapeHtml(summary.length > 80 ? summary.substring(0, 80) + '…' : summary) + '</td>' +
+              '</tr>';
+          }).join('');
+        } catch (error) {
+          empty.style.display = 'none';
+          degraded.style.display = 'block';
+          degraded.textContent = 'Failed to load workflow audit events: ' + error.message;
+        }
+      }
+
       // ── Utility ──
 
       function debounce(fn, delay) {
@@ -3907,44 +4834,39 @@
         }
       }
 
+      async function loadAll() {
+        try {
+          const [sourcesResp, pipelineRunsResp] = await Promise.all([
+            getJson('/sources'),
+            getJson('/pipeline-runs'),
+          ]);
+          state.sources = sourcesResp.items;
+          state.pipelineRuns = pipelineRunsResp.items;
+          renderSources();
+          await renderPipelineRuns();
+        } catch (e) {
+          console.error('loadAll error', e);
+        }
+      }
+
       async function boot() {
         try {
-          // Restore filter state from URL query params
-          var urlParams = new URLSearchParams(window.location.search);
-          if (urlParams.has('provider')) state.runsFilter.provider = urlParams.get('provider');
-          if (urlParams.has('model')) state.runsFilter.model = urlParams.get('model');
-          if (urlParams.has('profile_id')) state.runsFilter.profile_id = urlParams.get('profile_id');
-          if (urlParams.has('status')) state.runsFilter.status = urlParams.get('status');
-          if (urlParams.has('started_after')) state.runsFilter.started_after = urlParams.get('started_after');
-          if (urlParams.has('started_before')) state.runsFilter.started_before = urlParams.get('started_before');
-          if (urlParams.has('limit')) state.runsFilter.limit = parseInt(urlParams.get('limit'), 10) || 10;
-
-          // Listen for browser back/forward to re-apply URL filters
-          window.addEventListener('popstate', function() {
-            var p = new URLSearchParams(window.location.search);
-            state.runsFilter.provider = p.get('provider') || '';
-            state.runsFilter.model = p.get('model') || '';
-            state.runsFilter.profile_id = p.get('profile_id') || '';
-            state.runsFilter.status = p.get('status') || '';
-            state.runsFilter.started_after = p.get('started_after') || '';
-            state.runsFilter.started_before = p.get('started_before') || '';
-            if (p.has('limit')) state.runsFilter.limit = parseInt(p.get('limit'), 10) || 10;
-            renderRunsFilterBar();
-            renderUnderstandingRuns();
-          });
-
           await loadInitialData();
           await loadFormats();
           await loadFormats();
           await loadSanitizerCoverage();
           await loadSanitizerDriftHistory();
+          await loadSanitizerDriftHistorySummary();
           await loadRetrievalBenchmark();
           await loadRetrievalBenchmarkIntegrity();
+          await loadAnswerLiveSmoke();
           await loadUnderstandingExportDiff();
+          await loadSanitizerContractMatrix();
+          await loadAdvancedParserCorpus();
+          await loadOpsDiagnostics();
           renderStatusStrip();
           renderKnowledgeBases();
           renderSources();
-          renderIngestionPanel();
           await renderPipelineRuns();
           await renderUnderstandingCoverage();
           renderRunsFilterBar();
@@ -3954,6 +4876,7 @@
           renderModels();
           await renderProfileMatrix();
           await renderAuditLog();
+          await renderWorkflowAuditEvents();
           renderPlugins();
           renderFilesharePanel();
           renderWizard();
@@ -3966,9 +4889,14 @@
           renderFormats();
           renderSanitizerCoverage();
           renderSanitizerDriftHistory();
+          renderSanitizerDriftHistorySummary();
           renderRetrievalBenchmark();
           renderRetrievalBenchmarkIntegrity();
+          renderAnswerLiveSmoke();
           renderUnderstandingExportDiffBadge();
+          renderSanitizerContractMatrix();
+          renderAdvancedParserCorpus();
+          renderOpsDiagnostics();
           renderUploadKBSelect();
         } catch (error) {
           document.body.innerHTML = `<main class="main">${empty(error.message)}</main>`;
@@ -3977,6 +4905,7 @@
 
         document.getElementById('run-evaluation-btn').addEventListener('click', runEvaluationFromConsole);
         document.getElementById('run-retrieval').addEventListener('click', runRetrieval);
+        document.getElementById('run-permission-preview').addEventListener('click', runPermissionPreview);
         document.getElementById('retrieval-mode').addEventListener('change', function() {
           const mode = this.value;
           document.getElementById('retrieval-hybrid-opts').style.display =
@@ -4017,6 +4946,9 @@
         document.getElementById('profile-create-btn').addEventListener('click', () => showProfileCreateForm(true));
         document.getElementById('audit-log-refresh').addEventListener('click', () => renderAuditLog());
         document.getElementById('audit-log-limit').addEventListener('change', () => renderAuditLog());
+        document.getElementById('wf-audit-refresh').addEventListener('click', () => renderWorkflowAuditEvents());
+        document.getElementById('wf-audit-limit').addEventListener('change', () => renderWorkflowAuditEvents());
+        document.getElementById('wf-audit-type').addEventListener('change', () => renderWorkflowAuditEvents());
         document.getElementById('audit-filter-provider').addEventListener('change', () => renderAuditLog());
         document.getElementById('audit-filter-task').addEventListener('change', () => renderAuditLog());
         document.getElementById('audit-filter-profile').addEventListener('input', debounce(function() { renderAuditLog(); }, 300));

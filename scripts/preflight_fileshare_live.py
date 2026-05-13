@@ -35,7 +35,10 @@ _OPTIONAL_SDKS = {
 
 
 def _run_quiet(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(cmd, 127, stdout="", stderr=str(exc))
 
 
 def _docker_available() -> str | None:

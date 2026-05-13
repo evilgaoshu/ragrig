@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from ragrig.db.models import DocumentVersion, PipelineRun, PipelineRunItem
+from ragrig.acl import AclMetadata
+from ragrig.db.models import AuditEvent, Chunk, DocumentVersion, PipelineRun, PipelineRunItem
 from ragrig.repositories import (
     create_pipeline_run,
     create_pipeline_run_item,
@@ -14,6 +15,8 @@ from ragrig.repositories import (
     get_or_create_knowledge_base,
     get_or_create_source,
     list_latest_document_versions,
+    set_chunk_acl,
+    set_document_acl,
 )
 
 pytestmark = pytest.mark.integration
@@ -159,3 +162,56 @@ def test_document_version_helpers_and_pipeline_run_helpers(sqlite_session) -> No
     )
     assert item.error_message is None
     assert item.finished_at is not None
+
+
+def test_acl_crud_writes_safe_audit_events(sqlite_session) -> None:
+    knowledge_base = get_or_create_knowledge_base(sqlite_session, "acl-kb")
+    source = get_or_create_source(
+        sqlite_session,
+        knowledge_base_id=knowledge_base.id,
+        uri="/tmp/acl",
+        config_json={},
+    )
+    document, _ = get_or_create_document(
+        sqlite_session,
+        knowledge_base_id=knowledge_base.id,
+        source_id=source.id,
+        uri="/tmp/acl/private.md",
+        content_hash="hash",
+        mime_type="text/markdown",
+        metadata_json={},
+    )
+    version = DocumentVersion(
+        document_id=document.id,
+        version_number=1,
+        content_hash="hash",
+        parser_name="markdown",
+        parser_config_json={},
+        extracted_text="restricted body",
+        metadata_json={},
+    )
+    sqlite_session.add(version)
+    sqlite_session.flush()
+    chunk = Chunk(
+        document_version_id=version.id,
+        chunk_index=0,
+        text="restricted body",
+        metadata_json={},
+    )
+    sqlite_session.add(chunk)
+    sqlite_session.flush()
+
+    acl = AclMetadata(
+        visibility="protected",
+        allowed_principals=["user:alice", "group:engineering"],
+        acl_source="test",
+        acl_source_hash="hash",
+    )
+    set_document_acl(sqlite_session, document_id=document.id, acl=acl, actor="test")
+    set_chunk_acl(sqlite_session, chunk_id=chunk.id, acl=acl, actor="test")
+
+    events = sqlite_session.scalars(select(AuditEvent).order_by(AuditEvent.occurred_at)).all()
+    assert [event.event_type for event in events] == ["acl_write", "acl_write"]
+    assert events[0].payload_json["allowed_count"] == 2
+    assert "user:alice" not in str(events[0].payload_json)
+    assert "restricted body" not in str(events[1].payload_json)

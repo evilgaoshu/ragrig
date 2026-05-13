@@ -11,6 +11,7 @@ def test_phase_1a_metadata_defines_core_tables() -> None:
 
     assert {
         "knowledge_bases",
+        "audit_events",
         "sources",
         "documents",
         "document_versions",
@@ -24,12 +25,15 @@ def test_phase_1a_metadata_defines_core_tables() -> None:
     document_versions = metadata.tables["document_versions"]
     embeddings = metadata.tables["embeddings"]
     pipeline_runs = metadata.tables["pipeline_runs"]
+    audit_events = metadata.tables["audit_events"]
 
     assert documents.c.id.primary_key
     assert document_versions.c.document_id.references(documents.c.id)
     assert embeddings.c.chunk_id.references(metadata.tables["chunks"].c.id)
     assert embeddings.c.dimensions.nullable is False
     assert str(embeddings.c.embedding.type) == "VECTOR"
+    assert audit_events.c.event_type.nullable is False
+    assert audit_events.c.payload_json.nullable is False
 
     document_fk_targets = {
         element.target_fullname

@@ -1,7 +1,7 @@
 UV ?= uv
 ARTIFACTS_DIR ?= docs/operations/artifacts
 
-.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact bge-rerank-smoke sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff
+.PHONY: sync format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff seed-acl-fixtures pipeline-dag-smoke ops-deploy-smoke ops-backup-smoke ops-restore-smoke ops-upgrade-smoke pilot-evidence-pack
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -39,13 +39,19 @@ test-optional:
 	$(UV) run pytest -m optional
 
 answer-live-smoke:
-	$(UV) run python -m scripts.answer_live_smoke --pretty
+	$(UV) run python -m scripts.answer_live_smoke --pretty --output $(ARTIFACTS_DIR)/answer-live-smoke.json
+
+pipeline-dag-smoke:
+	$(UV) run python -m scripts.pipeline_dag_smoke --pretty --output $(ARTIFACTS_DIR)/pipeline-dag-smoke.json
 
 coverage:
 	$(UV) run pytest --cov --cov-report=term-missing --cov-report=json:coverage.json
 
 coverage-strict:
 	$(UV) run pytest --cov=ragrig.chunkers --cov=ragrig.embeddings --cov=ragrig.retrieval --cov=ragrig.acl --cov-fail-under=100 --cov-report=term-missing
+
+acl-regression:
+	$(UV) run pytest tests/test_acl_regression.py -v
 
 audit:
 	$(UV) run python -m pip_audit --local --format=json -o "$(ARTIFACTS_DIR)/pip-audit.json"
@@ -116,6 +122,9 @@ index-check:
 retrieve-check:
 	$(UV) run python -m scripts.retrieve_check --knowledge-base "$(INGEST_KB)" --query "$(QUERY)"
 
+seed-acl-fixtures:
+	$(UV) run python -m scripts.seed_acl_fixtures
+
 qdrant-up:
 	docker compose --profile qdrant up -d qdrant
 
@@ -163,6 +172,10 @@ eval-local:
 eval-baseline:
 	$(UV) run python -m scripts.eval_baseline --run-id "$(RUN_ID)" $(if $(BASELINE_ID),--baseline-id $(BASELINE_ID),)
 
+# Canonical backfill for existing baselines: make eval-baseline-backfill-canonical [DRY_RUN=1]
+eval-baseline-backfill-canonical:
+	$(UV) run python -m scripts.eval_baseline_backfill_canonical $(if $(DRY_RUN),--dry-run,) --baseline-dir "$(BASELINE_DIR)"
+
 # ── Retention / cleanup ───────────────────────────────────────
 # Clean old evaluation runs: make eval-cleanup KEEP_COUNT=20
 eval-cleanup:
@@ -198,6 +211,21 @@ retrieval-benchmark-compare:
 retrieval-benchmark-integrity-artifact:
 	$(UV) run python -m ragrig.retrieval_benchmark_integrity --pretty --output $(ARTIFACTS_DIR)/retrieval-benchmark-integrity.json
 
+# ── Retrieval benchmark integrity summary ────────────────────
+retrieval-benchmark-integrity-summary:
+	$(UV) run python -m ragrig.retrieval_benchmark_integrity --summary \
+		$(ARTIFACTS_DIR)/retrieval-benchmark-integrity.json \
+		--output-dir $(ARTIFACTS_DIR)
+
+# ── Retrieval benchmark integrity cleanup ────────────────────
+retrieval-benchmark-integrity-cleanup:
+	$(UV) run python -m scripts.artifact_cleanup \
+		--artifacts-dir $(ARTIFACTS_DIR) \
+		--pattern "retrieval-benchmark-integrity*.json" \
+		$(if $(KEEP_DAYS),--keep-days $(KEEP_DAYS),--keep-days 90) \
+		$(if $(CONFIRM_DELETE),--confirm-delete,) \
+		--stdout
+
 # ── Optional BGE reranker smoke ────────────────────────────────
 # Requires local-ml extras (FlagEmbedding, sentence-transformers,
 # torch).  If dependencies are missing the test safely reports
@@ -205,18 +233,35 @@ retrieval-benchmark-integrity-artifact:
 bge-rerank-smoke:
 	$(UV) run python -m scripts.bge_rerank_smoke --pretty
 
+# ── Advanced parser corpus check ──────────────────────────────
+# Runs the advanced parser corpus quality gate against fixture
+# files in tests/fixtures/advanced_documents/.  Outputs JSON and
+# Markdown reports to the operations artifacts directory.
+# Exit code 0 when all fixtures healthy/skipped, 1 when any
+# degraded/failure, 2 when corrupt artifact detected.
+advanced-parser-corpus-check:
+	$(UV) run python -m scripts.advanced_parser_corpus_check \
+		--json-output $(ARTIFACTS_DIR)/advanced-parser-corpus.json \
+		--markdown-output $(ARTIFACTS_DIR)/advanced-parser-corpus.md
+
+generate-advanced-fixtures:
+	$(UV) run python scripts/generate_advanced_fixtures.py
+
 export-object-storage-check:
 	$(UV) run python -m scripts.export_object_storage
 
 verify-export-fixture:
 	$(UV) run python -m scripts.verify_export_fixture
 
-# ── Sanitizer drift diff ──────────────────────────────────────
-# Compares base/head sanitizer-coverage-summary.json artifacts and
-# produces a structured diff + Markdown report.  Exit code 2 when
-# risk=degraded, 0 when unchanged, 1 on error.
+# ── Sanitizer contract check ──────────────────────────────────
+# Scans the source tree for sanitizer call sites, verifies
+# cross-layer contract, and outputs a callsite matrix artifact
+# (JSON + Markdown).  The artifact is consumed by the Web Console
+# badge at GET /sanitizer-contract-status.
 sanitizer-contract-check:
-	$(UV) run python -m scripts.sanitizer_contract_check
+	$(UV) run python -m scripts.sanitizer_contract_check \
+		--json-output $(ARTIFACTS_DIR)/sanitizer-contract-matrix.json \
+		--markdown-output $(ARTIFACTS_DIR)/sanitizer-contract-matrix.md
 
 sanitizer-drift-diff:
 	$(UV) run python -m scripts.sanitizer_drift_diff \
@@ -244,7 +289,11 @@ sanitizer-drift-history:
 sanitizer-drift-history-summary:
 	$(UV) run python -m scripts.sanitizer_drift_history_summary \
 		--history $(ARTIFACTS_DIR)/sanitizer-drift-history.json \
-		--stdout
+		--output $(ARTIFACTS_DIR)/sanitizer-drift-history-summary.md \
+		--stdout; \
+	$(UV) run python -m scripts.sanitizer_drift_history_summary \
+		--history $(ARTIFACTS_DIR)/sanitizer-drift-history.json \
+		--json > $(ARTIFACTS_DIR)/sanitizer-drift-history-summary.json
 
 # ── Artifact retention / cleanup ──────────────────────────────
 # Dry-run by default.  Lists files that would be removed.
@@ -266,6 +315,38 @@ verify-understanding-export:
 
 verify-understanding-export-json:
 	$(UV) run python -m scripts.verify_understanding_export --json --output $(ARTIFACTS_DIR)/understanding-export-verify-summary.json
+
+# ── Operations pack: deploy / backup / restore / upgrade smoke ──────────
+
+OPS_BACKUP_DIR ?= backups
+
+ops-deploy-smoke:
+	$(UV) run python -m scripts.ops_deploy --pretty --output $(ARTIFACTS_DIR)/ops-deploy-summary.json
+
+ops-backup-smoke:
+	$(UV) run python -m scripts.ops_backup --pretty --backup-dir $(OPS_BACKUP_DIR) --output $(ARTIFACTS_DIR)/ops-backup-summary.json
+
+ops-restore-smoke:
+	$(UV) run python -m scripts.ops_restore --pretty --backup-dir $(OPS_BACKUP_DIR) --output $(ARTIFACTS_DIR)/ops-restore-summary.json
+
+ops-upgrade-smoke:
+	$(UV) run python -m scripts.ops_upgrade --pretty --output $(ARTIFACTS_DIR)/ops-upgrade-summary.json
+
+# ── Pilot go/no-go evidence manifest ──────────────────────────
+# Captures the fixed pilot corpus, golden questions, evidence commands,
+# artifact paths, and decision status. JSON artifacts are local run output;
+# the Markdown record is versioned in docs/operations/records/.
+pilot-evidence-pack:
+	$(UV) run python -m scripts.pilot_evidence_pack --pretty
+
+# ── Understanding export diff summary ──────────────────────────
+# Reads understanding-export-diff.json and produces a concise
+# PR-ready Markdown summary.  Exit code 1 on failure, 3 on degraded,
+# 0 on pass.
+understanding-export-diff-summary:
+	$(UV) run python -m scripts.understanding_export_diff_summary \
+		--diff $(ARTIFACTS_DIR)/understanding-export-diff.json \
+		--stdout
 
 # ── Understanding export baseline diff ────────────────────────
 # Compares current understanding export against a baseline fixture/path

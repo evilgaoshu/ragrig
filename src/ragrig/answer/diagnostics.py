@@ -3,6 +3,9 @@
 This module provides a safe, dependency-guarded diagnostics path for
 `make answer-live-smoke`.  It never crashes on missing optional dependencies
 and never exposes raw API keys.
+
+This module also provides artifact generation and console-safe summary
+functions for the Web Console badge / CI artifact pattern.
 """
 
 from __future__ import annotations
@@ -12,6 +15,8 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse, urlunparse
 
@@ -224,6 +229,173 @@ def run_answer_diagnostics(
     )
 
 
+# ── Artifact generation ──────────────────────────────────────────────────
+
+_DEFAULT_ARTIFACT_PATH = Path("docs/operations/artifacts/answer-live-smoke.json")
+_ARTIFACT_TYPE = "answer-live-smoke"
+_SUPPORTED_SCHEMA_VERSION = "1.0"
+
+_SECRET_KEY_PARTS = (
+    "api_key",
+    "access_key",
+    "secret",
+    "password",
+    "token",
+    "credential",
+    "private_key",
+    "dsn",
+    "service_account",
+    "session_token",
+)
+
+
+def _redact_secrets(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {
+            k: "[redacted]"
+            if any(p in k.lower() for p in _SECRET_KEY_PARTS)
+            else _redact_secrets(v)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_redact_secrets(v) for v in obj]
+    return obj
+
+
+def generate_diagnostics_artifact(
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+    output_path: Path | None = None,
+    _deps_fn=_check_openai_dependency,
+    _ping_fn=_ping_provider,
+    _chat_fn=_smoke_chat,
+) -> dict[str, Any]:
+    """Run diagnostics and produce a CI artifact dict with all required fields.
+
+    Writes to *output_path* if provided (defaults to
+    ``docs/operations/artifacts/answer-live-smoke.json``).
+    Never includes raw secret fragments.
+    """
+    report = run_answer_diagnostics(
+        provider=provider,
+        model=model,
+        base_url=base_url,
+        _deps_fn=_deps_fn,
+        _ping_fn=_ping_fn,
+        _chat_fn=_chat_fn,
+    )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    artifact = {
+        "artifact": _ARTIFACT_TYPE,
+        "schema_version": _SUPPORTED_SCHEMA_VERSION,
+        "provider": report.provider,
+        "model": report.model,
+        "base_url_redacted": report.base_url_redacted,
+        "status": report.status,
+        "reason": report.reason,
+        "citation_count": report.citation_count,
+        "timing_ms": report.timing_ms,
+        "generated_at": now_iso,
+        "report_path": None,
+    }
+    artifact = _redact_secrets(artifact)
+
+    out = output_path or _DEFAULT_ARTIFACT_PATH
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(artifact, indent=2, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    artifact["report_path"] = str(out)
+    return artifact
+
+
+def _read_artifact(artifact_path: Path) -> dict[str, Any] | None:
+    """Read and validate a diagnostics artifact, or return None on failure."""
+    if not artifact_path.exists():
+        return None
+    try:
+        data = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("artifact") != _ARTIFACT_TYPE:
+        return None
+    return data
+
+
+def get_diagnostics_summary(*, artifact_path: Path | None = None) -> dict[str, Any]:
+    """Return a Web Console-safe summary of the latest answer live smoke diagnostics.
+
+    Reads the artifact at *artifact_path* (defaults to
+    ``docs/operations/artifacts/answer-live-smoke.json``).
+
+    Missing, corrupt, or schema-incompatible artifacts are reported as
+    degraded/failure — never as healthy.
+    Never includes raw secret fragments.
+    """
+    path = artifact_path or _DEFAULT_ARTIFACT_PATH
+
+    def _artifact_relative() -> str:
+        try:
+            return str(path.relative_to(Path(__file__).resolve().parents[2]))
+        except ValueError:
+            return str(path)
+
+    artifact = _read_artifact(path)
+    if artifact is None:
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": "artifact not found or corrupt",
+            "artifact_path": _artifact_relative(),
+        }
+
+    # Check staleness (> 24 hours)
+    generated_at_str = artifact.get("generated_at")
+    is_stale = False
+    if generated_at_str:
+        try:
+            generated_at = datetime.fromisoformat(generated_at_str.replace("Z", "+00:00"))
+            age_hours = (datetime.now(timezone.utc) - generated_at).total_seconds() / 3600.0
+            if age_hours > 24:
+                is_stale = True
+        except (ValueError, TypeError):
+            pass
+
+    status = artifact.get("status", "unknown")
+    if status not in ("healthy", "degraded", "skip", "error"):
+        status = "failure"
+
+    if is_stale and status == "healthy":
+        status = "degraded"
+
+    summary: dict[str, Any] = {
+        "available": True,
+        "status": status,
+        "is_stale": is_stale,
+        "provider": artifact.get("provider"),
+        "model": artifact.get("model"),
+        "base_url_redacted": artifact.get("base_url_redacted"),
+        "reason": artifact.get("reason"),
+        "citation_count": artifact.get("citation_count"),
+        "timing_ms": artifact.get("timing_ms"),
+        "generated_at": generated_at_str,
+        "report_path": artifact.get("report_path") or _artifact_relative(),
+        "artifact_path": _artifact_relative(),
+        "schema_version": artifact.get("schema_version"),
+    }
+
+    # Map skip/error to degraded/failure for status card display
+    summary["display_status"] = summary["status"]
+
+    return summary
+
+
 __all__ = [
     "AnswerDiagnosticsReport",
     "Status",
@@ -231,5 +403,7 @@ __all__ = [
     "_ping_provider",
     "_redact_base_url",
     "_smoke_chat",
+    "generate_diagnostics_artifact",
+    "get_diagnostics_summary",
     "run_answer_diagnostics",
 ]

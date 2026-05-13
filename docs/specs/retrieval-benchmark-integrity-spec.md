@@ -1,8 +1,8 @@
 # Retrieval Benchmark Integrity Badge & CI Artifact SPEC
 
-**Version:** 1.0  
+**Version:** 1.2  
 **Status:** Draft  
-**Issue:** EVI-91
+**Issues:** EVI-91, EVI-99, EVI-111
 
 ---
 
@@ -31,6 +31,12 @@ The Web Console badge / status card displays the following fields, sourced from 
 
 The CI artifact is written to `docs/operations/artifacts/retrieval-benchmark-integrity.json`.
 
+Compatibility note:
+
+- Integrity artifacts generated from pre-EVI-111 baselines may embed legacy `fixture_id` values derived from checkout absolute paths.
+- Those files remain valid historical snapshots for age/hash/status reporting at the time they were produced, but they must not be used to judge post-EVI-111 fixture identity compatibility.
+- Recreate them from a refreshed baseline with `make retrieval-benchmark-baseline-refresh && make retrieval-benchmark-integrity-artifact && make retrieval-benchmark-integrity-summary`.
+
 ```json
 {
   "artifact": "retrieval-benchmark-integrity",
@@ -46,6 +52,8 @@ The CI artifact is written to `docs/operations/artifacts/retrieval-benchmark-int
   "baseline_present": true
 }
 ```
+
+The example above is illustrative only. If a repository snapshot still contains this older `fixture_id`, treat it as historical evidence unless the baseline was refreshed after EVI-111.
 
 ### Field definitions
 
@@ -126,11 +134,24 @@ The integrity checker must **never** emit raw secret values in its output.
 retrieval-benchmark-integrity-artifact:
 	$(UV) run python -m ragrig.retrieval_benchmark_integrity \
 		--pretty --output $(ARTIFACTS_DIR)/retrieval-benchmark-integrity.json
+
+retrieval-benchmark-integrity-summary:
+	$(UV) run python -m ragrig.retrieval_benchmark_integrity --summary \
+		$(ARTIFACTS_DIR)/retrieval-benchmark-integrity.json \
+		--output-dir $(ARTIFACTS_DIR)
+
+retrieval-benchmark-integrity-cleanup:
+	$(UV) run python -m scripts.artifact_cleanup \
+		--artifacts-dir $(ARTIFACTS_DIR) \
+		--pattern "retrieval-benchmark-integrity*.json" \
+		$(if $(KEEP_DAYS),--keep-days $(KEEP_DAYS),--keep-days 90) \
+		$(if $(CONFIRM_DELETE),--confirm-delete,) \
+		--stdout
 ```
 
-- Exit code `0` when `overall_status != "failure"`
-- Exit code `1` when `overall_status == "failure"`
-- This is **not** a required CI gate; it is informational.
+- `retrieval-benchmark-integrity-artifact`: exit code `0` when `overall_status != "failure"`, `1` when `"failure"`. Informational, not a required CI gate.
+- `retrieval-benchmark-integrity-summary`: generates Markdown + JSON from the artifact (see section 9).
+- `retrieval-benchmark-integrity-cleanup`: dry-run by default. Pass `CONFIRM_DELETE=1` to actually delete. Default retention: 90 days.
 
 ---
 
@@ -152,7 +173,45 @@ retrieval-benchmark-integrity-artifact:
 
 ---
 
-## 9. Out of Scope
+## 9. Summary Output Fields
+
+The `retrieval-benchmark-integrity-summary` target produces two files:
+- `<artifact_stem>_summary.md` — human-readable Markdown table
+- `<artifact_stem>_summary.json` — machine-readable summary
+
+When these summaries are generated from a legacy pre-EVI-111 baseline, the reported `fixture_id` is also legacy. In that case, the summary is a historical snapshot reference only and should be regenerated after baseline refresh before using it for new regression triage.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `overall_status` | `string` | `"pass"`, `"degraded"`, or `"failure"` |
+| `reasons` | `string[]` | Human-readable reasons for degraded/failure |
+| `baseline_age` | `string` | Age string (e.g. `"12.5d"`, `"unknown"`) |
+| `fixture_id` | `string` | Fixture identifier |
+| `iteration_count` | `int` | Number of iterations per query |
+| `metrics_hash_status` | `string` | `"match"`, `"mismatch"`, or `"unchecked"` |
+| `schema_version` | `string` | Manifest schema version |
+| `generated_at` | `string` | ISO 8601 timestamp |
+| `json_report_path` | `string` | Path to the JSON report |
+| `md_report_path` | `string` | Path to the Markdown summary |
+
+Summary output never contains raw secret fragments. Test coverage verifies that secret-like artifact fields do not appear verbatim in the output.
+
+---
+
+## 10. Retention & Cleanup
+
+| Attribute | Value |
+|-----------|-------|
+| Default retention | 90 days (`--keep-days 90`) |
+| Scope | Files matching `retrieval-benchmark-integrity*.json` in `docs/operations/artifacts/` |
+| Dry-run | Default mode — lists candidates without deleting |
+| Confirmation | Required: `CONFIRM_DELETE=1` |
+
+The cleanup target delegates to `scripts.artifact_cleanup`, which defaults to dry-run and requires `--confirm-delete` to actually remove files.
+
+---
+
+## 11. Out of Scope
 
 - CI required gate (exit code is advisory)
 - Cloud storage / BI integration
@@ -161,8 +220,10 @@ retrieval-benchmark-integrity-artifact:
 
 ---
 
-## 10. Changelog
+## 12. Changelog
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2 | 2026-05-13 | Added EVI-111 legacy `fixture_id` compatibility notes, refresh path, and historical snapshot boundary for integrity artifacts. |
+| 1.1 | 2026-05-12 | Added summary target (SCHARP 9), retention & cleanup (SCHARP 10), updated Makefile targets (SCHARP 7) |
 | 1.0 | 2026-05-11 | Initial SPEC for EVI-91 |

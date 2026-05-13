@@ -13,6 +13,52 @@ from typing import Any, Literal
 
 Visibility = Literal["public", "protected", "unknown"]
 AclSummaryVisibility = Literal["public", "protected", "unknown"]
+AuditEventType = Literal[
+    "acl_write",
+    "retrieval_filter",
+    "access_denied",
+    "source_save",
+    "dry_run_start",
+    "dry_run_complete",
+    "retry_start",
+    "retry_complete",
+    "resume_start",
+    "resume_complete",
+]
+AclExplainReason = Literal[
+    "public",
+    "principal_match",
+    "explicit_deny",
+    "no_matching_principal",
+    "missing_principal",
+    "unknown_visibility",
+]
+
+
+@dataclass(frozen=True)
+class AclExplain:
+    """Per-chunk ACL explanation safe for API responses.
+
+    Must NOT contain raw principal lists, full chunk text, or secrets.
+    """
+
+    chunk_id: str
+    visibility: Visibility
+    permitted: bool
+    reason: AclExplainReason
+
+
+@dataclass(frozen=True)
+class Principal:
+    """A retrieval principal with explicit user and group subjects."""
+
+    user_id: str
+    group_ids: list[str] = field(default_factory=list)
+
+    def subject_ids(self) -> list[str]:
+        subjects = [f"user:{self.user_id}", self.user_id]
+        subjects.extend(f"group:{group_id}" for group_id in self.group_ids)
+        return normalize_principal_ids(subjects)
 
 
 @dataclass(frozen=True)
@@ -38,12 +84,29 @@ class AclMetadata:
         if not principal_ids:
             return False
         # denied principals are excluded first
-        allowed = {pid.lower() for pid in self.allowed_principals}
-        denied = {pid.lower() for pid in self.denied_principals}
-        request_principals = {pid.lower() for pid in principal_ids}
+        allowed = set(normalize_principal_ids(self.allowed_principals))
+        denied = set(normalize_principal_ids(self.denied_principals))
+        request_principals = set(normalize_principal_ids(principal_ids))
         if denied & request_principals:
             return False
         return bool(allowed & request_principals)
+
+    def decision_reason(self, principal_ids: list[str] | None) -> str:
+        """Return a safe reason code for permission preview and explain payloads."""
+        if self.visibility == "public":
+            return "public"
+        if self.visibility == "unknown":
+            return "unknown_visibility"
+        if not principal_ids:
+            return "missing_principal"
+        allowed = set(normalize_principal_ids(self.allowed_principals))
+        denied = set(normalize_principal_ids(self.denied_principals))
+        request_principals = set(normalize_principal_ids(principal_ids))
+        if denied & request_principals:
+            return "explicit_deny"
+        if allowed & request_principals:
+            return "principal_match"
+        return "no_matching_principal"
 
     @classmethod
     def from_metadata(cls, metadata: dict[str, Any] | None) -> AclMetadata:
@@ -121,14 +184,71 @@ def _coerce_str_list(value: Any) -> list[str]:
     return []
 
 
+def normalize_principal_ids(principal_ids: list[str] | tuple[str, ...] | None) -> list[str]:
+    """Normalize principal strings for case-insensitive user/group matching."""
+    if not principal_ids:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for principal_id in principal_ids:
+        value = str(principal_id).strip().lower()
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return normalized
+
+
+def acl_explain_reason(
+    chunk_metadata: dict[str, Any] | None,
+    principal_ids: list[str] | None,
+) -> tuple[bool, AclExplainReason]:
+    acl = AclMetadata.from_metadata(chunk_metadata)
+    if acl.visibility == "public":
+        return True, "public"
+    if acl.visibility == "unknown":
+        return False, "unknown_visibility"
+    if not principal_ids:
+        return False, "missing_principal"
+    allowed = set(normalize_principal_ids(acl.allowed_principals))
+    denied = set(normalize_principal_ids(acl.denied_principals))
+    request_principals = set(normalize_principal_ids(principal_ids))
+    if denied & request_principals:
+        return False, "explicit_deny"
+    if allowed & request_principals:
+        return True, "principal_match"
+    return False, "no_matching_principal"
+
+
+def build_acl_explain(
+    chunk_id: str,
+    chunk_metadata: dict[str, Any] | None,
+    principal_ids: list[str] | None,
+) -> AclExplain:
+    permitted, reason = acl_explain_reason(chunk_metadata, principal_ids)
+    acl = AclMetadata.from_metadata(chunk_metadata)
+    return AclExplain(
+        chunk_id=str(chunk_id),
+        visibility=acl.visibility,
+        permitted=permitted,
+        reason=reason,
+    )
+
+
 def acl_permits_chunk_metadata(
     chunk_metadata: dict[str, Any] | None,
     principal_ids: list[str] | None,
 ) -> bool:
-    """Convenience: check whether chunk metadata grants access."""
     return AclMetadata.from_metadata(chunk_metadata).permits(principal_ids)
 
 
+def acl_decision_reason(
+    chunk_metadata: dict[str, Any] | None,
+    principal_ids: list[str] | None,
+) -> str:
+    """Return a safe ACL reason code for a chunk metadata decision."""
+    return AclMetadata.from_metadata(chunk_metadata).decision_reason(principal_ids)
+
+
 def acl_summary_from_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Convenience: return acl summary from metadata dict."""
     return AclMetadata.from_metadata(metadata).summary()

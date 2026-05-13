@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from starlette.responses import Response
 
 from ragrig import __version__
+from ragrig.acl import acl_summary_from_metadata
 from ragrig.answer import (
     NoEvidenceError,
     generate_answer,
@@ -52,6 +53,7 @@ from ragrig.repositories import (
     get_next_version_number,
     get_or_create_document,
     get_or_create_source,
+    list_audit_events,
 )
 from ragrig.retrieval import (
     EmbeddingProfileMismatchError,
@@ -79,13 +81,21 @@ from ragrig.understanding import (
 from ragrig.vectorstore import get_vector_backend, get_vector_backend_health
 from ragrig.web_console import (
     PluginWizardValidationError,
+    build_permission_preview,
     build_system_status,
     check_format,
+    dry_run_source,
+    get_advanced_parser_corpus,
+    get_answer_live_smoke,
+    get_ops_diagnostics,
     get_pipeline_run_detail,
+    get_pipeline_run_item_detail,
     get_recent_benchmark,
     get_retrieval_benchmark_integrity,
+    get_sanitizer_contract_status,
     get_sanitizer_coverage,
     get_sanitizer_drift_history,
+    get_sanitizer_drift_history_summary,
     get_understanding_export_diff,
     get_understanding_run_detail,
     list_document_version_chunks,
@@ -99,13 +109,20 @@ from ragrig.web_console import (
     list_supported_formats,
     list_understanding_runs,
     load_console_html,
+    resume_pipeline_dag,
+    retry_pipeline_run,
+    retry_pipeline_run_item,
+    save_source_config,
     validate_plugin_config_for_wizard,
+    validate_source_config,
 )
 from ragrig.workflows import (
+    IngestionDagRejected,
     WorkflowDefinition,
     WorkflowStep,
     WorkflowValidationError,
     list_workflow_operations,
+    run_ingestion_dag,
     run_workflow,
 )
 
@@ -171,6 +188,10 @@ class AnswerRequest(BaseModel):
     enforce_acl: bool = True
 
 
+class PermissionPreviewRequest(BaseModel):
+    principal_ids: list[str] | None = None
+
+
 class CreateProcessingProfileRequest(BaseModel):
     profile_id: str
     extension: str
@@ -221,6 +242,13 @@ def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
             "details": exc.details,
         }
     }
+
+
+def _safe_chunk_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    safe = dict(metadata or {})
+    if "acl" in safe:
+        safe["acl"] = acl_summary_from_metadata(metadata)
+    return safe
 
 
 def _plugin_validation_error_response(*, code: str, message: str) -> JSONResponse:
@@ -368,6 +396,36 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, list[dict[str, Any]]]:
         return {"items": list_pipeline_run_items(session, pipeline_run_id)}
+
+    class IngestionDagRequest(BaseModel):
+        knowledge_base: str = "fixture-local"
+        root_path: str
+        include_patterns: list[str] | None = None
+        exclude_patterns: list[str] | None = None
+        max_file_size_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+        failure_node: str | None = None
+
+    @app.post("/pipeline-dags/ingestion", response_model=None)
+    def ingestion_dag_run(
+        request: IngestionDagRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            report = run_ingestion_dag(
+                session,
+                knowledge_base_name=request.knowledge_base,
+                root_path=Path(request.root_path),
+                include_patterns=request.include_patterns,
+                exclude_patterns=request.exclude_patterns,
+                max_file_size_bytes=request.max_file_size_bytes,
+                failure_node=request.failure_node,
+            )
+        except IngestionDagRejected as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "rejected", "degraded": True, "reason": str(exc)},
+            )
+        return report.as_dict()
 
     @app.get("/documents", response_model=None)
     def documents(
@@ -747,6 +805,19 @@ def create_app(
         """
         return get_sanitizer_drift_history()
 
+    @app.get("/sanitizer-drift-history-summary", response_model=None)
+    def sanitizer_drift_history_summary() -> dict[str, Any]:
+        """Return the sanitizer drift history summary for Web Console display.
+
+        Reads the summary artifact from docs/operations/artifacts/ and
+        returns latest status, risk, parser counts, degraded reports count,
+        and summary path.
+
+        Missing/corrupt artifacts are reported as degraded/failure.
+        Never includes raw secret fragments.
+        """
+        return get_sanitizer_drift_history_summary()
+
     @app.get("/understanding-export-diff", response_model=None)
     def understanding_export_diff() -> dict[str, Any]:
         """Return the latest understanding export diff for Web Console display.
@@ -763,6 +834,24 @@ def create_app(
         Never includes raw secret fragments.
         """
         return get_understanding_export_diff()
+
+    @app.get("/sanitizer-contract-status", response_model=None)
+    def sanitizer_contract_status() -> dict[str, Any]:
+        """Return the latest sanitizer contract matrix status for Web Console display.
+
+        Reads the artifact at
+        docs/operations/artifacts/sanitizer-contract-matrix.json.
+
+        Returns a lightweight summary with contract status, registered callsite
+        count, unregistered count, summary fields check, duplicate impl check,
+        and artifact path.
+
+        Missing, corrupt, or schema-incompatible artifacts are reported as
+        degraded/failure — never as pass.
+
+        Never includes raw secret fragments.
+        """
+        return get_sanitizer_contract_status()
 
     @app.get("/retrieval/benchmark/recent", response_model=None)
     def retrieval_benchmark_recent() -> dict[str, Any]:
@@ -784,6 +873,54 @@ def create_app(
         rendering — never includes raw secret fragments.
         """
         return get_retrieval_benchmark_integrity()
+
+    @app.get("/ops/diagnostics", response_model=None)
+    def ops_diagnostics() -> dict[str, Any]:
+        """Return the latest deploy/backup/restore/upgrade summary.
+
+        Reads artifacts from docs/operations/artifacts/ and returns
+        a lightweight summary safe for browser rendering.
+
+        Missing, corrupt, or stale artifacts are reported as degraded/failure
+        — never as healthy.
+
+        Never includes plaintext DSN, token, API key, or object storage secret.
+        """
+        return get_ops_diagnostics()
+
+    @app.get("/answer/live-smoke", response_model=None)
+    def answer_live_smoke() -> dict[str, Any]:
+        """Return the latest answer live smoke diagnostics for Web Console display.
+
+        Reads the artifact at
+        docs/operations/artifacts/answer-live-smoke.json.
+
+        Returns a lightweight summary with provider, model, status, reason,
+        citation count, timing, and artifact path.
+
+        Missing, corrupt, or stale artifacts are reported as degraded/failure
+        — never as healthy.
+
+        Never includes raw secret fragments.
+        """
+        return get_answer_live_smoke()
+
+    @app.get("/advanced-parser-corpus", response_model=None)
+    def advanced_parser_corpus() -> dict[str, Any]:
+        """Return the latest advanced parser corpus status for Web Console display.
+
+        Reads the artifact at
+        docs/operations/artifacts/advanced-parser-corpus.json.
+
+        Returns a lightweight summary with total/degraded/skipped/failed counts,
+        per-fixture results, and artifact path.
+
+        Missing, corrupt, or schema-incompatible artifacts are reported as
+        degraded/failure — never as pass.
+
+        Never includes raw secret fragments.
+        """
+        return get_advanced_parser_corpus()
 
     @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
     async def knowledge_base_upload(
@@ -1087,6 +1224,7 @@ def create_app(
             "backend": report.backend,
             "backend_metadata": report.backend_metadata,
             "total_results": report.total_results,
+            "acl_explain": report.acl_explain,
             "results": [
                 {
                     "document_id": str(result.document_id),
@@ -1099,16 +1237,40 @@ def create_app(
                     "text_preview": result.text_preview,
                     "distance": result.distance,
                     "score": result.score,
-                    "chunk_metadata": result.chunk_metadata,
+                    "chunk_metadata": _safe_chunk_metadata(result.chunk_metadata),
                     "rank_stage_trace": result.rank_stage_trace,
+                    "acl_explain": {
+                        "chunk_id": result.acl_explain.chunk_id,
+                        "visibility": result.acl_explain.visibility,
+                        "permitted": result.acl_explain.permitted,
+                        "reason": result.acl_explain.reason,
+                    }
+                    if result.acl_explain is not None
+                    else None,
                 }
                 for result in report.results
             ],
         }
+        if report.results:
+            reasons: dict[str, int] = {}
+            for r in report.results:
+                if r.acl_explain is not None:
+                    reasons[r.acl_explain.reason] = reasons.get(r.acl_explain.reason, 0) + 1
+            response["acl_explain_summary"] = {
+                "total_chunks": len(report.results),
+                "reasons": reasons,
+            }
         if report.degraded:
             response["degraded"] = True
             response["degraded_reason"] = report.degraded_reason
         return response
+
+    @app.post("/permissions/preview", response_model=None)
+    def permission_preview(
+        request: PermissionPreviewRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any]:
+        return build_permission_preview(session, principal_ids=request.principal_ids)
 
     @app.post("/evaluations/runs", response_model=None)
     def evaluation_run(
@@ -1475,6 +1637,206 @@ def create_app(
         entry = profile.to_api_dict()
         entry["provider_available"] = resolve_provider_availability(profile.provider)
         return entry
+
+    def _redact_summary(payload: dict[str, Any]) -> dict[str, Any]:
+        _forbidden = {
+            "password",
+            "api_key",
+            "token",
+            "secret",
+            "raw_secret",
+            "private_key",
+            "access_key",
+        }
+        safe: dict[str, Any] = {}
+        for key, value in payload.items():
+            k = str(key)
+            if k.lower() in _forbidden:
+                safe[k] = "[REDACTED]"
+            elif isinstance(value, dict):
+                safe[k] = _redact_summary(value)
+            elif isinstance(value, list):
+                safe[k] = [_redact_summary(i) if isinstance(i, dict) else i for i in value[:50]]
+            elif isinstance(value, str) and len(value) > 240:
+                safe[k] = value[:237] + "..."
+            else:
+                safe[k] = value
+        return safe
+
+    # ── Workflow Audit Events ────────────────────────────────────────────────
+
+    @app.get("/audit-events", response_model=None)
+    def workflow_audit_events(
+        session: Annotated[Session, Depends(get_session)],
+        limit: int = 50,
+        event_type: str | None = None,
+        run_id: str | None = None,
+        item_id: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """List workflow audit events (source_save, dry_run, retry, resume)."""
+        events = list_audit_events(
+            session,
+            event_type=event_type,
+            limit=limit,
+            run_id=run_id,
+            item_id=item_id,
+        )
+        return {
+            "entries": [
+                {
+                    "id": str(e.id),
+                    "event_type": e.event_type,
+                    "actor": e.actor,
+                    "knowledge_base_id": str(e.knowledge_base_id) if e.knowledge_base_id else None,
+                    "run_id": str(e.run_id) if e.run_id else None,
+                    "item_id": str(e.item_id) if e.item_id else None,
+                    "occurred_at": e.occurred_at.isoformat() if e.occurred_at else None,
+                    "payload": _redact_summary(e.payload_json),
+                }
+                for e in events
+            ]
+        }
+
+    # ── Source Config Validation & Save ────────────────────────────────────
+
+    class SourceConfigValidateRequest(BaseModel):
+        plugin_id: str
+        config: dict[str, Any] = Field(default_factory=dict)
+        knowledge_base: str = "default"
+
+    class SourceConfigSaveRequest(BaseModel):
+        plugin_id: str
+        config: dict[str, Any] = Field(default_factory=dict)
+        knowledge_base: str = "default"
+        operator: str | None = None
+
+    @app.post("/sources/validate-config", response_model=None)
+    def source_validate_config(
+        request: SourceConfigValidateRequest,
+    ) -> dict[str, Any]:
+        """Validate a source configuration draft with dependency/credential checks."""
+        return validate_source_config(
+            plugin_id=request.plugin_id,
+            config=request.config,
+        )
+
+    @app.post("/sources", response_model=None)
+    def source_save_config(
+        request: SourceConfigSaveRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Validate and save a source configuration."""
+        try:
+            result = save_source_config(
+                session,
+                plugin_id=request.plugin_id,
+                config=request.config,
+                knowledge_base_name=request.knowledge_base,
+                operator=request.operator,
+            )
+        except Exception as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": str(exc)},
+            )
+        return result
+
+    # ── Dry-run Ingestion ──────────────────────────────────────────────────
+
+    class SourceDryRunRequest(BaseModel):
+        plugin_id: str
+        config: dict[str, Any] = Field(default_factory=dict)
+
+    @app.post("/sources/dry-run", response_model=None)
+    def source_dry_run(
+        request: SourceDryRunRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Dry-run ingestion scan for a source.
+
+        Lists candidate files, skip reasons, and expected pipeline_run
+        without writing document_versions/chunks/embeddings.
+        """
+        try:
+            result = dry_run_source(
+                session,
+                plugin_id=request.plugin_id,
+                config=request.config,
+            )
+        except Exception as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": str(exc)},
+            )
+        return result
+
+    # ── Pipeline Run Item Inspect & Retry ──────────────────────────────────
+
+    @app.get("/pipeline-run-items/{item_id}", response_model=None)
+    def pipeline_run_item_detail(
+        item_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Inspect a single pipeline run item."""
+        detail = get_pipeline_run_item_detail(session, item_id)
+        if detail is None:
+            return JSONResponse(status_code=404, content={"error": "pipeline_run_item_not_found"})
+        return detail
+
+    class RetryRequest(BaseModel):
+        operator: str | None = None
+        new_snapshot: bool = False
+
+    @app.post("/pipeline-run-items/{item_id}/retry", response_model=None)
+    def pipeline_run_item_retry(
+        item_id: str,
+        request: RetryRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Retry a single failed pipeline run item.
+
+        Re-processes the failed document using the same run's config snapshot.
+        Does not modify historical run data.
+        """
+        result = retry_pipeline_run_item(
+            session,
+            item_id=item_id,
+            operator=request.operator,
+        )
+        if result is None:
+            return JSONResponse(status_code=404, content={"error": "pipeline_run_item_not_found"})
+        return result
+
+    @app.post("/pipeline-runs/{run_id}/retry", response_model=None)
+    def pipeline_run_retry(
+        run_id: str,
+        request: RetryRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Retry all failed items in a pipeline run.
+
+        Reuses the same config snapshot by default.
+        Set new_snapshot=True to create a new snapshot from current config.
+        """
+        result = retry_pipeline_run(
+            session,
+            run_id=run_id,
+            operator=request.operator,
+            new_snapshot=request.new_snapshot,
+        )
+        if result is None:
+            return JSONResponse(status_code=404, content={"error": "pipeline_run_not_found"})
+        return result
+
+    @app.post("/pipeline-runs/{run_id}/dag-resume", response_model=None)
+    def pipeline_dag_resume(
+        run_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        result = resume_pipeline_dag(session, run_id=run_id)
+        if result is None:
+            return JSONResponse(status_code=404, content={"error": "ingestion_dag_not_found"})
+        return result
 
     return app
 

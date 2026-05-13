@@ -60,3 +60,9 @@ def test_docker_compose_uses_existing_qdrant_image_tag() -> None:
     compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
     assert "image: qdrant/qdrant:v1.14.1" in compose
+
+
+def test_ruff_configuration_excludes_nested_worktrees_from_repo_lint() -> None:
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert 'extend-exclude = [".worktrees"]' in pyproject

@@ -7,11 +7,18 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ragrig.acl import acl_permits_chunk_metadata
+from ragrig.acl import (
+    AclExplain,
+    acl_decision_reason,
+    acl_permits_chunk_metadata,
+    build_acl_explain,
+    normalize_principal_ids,
+)
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding, KnowledgeBase
 from ragrig.lexical import token_overlap_score
 from ragrig.providers import get_provider_registry
 from ragrig.repositories import get_knowledge_base_by_name
+from ragrig.repositories.audit import create_audit_event
 from ragrig.reranker import (
     RerankCandidate,
     RerankResult,
@@ -71,6 +78,7 @@ class RetrievalResult:
     distance: float
     score: float
     chunk_metadata: dict[str, Any]
+    acl_explain: AclExplain | None = None
     rank_stage_trace: dict[str, Any] = field(default_factory=dict)
 
 
@@ -89,6 +97,65 @@ class RetrievalReport:
     results: list[RetrievalResult]
     degraded: bool = False
     degraded_reason: str = ""
+    acl_explain: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _AclFilterReport:
+    results: list[Any]
+    candidate_count: int
+    visible_count: int
+    filtered_count: int
+    reason_counts: dict[str, int]
+
+
+def _filter_acl_candidates(
+    candidates: list[Any],
+    *,
+    principal_ids: list[str] | None,
+    metadata_getter,
+) -> _AclFilterReport:
+    normalized_principals = normalize_principal_ids(principal_ids)
+    visible: list[Any] = []
+    reason_counts: dict[str, int] = {}
+    effective_principals = normalized_principals if normalized_principals else None
+    for candidate in candidates:
+        metadata = metadata_getter(candidate)
+        reason = acl_decision_reason(metadata, effective_principals)
+        permitted = acl_permits_chunk_metadata(metadata, effective_principals)
+        if permitted:
+            visible.append(candidate)
+        else:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    return _AclFilterReport(
+        results=visible,
+        candidate_count=len(candidates),
+        visible_count=len(visible),
+        filtered_count=len(candidates) - len(visible),
+        reason_counts=reason_counts,
+    )
+
+
+def _build_acl_explain(
+    *,
+    enforce_acl: bool,
+    principal_ids: list[str] | None,
+    candidate_count: int,
+    visible_count: int,
+    filtered_count: int,
+    reason_counts: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    principal_count = len(normalize_principal_ids(principal_ids))
+    return {
+        "enforced": enforce_acl,
+        "principal_context": "present" if principal_count > 0 else "missing",
+        "principal_count": principal_count,
+        "stage": "pre_retrieval",
+        "candidate_count": candidate_count,
+        "visible_count": visible_count,
+        "filtered_count": filtered_count,
+        "reason_counts": reason_counts or {},
+    }
 
 
 def _available_profiles(session: Session, *, knowledge_base_id) -> list[dict[str, Any]]:
@@ -169,8 +236,8 @@ def _search_with_sql_distance(
         model=model,
         dimensions=dimensions,
     ).add_columns(distance_expr.label("distance"))
-    if enforce_acl and principal_ids is not None:
-        if len(principal_ids) > 0:
+    if enforce_acl:
+        if principal_ids and len(principal_ids) > 0:
             statement = statement.where(_build_acl_where_clause(principal_ids))
         else:
             statement = statement.where(_build_acl_public_only_clause())
@@ -218,7 +285,7 @@ def _search_with_python_distance(
     top_k: int,
     principal_ids: list[str] | None = None,
     enforce_acl: bool = True,
-) -> list[RetrievalResult]:
+) -> tuple[list[RetrievalResult], _AclFilterReport | None]:
     rows = session.execute(
         _build_base_statement(
             knowledge_base_id=knowledge_base_id,
@@ -228,15 +295,14 @@ def _search_with_python_distance(
         )
     ).all()
 
-    if enforce_acl and principal_ids is not None:
-        rows = [
-            row
-            for row in rows
-            if acl_permits_chunk_metadata(
-                row.chunk_metadata,
-                principal_ids if len(principal_ids) > 0 else None,
-            )
-        ]
+    acl_filter_report: _AclFilterReport | None = None
+    if enforce_acl:
+        acl_filter_report = _filter_acl_candidates(
+            list(rows),
+            principal_ids=principal_ids,
+            metadata_getter=lambda row: row.chunk_metadata,
+        )
+        rows = acl_filter_report.results
 
     ranked = sorted(
         rows,
@@ -276,7 +342,7 @@ def _search_with_python_distance(
                 },
             )
         )
-    return results
+    return results, acl_filter_report
 
 
 def _build_acl_where_clause(principal_ids: list[str]) -> Any:
@@ -308,6 +374,34 @@ def _build_acl_public_only_clause() -> Any:
     is_public = Chunk.metadata_json["acl", "visibility"].astext == "public"
     no_acl = ~Chunk.metadata_json.has_key("acl")
     return or_(is_public, no_acl)
+
+
+def _enrich_with_acl_explain(
+    results: list[RetrievalResult],
+    principal_ids: list[str] | None,
+    enforce_acl: bool,
+) -> list[RetrievalResult]:
+    new_results: list[RetrievalResult] = []
+    for r in results:
+        explain = build_acl_explain(str(r.chunk_id), r.chunk_metadata, principal_ids)
+        new_results.append(
+            RetrievalResult(
+                document_id=r.document_id,
+                document_version_id=r.document_version_id,
+                chunk_id=r.chunk_id,
+                chunk_index=r.chunk_index,
+                document_uri=r.document_uri,
+                source_uri=r.source_uri,
+                text=r.text,
+                text_preview=r.text_preview,
+                distance=r.distance,
+                score=r.score,
+                chunk_metadata=r.chunk_metadata,
+                acl_explain=explain,
+                rank_stage_trace=r.rank_stage_trace,
+            )
+        )
+    return new_results
 
 
 def _apply_hybrid_fusion(
@@ -603,6 +697,7 @@ def search_knowledge_base(
     # ── Phase 1: Dense vector retrieval ────────────────────────
     degraded = False
     degraded_reason = ""
+    acl_filter_report: _AclFilterReport | None = None
 
     if vector_backend is not None:
         vector_backend.ensure_collection(session, collection)
@@ -615,15 +710,13 @@ def search_knowledge_base(
             query_vector=query_embedding.vector,
             top_k=fetch_k,
         )
-        if enforce_acl and principal_ids is not None:
-            vector_results = [
-                r
-                for r in vector_results
-                if acl_permits_chunk_metadata(
-                    r.metadata.get("chunk_metadata"),
-                    principal_ids if len(principal_ids) > 0 else None,
-                )
-            ]
+        if enforce_acl:
+            acl_filter_report = _filter_acl_candidates(
+                vector_results,
+                principal_ids=principal_ids,
+                metadata_getter=lambda row: row.metadata.get("chunk_metadata"),
+            )
+            vector_results = acl_filter_report.results
         dense_results: list[RetrievalResult] = []
         for result in vector_results[:candidate_k]:
             dense_results.append(
@@ -666,8 +759,15 @@ def search_knowledge_base(
             principal_ids=principal_ids,
             enforce_acl=enforce_acl,
         )
+        acl_filter_report = _AclFilterReport(
+            results=dense_results,
+            candidate_count=len(dense_results),
+            visible_count=len(dense_results),
+            filtered_count=0,
+            reason_counts={},
+        )
     else:
-        dense_results = _search_with_python_distance(
+        dense_results, acl_filter_report = _search_with_python_distance(
             session,
             knowledge_base_id=knowledge_base.id,
             provider=resolved_provider,
@@ -707,8 +807,48 @@ def search_knowledge_base(
             degraded = rerank_degraded
             degraded_reason = rerank_reason
 
+    # ── Enrich with acl_explain ──────────────────────────────
+    dense_results = _enrich_with_acl_explain(dense_results, principal_ids, enforce_acl)
+
     # ── Final: Trim to top_k ──────────────────────────────────
     final_results = dense_results[:top_k]
+    if acl_filter_report is None:
+        acl_explain = _build_acl_explain(
+            enforce_acl=enforce_acl,
+            principal_ids=principal_ids,
+            candidate_count=len(dense_results),
+            visible_count=len(dense_results),
+            filtered_count=0,
+        )
+    else:
+        acl_explain = _build_acl_explain(
+            enforce_acl=enforce_acl,
+            principal_ids=principal_ids,
+            candidate_count=acl_filter_report.candidate_count,
+            visible_count=acl_filter_report.visible_count,
+            filtered_count=acl_filter_report.filtered_count,
+            reason_counts=acl_filter_report.reason_counts,
+        )
+
+    if enforce_acl:
+        event_type = (
+            "access_denied"
+            if acl_explain["candidate_count"] > 0 and not final_results
+            else "retrieval_filter"
+        )
+        create_audit_event(
+            session,
+            event_type=event_type,
+            actor="retrieval",
+            knowledge_base_id=knowledge_base.id,
+            payload_json={
+                "knowledge_base": knowledge_base_name,
+                "query_hash": str(uuid.uuid5(uuid.NAMESPACE_URL, normalized_query)),
+                "top_k": top_k,
+                "mode": mode,
+                "acl_explain": acl_explain,
+            },
+        )
 
     # Build backend metadata
     if vector_backend is not None:
@@ -740,6 +880,7 @@ def search_knowledge_base(
         results=final_results,
         degraded=degraded,
         degraded_reason=degraded_reason,
+        acl_explain=acl_explain,
     )
 
 
