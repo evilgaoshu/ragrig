@@ -7,7 +7,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ragrig.acl import acl_decision_reason, acl_permits_chunk_metadata, normalize_principal_ids
+from ragrig.acl import (
+    AclExplain,
+    acl_decision_reason,
+    acl_permits_chunk_metadata,
+    build_acl_explain,
+    normalize_principal_ids,
+)
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding, KnowledgeBase
 from ragrig.lexical import token_overlap_score
 from ragrig.providers import get_provider_registry
@@ -72,6 +78,7 @@ class RetrievalResult:
     distance: float
     score: float
     chunk_metadata: dict[str, Any]
+    acl_explain: AclExplain | None = None
     rank_stage_trace: dict[str, Any] = field(default_factory=dict)
 
 
@@ -367,6 +374,34 @@ def _build_acl_public_only_clause() -> Any:
     is_public = Chunk.metadata_json["acl", "visibility"].astext == "public"
     no_acl = ~Chunk.metadata_json.has_key("acl")
     return or_(is_public, no_acl)
+
+
+def _enrich_with_acl_explain(
+    results: list[RetrievalResult],
+    principal_ids: list[str] | None,
+    enforce_acl: bool,
+) -> list[RetrievalResult]:
+    new_results: list[RetrievalResult] = []
+    for r in results:
+        explain = build_acl_explain(str(r.chunk_id), r.chunk_metadata, principal_ids)
+        new_results.append(
+            RetrievalResult(
+                document_id=r.document_id,
+                document_version_id=r.document_version_id,
+                chunk_id=r.chunk_id,
+                chunk_index=r.chunk_index,
+                document_uri=r.document_uri,
+                source_uri=r.source_uri,
+                text=r.text,
+                text_preview=r.text_preview,
+                distance=r.distance,
+                score=r.score,
+                chunk_metadata=r.chunk_metadata,
+                acl_explain=explain,
+                rank_stage_trace=r.rank_stage_trace,
+            )
+        )
+    return new_results
 
 
 def _apply_hybrid_fusion(
@@ -771,6 +806,9 @@ def search_knowledge_base(
             dense_results = reranked
             degraded = rerank_degraded
             degraded_reason = rerank_reason
+
+    # ── Enrich with acl_explain ──────────────────────────────
+    dense_results = _enrich_with_acl_explain(dense_results, principal_ids, enforce_acl)
 
     # ── Final: Trim to top_k ──────────────────────────────────
     final_results = dense_results[:top_k]

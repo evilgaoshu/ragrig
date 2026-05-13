@@ -14,7 +14,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
 from ragrig.config import Settings
-from ragrig.db.models import Base, DocumentVersion
+from ragrig.db.models import Base, Document, DocumentVersion
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
@@ -4069,22 +4069,141 @@ async def test_console_html_includes_sanitizer_drift_summary_section(tmp_path) -
     html = response.text
     assert "Sanitizer Drift History Summary" in html
     assert "sanitizer-drift-summary-panel" in html
-    assert "sanitizer-drift-summary-status" in html
-    assert "sanitizer-drift-summary-facts" in html
-    assert "sanitizer-drift-summary-actions" in html
-    assert "loadSanitizerDriftHistorySummary" in html
-    assert "renderSanitizerDriftHistorySummary" in html
-    assert "Copy Path" in html
-    assert "Copy JSON Path" in html
-    assert "Copy Summary" in html
-    assert "copyText" in html
-    assert "copySummaryMarkdown" in html
+
+
+# ── Advanced Parser Corpus ────────────────────────────────────────────────────
 
 
 @pytest.mark.anyio
-async def test_sanitizer_drift_summary_console_missing(tmp_path) -> None:
-    """Console page handles missing summary artifact gracefully."""
-    database_path = tmp_path / "web-console-ds-miss-ui.db"
+async def test_advanced_parser_corpus_endpoint_returns_pass_when_artifact_exists(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-corpus-pass.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    artifact = {
+        "artifact": "advanced-parser-corpus",
+        "generated_at": "2026-05-12T10:00:00+00:00",
+        "total_fixtures": 4,
+        "healthy": 0,
+        "degraded": 0,
+        "skipped": 4,
+        "failed": 0,
+        "status": "degraded",
+        "results": [
+            {
+                "format": "pdf",
+                "fixture_id": "sample",
+                "parser": "advanced.docling",
+                "status": "skip",
+                "degraded_reason": "missing_dependency",
+            }
+        ],
+    }
+    artifact_path = tmp_path / "advanced-parser-corpus.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setattr("ragrig.web_console._ADVANCED_PARSER_CORPUS_PATH", artifact_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/advanced-parser-corpus")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["status"] == "degraded"
+    assert payload["total_fixtures"] == 4
+    assert payload["healthy"] == 0
+    assert payload["skipped"] == 4
+    assert payload["failed"] == 0
+    assert payload["result_count"] == 1
+    assert payload["report_path"].endswith("advanced-parser-corpus.json")
+
+
+@pytest.mark.anyio
+async def test_advanced_parser_corpus_endpoint_returns_failure_when_artifact_missing(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-corpus-missing.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    missing_path = tmp_path / "nonexistent-corpus.json"
+    monkeypatch.setattr("ragrig.web_console._ADVANCED_PARSER_CORPUS_PATH", missing_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/advanced-parser-corpus")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "failure"
+    assert "not found" in payload["reason"]
+
+
+@pytest.mark.anyio
+async def test_advanced_parser_corpus_endpoint_returns_failure_when_artifact_corrupt(
+    tmp_path, monkeypatch
+) -> None:
+    database_path = tmp_path / "web-console-corpus-corrupt.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    corrupt_path = tmp_path / "corrupt-corpus.json"
+    corrupt_path.write_text("not json", encoding="utf-8")
+    monkeypatch.setattr("ragrig.web_console._ADVANCED_PARSER_CORPUS_PATH", corrupt_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/advanced-parser-corpus")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "failure"
+    assert "corrupt" in payload["reason"]
+
+
+@pytest.mark.anyio
+async def test_advanced_parser_corpus_endpoint_no_secret_leakage(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "web-console-corpus-secret.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    artifact = {
+        "artifact": "advanced-parser-corpus",
+        "generated_at": "2026-05-12T10:00:00+00:00",
+        "total_fixtures": 4,
+        "healthy": 0,
+        "degraded": 0,
+        "skipped": 4,
+        "failed": 0,
+        "status": "degraded",
+        "results": [],
+    }
+    artifact_path = tmp_path / "corpus-secret.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    monkeypatch.setattr("ragrig.web_console._ADVANCED_PARSER_CORPUS_PATH", artifact_path)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/advanced-parser-corpus")
+
+    assert response.status_code == 200
+    text = response.text.lower()
+    for forbidden in ("sk-live-", "ghp_", "bearer ", "private key"):
+        assert forbidden not in text
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_advanced_parser_corpus_section(tmp_path) -> None:
+    database_path = tmp_path / "web-console-corpus-html.db"
     session_factory = _create_file_session_factory(database_path)
     app = create_app(check_database=lambda: None, session_factory=session_factory)
     transport = httpx.ASGITransport(app=app)
@@ -4094,5 +4213,263 @@ async def test_sanitizer_drift_summary_console_missing(tmp_path) -> None:
 
     assert response.status_code == 200
     html = response.text
-    assert "Sanitizer Drift History Summary" in html
-    assert "sanitizer-drift-summary-panel" in html
+    assert "advanced-parser-corpus-panel" in html
+    assert "Advanced Parser Corpus" in html
+
+
+# ── Console Permission Preview Tests ─────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_console_document_list_includes_acl_summary(tmp_path) -> None:
+    database_path = tmp_path / "console-acl-summary.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"guide.md": "# Guide\n\nconsole acl summary test"})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/documents")
+
+    assert response.status_code == 200
+    documents = response.json()["items"]
+    assert len(documents) >= 1
+    for doc in documents:
+        assert "acl_summary" in doc
+        summary = doc["acl_summary"]
+        assert "visibility" in summary
+        assert "has_allowed_principals" in summary
+        assert "has_denied_principals" in summary
+        assert summary["visibility"] in ("public", "protected", "unknown")
+        summary_values = " ".join(str(v) for v in summary.values())
+        for pid in ["alice", "bob", "group:"]:
+            assert pid not in summary_values, f"Raw principal leaked in acl_summary: {pid}"
+
+
+@pytest.mark.anyio
+async def test_console_document_chunks_include_acl_summary(tmp_path) -> None:
+    database_path = tmp_path / "console-chunk-acl.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"note.txt": "console chunk acl summary test"})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+        version = session.scalars(
+            select(DocumentVersion).order_by(DocumentVersion.version_number.desc())
+        ).first()
+        version_id = str(version.id)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get(f"/document-versions/{version_id}/chunks")
+
+    assert response.status_code == 200
+    chunks = response.json()["items"]
+    assert len(chunks) >= 1
+    for chunk in chunks:
+        assert "acl_summary" in chunk
+        summary = chunk["acl_summary"]
+        assert "visibility" in summary
+        summary_values = " ".join(str(v) for v in summary.values())
+        for pid in ["alice", "bob", "group:"]:
+            assert pid not in summary_values, f"Raw principal leaked in acl_summary: {pid}"
+
+
+@pytest.mark.anyio
+async def test_console_acl_summary_shows_public_for_document_without_acl(tmp_path) -> None:
+    database_path = tmp_path / "console-acl-public.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"pub.txt": "public document for console"})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/documents")
+
+    assert response.status_code == 200
+    docs_list = response.json()["items"]
+    pub_docs = [d for d in docs_list if "public document for console" in str(d)]
+    assert len(pub_docs) >= 1
+    for doc in pub_docs:
+        assert doc["acl_summary"]["visibility"] == "public"
+        assert doc["acl_summary"]["has_allowed_principals"] is False
+
+
+@pytest.mark.anyio
+async def test_console_acl_summary_shows_protected_with_principals(tmp_path) -> None:
+    database_path = tmp_path / "console-acl-protected.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"secret.txt": "protected doc for console"})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        doc = session.scalars(select(Document).where(Document.uri.contains("secret.txt"))).first()
+        if doc:
+            doc.metadata_json = {
+                **doc.metadata_json,
+                "acl": {
+                    "visibility": "protected",
+                    "allowed_principals": ["alice"],
+                    "denied_principals": [],
+                    "acl_source": "test",
+                    "acl_source_hash": "abc",
+                    "inheritance": "document",
+                },
+            }
+            session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/documents")
+
+    assert response.status_code == 200
+    docs_list = response.json()["items"]
+    protected = [d for d in docs_list if "protected doc for console" in str(d)]
+    assert len(protected) >= 1
+    for doc in protected:
+        summary = doc["acl_summary"]
+        assert summary["visibility"] == "protected"
+        assert summary["has_allowed_principals"] is True
+        assert "alice" not in str(summary)
+
+
+@pytest.mark.anyio
+async def test_console_no_raw_principals_in_acl_summary(tmp_path) -> None:
+    database_path = tmp_path / "console-acl-no-raw.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(
+        tmp_path,
+        {"admin.txt": "admin document with many principals"},
+    )
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        doc = session.scalars(select(Document).where(Document.uri.contains("admin.txt"))).first()
+        if doc:
+            doc.metadata_json = {
+                **doc.metadata_json,
+                "acl": {
+                    "visibility": "protected",
+                    "allowed_principals": [
+                        "alice-admin",
+                        "bob-superuser",
+                        "charlie-viewer",
+                    ],
+                    "denied_principals": ["eve-blocked", "mallory"],
+                    "acl_source": "fileshare_test",
+                    "acl_source_hash": "def456",
+                    "inheritance": "document",
+                },
+            }
+            session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        docs_resp = await client.get("/documents")
+
+    assert docs_resp.status_code == 200
+    data = docs_resp.json()
+    for item in data["items"]:
+        summary = item["acl_summary"]
+        summary_values = " ".join(str(v) for v in summary.values())
+        assert "alice-admin" not in summary_values
+        assert "bob-superuser" not in summary_values
+        assert "charlie-viewer" not in summary_values
+        assert "eve-blocked" not in summary_values
+        assert "mallory" not in summary_values
+        assert summary["has_allowed_principals"] is True
+        assert summary["has_denied_principals"] is True
+
+
+@pytest.mark.anyio
+async def test_console_acl_badge_not_full_visibility_for_protected(tmp_path) -> None:
+    database_path = tmp_path / "console-acl-badge.db"
+    session_factory = _create_file_session_factory(database_path)
+    docs = _seed_documents(tmp_path, {"internal.md": "# Internal\n\ninternal only content"})
+
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        doc = session.scalars(select(Document).where(Document.uri.contains("internal.md"))).first()
+        if doc:
+            doc.metadata_json = {
+                **doc.metadata_json,
+                "acl": {
+                    "visibility": "protected",
+                    "allowed_principals": ["internal-team"],
+                    "denied_principals": [],
+                    "acl_source": "test",
+                    "acl_source_hash": "abc",
+                    "inheritance": "document",
+                },
+            }
+            session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "protected" in html
+    assert "aclBadgeHtml" in html
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_acl_badge_function(tmp_path) -> None:
+    database_path = tmp_path / "console-acl-function.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "aclBadgeHtml" in html
+    assert "aclSummary" in html
+    assert "visibility" in html

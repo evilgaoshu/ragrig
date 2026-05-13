@@ -1430,6 +1430,85 @@ def get_sanitizer_contract_status() -> dict[str, Any]:
     return summary
 
 
+# ── Advanced Parser Corpus ──────────────────────────────────────────────────
+
+
+_ADVANCED_PARSER_CORPUS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "operations"
+    / "artifacts"
+    / "advanced-parser-corpus.json"
+)
+
+
+def get_advanced_parser_corpus() -> dict[str, Any]:
+    import json as _json
+
+    artifact_path = _ADVANCED_PARSER_CORPUS_PATH
+
+    def _artifact_relative() -> str:
+        try:
+            return str(artifact_path.relative_to(Path(__file__).resolve().parents[2]))
+        except ValueError:
+            return str(artifact_path)
+
+    if not artifact_path.exists():
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": "artifact not found",
+            "artifact_path": _artifact_relative(),
+        }
+
+    try:
+        raw = _json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, _json.JSONDecodeError) as exc:
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": f"corrupt artifact: {exc}",
+            "artifact_path": _artifact_relative(),
+        }
+
+    if raw.get("artifact") != "advanced-parser-corpus":
+        return {
+            "available": False,
+            "status": "failure",
+            "reason": "invalid artifact type",
+            "artifact_path": _artifact_relative(),
+        }
+
+    status = raw.get("status", "unknown")
+    results = raw.get("results", [])
+
+    summary: dict[str, Any] = {
+        "available": True,
+        "status": status,
+        "total_fixtures": raw.get("total_fixtures", 0),
+        "healthy": raw.get("healthy", 0),
+        "degraded": raw.get("degraded", 0),
+        "skipped": raw.get("skipped", 0),
+        "failed": raw.get("failed", 0),
+        "result_count": len(results),
+        "report_path": _artifact_relative(),
+        "generated_at": raw.get("generated_at", ""),
+        "results": [
+            {
+                "format": r.get("format", ""),
+                "fixture_id": r.get("fixture_id", ""),
+                "parser": r.get("parser", ""),
+                "status": r.get("status", ""),
+                "degraded_reason": r.get("degraded_reason"),
+            }
+            for r in results
+        ],
+    }
+
+    _assert_console_no_secrets(summary, "advanced-parser-corpus-console")
+    return summary
+
+
 # ── Source Config Validation ────────────────────────────────────────────────
 
 _SOURCE_SECRET_FIELDS = {
