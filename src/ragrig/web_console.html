@@ -914,6 +914,7 @@
         <div class="nav-item" data-section="retrieval-benchmark-integrity">Baseline Integrity</div>
         <div class="nav-item" data-section="answer-live-smoke">Answer Live Smoke</div>
         <div class="nav-item" data-section="advanced-parser-corpus">Parser Corpus</div>
+        <div class="nav-item" data-section="ops-diagnostics">Ops Diagnostics</div>
         <div class="nav-item">Documents</div>
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
@@ -1087,6 +1088,21 @@
           <div class="panel-body stack">
             <div id="advanced-parser-corpus-body" style="margin-bottom:12px"></div>
             <div class="facts" id="advanced-parser-corpus-facts"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="ops-diagnostics-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Ops Diagnostics</div>
+              <div class="panel-meta">Deploy / Backup / Restore / Upgrade · GET /ops/diagnostics · make ops-*-smoke</div>
+            </div>
+            <div id="ops-diagnostics-panel-status" class="pill neutral">Loading</div>
+          </div>
+          <div class="panel-body stack">
+            <div id="ops-diagnostics-overall" style="margin-bottom:12px"></div>
+            <div class="facts" id="ops-diagnostics-facts"></div>
+            <div id="ops-diagnostics-detail" style="margin-top:12px"></div>
           </div>
         </section>
 
@@ -1543,6 +1559,7 @@
         },
         retrievalBenchmarkIntegrity: null,
         answerLiveSmoke: null,
+        opsDiagnostics: null,
         permissionPreview: null,
       };
 
@@ -3913,6 +3930,67 @@
         }
       }
 
+      async function loadOpsDiagnostics() {
+        try {
+          state.opsDiagnostics = await getJson('/ops/diagnostics');
+        } catch {
+          state.opsDiagnostics = null;
+        }
+      }
+
+      function renderOpsDiagnostics() {
+        const panelStatus = document.getElementById('ops-diagnostics-panel-status');
+        const overallEl = document.getElementById('ops-diagnostics-overall');
+        const factsEl = document.getElementById('ops-diagnostics-facts');
+        const detailEl = document.getElementById('ops-diagnostics-detail');
+        const data = state.opsDiagnostics;
+
+        if (!data || !data.summaries || Object.keys(data.summaries).length === 0) {
+          panelStatus.className = 'pill neutral';
+          panelStatus.textContent = 'No data';
+          overallEl.innerHTML = '<span class="pill neutral">No diagnostics data</span>';
+          factsEl.innerHTML = '<div class="empty">No ops artifacts found. Run make ops-*-smoke to generate them.</div>';
+          detailEl.innerHTML = '';
+          return;
+        }
+
+        var os = data.overall_status || 'unknown';
+        var statusClass = os === 'success' ? 'good' : os === 'degraded' ? 'warn' : 'error';
+        panelStatus.className = 'pill ' + statusClass;
+        panelStatus.textContent = os;
+
+        overallEl.innerHTML = '<span class="pill ' + statusClass + '">Overall: ' + escapeHtml(os) + '</span>';
+
+        var artifactNames = ['ops-deploy-summary', 'ops-backup-summary', 'ops-restore-summary', 'ops-upgrade-summary'];
+        var cards = [];
+        for (var i = 0; i < artifactNames.length; i++) {
+          var key = artifactNames[i];
+          var s = data.summaries[key];
+          if (!s) {
+            cards.push('<div class="card"><div class="fact-label">' + escapeHtml(key) + '</div><div class="fact-value"><span class="pill neutral">No data</span></div></div>');
+            continue;
+          }
+          var sv = s.status || 'unknown';
+          var sc = sv === 'success' ? 'good' : sv === 'degraded' ? 'warn' : 'error';
+          var label = key.replace('ops-', '').replace('-summary', '');
+          cards.push(
+            '<div class="card">' +
+              '<div class="fact-label">' + escapeHtml(label) + '</div>' +
+              '<div class="fact-value"><span class="pill ' + sc + '">' + escapeHtml(sv) + '</span></div>' +
+              '<div style="font-size:11px;color:var(--muted);margin-top:4px">' +
+                (s.snapshot_id ? 'snapshot: ' + escapeHtml(s.snapshot_id) + '<br>' : '') +
+                (s.schema_revision ? 'revision: ' + escapeHtml(s.schema_revision) : '') +
+              '</div>' +
+            '</div>'
+          );
+        }
+        factsEl.innerHTML = cards.join('');
+
+        if (data.artifacts_dir) {
+          detailEl.innerHTML = '<div class="meta">Artifacts: <code style="font-size:11px">' + escapeHtml(data.artifacts_dir) + '</code></div>';
+        }
+      }
+
       async function loadSanitizerCoverage() {
         try {
           state.sanitizerCoverage = await getJson('/sanitizer-coverage');
@@ -4785,6 +4863,7 @@
           await loadUnderstandingExportDiff();
           await loadSanitizerContractMatrix();
           await loadAdvancedParserCorpus();
+          await loadOpsDiagnostics();
           renderStatusStrip();
           renderKnowledgeBases();
           renderSources();
@@ -4817,6 +4896,7 @@
           renderUnderstandingExportDiffBadge();
           renderSanitizerContractMatrix();
           renderAdvancedParserCorpus();
+          renderOpsDiagnostics();
           renderUploadKBSelect();
         } catch (error) {
           document.body.innerHTML = `<main class="main">${empty(error.message)}</main>`;

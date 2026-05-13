@@ -2564,3 +2564,80 @@ def _parser_plugin_id(parser_name: str) -> str:
     if parser_name == "plaintext":
         return "parser.text"
     return f"parser.{parser_name}"
+
+
+# ── Ops Diagnostics ────────────────────────────────────────────────────
+
+_OPS_ARTIFACTS_DIR = Path(__file__).resolve().parents[2] / "docs" / "operations" / "artifacts"
+
+
+def _load_ops_artifact(name: str) -> dict[str, Any] | None:
+    """Load an ops summary artifact, returning None if missing or corrupt."""
+    import json as _json
+
+    path = _OPS_ARTIFACTS_DIR / f"{name}.json"
+    if not path.exists():
+        return None
+    try:
+        data = _json.loads(path.read_text(encoding="utf-8"))
+        _assert_console_no_secrets(data, f"ops-{name}")
+        return data
+    except (OSError, ValueError, _json.JSONDecodeError):
+        return None
+
+
+def get_ops_diagnostics() -> dict[str, Any]:
+    """Return ops diagnostics summary for Web Console display.
+
+    Reads artifacts from docs/operations/artifacts/ and returns:
+    - deploy summary
+    - backup summary
+    - restore summary
+    - upgrade summary
+
+    Missing/corrupt artifacts are reported as degraded/failure.
+    Never includes plaintext DSN, token, API key, or object storage secret.
+    """
+    artifacts: list[str] = [
+        "ops-deploy-summary",
+        "ops-backup-summary",
+        "ops-restore-summary",
+        "ops-upgrade-summary",
+    ]
+
+    summaries: dict[str, Any] = {}
+    overall_status = "success"
+
+    for name in artifacts:
+        data = _load_ops_artifact(name)
+        if data is None:
+            summaries[name] = {
+                "available": False,
+                "artifact": name,
+                "status": "failure",
+                "reason": "artifact not found or corrupt",
+            }
+            overall_status = "degraded"
+        else:
+            op_status = data.get("operation_status", "unknown")
+            summaries[name] = {
+                "available": True,
+                "artifact": data.get("artifact", name),
+                "version": data.get("version", ""),
+                "snapshot_id": data.get("snapshot_id"),
+                "schema_revision": data.get("schema_revision"),
+                "status": op_status,
+                "generated_at": data.get("generated_at"),
+                "check_count": len(data.get("verification_checks", [])),
+            }
+            if op_status != "success":
+                overall_status = "degraded"
+
+    result: dict[str, Any] = {
+        "overall_status": overall_status,
+        "summaries": summaries,
+        "artifacts_dir": str(_OPS_ARTIFACTS_DIR),
+    }
+
+    _assert_console_no_secrets(result, "ops-diagnostics")
+    return result

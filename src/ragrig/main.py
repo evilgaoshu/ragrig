@@ -87,6 +87,7 @@ from ragrig.web_console import (
     dry_run_source,
     get_advanced_parser_corpus,
     get_answer_live_smoke,
+    get_ops_diagnostics,
     get_pipeline_run_detail,
     get_pipeline_run_item_detail,
     get_recent_benchmark,
@@ -872,6 +873,20 @@ def create_app(
         rendering — never includes raw secret fragments.
         """
         return get_retrieval_benchmark_integrity()
+
+    @app.get("/ops/diagnostics", response_model=None)
+    def ops_diagnostics() -> dict[str, Any]:
+        """Return the latest deploy/backup/restore/upgrade summary.
+
+        Reads artifacts from docs/operations/artifacts/ and returns
+        a lightweight summary safe for browser rendering.
+
+        Missing, corrupt, or stale artifacts are reported as degraded/failure
+        — never as healthy.
+
+        Never includes plaintext DSN, token, API key, or object storage secret.
+        """
+        return get_ops_diagnostics()
 
     @app.get("/answer/live-smoke", response_model=None)
     def answer_live_smoke() -> dict[str, Any]:

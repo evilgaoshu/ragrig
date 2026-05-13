@@ -1,7 +1,7 @@
 UV ?= uv
 ARTIFACTS_DIR ?= docs/operations/artifacts
 
-.PHONY: sync format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff seed-acl-fixtures pipeline-dag-smoke
+.PHONY: sync format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff seed-acl-fixtures pipeline-dag-smoke ops-deploy-smoke ops-backup-smoke ops-restore-smoke ops-upgrade-smoke
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -315,6 +315,22 @@ verify-understanding-export:
 
 verify-understanding-export-json:
 	$(UV) run python -m scripts.verify_understanding_export --json --output $(ARTIFACTS_DIR)/understanding-export-verify-summary.json
+
+# ── Operations pack: deploy / backup / restore / upgrade smoke ──────────
+
+OPS_BACKUP_DIR ?= backups
+
+ops-deploy-smoke:
+	$(UV) run python -m scripts.ops_deploy --pretty --output $(ARTIFACTS_DIR)/ops-deploy-summary.json
+
+ops-backup-smoke:
+	$(UV) run python -m scripts.ops_backup --pretty --backup-dir $(OPS_BACKUP_DIR) --output $(ARTIFACTS_DIR)/ops-backup-summary.json
+
+ops-restore-smoke:
+	$(UV) run python -m scripts.ops_restore --pretty --backup-dir $(OPS_BACKUP_DIR) --output $(ARTIFACTS_DIR)/ops-restore-summary.json
+
+ops-upgrade-smoke:
+	$(UV) run python -m scripts.ops_upgrade --pretty --output $(ARTIFACTS_DIR)/ops-upgrade-summary.json
 
 # ── Understanding export diff summary ──────────────────────────
 # Reads understanding-export-diff.json and produces a concise
