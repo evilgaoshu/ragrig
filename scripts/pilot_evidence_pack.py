@@ -13,9 +13,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
 ARTIFACTS_DIR = REPO_ROOT / "docs" / "operations" / "artifacts"
-RECORD_PATH = (
-    REPO_ROOT / "docs" / "operations" / "records" / "EVI-110-pilot-go-no-go-evidence.md"
-)
+RECORD_PATH = REPO_ROOT / "docs" / "operations" / "records" / "EVI-110-pilot-go-no-go-evidence.md"
 JSON_PATH = ARTIFACTS_DIR / "pilot-go-no-go-evidence.json"
 GOLDEN_PATH = REPO_ROOT / "tests" / "fixtures" / "evaluation_golden.yaml"
 LIVE_CORPUS_ROOT = REPO_ROOT / "tests" / "fixtures" / "fileshare_live"
@@ -64,9 +62,7 @@ EVIDENCE_REQUIREMENTS = (
     {
         "id": "operations_smoke",
         "title": "Backup, restore, and upgrade summary",
-        "command": (
-            "make ops-backup-smoke && make ops-restore-smoke && make ops-upgrade-smoke"
-        ),
+        "command": ("make ops-backup-smoke && make ops-restore-smoke && make ops-upgrade-smoke"),
         "artifact": "ops-backup-summary.json",
         "supporting_artifacts": ["ops-restore-summary.json", "ops-upgrade-summary.json"],
         "go_rule": (
