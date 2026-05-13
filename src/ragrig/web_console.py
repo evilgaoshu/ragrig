@@ -10,7 +10,7 @@ from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
 
 from ragrig import __version__
-from ragrig.acl import acl_summary_from_metadata
+from ragrig.acl import AclMetadata, acl_summary_from_metadata, normalize_principal_ids
 from ragrig.answer.diagnostics import get_diagnostics_summary as _get_answer_diagnostics_summary
 from ragrig.config import Settings
 from ragrig.db.models import (
@@ -211,6 +211,64 @@ def list_knowledge_bases(session: Session, *, settings: Settings) -> list[dict[s
             }
         )
     return items
+
+
+def build_permission_preview(
+    session: Session,
+    *,
+    principal_ids: list[str] | None,
+) -> dict[str, Any]:
+    principals = normalize_principal_ids(principal_ids)
+    degraded = len(principals) == 0
+    latest_versions = _latest_versions_subquery()
+    rows = session.execute(
+        select(KnowledgeBase, Document, DocumentVersion)
+        .join(Document, Document.knowledge_base_id == KnowledgeBase.id)
+        .join(latest_versions, latest_versions.c.document_id == Document.id)
+        .join(DocumentVersion, DocumentVersion.id == latest_versions.c.document_version_id)
+        .order_by(KnowledgeBase.name, Document.uri)
+    ).all()
+
+    kb_map: dict[str, dict[str, Any]] = {}
+    for knowledge_base, document, version in rows:
+        doc_acl = AclMetadata.from_metadata(document.metadata_json or version.metadata_json)
+        visible = doc_acl.permits(principals if principals else None)
+        reason = doc_acl.decision_reason(principals if principals else None)
+        kb_entry = kb_map.setdefault(
+            str(knowledge_base.id),
+            {
+                "id": str(knowledge_base.id),
+                "name": knowledge_base.name,
+                "visible_documents": 0,
+                "filtered_documents": 0,
+                "documents": [],
+            },
+        )
+        chunk_count = session.scalar(
+            select(func.count(Chunk.id)).where(Chunk.document_version_id == version.id)
+        )
+        kb_entry["documents"].append(
+            {
+                "id": str(document.id),
+                "uri": document.uri,
+                "visible": visible,
+                "reason": reason,
+                "chunk_count": chunk_count or 0,
+                "acl_summary": doc_acl.summary(),
+            }
+        )
+        if visible:
+            kb_entry["visible_documents"] += 1
+        else:
+            kb_entry["filtered_documents"] += 1
+
+    return {
+        "principal_context": "present" if principals else "missing",
+        "principal_count": len(principals),
+        "degraded": degraded,
+        "degraded_reason": "missing_principal_context" if degraded else "",
+        "knowledge_bases": list(kb_map.values()),
+    }
 
 
 def list_sources(session: Session) -> list[dict[str, Any]]:
@@ -1372,6 +1430,7 @@ def get_sanitizer_contract_status() -> dict[str, Any]:
     return summary
 
 
+<<<<<<< HEAD
 # ── Advanced Parser Corpus ────────────────────────────────────────────────────
 
 _ADVANCED_PARSER_CORPUS_PATH = (
@@ -1468,6 +1527,8 @@ def get_advanced_parser_corpus() -> dict[str, Any]:
     return summary
 
 
+=======
+>>>>>>> origin/main
 # ── Source Config Validation ────────────────────────────────────────────────
 
 _SOURCE_SECRET_FIELDS = {

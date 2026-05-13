@@ -63,6 +63,7 @@ def _build_retrieval_trace(report: Any) -> dict[str, Any]:
         "distance_metric": report.distance_metric,
         "backend": report.backend,
         "total_results": report.total_results,
+        "acl_explain": report.acl_explain,
     }
 
 
