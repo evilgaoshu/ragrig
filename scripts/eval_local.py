@@ -11,12 +11,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import JSON, create_engine
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
 from ragrig.config import get_settings
+from ragrig.db.models import Base
 from ragrig.evaluation import (
     BaselineCorruptError,
     BaselineHashMismatchError,
@@ -34,6 +39,16 @@ from ragrig.ingestion.pipeline import ingest_local_directory
 
 DEFAULT_GOLDEN_PATH = Path("tests/fixtures/evaluation_golden.yaml")
 DEFAULT_INGEST_ROOT = Path("tests/fixtures/local_ingestion")
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
+    return compiler.process(JSON(), **kwargs)
+
+
+@compiles(Vector, "sqlite")
+def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
+    return compiler.process(JSON(), **kwargs)
 
 
 def _ensure_indexed(session: Session, knowledge_base: str, root_path: Path) -> None:
@@ -147,6 +162,14 @@ def build_parser() -> argparse.ArgumentParser:
         default="full",
         help="Output format: full (with items) or summary (metrics only).",
     )
+    parser.add_argument(
+        "--ephemeral-sqlite",
+        action="store_true",
+        help=(
+            "Run against a temporary SQLite database seeded from fixture files. "
+            "This mode is intended for repo-local reproducible evidence."
+        ),
+    )
     return parser
 
 
@@ -167,8 +190,15 @@ def main() -> int:
         )
         return 1
 
-    settings = get_settings()
-    engine = create_engine(settings.sqlalchemy_runtime_database_url, pool_pre_ping=True)
+    temp_dir: tempfile.TemporaryDirectory[str] | None = None
+    if args.ephemeral_sqlite:
+        temp_dir = tempfile.TemporaryDirectory(prefix="ragrig-eval-")
+        database_path = Path(temp_dir.name) / "evaluation.db"
+        engine = create_engine(f"sqlite+pysqlite:///{database_path}", future=True)
+        Base.metadata.create_all(engine)
+    else:
+        settings = get_settings()
+        engine = create_engine(settings.sqlalchemy_runtime_database_url, pool_pre_ping=True)
 
     store_dir = Path(args.store_dir)
     baseline_dir = Path(args.baseline_dir)
@@ -255,6 +285,10 @@ def main() -> int:
             encoding="utf-8",
         )
         print(f"\nReport written to {output_path}", file=sys.stderr)
+
+    engine.dispose()
+    if temp_dir is not None:
+        temp_dir.cleanup()
 
     # Exit with non-zero if baseline was missing/corrupt to signal degraded
     if baseline_error:

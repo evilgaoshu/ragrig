@@ -1,7 +1,7 @@
 UV ?= uv
 ARTIFACTS_DIR ?= docs/operations/artifacts
 
-.PHONY: sync format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff seed-acl-fixtures pipeline-dag-smoke ops-deploy-smoke ops-backup-smoke ops-restore-smoke ops-upgrade-smoke
+.PHONY: sync format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff seed-acl-fixtures pipeline-dag-smoke ops-deploy-smoke ops-backup-smoke ops-restore-smoke ops-upgrade-smoke pilot-evidence-pack
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -331,6 +331,13 @@ ops-restore-smoke:
 
 ops-upgrade-smoke:
 	$(UV) run python -m scripts.ops_upgrade --pretty --output $(ARTIFACTS_DIR)/ops-upgrade-summary.json
+
+# ── Pilot go/no-go evidence manifest ──────────────────────────
+# Captures the fixed pilot corpus, golden questions, evidence commands,
+# artifact paths, and decision status. JSON artifacts are local run output;
+# the Markdown record is versioned in docs/operations/records/.
+pilot-evidence-pack:
+	$(UV) run python -m scripts.pilot_evidence_pack --pretty
 
 # ── Understanding export diff summary ──────────────────────────
 # Reads understanding-export-diff.json and produces a concise
