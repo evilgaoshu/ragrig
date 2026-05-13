@@ -84,6 +84,7 @@ from ragrig.web_console import (
     build_system_status,
     check_format,
     dry_run_source,
+    get_advanced_parser_corpus,
     get_answer_live_smoke,
     get_pipeline_run_detail,
     get_pipeline_run_item_detail,
@@ -855,6 +856,23 @@ def create_app(
         """
         return get_answer_live_smoke()
 
+    @app.get("/advanced-parser-corpus", response_model=None)
+    def advanced_parser_corpus() -> dict[str, Any]:
+        """Return the latest advanced parser corpus status for Web Console display.
+
+        Reads the artifact at
+        docs/operations/artifacts/advanced-parser-corpus.json.
+
+        Returns a lightweight summary with total/degraded/skipped/failed counts,
+        per-fixture results, and artifact path.
+
+        Missing, corrupt, or schema-incompatible artifacts are reported as
+        degraded/failure — never as pass.
+
+        Never includes raw secret fragments.
+        """
+        return get_advanced_parser_corpus()
+
     @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
     async def knowledge_base_upload(
         kb_name: str,
@@ -1172,10 +1190,27 @@ def create_app(
                     "score": result.score,
                     "chunk_metadata": _safe_chunk_metadata(result.chunk_metadata),
                     "rank_stage_trace": result.rank_stage_trace,
+                    "acl_explain": {
+                        "chunk_id": result.acl_explain.chunk_id,
+                        "visibility": result.acl_explain.visibility,
+                        "permitted": result.acl_explain.permitted,
+                        "reason": result.acl_explain.reason,
+                    }
+                    if result.acl_explain is not None
+                    else None,
                 }
                 for result in report.results
             ],
         }
+        if report.results:
+            reasons: dict[str, int] = {}
+            for r in report.results:
+                if r.acl_explain is not None:
+                    reasons[r.acl_explain.reason] = reasons.get(r.acl_explain.reason, 0) + 1
+            response["acl_explain_summary"] = {
+                "total_chunks": len(report.results),
+                "reasons": reasons,
+            }
         if report.degraded:
             response["degraded"] = True
             response["degraded_reason"] = report.degraded_reason

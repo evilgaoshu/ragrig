@@ -36,7 +36,12 @@ cloud-voyage = [
 ]
 cloud-llm = []
 cloud-embeddings = []
-doc-parsers = []
+doc-parsers = [
+  "python-docx>=1.1.0,<2.0.0",
+  "openpyxl>=3.1.0,<4.0.0",
+  "python-pptx>=1.0.0,<2.0.0",
+  "pypdf>=5.0.0,<6.0.0",
+]
 local-ml = [
   "FlagEmbedding>=1.3.5,<2.0.0",
   "ollama>=0.4.7,<1.0.0",

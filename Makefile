@@ -1,7 +1,7 @@
 UV ?= uv
 ARTIFACTS_DIR ?= docs/operations/artifacts
 
-.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff seed-acl-fixtures
+.PHONY: sync format lint test coverage audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff seed-acl-fixtures
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -226,6 +226,15 @@ retrieval-benchmark-integrity-cleanup:
 # "skipped" — never a false success.
 bge-rerank-smoke:
 	$(UV) run python -m scripts.bge_rerank_smoke --pretty
+
+# ── Advanced parser corpus check ──────────────────────────────
+advanced-parser-corpus-check:
+	$(UV) run python -m scripts.advanced_parser_corpus_check \
+		--json-output $(ARTIFACTS_DIR)/advanced-parser-corpus.json \
+		--markdown-output $(ARTIFACTS_DIR)/advanced-parser-corpus.md
+
+generate-advanced-fixtures:
+	$(UV) run python scripts/generate_advanced_fixtures.py
 
 export-object-storage-check:
 	$(UV) run python -m scripts.export_object_storage

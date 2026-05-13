@@ -875,6 +875,7 @@
         <div class="nav-item" data-section="retrieval-benchmark">Retrieval Benchmark</div>
         <div class="nav-item" data-section="retrieval-benchmark-integrity">Baseline Integrity</div>
         <div class="nav-item" data-section="answer-live-smoke">Answer Live Smoke</div>
+        <div class="nav-item" data-section="advanced-parser-corpus">Parser Corpus</div>
         <div class="nav-item">Documents</div>
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
@@ -909,6 +910,7 @@
           <div class="status-card"><div class="status-head">Baseline Integrity</div><strong id="baseline-integrity-status">—</strong><span id="baseline-integrity-subtext">Retrieval benchmark health</span></div>
           <div class="status-card"><div class="status-head">LLM Smoke</div><strong id="answer-smoke-status">—</strong><span id="answer-smoke-subtext">Answer live smoke health</span></div>
           <div class="status-card"><div class="status-head">Contract Matrix</div><strong id="contract-matrix-status">—</strong><span id="contract-matrix-subtext">Sanitizer contract badge</span></div>
+          <div class="status-card"><div class="status-head">Parser Corpus</div><strong id="advanced-parser-corpus-status">—</strong><span id="advanced-parser-corpus-subtext">Advanced parser corpus health</span></div>
         </section>
 
         <section class="panel">
@@ -1033,6 +1035,20 @@
           <div class="panel-body stack">
             <div id="sanitizer-contract-status" style="margin-bottom:12px"></div>
             <div class="facts" id="sanitizer-contract-facts"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="advanced-parser-corpus-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Advanced Parser Corpus</div>
+              <div class="panel-meta">Corpus health · GET /advanced-parser-corpus · make advanced-parser-corpus-check</div>
+            </div>
+            <div id="advanced-parser-corpus-panel-status" class="pill neutral">Loading</div>
+          </div>
+          <div class="panel-body stack">
+            <div id="advanced-parser-corpus-body" style="margin-bottom:12px"></div>
+            <div class="facts" id="advanced-parser-corpus-facts"></div>
           </div>
         </section>
 
@@ -3538,6 +3554,68 @@
         ].join('');
       }
 
+      async function loadAdvancedParserCorpus() {
+        try {
+          state.advancedParserCorpus = await getJson('/advanced-parser-corpus');
+        } catch {
+          state.advancedParserCorpus = { available: false, status: 'failure', reason: 'network error' };
+        }
+      }
+
+      function renderAdvancedParserCorpus() {
+        const panelStatus = document.getElementById('advanced-parser-corpus-panel-status');
+        const bodyEl = document.getElementById('advanced-parser-corpus-body');
+        const factsEl = document.getElementById('advanced-parser-corpus-facts');
+        const data = state.advancedParserCorpus || { available: false, status: 'failure', reason: 'not loaded' };
+
+        if (!data.available) {
+          var reason = data.reason || 'artifact not found';
+          panelStatus.className = 'pill error';
+          panelStatus.textContent = 'failure';
+          bodyEl.innerHTML = '<span class="pill error">failure</span> ' + escapeHtml(reason);
+          factsEl.innerHTML = '';
+          document.getElementById('advanced-parser-corpus-status').textContent = '—';
+          document.getElementById('advanced-parser-corpus-subtext').textContent = reason;
+          return;
+        }
+
+        var status = data.status || 'unknown';
+        var statusClass = status === 'pass' ? 'good' : status === 'degraded' ? 'warn' : 'error';
+        panelStatus.className = 'pill ' + statusClass;
+        panelStatus.textContent = status;
+
+        var subtext = data.total_fixtures + ' fixtures: ' + data.healthy + ' healthy, ' + data.degraded + ' degraded, ' + data.skipped + ' skipped, ' + data.failed + ' failed';
+        document.getElementById('advanced-parser-corpus-status').textContent = status;
+        document.getElementById('advanced-parser-corpus-subtext').textContent = subtext;
+
+        bodyEl.innerHTML = [
+          '<span class="pill ' + statusClass + '">' + escapeHtml(status) + '</span>',
+          '<span class="pill neutral">' + escapeHtml(data.total_fixtures) + ' fixtures</span>',
+          '<span class="pill good">' + escapeHtml(data.healthy) + ' healthy</span>',
+          '<span class="pill warn">' + escapeHtml(data.degraded) + ' degraded</span>',
+          '<span class="pill neutral">' + escapeHtml(data.skipped) + ' skipped</span>',
+          data.failed > 0 ? '<span class="pill error">' + escapeHtml(data.failed) + ' failed</span>' : '',
+        ].join(' ');
+
+        var resultRows = (data.results || []).map(function(r) {
+          var rStatus = r.status || 'unknown';
+          var rClass = rStatus === 'healthy' ? 'good' : rStatus === 'degraded' ? 'warn' : rStatus === 'failure' ? 'error' : 'neutral';
+          return '<div class="card"><div class="fact-label">' + escapeHtml(r.format) + ' / ' + escapeHtml(r.fixture_id) + '</div><div class="fact-value"><span class="pill ' + rClass + '">' + escapeHtml(rStatus) + '</span> ' + escapeHtml(r.parser) + (r.degraded_reason ? ' (' + escapeHtml(r.degraded_reason) + ')' : '') + '</div></div>';
+        }).join('');
+
+        factsEl.innerHTML = [
+          '<div class="card"><div class="fact-label">Status</div><div class="fact-value code">' + escapeHtml(status) + '</div></div>',
+          '<div class="card"><div class="fact-label">Total Fixtures</div><div class="fact-value">' + escapeHtml(data.total_fixtures) + '</div></div>',
+          '<div class="card"><div class="fact-label">Healthy</div><div class="fact-value">' + escapeHtml(data.healthy) + '</div></div>',
+          '<div class="card"><div class="fact-label">Degraded</div><div class="fact-value">' + escapeHtml(data.degraded) + '</div></div>',
+          '<div class="card"><div class="fact-label">Skipped</div><div class="fact-value">' + escapeHtml(data.skipped) + '</div></div>',
+          '<div class="card"><div class="fact-label">Failed</div><div class="fact-value">' + escapeHtml(data.failed) + '</div></div>',
+          '<div class="card"><div class="fact-label">Results</div><div class="fact-value">' + resultRows + '</div></div>',
+          '<div class="card"><div class="fact-label">Generated At</div><div class="fact-value">' + escapeHtml(data.generated_at || '—') + '</div></div>',
+          '<div class="card"><div class="fact-label">Report Path</div><div class="fact-value code" style="font-size:11px">' + escapeHtml(data.report_path || '') + '</div></div>',
+        ].join('');
+      }
+
       async function loadRetrievalBenchmark() {
         try {
           state.retrievalBenchmark = await getJson('/retrieval/benchmark/recent');
@@ -4548,6 +4626,7 @@
           await loadAnswerLiveSmoke();
           await loadUnderstandingExportDiff();
           await loadSanitizerContractMatrix();
+          await loadAdvancedParserCorpus();
           renderStatusStrip();
           renderKnowledgeBases();
           renderSources();
@@ -4578,6 +4657,7 @@
           renderAnswerLiveSmoke();
           renderUnderstandingExportDiffBadge();
           renderSanitizerContractMatrix();
+          renderAdvancedParserCorpus();
           renderUploadKBSelect();
         } catch (error) {
           document.body.innerHTML = `<main class="main">${empty(error.message)}</main>`;
