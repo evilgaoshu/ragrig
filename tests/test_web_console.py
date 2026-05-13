@@ -83,6 +83,7 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "make fileshare-check" in response.text
     assert "make test-live-fileshare" in response.text
     assert "FILESHARE_FIELD_SCHEMAS" in response.text
+    assert "Resume DAG" in response.text
     assert "validateFileshareField" in response.text
     assert "handleFileshareFormSubmit" in response.text
     assert "handleFileshareCopyClick" in response.text
@@ -203,6 +204,7 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     assert chunks.json()["items"][0]["chunk_index"] == 0
     assert models.status_code == 200
     assert models.json()["embedding_profiles"][0]["provider"] == "deterministic-local"
+
     provider_names = {item["name"] for item in models.json()["registered_providers"]}
     assert {
         "deterministic-local",
@@ -271,6 +273,41 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
     assert "smb" in fileshare_plugin["protocol_example_configs"]
     assert "webdav" in fileshare_plugin["protocol_example_configs"]
     assert "sftp" in fileshare_plugin["protocol_example_configs"]
+
+
+@pytest.mark.anyio
+async def test_ingestion_dag_console_api_exposes_failure_and_resume(tmp_path) -> None:
+    database_path = tmp_path / "web-console-dag.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+    docs = _seed_documents(tmp_path, {"dag.md": "# DAG\n\nfixture"})
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        created = await client.post(
+            "/pipeline-dags/ingestion",
+            json={
+                "knowledge_base": "dag-console",
+                "root_path": str(docs),
+                "failure_node": "embed",
+            },
+        )
+        resumed = await client.post(
+            f"/pipeline-runs/{created.json()['pipeline_run_id']}/dag-resume"
+        )
+        duplicate = await client.post(
+            f"/pipeline-runs/{created.json()['pipeline_run_id']}/dag-resume"
+        )
+
+    assert created.status_code == 200
+    assert created.json()["status"] == "completed_with_failures"
+    assert created.json()["failure_queue"][0]["node_id"] == "embed"
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "completed"
+    assert resumed.json()["failure_queue"][0]["status"] == "resolved"
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "rejected"
+    assert duplicate.json()["degraded"] is True
 
 
 @pytest.mark.anyio
