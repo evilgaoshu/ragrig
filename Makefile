@@ -47,6 +47,9 @@ coverage:
 coverage-strict:
 	$(UV) run pytest --cov=ragrig.chunkers --cov=ragrig.embeddings --cov=ragrig.retrieval --cov=ragrig.acl --cov-fail-under=100 --cov-report=term-missing
 
+acl-regression:
+	$(UV) run pytest tests/test_acl_regression.py -v
+
 audit:
 	$(UV) run python -m pip_audit --local --format=json -o "$(ARTIFACTS_DIR)/pip-audit.json"
 

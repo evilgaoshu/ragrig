@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ragrig.parsers.advanced import AdvancedParserRunner, ParserStatus
 from ragrig.parsers.advanced.models import CorpusSummary
+from ragrig.parsers.advanced.runner import _KNOWN_FIXTURES
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "advanced_documents"
 DEFAULT_ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "docs" / "operations" / "artifacts"
@@ -46,14 +47,25 @@ def _make_markdown(summary: CorpusSummary) -> str:
 
 
 def _make_json(summary: CorpusSummary) -> str:
+    status = "pass"
+    if summary.failed > 0:
+        status = "failure"
+    elif summary.degraded > 0:
+        status = "degraded"
+    elif summary.healthy == summary.total_fixtures:
+        status = "pass"
+    else:
+        status = "degraded"
     return json.dumps(
         {
+            "artifact": "advanced-parser-corpus",
             "generated_at": summary.generated_at,
             "total_fixtures": summary.total_fixtures,
             "healthy": summary.healthy,
             "degraded": summary.degraded,
             "skipped": summary.skipped,
             "failed": summary.failed,
+            "status": status,
             "results": [
                 {
                     "format": r.format,
@@ -81,7 +93,9 @@ def main() -> int:
     parser.add_argument("--ocr", action="store_true", help="Enable OCR fallback")
     args = parser.parse_args()
 
-    runner = AdvancedParserRunner(fixtures_dir=FIXTURES_DIR, ocr_enabled=args.ocr)
+    runner = AdvancedParserRunner(
+        fixtures_dir=FIXTURES_DIR, ocr_enabled=args.ocr, known_fixtures=_KNOWN_FIXTURES
+    )
     summary = runner.run_all()
 
     print("Advanced Parser Corpus Check")
@@ -93,8 +107,10 @@ def main() -> int:
     print(f"  Failed:         {summary.failed}")
     print(f"{'=' * 40}")
     for r in summary.results:
-        print(f"  [{r.status.value.upper():>8}] {r.format:>4} {r.fixture_id:20} "
-              f"parser={r.parser:25} reason={r.degraded_reason or ''}")
+        print(
+            f"  [{r.status.value.upper():>8}] {r.format:>4} {r.fixture_id:20} "
+            f"parser={r.parser:25} reason={r.degraded_reason or ''}"
+        )
 
     json_str = _make_json(summary)
     md_str = _make_markdown(summary)
@@ -112,9 +128,7 @@ def main() -> int:
         print(f"\nMarkdown report written to {out_path}")
 
     has_failure = any(r.status == ParserStatus.FAILURE for r in summary.results)
-    has_corrupt = any(
-        r.degraded_reason == "corrupt_artifact" for r in summary.results
-    )
+    has_corrupt = any(r.degraded_reason == "corrupt_artifact" for r in summary.results)
     if has_corrupt:
         return 2
     if has_failure:

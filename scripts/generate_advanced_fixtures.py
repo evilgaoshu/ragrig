@@ -49,7 +49,9 @@ def _rels_xml(*parts: tuple[str, str, str]) -> bytes:
     return xml.encode("utf-8")
 
 
-DOCX_REL_TYPES = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+DOCX_REL_TYPES = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+)
 XLSX_REL_TYPES = DOCX_REL_TYPES
 PPTX_REL_TYPES = DOCX_REL_TYPES
 
@@ -63,9 +65,7 @@ def generate_docx(text: str) -> bytes:
                     ".rels": "application/vnd.openxmlformats-package.relationships+xml",
                 }
             ),
-            "_rels/.rels": _rels_xml(
-                ("rId1", DOCX_REL_TYPES, "word/document.xml")
-            ),
+            "_rels/.rels": _rels_xml(("rId1", DOCX_REL_TYPES, "word/document.xml")),
             "word/document.xml": (
                 '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
@@ -88,28 +88,28 @@ def generate_xlsx(text: str) -> bytes:
                     ".rels": "application/vnd.openxmlformats-package.relationships+xml",
                 }
             ),
-            "_rels/.rels": _rels_xml(
-                ("rId1", XLSX_REL_TYPES, "xl/workbook.xml")
-            ),
+            "_rels/.rels": _rels_xml(("rId1", XLSX_REL_TYPES, "xl/workbook.xml")),
             "xl/workbook.xml": (
                 '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-                "<sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\" "
+                '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" '
                 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>'
                 "</sheets>"
                 "</workbook>"
             ).encode("utf-8"),
             "xl/_rels/workbook.xml.rels": _rels_xml(
-                ("rId1",
-                 "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet",
-                 "worksheets/sheet1.xml")
+                (
+                    "rId1",
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet",
+                    "worksheets/sheet1.xml",
+                )
             ),
             "xl/worksheets/sheet1.xml": (
                 '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
                 "<sheetData>"
-                "<row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>Data</t></is></c></row>"
-                "<row r=\"2\"><c r=\"A2\" t=\"inlineStr\"><is><t>"
+                '<row r="1"><c r="A1" t="inlineStr"><is><t>Data</t></is></c></row>'
+                '<row r="2"><c r="A2" t="inlineStr"><is><t>'
                 f"{xml_escape(text)}</t></is></c></row>"
                 "</sheetData>"
                 "</worksheet>"
@@ -127,9 +127,7 @@ def generate_pptx(text: str) -> bytes:
                     ".rels": "application/vnd.openxmlformats-package.relationships+xml",
                 }
             ),
-            "_rels/.rels": _rels_xml(
-                ("rId1", PPTX_REL_TYPES, "ppt/presentation.xml")
-            ),
+            "_rels/.rels": _rels_xml(("rId1", PPTX_REL_TYPES, "ppt/presentation.xml")),
             "ppt/presentation.xml": (
                 '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 '<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
@@ -139,20 +137,24 @@ def generate_pptx(text: str) -> bytes:
                 "</p:presentation>"
             ).encode("utf-8"),
             "ppt/_rels/presentation.xml.rels": _rels_xml(
-                ("rId2",
-                 "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide",
-                 "slides/slide1.xml"),
-                ("rId3",
-                 "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide",
-                 "slides/slide2.xml"),
+                (
+                    "rId2",
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide",
+                    "slides/slide1.xml",
+                ),
+                (
+                    "rId3",
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide",
+                    "slides/slide2.xml",
+                ),
             ),
             "ppt/slides/slide1.xml": (
                 '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
                 '<p:cSld><p:spTree><p:nvGrpSpPr><p:nvPr/><p:cNvPr id="1" name=""/>'
-                '<p:nvGrpSpPr/></p:nvGrpSpPr>'
+                "<p:nvGrpSpPr/></p:nvGrpSpPr>"
                 '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 1"/>'
-                '<p:nvSpPr/><p:prstTxWarp/></p:nvSpPr>'
+                "<p:nvSpPr/><p:prstTxWarp/></p:nvSpPr>"
                 '<p:spPr/><p:txBody><a:p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
                 f"<a:r><a:t>{xml_escape(text)}</a:t></a:r></a:p></p:txBody></p:sp>"
                 "</p:spTree></p:cSld>"
@@ -162,9 +164,9 @@ def generate_pptx(text: str) -> bytes:
                 '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
                 '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
                 '<p:cSld><p:spTree><p:nvGrpSpPr><p:nvPr/><p:cNvPr id="1" name=""/>'
-                '<p:nvGrpSpPr/></p:nvGrpSpPr>'
+                "<p:nvGrpSpPr/></p:nvGrpSpPr>"
                 '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 2"/>'
-                '<p:nvSpPr/><p:prstTxWarp/></p:nvSpPr>'
+                "<p:nvSpPr/><p:prstTxWarp/></p:nvSpPr>"
                 '<p:spPr/><p:txBody><a:p xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
                 "<a:r><a:t>Slide two</a:t></a:r></a:p></p:txBody></p:sp>"
                 "</p:spTree></p:cSld>"
@@ -177,14 +179,20 @@ def generate_pptx(text: str) -> bytes:
 def generate_pdf(text: str) -> bytes:
     content = "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj "
     content += "2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj "
-    content += ("3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R"
-                "/Resources<</Font<</F1 5 0 R>>>>>>endobj ")  # noqa: E501
-    content += (f"4 0 obj<</Length 44>>stream BT /F1 12 Tf 72 720 Td "
-                f"({xml_escape(text)}) Tj ET endstream endobj ")  # noqa: E501
+    content += (
+        "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R"
+        "/Resources<</Font<</F1 5 0 R>>>>>>endobj "
+    )  # noqa: E501
+    content += (
+        f"4 0 obj<</Length 44>>stream BT /F1 12 Tf 72 720 Td "
+        f"({xml_escape(text)}) Tj ET endstream endobj "
+    )  # noqa: E501
     content += "5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj "
-    content += ("xref 0 6 0000000000 65535 f 0000000009 00000 n 0000000058 00000 n "
-                "0000000115 00000 n 0000000266 00000 n 0000000364 00000 n "
-                "trailer<</Size 6/Root 1 0 R>>startxref 414 %%EOF")
+    content += (
+        "xref 0 6 0000000000 65535 f 0000000009 00000 n 0000000058 00000 n "
+        "0000000115 00000 n 0000000266 00000 n 0000000364 00000 n "
+        "trailer<</Size 6/Root 1 0 R>>startxref 414 %%EOF"
+    )
     return f"%PDF-1.4\n{content}".encode("latin-1")
 
 

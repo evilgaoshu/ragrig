@@ -204,9 +204,7 @@ def test_runner_handles_missing_file_via_adapter(tmp_path, monkeypatch) -> None:
         def parse(self, p: Path) -> AdvancedParseResult:
             raise FileNotFoundError("file vanished")
 
-    runner = AdvancedParserRunner(
-        fixtures_dir=tmp_path, adapters=[BrokenAdapter()]
-    )
+    runner = AdvancedParserRunner(fixtures_dir=tmp_path, adapters=[BrokenAdapter()])
     summary = runner.run_all()
     assert summary.total_fixtures == 1
     r = summary.results[0]
@@ -224,6 +222,48 @@ def test_runner_handles_unsupported_format(tmp_path) -> None:
     fixtures = runner.discover_fixtures()
     # discover_fixtures only returns .pdf/.docx/.pptx/.xlsx
     assert fixtures == []
+
+
+# ── Runner tests: missing fixture detection ──
+
+
+def test_runner_reports_missing_known_fixtures(tmp_path) -> None:
+    runner = AdvancedParserRunner(
+        fixtures_dir=tmp_path,
+        known_fixtures=[
+            {"fixture_id": "doc1", "format": "pdf", "filename": "doc1.pdf"},
+            {"fixture_id": "doc2", "format": "docx", "filename": "doc2.docx"},
+        ],
+    )
+    summary = runner.run_all()
+    assert summary.total_fixtures == 2
+    assert summary.failed == 2
+    for r in summary.results:
+        assert r.status == ParserStatus.FAILURE
+        assert r.degraded_reason == "corrupt_artifact"
+        assert "missing expected fixture" in r.metadata.get("error", "")
+
+
+def test_runner_partial_known_fixtures_missing(tmp_path) -> None:
+    (tmp_path / "doc1.pdf").write_bytes(b"%PDF content")
+    runner = AdvancedParserRunner(
+        fixtures_dir=tmp_path,
+        known_fixtures=[
+            {"fixture_id": "doc1", "format": "pdf", "filename": "doc1.pdf"},
+            {"fixture_id": "doc2", "format": "docx", "filename": "doc2.docx"},
+        ],
+    )
+    summary = runner.run_all()
+    assert summary.total_fixtures == 2
+    assert summary.failed == 1
+    assert summary.skipped == 1 or summary.healthy == 1
+
+
+def test_runner_no_false_missing_without_known_fixtures(tmp_path) -> None:
+    (tmp_path / "custom.pdf").write_bytes(b"%PDF data")
+    runner = AdvancedParserRunner(fixtures_dir=tmp_path)
+    summary = runner.run_all()
+    assert summary.total_fixtures == 1
 
 
 # ── OCR fallback tests ──
@@ -390,8 +430,10 @@ def test_summary_to_markdown_contains_table() -> None:
 def test_summary_counts_correct() -> None:
     runner = AdvancedParserRunner(fixtures_dir=FIXTURES_DIR)
     summary = runner.run_all()
-    assert (summary.healthy + summary.degraded + summary.skipped + summary.failed
-            == summary.total_fixtures)
+    assert (
+        summary.healthy + summary.degraded + summary.skipped + summary.failed
+        == summary.total_fixtures
+    )
     assert 0 <= summary.healthy <= summary.total_fixtures
     assert 0 <= summary.degraded <= summary.total_fixtures
     assert 0 <= summary.skipped <= summary.total_fixtures
@@ -428,35 +470,114 @@ def test_artifact_schema_hash_consistency() -> None:
 # ── Secret leakage prevention tests ──
 
 
-def test_advanced_result_no_secret_in_metadata() -> None:
-    result = AdvancedParseResult(
-        format="pdf",
-        fixture_id="test",
-        parser="test",
-        status=ParserStatus.HEALTHY,
-        metadata={
-            "text_summary": "some text",
-            "status": "healthy",
-        },
+def test_runner_sanitizes_secrets_in_custom_adapter_output(tmp_path) -> None:
+    class LeakyAdapter(AdvancedParserAdapter):
+        parser_name = "test.leaky"
+
+        def can_parse(self, p: Path) -> bool:
+            return p.suffix == ".pdf"
+
+        def check_dependencies(self) -> bool:
+            return True
+
+        def parse(self, p: Path) -> AdvancedParseResult:
+            return AdvancedParseResult(
+                format="pdf",
+                fixture_id=p.stem,
+                parser=self.parser_name,
+                status=ParserStatus.HEALTHY,
+                text_length=100,
+                extracted_text="some content",
+                metadata={
+                    "text_summary": "Using key sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ for auth",
+                    "config": "api_key=sk-live-1234567890abcdef",
+                    "safe_field": "hello world",
+                },
+            )
+
+    path = tmp_path / "test.pdf"
+    path.write_bytes(b"%PDF some content")
+    runner = AdvancedParserRunner(
+        fixtures_dir=tmp_path,
+        adapters=[LeakyAdapter()],
     )
-    meta_str = str(result.metadata)
-    for key in ("api_key", "password", "secret", "token", "credential"):
-        assert key not in meta_str
+    summary = runner.run_all()
+    assert summary.total_fixtures == 1
+    r = summary.results[0]
+    meta = r.metadata
+    assert "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ" not in meta.get("text_summary", "")
+    assert "[API KEY REDACTED]" in meta.get("text_summary", "")
+    assert meta.get("redaction_count", 0) >= 1
 
 
-def test_advanced_result_redaction_count() -> None:
-    result = AdvancedParseResult(
-        format="csv",
-        fixture_id="sensitive",
-        parser="test",
-        status=ParserStatus.HEALTHY,
-        metadata={
-            "text_summary": "api_key=[REDACTED]",
-            "redaction_count": 1,
-        },
+def test_runner_sanitizes_real_adapter_output_when_available(tmp_path) -> None:
+    class AdapterWithSecret(AdvancedParserAdapter):
+        parser_name = "test.withsecret"
+
+        def can_parse(self, p: Path) -> bool:
+            return p.suffix == ".pdf"
+
+        def check_dependencies(self) -> bool:
+            return True
+
+        def parse(self, p: Path) -> AdvancedParseResult:
+            return AdvancedParseResult(
+                format="pdf",
+                fixture_id=p.stem,
+                parser=self.parser_name,
+                status=ParserStatus.HEALTHY,
+                text_length=100,
+                extracted_text="password=supersecret123\napi_key=sk-live-test",
+                metadata={
+                    "db_password": "supersecret123",
+                },
+            )
+
+    path = tmp_path / "test.pdf"
+    path.write_bytes(b"%PDF data")
+    runner = AdvancedParserRunner(
+        fixtures_dir=tmp_path,
+        adapters=[AdapterWithSecret()],
     )
-    assert result.metadata["redaction_count"] >= 1
-    assert "[REDACTED]" in result.metadata["text_summary"]
+    summary = runner.run_all()
+    r = summary.results[0]
+    assert "[REDACTED]" in r.metadata.get("text_summary", "")
+    assert r.metadata.get("redaction_count", 0) >= 1
+    assert r.metadata.get("db_password") == "supersecret123"
+
+
+def test_runner_redaction_count_increments_for_secret_content(tmp_path) -> None:
+    class SecretAdapter(AdvancedParserAdapter):
+        parser_name = "test.secret"
+
+        def can_parse(self, p: Path) -> bool:
+            return p.suffix == ".pdf"
+
+        def check_dependencies(self) -> bool:
+            return True
+
+        def parse(self, p: Path) -> AdvancedParseResult:
+            return AdvancedParseResult(
+                format="pdf",
+                fixture_id=p.stem,
+                parser=self.parser_name,
+                status=ParserStatus.HEALTHY,
+                text_length=50,
+                extracted_text="api_key=sk-abc\npassword=xyz\n",
+                metadata={
+                    "text_summary": "api_key=sk-abc\npassword=xyz",
+                },
+            )
+
+    path = tmp_path / "test.pdf"
+    path.write_bytes(b"%PDF data")
+    runner = AdvancedParserRunner(
+        fixtures_dir=tmp_path,
+        adapters=[SecretAdapter()],
+    )
+    summary = runner.run_all()
+    r = summary.results[0]
+    assert r.metadata["redaction_count"] >= 1
 
 
 # ── Corpus check script integration (via runner) ──
@@ -518,6 +639,7 @@ def test_corpus_check_exit_code_healthy(tmp_path) -> None:
                 )
 
         import scripts.advanced_parser_corpus_check as mod
+
         original_runner = mod.AdvancedParserRunner
         mod.AdvancedParserRunner = FakeRunner
         try:
@@ -602,9 +724,7 @@ def test_runner_with_custom_adapters(tmp_path) -> None:
                 extracted_text="test content",
             )
 
-    runner = AdvancedParserRunner(
-        fixtures_dir=tmp_path, adapters=[CustomAdapter()]
-    )
+    runner = AdvancedParserRunner(fixtures_dir=tmp_path, adapters=[CustomAdapter()])
     summary = runner.run_all()
     assert summary.total_fixtures == 1
     assert summary.healthy == 1

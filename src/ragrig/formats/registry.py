@@ -135,8 +135,7 @@ _DEFAULT_FORMATS: list[dict[str, Any]] = [
         "max_file_size_mb": 50,
         "capabilities": ["parse"],
         "limitations": (
-            "Advanced document parsing in preview. "
-            "Requires optional doc-parsers extras."
+            "Advanced document parsing in preview. Requires optional doc-parsers extras."
         ),
         "fallback_policy": "parse_as_plaintext",
         "docs_reference": "docs/specs/ragrig-advanced-parser-corpus-spec.md",
@@ -150,8 +149,7 @@ _DEFAULT_FORMATS: list[dict[str, Any]] = [
         "max_file_size_mb": 50,
         "capabilities": ["parse"],
         "limitations": (
-            "Advanced document parsing in preview. "
-            "Requires optional doc-parsers extras."
+            "Advanced document parsing in preview. Requires optional doc-parsers extras."
         ),
         "fallback_policy": "parse_as_plaintext",
         "docs_reference": "docs/specs/ragrig-advanced-parser-corpus-spec.md",
@@ -165,8 +163,7 @@ _DEFAULT_FORMATS: list[dict[str, Any]] = [
         "max_file_size_mb": 50,
         "capabilities": ["parse"],
         "limitations": (
-            "Advanced document parsing in preview. "
-            "Requires optional doc-parsers extras."
+            "Advanced document parsing in preview. Requires optional doc-parsers extras."
         ),
         "fallback_policy": "parse_as_plaintext",
         "docs_reference": "docs/specs/ragrig-advanced-parser-corpus-spec.md",
@@ -180,8 +177,7 @@ _DEFAULT_FORMATS: list[dict[str, Any]] = [
         "max_file_size_mb": 50,
         "capabilities": ["parse"],
         "limitations": (
-            "Advanced document parsing in preview. "
-            "Requires optional doc-parsers extras."
+            "Advanced document parsing in preview. Requires optional doc-parsers extras."
         ),
         "fallback_policy": "parse_as_plaintext",
         "docs_reference": "docs/specs/ragrig-advanced-parser-corpus-spec.md",

@@ -7,20 +7,16 @@ from ragrig.parsers.advanced.models import AdvancedParseResult
 
 
 class AdvancedParserAdapter(ABC):
-
     parser_name: str = "abstract"
 
     @abstractmethod
-    def can_parse(self, path: Path) -> bool:
-        ...
+    def can_parse(self, path: Path) -> bool: ...
 
     @abstractmethod
-    def parse(self, path: Path) -> AdvancedParseResult:
-        ...
+    def parse(self, path: Path) -> AdvancedParseResult: ...
 
     @abstractmethod
-    def check_dependencies(self) -> bool:
-        ...
+    def check_dependencies(self) -> bool: ...
 
     def get_format(self) -> str:
         ext = self.parser_name.split(".")[-1]
