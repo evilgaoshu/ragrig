@@ -1,6 +1,6 @@
 # Google Workspace Source Connector SPEC
 
-**Version**: 1.0.0  
+**Version**: 1.1.0  
 **Last Updated**: 2026-05-13  
 **Status**: Pilot
 
@@ -9,6 +9,8 @@
 ## 1. Overview
 
 This SPEC defines the first enterprise collaboration source connector for ragrig: a Google Workspace (Drive + Docs) pilot. It validates configuration, discovery, incremental sync, desensitization (secret masking), and Console diagnostic loop.
+
+This version inherits the EVI-107 pilot shipped in PR #99 and narrows three QA follow-ups from EVI-112: diagnostic status semantics, console exception redaction, and capability contract alignment.
 
 ---
 
@@ -109,6 +111,9 @@ Masking rule:
 - Nested dicts: recursive sanitization
 - Error messages: replace known secrets with `[REDACTED]`
 
+Console-specific redaction rule:
+- Any exception text containing `client_secret`, `refresh_token`, or `access_token` must be rewritten before rendering in plain-text console output as well as JSON output.
+
 ---
 
 ## 8. Connector State / Console Output
@@ -124,6 +129,15 @@ Console output must display:
 - `last_discovery` summary (total count, skipped count, next cursor, item list)
 - `next_step_command`
 
+Status semantics:
+- `healthy`: config resolved and discovery summary is available
+- `skip`: connector is not runnable because required credentials are absent in the environment
+- `degraded`: config shape is invalid, service-account payload is invalid JSON, or any rendered connector error required sanitization
+
+Permission mapping contract for this pilot:
+- `PERMISSION_MAPPING` is not declared for `source.google_workspace` in v1.1 because the pilot does not emit ACL or sharing metadata yet.
+- A later version may re-introduce the capability once runtime output includes a documented permission-mapping payload.
+
 ---
 
 ## 9. CI Behavior
@@ -134,6 +148,10 @@ When credentials are not present (default in CI):
 - `build_connector_state` returns `SKIP` status with reason
 - All unit tests pass without real Google API calls
 - No live network traffic required
+
+When credentials are present but malformed:
+- invalid JSON service-account payloads return `DEGRADED`
+- invalid `service_account_json` config references return `DEGRADED`
 
 ---
 

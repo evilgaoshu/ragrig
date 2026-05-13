@@ -27,3 +27,10 @@ def _sanitize_message(message: str, secrets: list[str]) -> str:
         if secret:
             sanitized = sanitized.replace(secret, "[REDACTED]")
     return sanitized
+
+
+def classify_credential_error(exc: GoogleWorkspaceSourceError) -> str:
+    message = str(exc).lower()
+    if "missing required secret" in message:
+        return "skip"
+    return "degraded"

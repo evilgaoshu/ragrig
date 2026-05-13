@@ -17,6 +17,7 @@ from ragrig.plugins.sources.google_workspace.scanner import (
     deduplicate_items,
     scan_drive_items,
 )
+from ragrig.plugins.types import Capability
 
 
 def _config(**overrides: object) -> dict[str, object]:
@@ -72,6 +73,12 @@ class TestPluginRegistry:
         discovery = registry.list_discovery()
         gw_item = next(item for item in discovery if item["plugin_id"] == "source.google_workspace")
         assert gw_item["status"] in (PluginStatus.DEGRADED.value, PluginStatus.UNAVAILABLE.value)
+
+    def test_permission_mapping_capability_is_not_declared_without_runtime_support(self) -> None:
+        registry = build_plugin_registry()
+        manifest = registry.get("source.google_workspace")
+
+        assert Capability.PERMISSION_MAPPING not in manifest.capabilities
 
 
 class TestScanner:
@@ -165,6 +172,22 @@ class TestConsoleOutput:
         assert state["last_discovery"] is not None
         assert state["last_discovery"]["total_count"] == 2
 
+    def test_state_degraded_for_invalid_json_service_account(self) -> None:
+        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": "not-valid-json"}
+
+        state = build_connector_state(_config(), env=env)
+
+        assert state["status"] == "degraded"
+        assert state["degraded_reason"]
+        assert state["skip_reason"] is None
+
+    def test_state_degraded_for_invalid_config(self) -> None:
+        state = build_connector_state(_config(service_account_json="raw-secret-value"), env={})
+
+        assert state["status"] == "degraded"
+        assert state["degraded_reason"]
+        assert state["skip_reason"] is None
+
     def test_format_console_output_contains_no_secrets(self) -> None:
         env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
         scan_result = scan_drive_items(_config(), env=env)
@@ -181,6 +204,31 @@ class TestConsoleOutput:
         state = build_connector_state(_config(), env=env, scan_result=scan_result)
         json_text = format_console_output_json(state)
         assert "service_account_json" not in json_text
+
+    def test_format_console_output_redacts_secret_like_error_content(self) -> None:
+        state = {
+            "connector_id": "source.google_workspace",
+            "status": "degraded",
+            "config_valid": False,
+            "schema_version": "1.0.0",
+            "last_discovery_at": None,
+            "skip_reason": None,
+            "degraded_reason": (
+                "invalid client_secret=abc1234567890 refresh_token=refresh-secret "
+                "access_token=access-secret"
+            ),
+            "next_step_command": "ragrig-connectors google-workspace configure --credentials",
+            "last_discovery": None,
+        }
+
+        text = format_console_output(state)
+
+        assert "client_secret" not in text
+        assert "refresh_token" not in text
+        assert "access_token" not in text
+        assert "abc1234567890" not in text
+        assert "refresh-secret" not in text
+        assert "access-secret" not in text
 
     def test_format_console_output_shows_state(self) -> None:
         state = build_connector_state(_config(), env={})

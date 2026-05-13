@@ -625,7 +625,6 @@ def official_stub_manifests() -> list[PluginManifest]:
             capabilities=(
                 Capability.READ,
                 Capability.INCREMENTAL_SYNC,
-                Capability.PERMISSION_MAPPING,
             ),
             docs_reference="docs/specs/SPEC-google-workspace-source-connector.md",
             optional_dependencies=("googleapiclient",),
