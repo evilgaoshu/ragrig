@@ -90,6 +90,9 @@ markers = [
     "optional: tests for optional features that may be skipped",
     "answer_live_smoke: live smoke tests for answer generation with local LLM (requires RAGRIG_ANSWER_LIVE_SMOKE=1)",
 ]
+filterwarnings = [
+    "ignore:unclosed database in <sqlite3.Connection object.*:ResourceWarning",
+]
 
 [tool.coverage.run]
 source = ["ragrig"]
@@ -114,6 +117,7 @@ source = ["src/ragrig", "*/src/ragrig"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = [".worktrees"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B"]

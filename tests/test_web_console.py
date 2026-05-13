@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import gc
 import json
 import uuid
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from sqlalchemy import JSON, create_engine, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 
 from ragrig.config import Settings
 from ragrig.db.models import Base, DocumentVersion
@@ -33,13 +36,37 @@ def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
 
 
 def _create_file_session_factory(database_path) -> Callable[[], Session]:
-    engine = create_engine(f"sqlite+pysqlite:///{database_path}", future=True)
+    engine = create_engine(
+        f"sqlite+pysqlite:///{database_path}",
+        future=True,
+        poolclass=NullPool,
+    )
     Base.metadata.create_all(engine)
 
     def _factory() -> Session:
         return Session(engine, expire_on_commit=False)
 
     return _factory
+
+
+def test_file_session_factory_does_not_leave_unclosed_sqlite_connections(tmp_path) -> None:
+    session_factory = _create_file_session_factory(tmp_path / "resource-warning.db")
+
+    gc.collect()
+
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter("always", ResourceWarning)
+        session = session_factory()
+        session.execute(text("select 1"))
+        session.close()
+        del session
+        del session_factory
+        gc.collect()
+
+    resource_warnings = [
+        warning for warning in records if isinstance(warning.message, ResourceWarning)
+    ]
+    assert resource_warnings == []
 
 
 def _seed_documents(tmp_path, files: dict[str, str]):
