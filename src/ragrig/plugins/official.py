@@ -4,13 +4,9 @@ from ragrig.plugins import guards
 from ragrig.plugins.manifest import PluginConfigModel, PluginManifest, SecretRequirement
 from ragrig.plugins.object_storage.config import ObjectStorageSinkConfig
 from ragrig.plugins.sources.fileshare.config import FileshareSourceConfig
+from ragrig.plugins.sources.google_workspace.config import GoogleWorkspaceSourceConfig
 from ragrig.plugins.sources.s3.config import S3SourceConfig
 from ragrig.plugins.types import Capability, PluginStatus, PluginTier, PluginType
-
-
-class GoogleWorkspaceSourceConfig(PluginConfigModel):
-    drive_id: str
-    service_account_json: str
 
 
 class Microsoft365SourceConfig(PluginConfigModel):
@@ -620,7 +616,10 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="source.google_workspace",
             display_name="Google Workspace Source",
-            description="Stub manifest for Drive, Docs, Sheets, and Slides sources.",
+            description=(
+                "Pilot connector for Google Drive and Google Docs with dry-run"
+                " discovery, incremental cursor, and secret masking."
+            ),
             plugin_type=PluginType.SOURCE,
             family="google_workspace",
             capabilities=(
@@ -628,18 +627,30 @@ def official_stub_manifests() -> list[PluginManifest]:
                 Capability.INCREMENTAL_SYNC,
                 Capability.PERMISSION_MAPPING,
             ),
+            docs_reference="docs/specs/SPEC-google-workspace-source-connector.md",
             optional_dependencies=("googleapiclient",),
+            degraded_missing_dependencies=("googleapiclient",),
             config_model=GoogleWorkspaceSourceConfig,
             example_config={
                 "drive_id": "shared-drive-id",
+                "include_shared_drives": False,
+                "include_patterns": ["*.pdf", "*.txt", "*.docx"],
+                "exclude_patterns": [],
+                "page_size": 100,
+                "max_retries": 3,
                 "service_account_json": "env:GOOGLE_SERVICE_ACCOUNT_JSON",
             },
             secret_requirements=(
                 SecretRequirement(
-                    name="GOOGLE_SERVICE_ACCOUNT_JSON", description="Google service account JSON"
+                    name="GOOGLE_SERVICE_ACCOUNT_JSON",
+                    description="Google service account JSON key",
+                    required=True,
                 ),
             ),
-            unavailable_reason="Google Workspace connector logic is intentionally out of scope.",
+            unavailable_reason=(
+                "Install google-api-python-client to enable live Google Workspace discovery."
+            ),
+            status=PluginStatus.DEGRADED,
         ),
         _official_manifest(
             plugin_id="source.microsoft_365",
