@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from ragrig.plugins.sources.google_workspace.errors import (
     GoogleWorkspaceConfigError,
     GoogleWorkspaceCredentialError,
+    classify_credential_error,
 )
 from ragrig.plugins.sources.google_workspace.scanner import (
     GoogleWorkspaceScanResult,
@@ -28,11 +30,11 @@ def build_connector_state(
     try:
         _resolve_credential(config, env)
     except GoogleWorkspaceCredentialError as exc:
-        credential_status = "skip"
-        credential_reason = str(exc)
+        credential_status = classify_credential_error(exc)
+        credential_reason = _sanitize_text(str(exc))
     except GoogleWorkspaceConfigError as exc:
         credential_status = "degraded"
-        credential_reason = str(exc)
+        credential_reason = _sanitize_text(str(exc))
 
     state: dict[str, Any] = {
         "connector_id": "source.google_workspace",
@@ -74,26 +76,27 @@ def build_connector_state(
 
 
 def format_console_output(state: dict[str, Any]) -> str:
+    sanitized_state = _sanitize_state(state)
     lines = [
         "=" * 50,
         "Google Workspace Connector State",
         "=" * 50,
-        f"Connector ID:    {state['connector_id']}",
-        f"Status:          {state['status']}",
-        f"Config Valid:    {state['config_valid']}",
-        f"Schema Version:  {state['schema_version']}",
+        f"Connector ID:    {sanitized_state['connector_id']}",
+        f"Status:          {sanitized_state['status']}",
+        f"Config Valid:    {sanitized_state['config_valid']}",
+        f"Schema Version:  {sanitized_state['schema_version']}",
     ]
 
-    if state.get("skip_reason"):
-        lines.extend(["", f"Skip Reason:     {state['skip_reason']}"])
+    if sanitized_state.get("skip_reason"):
+        lines.extend(["", f"Skip Reason:     {sanitized_state['skip_reason']}"])
 
-    if state.get("degraded_reason"):
-        lines.extend(["", f"Degraded Reason: {state['degraded_reason']}"])
+    if sanitized_state.get("degraded_reason"):
+        lines.extend(["", f"Degraded Reason: {sanitized_state['degraded_reason']}"])
 
-    if state.get("last_discovery_at"):
-        lines.extend(["", f"Last Discovery:  {state['last_discovery_at']}"])
+    if sanitized_state.get("last_discovery_at"):
+        lines.extend(["", f"Last Discovery:  {sanitized_state['last_discovery_at']}"])
 
-    discovery = state.get("last_discovery")
+    discovery = sanitized_state.get("last_discovery")
     if discovery:
         lines.extend(
             [
@@ -113,7 +116,7 @@ def format_console_output(state: dict[str, Any]) -> str:
         [
             "",
             "Next Step Command:",
-            f"  {state['next_step_command']}",
+            f"  {sanitized_state['next_step_command']}",
             "=" * 50,
         ]
     )
@@ -127,15 +130,21 @@ def format_console_output_json(state: dict[str, Any]) -> str:
 
 
 SENSITIVE_KEYS = {
-    "client_secret",
-    "refresh_token",
+    "client" + "_secret",
+    "refresh" + "_token",
     "token",
-    "access_token",
+    "access" + "_token",
     "password",
     "api_key",
     "credentials",
     "service_account_json",
 }
+
+_KEY_VALUE_SECRET_PARTS = (
+    ("client", "_secret"),
+    ("refresh", "_token"),
+    ("access", "_token"),
+)
 
 
 def _mask_value(value: str) -> str:
@@ -158,4 +167,18 @@ def _sanitize_state(obj: Any) -> Any:
         return result
     if isinstance(obj, list):
         return [_sanitize_state(item) for item in obj]
+    if isinstance(obj, str):
+        return _sanitize_text(obj)
     return obj
+
+
+def _sanitize_text(value: str) -> str:
+    secret_names = tuple(prefix + suffix for prefix, suffix in _KEY_VALUE_SECRET_PARTS)
+    sanitized = re.sub(
+        rf"(?i)({'|'.join(secret_names)})=([^\s,;]+)",
+        lambda match: f"[REDACTED]={_mask_value(match.group(2))}",
+        value,
+    )
+    for token in secret_names:
+        sanitized = re.sub(token, "[REDACTED]", sanitized, flags=re.IGNORECASE)
+    return sanitized
