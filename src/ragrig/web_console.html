@@ -2036,12 +2036,24 @@
           const retryAllBtn = run.failure_count > 0
             ? `<button class="btn small" onclick="retryPipelineRun('${escapeHtml(run.id)}')">Retry all failed (${run.failure_count})</button>`
             : '';
+          const dag = run.dag || null;
+          const dagNodes = dag
+            ? `<div class="sub">DAG: ${dag.nodes.map(node => `${escapeHtml(node.node_id)}=${escapeHtml(node.status)}`).join(' · ')}</div>`
+            : '';
+          const dagFailures = dag && dag.failure_queue.length
+            ? `<div class="sub">Failure queue: ${dag.failure_queue.map(entry => `${escapeHtml(entry.node_id)} ${escapeHtml(entry.reason)} [${escapeHtml(entry.status)}]`).join(' · ')}</div>`
+            : '';
+          const dagResumeBtn = dag && (run.failure_count > 0 || run.status === 'completed_with_failures')
+            ? `<button class="btn small" onclick="resumePipelineDag('${escapeHtml(run.id)}')">Resume DAG</button>`
+            : '';
           return `
             <div class="card">
               <div class="name">${escapeHtml(run.run_type)} <span class="${pillClass(run.status)}">${escapeHtml(run.status)}</span></div>
               <div class="sub">KB: ${escapeHtml(run.knowledge_base)} · total ${run.total_items} · success ${run.success_count} · skipped ${run.skipped_count} · failed ${run.failure_count}</div>
+              ${dagNodes}
+              ${dagFailures}
               ${itemHtml}
-              <div class="sub" style="margin-top:4px">${retryAllBtn}</div>
+              <div class="sub" style="margin-top:4px">${retryAllBtn} ${dagResumeBtn}</div>
             </div>
           `;
         }));
@@ -2079,6 +2091,25 @@
             showToast('Retried ' + data.retried + ' items: ' + data.succeeded + ' succeeded, ' + data.failed + ' failed');
           } else {
             showToast('Retry result: ' + (data.message || data.error || 'unknown'));
+          }
+          await loadAll();
+        } catch (err) {
+          showToast('Error: ' + err.message);
+        }
+      }
+
+      async function resumePipelineDag(runId) {
+        try {
+          const resp = await fetch('/pipeline-runs/' + runId + '/dag-resume', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          const data = await resp.json();
+          if (data.status === 'rejected') {
+            showToast('Resume rejected: ' + (data.reason || 'invalid state'));
+          } else {
+            showToast('DAG resume ' + data.status);
           }
           await loadAll();
         } catch (err) {

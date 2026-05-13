@@ -108,6 +108,7 @@ from ragrig.web_console import (
     list_supported_formats,
     list_understanding_runs,
     load_console_html,
+    resume_pipeline_dag,
     retry_pipeline_run,
     retry_pipeline_run_item,
     save_source_config,
@@ -115,10 +116,12 @@ from ragrig.web_console import (
     validate_source_config,
 )
 from ragrig.workflows import (
+    IngestionDagRejected,
     WorkflowDefinition,
     WorkflowStep,
     WorkflowValidationError,
     list_workflow_operations,
+    run_ingestion_dag,
     run_workflow,
 )
 
@@ -392,6 +395,36 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, list[dict[str, Any]]]:
         return {"items": list_pipeline_run_items(session, pipeline_run_id)}
+
+    class IngestionDagRequest(BaseModel):
+        knowledge_base: str = "fixture-local"
+        root_path: str
+        include_patterns: list[str] | None = None
+        exclude_patterns: list[str] | None = None
+        max_file_size_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+        failure_node: str | None = None
+
+    @app.post("/pipeline-dags/ingestion", response_model=None)
+    def ingestion_dag_run(
+        request: IngestionDagRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            report = run_ingestion_dag(
+                session,
+                knowledge_base_name=request.knowledge_base,
+                root_path=Path(request.root_path),
+                include_patterns=request.include_patterns,
+                exclude_patterns=request.exclude_patterns,
+                max_file_size_bytes=request.max_file_size_bytes,
+                failure_node=request.failure_node,
+            )
+        except IngestionDagRejected as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "rejected", "degraded": True, "reason": str(exc)},
+            )
+        return report.as_dict()
 
     @app.get("/documents", response_model=None)
     def documents(
@@ -1778,6 +1811,16 @@ def create_app(
         )
         if result is None:
             return JSONResponse(status_code=404, content={"error": "pipeline_run_not_found"})
+        return result
+
+    @app.post("/pipeline-runs/{run_id}/dag-resume", response_model=None)
+    def pipeline_dag_resume(
+        run_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        result = resume_pipeline_dag(session, run_id=run_id)
+        if result is None:
+            return JSONResponse(status_code=404, content={"error": "ingestion_dag_not_found"})
         return result
 
     return app

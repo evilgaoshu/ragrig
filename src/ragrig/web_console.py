@@ -32,6 +32,7 @@ from ragrig.providers.model_catalog import serialize_provider_catalog
 from ragrig.repositories.audit import create_audit_event
 from ragrig.retrieval_benchmark_integrity import get_integrity_summary as _get_integrity_summary
 from ragrig.vectorstore.base import VectorBackendHealth
+from ragrig.workflows.ingestion_dag import dag_snapshot, resume_ingestion_dag
 
 
 def _plugin_discovery_by_id() -> dict[str, dict[str, Any]]:
@@ -339,6 +340,7 @@ def list_pipeline_runs(session: Session) -> list[dict[str, Any]]:
                 "config_snapshot": run.config_snapshot_json,
                 "started_at": _isoformat(run.started_at),
                 "finished_at": _isoformat(run.finished_at),
+                "dag": dag_snapshot(run),
             }
         )
     return items
@@ -376,6 +378,7 @@ def get_pipeline_run_detail(session: Session, pipeline_run_id: str) -> dict[str,
         "config_snapshot": run.config_snapshot_json,
         "started_at": _isoformat(run.started_at),
         "finished_at": _isoformat(run.finished_at),
+        "dag": dag_snapshot(run),
     }
 
 
@@ -2539,6 +2542,15 @@ def retry_pipeline_run(
         "failed": still_failed,
         "items": results,
     }
+
+
+def resume_pipeline_dag(
+    session: Session,
+    *,
+    run_id: str,
+) -> dict[str, Any] | None:
+    """Resume a persisted ingestion DAG from its first incomplete node."""
+    return resume_ingestion_dag(session, pipeline_run_id=run_id)
 
 
 def _sanitize_retry_error(message: str) -> str:
