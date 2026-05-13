@@ -32,7 +32,7 @@ make lint
 make test
 make coverage
 make web-check
-make retrieval-benchmark-compare
+BENCHMARK_BASELINE_PATH=/var/folders/p2/wwgksm0s2xj98__bmwzlglww0000gn/T/opencode/evi111-legacy-baseline.json make retrieval-benchmark-compare
 make retrieval-benchmark-baseline-refresh
 make retrieval-benchmark-compare
 ```
@@ -40,9 +40,9 @@ make retrieval-benchmark-compare
 ## Result Summary
 
 - `make lint` passed via `ruff check .`
-- `make test` passed: `1249 passed, 11 skipped`
-- `make coverage` passed: total coverage `97.93%` with required `90.0%`
-- `make web-check` passed: `99 passed`
-- First `make retrieval-benchmark-compare` failed with `fixture_id mismatch` and the expected legacy baseline refresh hint
+- `make test` passed: `1495 passed, 11 skipped`
+- `make coverage` passed: total coverage `95.70%` with required `90.0%`
+- `make web-check` passed: `131 passed`
+- `BENCHMARK_BASELINE_PATH=/var/folders/p2/wwgksm0s2xj98__bmwzlglww0000gn/T/opencode/evi111-legacy-baseline.json make retrieval-benchmark-compare` failed with `fixture_id mismatch` and the expected legacy baseline refresh hint
 - `make retrieval-benchmark-baseline-refresh` rewrote `docs/benchmarks/retrieval-benchmark-baseline.json` and `.manifest.json` with stable content-derived `fixture_id` `34f839a57cf1af5d`
-- Second `make retrieval-benchmark-compare` passed with `overall_status: pass`
+- Final `make retrieval-benchmark-compare` passed with `overall_status: pass`
