@@ -13,7 +13,18 @@ from typing import Any, Literal
 
 Visibility = Literal["public", "protected", "unknown"]
 AclSummaryVisibility = Literal["public", "protected", "unknown"]
-AuditEventType = Literal["acl_write", "retrieval_filter", "access_denied"]
+AuditEventType = Literal[
+    "acl_write",
+    "retrieval_filter",
+    "access_denied",
+    "source_save",
+    "dry_run_start",
+    "dry_run_complete",
+    "retry_start",
+    "retry_complete",
+    "resume_start",
+    "resume_complete",
+]
 AclExplainReason = Literal[
     "public",
     "principal_match",

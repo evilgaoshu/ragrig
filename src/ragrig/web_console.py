@@ -29,6 +29,7 @@ from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
 from ragrig.providers import get_provider_registry
 from ragrig.providers.model_catalog import serialize_provider_catalog
+from ragrig.repositories.audit import create_audit_event
 from ragrig.retrieval_benchmark_integrity import get_integrity_summary as _get_integrity_summary
 from ragrig.vectorstore.base import VectorBackendHealth
 
@@ -1826,6 +1827,13 @@ def dry_run_source(
     registry = get_plugin_registry()
     validated = registry.validate_config(plugin_id, config)
 
+    create_audit_event(
+        session,
+        event_type="dry_run_start",
+        payload_json=_safe_payload({"plugin_id": plugin_id}),
+    )
+    session.commit()
+
     if plugin_id == "source.local":
         report = _dry_run_local_directory(session, validated)
     elif plugin_id == "source.s3":
@@ -1833,9 +1841,31 @@ def dry_run_source(
     elif plugin_id == "source.fileshare":
         report = _dry_run_fileshare_source(session, validated, env=env)
     else:
+        create_audit_event(
+            session,
+            event_type="dry_run_complete",
+            payload_json={"plugin_id": plugin_id, "error": "unsupported source plugin"},
+        )
+        session.commit()
         return {"dry_run": False, "error": f"unsupported source plugin: {plugin_id}"}
 
-    return _serialize_dry_run(report)
+    serialized = _serialize_dry_run(report)
+    create_audit_event(
+        session,
+        event_type="dry_run_complete",
+        payload_json=_safe_payload(
+            {
+                "plugin_id": plugin_id,
+                "source_kind": report.source_kind,
+                "total": report.total,
+                "discovered_count": len(report.discovered),
+                "skipped_count": len(report.skipped),
+                "failed_count": len(report.failed),
+            }
+        ),
+    )
+    session.commit()
+    return serialized
 
 
 # ── Source Config Save ──────────────────────────────────────────────────────
@@ -1911,6 +1941,22 @@ def save_source_config(
 
     session.commit()
 
+    summary = _safe_payload(
+        {
+            "source_id": str(source.id),
+            "kind": source_kind,
+            "uri": source.uri,
+        }
+    )
+    create_audit_event(
+        session,
+        event_type="source_save",
+        actor=operator,
+        knowledge_base_id=kb.id,
+        payload_json=summary,
+    )
+    session.commit()
+
     return {
         "id": str(source.id),
         "knowledge_base": knowledge_base_name,
@@ -1920,6 +1966,159 @@ def save_source_config(
         "created_at": _isoformat(source.created_at),
         "updated_at": _isoformat(source.updated_at),
     }
+
+
+def _check_retry_guardrails(
+    session: Session,
+    *,
+    item: PipelineRunItem,
+    run: PipelineRun,
+) -> dict[str, Any] | None:
+    """Check guardrails before allowing a retry.
+
+    Returns a deny response dict if a guardrail blocks the retry,
+    or None if the retry may proceed.
+    """
+    if item.status != "failed":
+        return {
+            "denied": True,
+            "reason": "invalid_state_transition",
+            "message": (
+                f"Cannot retry item with status '{item.status}';"
+                " only 'failed' items may be retried."
+            ),
+            "item_id": str(item.id),
+            "current_status": item.status,
+        }
+
+    # Check for existing successful retry
+    if (
+        item.metadata_json
+        and item.metadata_json.get("retry_version_number") is not None
+        and item.status == "success"
+    ):
+        return {
+            "denied": True,
+            "reason": "duplicate_retry",
+            "message": "Item has already been successfully retried.",
+            "item_id": str(item.id),
+        }
+
+    # Check concurrent retry (item already being retried in another session)
+    if item.metadata_json and item.metadata_json.get("retry_in_progress"):
+        return {
+            "denied": True,
+            "reason": "concurrent_retry",
+            "message": "Item retry is already in progress.",
+            "item_id": str(item.id),
+        }
+
+    # Check for expired config snapshot
+    snapshot = run.config_snapshot_json or {}
+    snapshot_age = None
+    if run.finished_at:
+        now = datetime.now(timezone.utc)
+        finished = run.finished_at
+        if finished.tzinfo is None:
+            finished = finished.replace(tzinfo=timezone.utc)
+        snapshot_age = (now - finished).total_seconds()
+    if snapshot.get("snapshot_expired"):
+        return {
+            "denied": True,
+            "reason": "expired_snapshot",
+            "message": "Config snapshot has been marked as expired.",
+            "item_id": str(item.id),
+            "run_id": str(run.id),
+        }
+    if snapshot_age is not None and snapshot_age > 86400:
+        return {
+            "denied": True,
+            "reason": "expired_snapshot",
+            "message": f"Config snapshot is too old ({snapshot_age:.0f}s > 86400s threshold).",
+            "item_id": str(item.id),
+            "run_id": str(run.id),
+            "snapshot_age_seconds": snapshot_age,
+        }
+
+    return None
+
+
+def _check_run_retry_guardrails(
+    session: Session,
+    *,
+    run: PipelineRun,
+) -> dict[str, Any] | None:
+    """Check guardrails before retrying all failed items in a run."""
+    failed_items = (
+        session.query(PipelineRunItem)
+        .filter(
+            PipelineRunItem.pipeline_run_id == run.id,
+            PipelineRunItem.status == "failed",
+        )
+        .all()
+    )
+
+    if not failed_items:
+        return None
+
+    snapshot = run.config_snapshot_json or {}
+    snapshot_age = None
+    if run.finished_at:
+        now = datetime.now(timezone.utc)
+        finished = run.finished_at
+        if finished.tzinfo is None:
+            finished = finished.replace(tzinfo=timezone.utc)
+        snapshot_age = (now - finished).total_seconds()
+    if snapshot.get("snapshot_expired"):
+        return {
+            "denied": True,
+            "reason": "expired_snapshot",
+            "message": "Config snapshot has been marked as expired.",
+            "run_id": str(run.id),
+        }
+    if snapshot_age is not None and snapshot_age > 86400:
+        return {
+            "denied": True,
+            "reason": "expired_snapshot",
+            "message": f"Config snapshot is too old ({snapshot_age:.0f}s > 86400s threshold).",
+            "run_id": str(run.id),
+            "snapshot_age_seconds": snapshot_age,
+        }
+
+    return None
+
+
+def _safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Redact sensitive keys from a payload dict.
+
+    Mirrors the pattern from ragrig.repositories.audit._safe_payload.
+    """
+    _forbidden_keys = {
+        "password",
+        "api_key",
+        "token",
+        "secret",
+        "raw_secret",
+        "private_key",
+        "access_key",
+        "session_token",
+    }
+    safe: dict[str, Any] = {}
+    for key, value in payload.items():
+        key_text = str(key)
+        if key_text.lower() in _forbidden_keys:
+            safe[key_text] = "[REDACTED]"
+        elif isinstance(value, dict):
+            safe[key_text] = _safe_payload(value)
+        elif isinstance(value, list):
+            safe[key_text] = [
+                _safe_payload(item) if isinstance(item, dict) else item for item in value[:50]
+            ]
+        elif isinstance(value, str) and len(value) > 240:
+            safe[key_text] = value[:237] + "..."
+        else:
+            safe[key_text] = value
+    return safe
 
 
 # ── Pipeline Run Item Inspect & Retry ───────────────────────────────────────
@@ -1979,6 +2178,23 @@ def retry_pipeline_run_item(
 
     item, run, document, source, kb = row
 
+    # Guardrail check
+    guardrail = _check_retry_guardrails(session, item=item, run=run)
+    if guardrail is not None:
+        return {**guardrail, "retried": False}
+
+    create_audit_event(
+        session,
+        event_type="retry_start",
+        actor=operator,
+        knowledge_base_id=kb.id,
+        document_id=document.id,
+        run_id=run.id,
+        item_id=item.id,
+        payload_json={"document_uri": document.uri, "run_type": run.run_type},
+    )
+    session.commit()
+
     from ragrig.db.models import DocumentVersion
     from ragrig.ingestion.pipeline import _select_parser
     from ragrig.parsers.base import parse_with_timeout
@@ -2016,6 +2232,17 @@ def retry_pipeline_run_item(
             item.error_message = error_msg
             item.finished_at = datetime.now(timezone.utc)
             session.commit()
+            create_audit_event(
+                session,
+                event_type="retry_complete",
+                actor=operator,
+                knowledge_base_id=kb.id,
+                document_id=document.id,
+                run_id=run.id,
+                item_id=item.id,
+                payload_json={"status": "failed", "error_message": error_msg},
+            )
+            session.commit()
             return {
                 "id": str(item.id),
                 "pipeline_run_id": str(run.id),
@@ -2039,6 +2266,17 @@ def retry_pipeline_run_item(
             item.status = "failed"
             item.error_message = error_msg
             item.finished_at = datetime.now(timezone.utc)
+            session.commit()
+            create_audit_event(
+                session,
+                event_type="retry_complete",
+                actor=operator,
+                knowledge_base_id=kb.id,
+                document_id=document.id,
+                run_id=run.id,
+                item_id=item.id,
+                payload_json={"status": "failed", "error_message": error_msg},
+            )
             session.commit()
             return {
                 "id": str(item.id),
@@ -2064,6 +2302,17 @@ def retry_pipeline_run_item(
             item.error_message = error_msg
             item.finished_at = datetime.now(timezone.utc)
             session.commit()
+            create_audit_event(
+                session,
+                event_type="retry_complete",
+                actor=operator,
+                knowledge_base_id=kb.id,
+                document_id=document.id,
+                run_id=run.id,
+                item_id=item.id,
+                payload_json={"status": "failed", "error_message": error_msg},
+            )
+            session.commit()
             return {
                 "id": str(item.id),
                 "pipeline_run_id": str(run.id),
@@ -2081,6 +2330,17 @@ def retry_pipeline_run_item(
         item.status = "failed"
         item.error_message = error_msg
         item.finished_at = datetime.now(timezone.utc)
+        session.commit()
+        create_audit_event(
+            session,
+            event_type="retry_complete",
+            actor=operator,
+            knowledge_base_id=kb.id,
+            document_id=document.id,
+            run_id=run.id,
+            item_id=item.id,
+            payload_json={"status": "failed", "error_message": error_msg},
+        )
         session.commit()
         return {
             "id": str(item.id),
@@ -2129,6 +2389,21 @@ def retry_pipeline_run_item(
 
         session.commit()
 
+        create_audit_event(
+            session,
+            event_type="retry_complete",
+            actor=operator,
+            knowledge_base_id=kb.id,
+            document_id=document.id,
+            run_id=run.id,
+            item_id=item.id,
+            payload_json={
+                "status": "success",
+                "new_version_number": version.version_number,
+            },
+        )
+        session.commit()
+
         return {
             "id": str(item.id),
             "pipeline_run_id": str(run.id),
@@ -2142,6 +2417,17 @@ def retry_pipeline_run_item(
         item.status = "failed"
         item.error_message = error_msg
         item.finished_at = datetime.now(timezone.utc)
+        session.commit()
+        create_audit_event(
+            session,
+            event_type="retry_complete",
+            actor=operator,
+            knowledge_base_id=kb.id,
+            document_id=document.id,
+            run_id=run.id,
+            item_id=item.id,
+            payload_json={"status": "failed", "error_message": error_msg},
+        )
         session.commit()
         return {
             "id": str(item.id),
@@ -2177,6 +2463,21 @@ def retry_pipeline_run(
     if run is None:
         return None
 
+    # Run-level guardrail check
+    guardrail = _check_run_retry_guardrails(session, run=run)
+    if guardrail is not None:
+        return {**guardrail, "retried": False}
+
+    create_audit_event(
+        session,
+        event_type="retry_start",
+        actor=operator,
+        knowledge_base_id=run.knowledge_base_id,
+        run_id=run.id,
+        payload_json={"run_type": run.run_type},
+    )
+    session.commit()
+
     # Collect failed items
     failed_items = (
         session.query(PipelineRunItem)
@@ -2188,6 +2489,15 @@ def retry_pipeline_run(
     )
 
     if not failed_items:
+        create_audit_event(
+            session,
+            event_type="retry_complete",
+            actor=operator,
+            knowledge_base_id=run.knowledge_base_id,
+            run_id=run.id,
+            payload_json={"status": "no_failed_items"},
+        )
+        session.commit()
         return {
             "run_id": run_id,
             "status": "no_failed_items",
@@ -2205,6 +2515,21 @@ def retry_pipeline_run(
 
     succeeded = sum(1 for r in results if r.get("status") == "success")
     still_failed = sum(1 for r in results if r.get("status") == "failed")
+
+    create_audit_event(
+        session,
+        event_type="retry_complete",
+        actor=operator,
+        knowledge_base_id=run.knowledge_base_id,
+        run_id=run.id,
+        payload_json={
+            "status": "completed",
+            "retried": len(results),
+            "succeeded": succeeded,
+            "failed": still_failed,
+        },
+    )
+    session.commit()
 
     return {
         "run_id": run_id,

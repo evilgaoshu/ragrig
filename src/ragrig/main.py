@@ -53,6 +53,7 @@ from ragrig.repositories import (
     get_next_version_number,
     get_or_create_document,
     get_or_create_source,
+    list_audit_events,
 )
 from ragrig.retrieval import (
     EmbeddingProfileMismatchError,
@@ -1588,6 +1589,65 @@ def create_app(
         entry = profile.to_api_dict()
         entry["provider_available"] = resolve_provider_availability(profile.provider)
         return entry
+
+    def _redact_summary(payload: dict[str, Any]) -> dict[str, Any]:
+        _forbidden = {
+            "password",
+            "api_key",
+            "token",
+            "secret",
+            "raw_secret",
+            "private_key",
+            "access_key",
+        }
+        safe: dict[str, Any] = {}
+        for key, value in payload.items():
+            k = str(key)
+            if k.lower() in _forbidden:
+                safe[k] = "[REDACTED]"
+            elif isinstance(value, dict):
+                safe[k] = _redact_summary(value)
+            elif isinstance(value, list):
+                safe[k] = [_redact_summary(i) if isinstance(i, dict) else i for i in value[:50]]
+            elif isinstance(value, str) and len(value) > 240:
+                safe[k] = value[:237] + "..."
+            else:
+                safe[k] = value
+        return safe
+
+    # ── Workflow Audit Events ────────────────────────────────────────────────
+
+    @app.get("/audit-events", response_model=None)
+    def workflow_audit_events(
+        session: Annotated[Session, Depends(get_session)],
+        limit: int = 50,
+        event_type: str | None = None,
+        run_id: str | None = None,
+        item_id: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """List workflow audit events (source_save, dry_run, retry, resume)."""
+        events = list_audit_events(
+            session,
+            event_type=event_type,
+            limit=limit,
+            run_id=run_id,
+            item_id=item_id,
+        )
+        return {
+            "entries": [
+                {
+                    "id": str(e.id),
+                    "event_type": e.event_type,
+                    "actor": e.actor,
+                    "knowledge_base_id": str(e.knowledge_base_id) if e.knowledge_base_id else None,
+                    "run_id": str(e.run_id) if e.run_id else None,
+                    "item_id": str(e.item_id) if e.item_id else None,
+                    "occurred_at": e.occurred_at.isoformat() if e.occurred_at else None,
+                    "payload": _redact_summary(e.payload_json),
+                }
+                for e in events
+            ]
+        }
 
     # ── Source Config Validation & Save ────────────────────────────────────
 
