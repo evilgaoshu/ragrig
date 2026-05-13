@@ -101,6 +101,33 @@ class TestBuildManifest:
         )
         assert m1["fixture_id"] == m2["fixture_id"]
 
+    def test_fixture_id_matches_across_different_workspace_roots(self, tmp_path):
+        root_a = tmp_path / "workspace-a" / "fixtures"
+        root_b = tmp_path / "workspace-b" / "fixtures"
+        for root in (root_a, root_b):
+            docs = root / "nested"
+            docs.mkdir(parents=True)
+            (root / "alpha.txt").write_text("same corpus", encoding="utf-8")
+            (docs / "beta.txt").write_text("same nested corpus", encoding="utf-8")
+
+        fixture_id_a = retrieval_benchmark_baseline_refresh._compute_fixture_id(root_a)
+        fixture_id_b = retrieval_benchmark_baseline_refresh._compute_fixture_id(root_b)
+
+        assert fixture_id_a == fixture_id_b
+
+    def test_fixture_id_changes_when_file_content_changes_without_size_change(self, tmp_path):
+        fixture_root = tmp_path / "fixtures"
+        fixture_root.mkdir()
+        file_path = fixture_root / "alpha.txt"
+        file_path.write_text("abc", encoding="utf-8")
+
+        original_fixture_id = retrieval_benchmark_baseline_refresh._compute_fixture_id(fixture_root)
+
+        file_path.write_text("xyz", encoding="utf-8")
+        updated_fixture_id = retrieval_benchmark_baseline_refresh._compute_fixture_id(fixture_root)
+
+        assert updated_fixture_id != original_fixture_id
+
     def test_metrics_hash_changes_with_structure(self):
         data1 = _make_baseline([_make_mode("dense", result_count=10)])
         data2 = _make_baseline([_make_mode("dense", result_count=20)])
@@ -213,19 +240,24 @@ class TestManifestCompatibility:
         assert "schema_version mismatch" in reason
 
     def test_fail_when_fixture_id_mismatch(self, tmp_path):
+        baseline_root = tmp_path / "baseline-fixture"
+        current_root = tmp_path / "current-fixture"
+        baseline_root.mkdir()
+        current_root.mkdir()
+        (baseline_root / "alpha.txt").write_text("same", encoding="utf-8")
+        (current_root / "alpha.txt").write_text("changed", encoding="utf-8")
+
         baseline = retrieval_benchmark_baseline_refresh.refresh_baseline(
             iterations=1,
             top_k=3,
             candidate_k=5,
-            fixture_root=tmp_path,
+            fixture_root=baseline_root,
         )
-        other_path = tmp_path / "other"
-        other_path.mkdir()
         current = retrieval_benchmark_baseline_refresh.refresh_baseline(
             iterations=1,
             top_k=3,
             candidate_k=5,
-            fixture_root=other_path,
+            fixture_root=current_root,
         )
 
         from scripts.retrieval_benchmark_compare import _check_manifest_compatibility

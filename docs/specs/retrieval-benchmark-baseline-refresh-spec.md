@@ -1,6 +1,6 @@
 # SPEC: Retrieval Benchmark Baseline Refresh & Drift Calibration
 
-**Version**: 1.0  
+**Version**: 1.1  
 **Schema Version**: `1.0`  
 **Date**: 2026-05-11  
 **Status**: Approved
@@ -40,7 +40,7 @@ No network, GPU, torch, or BGE dependency is required.
 |-------|------|-------------|
 | `schema_version` | `string` | Manifest schema version. Current: `"1.0"`. |
 | `baseline_id` | `string` | UUID v4 generated at refresh time. |
-| `fixture_id` | `string` | SHA-256 truncated to 16 chars. Covers fixture path + file names + sizes. |
+| `fixture_id` | `string` | SHA-256 truncated to 16 chars. Covers relative fixture file paths plus file bytes, and excludes checkout absolute paths. |
 | `iteration_count` | `integer` | `iterations_per_query` used when the baseline was generated. |
 | `modes` | `list[string]` | Ordered list of mode names present in the baseline (e.g. `["dense", "hybrid", "rerank", "hybrid_rerank"]`). |
 | `metrics_hash` | `string` | SHA-256 truncated to 16 chars of the canonical metrics structure (modes, top_k, candidate_k, iterations, result_count, degraded flags). **Latency values are intentionally excluded** because they are volatile. |
@@ -59,7 +59,7 @@ A baseline is **incompatible** if any of the following is true:
 |-------|----------------|
 | Baseline has no `_manifest` | `baseline missing _manifest: run baseline refresh first` |
 | `schema_version` ≠ expected (`1.0`) | `schema_version mismatch: baseline 'X' != expected '1.0'` |
-| `fixture_id` ≠ current fixture | `fixture_id mismatch: baseline 'X' != current 'Y'` |
+| `fixture_id` ≠ current fixture | `fixture_id mismatch: baseline 'X' != current 'Y' (refresh baseline: older manifests may have path-derived fixture IDs)` |
 | `iteration_count` ≠ current run | `iteration_count mismatch: baseline N != current M` |
 | `metrics_hash` ≠ recomputed hash | `metrics_hash mismatch: baseline 'X' != current 'Y' (metrics structure changed)` |
 
@@ -166,4 +166,5 @@ The following are explicitly **not** required by this SPEC:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.1 | 2026-05-13 | EVI-111: redefine `fixture_id` as content-derived identity (relative paths + file bytes), excluding checkout absolute paths; add legacy baseline refresh guidance. |
 | 1.0 | 2026-05-11 | Initial SPEC: manifest schema, compatibility rules, threshold semantics, sanitization boundaries. |

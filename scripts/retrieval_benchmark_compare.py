@@ -244,6 +244,7 @@ def _check_manifest_compatibility(baseline: dict, current: dict) -> tuple[bool, 
             (
                 f"fixture_id mismatch: baseline {baseline_fixture_id!r}"
                 f" != current {current_fixture_id!r}"
+                " (refresh baseline: older manifests may have path-derived fixture IDs)"
             ),
         )
 
