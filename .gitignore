@@ -21,3 +21,5 @@ docs/operations/artifacts/*.json
 *.log
 tmp/
 /evaluation_runs/
+/backups/
+*.dump
