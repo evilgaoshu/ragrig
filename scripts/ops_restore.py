@@ -189,12 +189,17 @@ def restore_postgres(dsn: str, dump_path: Path) -> dict[str, Any]:
             "--if-exists",
             "--no-owner",
             "--no-acl",
-            "-d", dsn,
+            "-d",
+            dsn,
             str(dump_path),
         ]
         subprocess.run(
-            cmd, env=restore_env,
-            check=True, capture_output=True, text=True, timeout=300,
+            cmd,
+            env=restore_env,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
         result["detail"] = f"restored from {dump_path.name}"
     except subprocess.CalledProcessError as exc:
