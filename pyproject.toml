@@ -90,10 +90,6 @@ markers = [
     "optional: tests for optional features that may be skipped",
     "answer_live_smoke: live smoke tests for answer generation with local LLM (requires RAGRIG_ANSWER_LIVE_SMOKE=1)",
 ]
-filterwarnings = [
-    "ignore:unclosed database in <sqlite3.Connection object.*:ResourceWarning",
-]
-
 [tool.coverage.run]
 source = ["ragrig"]
 omit = [

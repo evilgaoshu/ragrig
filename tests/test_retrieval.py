@@ -43,7 +43,17 @@ def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
 def _create_session() -> Session:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
-    return Session(engine, expire_on_commit=False)
+    session = Session(engine, expire_on_commit=False)
+    original_close = session.close
+
+    def close() -> None:
+        try:
+            original_close()
+        finally:
+            engine.dispose()
+
+    session.close = close
+    return session
 
 
 def _seed_documents(tmp_path, files: dict[str, str]):
