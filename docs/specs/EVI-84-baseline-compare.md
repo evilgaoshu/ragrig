@@ -15,6 +15,7 @@ Enable objective, automated detection of latency and result-count drift in the r
   - CLI arg: `--baseline <path>`
   - Environment variable: `BENCHMARK_BASELINE_PATH`
 - The baseline is the canonical artifact produced by `scripts/retrieval_benchmark.py` and checked into the repo. It is deterministic (fixture data, no network/GPU/torch/BGE).
+- Legacy compatibility boundary: baselines generated before EVI-111 may carry path-derived `fixture_id` values tied to a checkout absolute path. Treat those artifacts as historical snapshots only; refresh them with `make retrieval-benchmark-baseline-refresh` before interpreting a `fixture_id mismatch` as a new regression.
 
 ## Comparison Schema
 

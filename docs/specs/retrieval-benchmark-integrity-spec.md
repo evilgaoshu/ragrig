@@ -1,8 +1,8 @@
 # Retrieval Benchmark Integrity Badge & CI Artifact SPEC
 
-**Version:** 1.1  
+**Version:** 1.2  
 **Status:** Draft  
-**Issues:** EVI-91, EVI-99
+**Issues:** EVI-91, EVI-99, EVI-111
 
 ---
 
@@ -31,6 +31,12 @@ The Web Console badge / status card displays the following fields, sourced from 
 
 The CI artifact is written to `docs/operations/artifacts/retrieval-benchmark-integrity.json`.
 
+Compatibility note:
+
+- Integrity artifacts generated from pre-EVI-111 baselines may embed legacy `fixture_id` values derived from checkout absolute paths.
+- Those files remain valid historical snapshots for age/hash/status reporting at the time they were produced, but they must not be used to judge post-EVI-111 fixture identity compatibility.
+- Recreate them from a refreshed baseline with `make retrieval-benchmark-baseline-refresh && make retrieval-benchmark-integrity-artifact && make retrieval-benchmark-integrity-summary`.
+
 ```json
 {
   "artifact": "retrieval-benchmark-integrity",
@@ -46,6 +52,8 @@ The CI artifact is written to `docs/operations/artifacts/retrieval-benchmark-int
   "baseline_present": true
 }
 ```
+
+The example above is illustrative only. If a repository snapshot still contains this older `fixture_id`, treat it as historical evidence unless the baseline was refreshed after EVI-111.
 
 ### Field definitions
 
@@ -171,6 +179,8 @@ The `retrieval-benchmark-integrity-summary` target produces two files:
 - `<artifact_stem>_summary.md` — human-readable Markdown table
 - `<artifact_stem>_summary.json` — machine-readable summary
 
+When these summaries are generated from a legacy pre-EVI-111 baseline, the reported `fixture_id` is also legacy. In that case, the summary is a historical snapshot reference only and should be regenerated after baseline refresh before using it for new regression triage.
+
 | Field | Type | Description |
 |-------|------|-------------|
 | `overall_status` | `string` | `"pass"`, `"degraded"`, or `"failure"` |
@@ -214,5 +224,6 @@ The cleanup target delegates to `scripts.artifact_cleanup`, which defaults to dr
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2 | 2026-05-13 | Added EVI-111 legacy `fixture_id` compatibility notes, refresh path, and historical snapshot boundary for integrity artifacts. |
 | 1.1 | 2026-05-12 | Added summary target (SCHARP 9), retention & cleanup (SCHARP 10), updated Makefile targets (SCHARP 7) |
 | 1.0 | 2026-05-11 | Initial SPEC for EVI-91 |
