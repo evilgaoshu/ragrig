@@ -101,6 +101,23 @@ class TestBuildManifest:
         )
         assert m1["fixture_id"] == m2["fixture_id"]
 
+    def test_fixture_id_ignores_checkout_absolute_path(self, tmp_path):
+        fixture_a = tmp_path / "workspace-a" / "fixtures"
+        fixture_b = tmp_path / "workspace-b" / "fixtures"
+        fixture_a.mkdir(parents=True)
+        fixture_b.mkdir(parents=True)
+
+        for fixture_root in (fixture_a, fixture_b):
+            (fixture_root / "doc.txt").write_text("same bytes", encoding="utf-8")
+            nested = fixture_root / "nested"
+            nested.mkdir()
+            (nested / "meta.json").write_text('{"same": true}', encoding="utf-8")
+
+        fixture_id_a = retrieval_benchmark_baseline_refresh._compute_fixture_id(fixture_a)
+        fixture_id_b = retrieval_benchmark_baseline_refresh._compute_fixture_id(fixture_b)
+
+        assert fixture_id_a == fixture_id_b
+
     def test_metrics_hash_changes_with_structure(self):
         data1 = _make_baseline([_make_mode("dense", result_count=10)])
         data2 = _make_baseline([_make_mode("dense", result_count=20)])
@@ -219,20 +236,40 @@ class TestManifestCompatibility:
             candidate_k=5,
             fixture_root=tmp_path,
         )
-        other_path = tmp_path / "other"
-        other_path.mkdir()
         current = retrieval_benchmark_baseline_refresh.refresh_baseline(
             iterations=1,
             top_k=3,
             candidate_k=5,
-            fixture_root=other_path,
+            fixture_root=tmp_path,
         )
+        current["_manifest"]["fixture_id"] = "different-fixture-id"
 
         from scripts.retrieval_benchmark_compare import _check_manifest_compatibility
 
         ok, reason = _check_manifest_compatibility(baseline, current)
         assert ok is False
         assert "fixture_id mismatch" in reason
+
+    def test_fail_when_baseline_uses_legacy_path_derived_fixture_id(self, tmp_path):
+        baseline = retrieval_benchmark_baseline_refresh.refresh_baseline(
+            iterations=1,
+            top_k=3,
+            candidate_k=5,
+            fixture_root=tmp_path,
+        )
+        current = retrieval_benchmark_baseline_refresh.refresh_baseline(
+            iterations=1,
+            top_k=3,
+            candidate_k=5,
+            fixture_root=tmp_path,
+        )
+        baseline["_manifest"]["fixture_id"] = "eb323cc73a16db53"
+
+        from scripts.retrieval_benchmark_compare import _check_manifest_compatibility
+
+        ok, reason = _check_manifest_compatibility(baseline, current)
+        assert ok is False
+        assert "legacy path-derived fixture_id" in reason
 
     def test_fail_when_iteration_count_mismatch(self, tmp_path):
         baseline = retrieval_benchmark_baseline_refresh.refresh_baseline(

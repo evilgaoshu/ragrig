@@ -1,8 +1,8 @@
 # Retrieval Benchmark Integrity Badge & CI Artifact SPEC
 
-**Version:** 1.1  
+**Version:** 1.2  
 **Status:** Draft  
-**Issues:** EVI-91, EVI-99
+**Issues:** EVI-91, EVI-99, EVI-116
 
 ---
 
@@ -30,6 +30,12 @@ The Web Console badge / status card displays the following fields, sourced from 
 ## 3. Artifact Schema
 
 The CI artifact is written to `docs/operations/artifacts/retrieval-benchmark-integrity.json`.
+
+Historical snapshot boundary:
+
+- Integrity checks surface known legacy path-derived `fixture_id` values as `legacy_fixture_id` degraded reasons.
+- The guard is read-only: existing snapshot artifacts remain historical evidence and are not auto-rewritten.
+- Operators must refresh the baseline before reusing those snapshots for active compatibility decisions.
 
 ```json
 {
@@ -83,6 +89,7 @@ The CI artifact is written to `docs/operations/artifacts/retrieval-benchmark-int
 |-------------|---------|-----------------|
 | `baseline_stale` | Age exceeds threshold | `baseline_stale: age 45.2 days exceeds threshold 30 days` |
 | `baseline_age_invalid` | `created_at` missing or unparsable | `baseline_age_invalid: created_at is missing or unparsable` |
+| `legacy_fixture_id` | Manifest `fixture_id` matches a known snapshot-only legacy ID | `legacy_fixture_id: legacy path-derived fixture_id detected: 'eb323cc73a16db53'; this snapshot-only artifact must be refreshed via make retrieval-benchmark-baseline-refresh before reuse as an active baseline` |
 | `metrics_hash_mismatch` | Recomputed hash != manifest hash | `metrics_hash_mismatch: manifest says abc123, computed def456` |
 | `metrics_hash_missing` | `metrics_hash` field absent from manifest | `metrics_hash_missing: metrics_hash not in manifest` |
 
@@ -214,5 +221,6 @@ The cleanup target delegates to `scripts.artifact_cleanup`, which defaults to dr
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2 | 2026-05-13 | EVI-116: add integrity degraded reason for known legacy path-derived `fixture_id` snapshots and document the read-only guard boundary. |
 | 1.1 | 2026-05-12 | Added summary target (SCHARP 9), retention & cleanup (SCHARP 10), updated Makefile targets (SCHARP 7) |
 | 1.0 | 2026-05-11 | Initial SPEC for EVI-91 |

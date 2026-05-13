@@ -277,6 +277,20 @@ class TestCheckIntegrityValid:
         assert result["metrics_hash_status"] == "mismatch"
         assert any("metrics_hash_mismatch" in r for r in result["reasons"])
 
+    def test_degraded_when_manifest_uses_legacy_fixture_id(self, tmp_path):
+        manifest = _make_manifest(fixture_id="eb323cc73a16db53")
+        baseline = _make_baseline()
+
+        manifest_path = tmp_path / "manifest.json"
+        baseline_path = tmp_path / "baseline.json"
+        manifest_path.write_text(json.dumps(manifest))
+        baseline_path.write_text(json.dumps(baseline))
+
+        result = check_integrity(manifest_path=manifest_path, baseline_path=baseline_path)
+
+        assert result["overall_status"] == "degraded"
+        assert any("legacy_fixture_id" in reason for reason in result["reasons"])
+
 
 class TestCheckIntegrityFailure:
     def test_failure_when_manifest_missing(self, tmp_path):

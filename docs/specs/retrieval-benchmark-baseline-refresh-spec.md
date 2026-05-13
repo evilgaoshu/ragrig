@@ -1,6 +1,6 @@
 # SPEC: Retrieval Benchmark Baseline Refresh & Drift Calibration
 
-**Version**: 1.0  
+**Version**: 1.1  
 **Schema Version**: `1.0`  
 **Date**: 2026-05-11  
 **Status**: Approved
@@ -29,6 +29,7 @@ make retrieval-benchmark-baseline-refresh
 4. Write the baseline JSON to `docs/benchmarks/retrieval-benchmark-baseline.json`.
 5. Write the standalone manifest to `docs/benchmarks/retrieval-benchmark-baseline.manifest.json`.
 6. Sanitize both outputs with `_sanitize_summary()` to strip secret-like values.
+7. Refuse to reuse known snapshot-only legacy `fixture_id` values as an active baseline identity.
 
 No network, GPU, torch, or BGE dependency is required.
 
@@ -59,6 +60,7 @@ A baseline is **incompatible** if any of the following is true:
 |-------|----------------|
 | Baseline has no `_manifest` | `baseline missing _manifest: run baseline refresh first` |
 | `schema_version` ≠ expected (`1.0`) | `schema_version mismatch: baseline 'X' != expected '1.0'` |
+| Baseline `fixture_id` is a known snapshot-only legacy ID | `legacy path-derived fixture_id detected: 'X'; this snapshot-only artifact must be refreshed via make retrieval-benchmark-baseline-refresh before reuse as an active baseline` |
 | `fixture_id` ≠ current fixture | `fixture_id mismatch: baseline 'X' != current 'Y'` |
 | `iteration_count` ≠ current run | `iteration_count mismatch: baseline N != current M` |
 | `metrics_hash` ≠ recomputed hash | `metrics_hash mismatch: baseline 'X' != current 'Y' (metrics structure changed)` |
@@ -70,6 +72,12 @@ When incompatibility is detected:
 - No per-mode latency drift comparison is performed.
 
 This guarantees that fixture/iteration/schema changes never produce a misleading `pass`.
+
+Guard coverage note:
+
+- `scripts.retrieval_benchmark_baseline_refresh._compute_fixture_id()` hashes only relative fixture paths plus file bytes; checkout absolute paths are excluded.
+- `scripts.retrieval_benchmark_compare._check_manifest_compatibility()` rejects known legacy path-derived snapshot IDs before normal fixture compatibility checks.
+- The guard is read-only and does not rewrite historical snapshot artifacts already stored in `docs/benchmarks/` or `docs/operations/artifacts/`.
 
 ---
 
@@ -166,4 +174,5 @@ The following are explicitly **not** required by this SPEC:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.1 | 2026-05-13 | EVI-116: add automated guard for known legacy path-derived `fixture_id` values, document compare entrypoint and failure message, and clarify that snapshot-only artifacts are not rewritten. |
 | 1.0 | 2026-05-11 | Initial SPEC: manifest schema, compatibility rules, threshold semantics, sanitization boundaries. |

@@ -32,6 +32,7 @@ from scripts.retrieval_benchmark import (
 DEFAULT_BASELINE_PATH = Path("docs/benchmarks/retrieval-benchmark-baseline.json")
 DEFAULT_MANIFEST_PATH = Path("docs/benchmarks/retrieval-benchmark-baseline.manifest.json")
 SCHEMA_VERSION = "1.0"
+LEGACY_PATH_DERIVED_FIXTURE_IDS = frozenset({"eb323cc73a16db53"})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -81,19 +82,32 @@ def build_parser() -> argparse.ArgumentParser:
 def _compute_fixture_id(fixture_root: Path) -> str:
     """Compute a stable fixture identifier from the fixture directory."""
     if not fixture_root.exists():
-        return hashlib.sha256(str(fixture_root).encode()).hexdigest()[:16]
+        return hashlib.sha256(b"").hexdigest()[:16]
 
     hasher = hashlib.sha256()
-    hasher.update(str(fixture_root.resolve()).encode())
 
     files = sorted(fixture_root.rglob("*"))
     for f in files:
         if f.is_file():
             rel = f.relative_to(fixture_root).as_posix()
             hasher.update(rel.encode())
-            hasher.update(str(f.stat().st_size).encode())
+            hasher.update(f.read_bytes())
 
     return hasher.hexdigest()[:16]
+
+
+def _is_legacy_path_derived_fixture_id(fixture_id: object) -> bool:
+    """Return whether fixture_id is a known snapshot-only legacy identifier."""
+    return isinstance(fixture_id, str) and fixture_id in LEGACY_PATH_DERIVED_FIXTURE_IDS
+
+
+def _legacy_fixture_id_reason(fixture_id: object) -> str:
+    """Explain why a fixture_id cannot be treated as an active baseline."""
+    return (
+        f"legacy path-derived fixture_id detected: {fixture_id!r}; "
+        "this snapshot-only artifact must be refreshed via "
+        "make retrieval-benchmark-baseline-refresh before reuse as an active baseline"
+    )
 
 
 def _compute_metrics_hash(benchmark_data: dict) -> str:
@@ -132,11 +146,15 @@ def build_manifest(benchmark_data: dict, *, fixture_root: Path | None = None) ->
     fixture_root = fixture_root or FIXTURE_ROOT
     modes = benchmark_data.get("modes", [])
     mode_names = sorted([m.get("mode", "") for m in modes if isinstance(m, dict)])
+    fixture_id = _compute_fixture_id(fixture_root)
+
+    if _is_legacy_path_derived_fixture_id(fixture_id):
+        raise ValueError(_legacy_fixture_id_reason(fixture_id))
 
     return {
         "schema_version": SCHEMA_VERSION,
         "baseline_id": str(uuid.uuid4()),
-        "fixture_id": _compute_fixture_id(fixture_root),
+        "fixture_id": fixture_id,
         "iteration_count": benchmark_data.get("iterations_per_query", DEFAULT_ITERATIONS),
         "modes": mode_names,
         "metrics_hash": _compute_metrics_hash(benchmark_data),
