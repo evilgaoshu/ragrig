@@ -112,9 +112,10 @@ def resume_ingestion_dag(
     _ensure_failure_queue(dag)
     if snapshot.get("snapshot_expired"):
         return _rejected(run, "stale_snapshot")
-    if run.status == "completed" or (not _has_open_failure(dag) and all(
-        node.get("status") == "completed" for node in _nodes(dag)
-    )):
+    if run.status == "completed" or (
+        not _has_open_failure(dag)
+        and all(node.get("status") == "completed" for node in _nodes(dag))
+    ):
         return _rejected(run, "duplicate_retry")
     if run.status == "running":
         return _rejected(run, "invalid_state_transition")
@@ -139,9 +140,7 @@ def _execute_dag(session: Session, *, run: PipelineRun, resumed: bool) -> Ingest
     dag["nodes"] = nodes
     original_failures = [dict(entry) for entry in dag.get("failure_queue", [])]
     dag["failure_queue"] = [
-        {**entry, "status": "retrying"}
-        if entry.get("status") == "open"
-        else dict(entry)
+        {**entry, "status": "retrying"} if entry.get("status") == "open" else dict(entry)
         for entry in dag.get("failure_queue", [])
     ]
     failed_node: str | None = None
