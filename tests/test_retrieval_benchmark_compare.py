@@ -264,6 +264,32 @@ class TestCorruptBaseline:
         assert "root must be a JSON object" in err
 
 
+class TestLegacyBaselineCompatibility:
+    """Legacy path-derived fixture IDs produce a migration hint."""
+
+    def test_legacy_fixture_id_mismatch_includes_refresh_guidance(self):
+        baseline = _make_baseline([_make_mode("dense", p50=10.0, p95=20.0, result_count=30)])
+        baseline["_manifest"] = {
+            "schema_version": "1.0",
+            "fixture_id": "legacy-path-derived-id",
+            "iteration_count": 2,
+            "metrics_hash": retrieval_benchmark_compare._compute_metrics_hash(baseline),
+        }
+        current = _make_baseline([_make_mode("dense", p50=10.0, p95=20.0, result_count=30)])
+        current["_manifest"] = {
+            "schema_version": "1.0",
+            "fixture_id": "stable-content-id",
+            "iteration_count": 2,
+            "metrics_hash": retrieval_benchmark_compare._compute_metrics_hash(current),
+        }
+
+        ok, reason = retrieval_benchmark_compare._check_manifest_compatibility(baseline, current)
+
+        assert ok is False
+        assert "fixture_id mismatch" in reason
+        assert "refresh baseline" in reason
+
+
 # ── Secret-like config sanitization ────────────────────────────────────────────
 
 
