@@ -102,9 +102,7 @@ class AdvancedParserRunner:
                             parser="none",
                             status=ParserStatus.FAILURE,
                             degraded_reason=DegradedReason.CORRUPT_ARTIFACT.value,
-                            metadata={
-                                "error": f"missing expected fixture: {known['filename']}"
-                            },
+                            metadata={"error": f"missing expected fixture: {known['filename']}"},
                         )
                     )
                     continue
@@ -221,9 +219,7 @@ class AdvancedParserRunner:
             safe_summary, summary_redactions = sanitize_text_summary(raw_text_summary)
             total_redactions += summary_redactions
         elif result.extracted_text:
-            safe_summary, summary_redactions = sanitize_text_summary(
-                result.extracted_text[:500]
-            )
+            safe_summary, summary_redactions = sanitize_text_summary(result.extracted_text[:500])
             total_redactions += summary_redactions
         else:
             safe_summary = ""

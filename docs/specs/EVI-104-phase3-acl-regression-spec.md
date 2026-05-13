@@ -54,10 +54,10 @@ Every chunk in the `/retrieval/search` response array **must** include an `acl_e
 | `reason`                  | Meaning                                                    |
 |---------------------------|------------------------------------------------------------|
 | `public`                  | Document is public (no ACL or visibility=public)           |
-| `allowed_principal`       | At least one request principal matched `allowed_principals` |
-| `denied_principal`        | At least one request principal matched `denied_principals`  |
+| `principal_match`         | At least one request principal matched `allowed_principals` |
+| `explicit_deny`           | At least one request principal matched `denied_principals`  |
 | `no_matching_principal`   | Protected document, no request principal matched `allowed_principals` |
-| `no_principal`            | Protected document, request principal_ids is None or empty |
+| `missing_principal`       | Protected document, request principal_ids is None or empty |
 | `unknown_visibility`      | ACL visibility is not public/protected (deny all)          |
 
 ### Safety constraints
@@ -78,10 +78,10 @@ When present in the API response:
   "denied": 3,
   "reasons": {
     "public": 5,
-    "allowed_principal": 2,
-    "denied_principal": 1,
+    "principal_match": 2,
+    "explicit_deny": 1,
     "no_matching_principal": 1,
-    "no_principal": 0,
+    "missing_principal": 0,
     "unknown_visibility": 1
   }
 }
@@ -100,6 +100,12 @@ When present in the API response:
    - Raw secrets / API keys
    - Full document text
    - Complete `allowed_principals` or `denied_principals` arrays
+
+### Per-chunk reason consistency with top-level summary
+
+Every chunk in the response has an `acl_explain.reason`. The top-level
+`acl_explain_summary.reasons` counts must equal the count of per-chunk
+reasons with the same value.
 
 ---
 

@@ -4473,5 +4473,3 @@ async def test_console_html_includes_acl_badge_function(tmp_path) -> None:
     assert "aclBadgeHtml" in html
     assert "aclSummary" in html
     assert "visibility" in html
-
-

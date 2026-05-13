@@ -173,7 +173,11 @@ ACL_MATRIX_CASES = [
     ),
     pytest.param(
         "protected_alice_in_both_lists",
-        {"visibility": "protected", "allowed_principals": ["alice"], "denied_principals": ["alice"]},
+        {
+            "visibility": "protected",
+            "allowed_principals": ["alice"],
+            "denied_principals": ["alice"],
+        },
         ["alice"],
         False,
         "explicit_deny",
