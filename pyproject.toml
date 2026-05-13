@@ -97,7 +97,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["ragrig"]
+source = ["src/ragrig"]
 omit = [
   "src/ragrig/cleaners/*",
   "src/ragrig/main.py",
