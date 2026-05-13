@@ -6,7 +6,7 @@ from collections.abc import Iterator
 import pytest
 import sqlalchemy
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, create_engine
+from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.compiler import compiles
@@ -26,7 +26,6 @@ def _tracking_create_engine(*args, **kwargs) -> Engine:
 
 
 sqlalchemy.create_engine = _tracking_create_engine
-create_engine = _tracking_create_engine
 
 
 @compiles(JSONB, "sqlite")
@@ -55,7 +54,7 @@ def _cleanup_sqlite_engines() -> Iterator[None]:
 
 @pytest.fixture
 def sqlite_session() -> Iterator[Session]:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    engine = sqlalchemy.create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
     with Session(engine, expire_on_commit=False) as session:
         yield session
