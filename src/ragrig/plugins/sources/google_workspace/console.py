@@ -95,24 +95,28 @@ def format_console_output(state: dict[str, Any]) -> str:
 
     discovery = state.get("last_discovery")
     if discovery:
-        lines.extend([
-            "",
-            "Last Discovery Summary:",
-            f"  Total Items:   {discovery['total_count']}",
-            f"  Skipped:       {discovery['skipped_count']}",
-            f"  Next Cursor:   {discovery['next_cursor'] or 'none'}",
-        ])
+        lines.extend(
+            [
+                "",
+                "Last Discovery Summary:",
+                f"  Total Items:   {discovery['total_count']}",
+                f"  Skipped:       {discovery['skipped_count']}",
+                f"  Next Cursor:   {discovery['next_cursor'] or 'none'}",
+            ]
+        )
         if discovery.get("items"):
             lines.append("  Items:")
             for item in discovery["items"]:
                 lines.append(f"    - {item['item_id']}: {item['name']} ({item['mime_type']})")
 
-    lines.extend([
-        "",
-        "Next Step Command:",
-        f"  {state['next_step_command']}",
-        "=" * 50,
-    ])
+    lines.extend(
+        [
+            "",
+            "Next Step Command:",
+            f"  {state['next_step_command']}",
+            "=" * 50,
+        ]
+    )
 
     return "\n".join(lines)
 

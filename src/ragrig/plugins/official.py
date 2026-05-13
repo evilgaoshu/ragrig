@@ -648,8 +648,7 @@ def official_stub_manifests() -> list[PluginManifest]:
                 ),
             ),
             unavailable_reason=(
-                "Install google-api-python-client to enable live"
-                " Google Workspace discovery."
+                "Install google-api-python-client to enable live Google Workspace discovery."
             ),
             status=PluginStatus.DEGRADED,
         ),

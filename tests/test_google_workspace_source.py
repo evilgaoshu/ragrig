@@ -211,12 +211,14 @@ class TestSecretLeakInterception:
 
     def test_console_sanitize_masks_nested_secrets(self) -> None:
         from ragrig.plugins.sources.google_workspace.console import _sanitize_state
+
         data = {"nested": {"client_secret": "super-secret-value"}}
         sanitized = _sanitize_state(data)
         assert sanitized["nested"]["client_secret"] != "super-secret-value"
 
     def test_sanitize_error_message_masks_secrets(self) -> None:
         from ragrig.plugins.sources.google_workspace.errors import _sanitize_message
+
         text = _sanitize_message("error with secret123", secrets=["secret123"])
         assert "secret123" not in text
         assert "[REDACTED]" in text
@@ -225,11 +227,13 @@ class TestSecretLeakInterception:
 class TestCredentialResolution:
     def test_missing_credential_raises(self) -> None:
         from ragrig.plugins.sources.google_workspace.scanner import _resolve_credential
+
         with pytest.raises(GoogleWorkspaceCredentialError, match="missing required secret"):
             _resolve_credential(_config(), {})
 
     def test_invalid_json_raises(self) -> None:
         from ragrig.plugins.sources.google_workspace.scanner import _resolve_credential
+
         env = {"GOOGLE_SERVICE_ACCOUNT_JSON": "not-valid-json"}
         with pytest.raises(GoogleWorkspaceCredentialError, match="invalid JSON"):
             _resolve_credential(_config(), env)
