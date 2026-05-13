@@ -7,15 +7,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-<<<<<<< HEAD
 from ragrig.acl import (
     AclExplain,
+    acl_decision_reason,
     acl_permits_chunk_metadata,
     build_acl_explain,
+    normalize_principal_ids,
 )
-=======
-from ragrig.acl import acl_decision_reason, acl_permits_chunk_metadata, normalize_principal_ids
->>>>>>> origin/main
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding, KnowledgeBase
 from ragrig.lexical import token_overlap_score
 from ragrig.providers import get_provider_registry
@@ -810,12 +808,9 @@ def search_knowledge_base(
             degraded_reason = rerank_reason
 
     # ── Enrich with acl_explain ──────────────────────────────
-    final_results = _enrich_with_acl_explain(dense_results, principal_ids, enforce_acl)
+    dense_results = _enrich_with_acl_explain(dense_results, principal_ids, enforce_acl)
 
     # ── Final: Trim to top_k ──────────────────────────────────
-<<<<<<< HEAD
-    final_results = final_results[:top_k]
-=======
     final_results = dense_results[:top_k]
     if acl_filter_report is None:
         acl_explain = _build_acl_explain(
@@ -854,7 +849,6 @@ def search_knowledge_base(
                 "acl_explain": acl_explain,
             },
         )
->>>>>>> origin/main
 
     # Build backend metadata
     if vector_backend is not None:

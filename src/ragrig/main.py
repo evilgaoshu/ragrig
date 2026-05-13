@@ -84,10 +84,7 @@ from ragrig.web_console import (
     build_system_status,
     check_format,
     dry_run_source,
-<<<<<<< HEAD
     get_advanced_parser_corpus,
-=======
->>>>>>> origin/main
     get_answer_live_smoke,
     get_pipeline_run_detail,
     get_pipeline_run_item_detail,

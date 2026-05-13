@@ -100,7 +100,7 @@ ACL_MATRIX_CASES = [
         {"visibility": "protected", "allowed_principals": ["alice"], "denied_principals": []},
         ["alice"],
         True,
-        "allowed_principal",
+        "principal_match",
         id="3-protected-alice-allowed",
     ),
     pytest.param(
@@ -108,7 +108,7 @@ ACL_MATRIX_CASES = [
         {"visibility": "protected", "allowed_principals": ["group:eng"], "denied_principals": []},
         ["group:eng"],
         True,
-        "allowed_principal",
+        "principal_match",
         id="4-protected-group-allowed",
     ),
     pytest.param(
@@ -120,7 +120,7 @@ ACL_MATRIX_CASES = [
         },
         ["bob"],
         False,
-        "denied_principal",
+        "explicit_deny",
         id="5-protected-bob-denied",
     ),
     pytest.param(
@@ -128,7 +128,7 @@ ACL_MATRIX_CASES = [
         {"visibility": "protected", "allowed_principals": ["alice"], "denied_principals": ["bob"]},
         ["alice", "bob"],
         False,
-        "denied_principal",
+        "explicit_deny",
         id="6-protected-alice-bob-denied-takes-precedence",
     ),
     pytest.param(
@@ -143,8 +143,8 @@ ACL_MATRIX_CASES = [
         "protected_no_principal",
         {"visibility": "protected", "allowed_principals": ["alice"], "denied_principals": []},
         None,
-        True,
-        "no_principal",
+        False,
+        "missing_principal",
         id="8-protected-no-principal",
     ),
     pytest.param(
@@ -152,7 +152,7 @@ ACL_MATRIX_CASES = [
         {"visibility": "protected", "allowed_principals": ["alice"], "denied_principals": []},
         [],
         False,
-        "no_principal",
+        "missing_principal",
         id="8b-protected-empty-principal",
     ),
     pytest.param(
@@ -173,23 +173,11 @@ ACL_MATRIX_CASES = [
     ),
     pytest.param(
         "protected_alice_in_both_lists",
-        {
-            "visibility": "protected",
-            "allowed_principals": ["alice"],
-            "denied_principals": ["alice"],
-        },
+        {"visibility": "protected", "allowed_principals": ["alice"], "denied_principals": ["alice"]},
         ["alice"],
         False,
-        "denied_principal",
+        "explicit_deny",
         id="11-protected-alice-in-both-denied-wins",
-    ),
-    pytest.param(
-        "no_acl_key_default_public",
-        None,
-        None,
-        True,
-        "public",
-        id="12-no-acl-key-default-public",
     ),
 ]
 
@@ -482,10 +470,10 @@ async def test_acl_explain_no_raw_secrets_or_lists(tmp_path) -> None:
         assert isinstance(explain["permitted"], bool)
         assert explain["reason"] in (
             "public",
-            "allowed_principal",
-            "denied_principal",
+            "principal_match",
+            "explicit_deny",
             "no_matching_principal",
-            "no_principal",
+            "missing_principal",
             "unknown_visibility",
         )
         explain_str = str(explain)

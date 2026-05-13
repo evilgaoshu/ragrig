@@ -13,13 +13,13 @@ from typing import Any, Literal
 
 Visibility = Literal["public", "protected", "unknown"]
 AclSummaryVisibility = Literal["public", "protected", "unknown"]
-<<<<<<< HEAD
+AuditEventType = Literal["acl_write", "retrieval_filter", "access_denied"]
 AclExplainReason = Literal[
     "public",
-    "allowed_principal",
-    "denied_principal",
+    "principal_match",
+    "explicit_deny",
     "no_matching_principal",
-    "no_principal",
+    "missing_principal",
     "unknown_visibility",
 ]
 
@@ -35,8 +35,6 @@ class AclExplain:
     visibility: Visibility
     permitted: bool
     reason: AclExplainReason
-=======
-AuditEventType = Literal["acl_write", "retrieval_filter", "access_denied"]
 
 
 @dataclass(frozen=True)
@@ -50,7 +48,6 @@ class Principal:
         subjects = [f"user:{self.user_id}", self.user_id]
         subjects.extend(f"group:{group_id}" for group_id in self.group_ids)
         return normalize_principal_ids(subjects)
->>>>>>> origin/main
 
 
 @dataclass(frozen=True)
@@ -176,7 +173,21 @@ def _coerce_str_list(value: Any) -> list[str]:
     return []
 
 
-<<<<<<< HEAD
+def normalize_principal_ids(principal_ids: list[str] | tuple[str, ...] | None) -> list[str]:
+    """Normalize principal strings for case-insensitive user/group matching."""
+    if not principal_ids:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for principal_id in principal_ids:
+        value = str(principal_id).strip().lower()
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return normalized
+
+
 def acl_explain_reason(
     chunk_metadata: dict[str, Any] | None,
     principal_ids: list[str] | None,
@@ -187,14 +198,14 @@ def acl_explain_reason(
     if acl.visibility == "unknown":
         return False, "unknown_visibility"
     if not principal_ids:
-        return False, "no_principal"
-    allowed = {pid.lower() for pid in acl.allowed_principals}
-    denied = {pid.lower() for pid in acl.denied_principals}
-    request_principals = {pid.lower() for pid in principal_ids}
+        return False, "missing_principal"
+    allowed = set(normalize_principal_ids(acl.allowed_principals))
+    denied = set(normalize_principal_ids(acl.denied_principals))
+    request_principals = set(normalize_principal_ids(principal_ids))
     if denied & request_principals:
-        return False, "denied_principal"
+        return False, "explicit_deny"
     if allowed & request_principals:
-        return True, "allowed_principal"
+        return True, "principal_match"
     return False, "no_matching_principal"
 
 
@@ -211,21 +222,6 @@ def build_acl_explain(
         permitted=permitted,
         reason=reason,
     )
-=======
-def normalize_principal_ids(principal_ids: list[str] | tuple[str, ...] | None) -> list[str]:
-    """Normalize principal strings for case-insensitive user/group matching."""
-    if not principal_ids:
-        return []
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for principal_id in principal_ids:
-        value = str(principal_id).strip().lower()
-        if not value or value in seen:
-            continue
-        normalized.append(value)
-        seen.add(value)
-    return normalized
->>>>>>> origin/main
 
 
 def acl_permits_chunk_metadata(

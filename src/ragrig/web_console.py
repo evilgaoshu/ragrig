@@ -1430,8 +1430,8 @@ def get_sanitizer_contract_status() -> dict[str, Any]:
     return summary
 
 
-<<<<<<< HEAD
-# ── Advanced Parser Corpus ────────────────────────────────────────────────────
+# ── Advanced Parser Corpus ──────────────────────────────────────────────────
+
 
 _ADVANCED_PARSER_CORPUS_PATH = (
     Path(__file__).resolve().parents[2]
@@ -1443,19 +1443,6 @@ _ADVANCED_PARSER_CORPUS_PATH = (
 
 
 def get_advanced_parser_corpus() -> dict[str, Any]:
-    """Return the latest advanced parser corpus status for Web Console display.
-
-    Reads the artifact at
-    docs/operations/artifacts/advanced-parser-corpus.json.
-
-    Returns a lightweight summary with total/degraded/skipped/failed counts,
-    per-fixture results, and artifact path.
-
-    Missing, corrupt, or schema-incompatible artifacts are reported as
-    degraded/failure — never as pass.
-
-    Never includes raw secret fragments.
-    """
     import json as _json
 
     artifact_path = _ADVANCED_PARSER_CORPUS_PATH
@@ -1493,21 +1480,16 @@ def get_advanced_parser_corpus() -> dict[str, Any]:
         }
 
     status = raw.get("status", "unknown")
-    total_fixtures = raw.get("total_fixtures", 0)
-    healthy = raw.get("healthy", 0)
-    degraded = raw.get("degraded", 0)
-    skipped = raw.get("skipped", 0)
-    failed = raw.get("failed", 0)
     results = raw.get("results", [])
 
     summary: dict[str, Any] = {
         "available": True,
         "status": status,
-        "total_fixtures": total_fixtures,
-        "healthy": healthy,
-        "degraded": degraded,
-        "skipped": skipped,
-        "failed": failed,
+        "total_fixtures": raw.get("total_fixtures", 0),
+        "healthy": raw.get("healthy", 0),
+        "degraded": raw.get("degraded", 0),
+        "skipped": raw.get("skipped", 0),
+        "failed": raw.get("failed", 0),
         "result_count": len(results),
         "report_path": _artifact_relative(),
         "generated_at": raw.get("generated_at", ""),
@@ -1527,8 +1509,6 @@ def get_advanced_parser_corpus() -> dict[str, Any]:
     return summary
 
 
-=======
->>>>>>> origin/main
 # ── Source Config Validation ────────────────────────────────────────────────
 
 _SOURCE_SECRET_FIELDS = {
