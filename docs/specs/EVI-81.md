@@ -127,6 +127,8 @@ On CI runners these thresholds are expected to vary. The benchmark output should
 
 The initial benchmark run's JSON output is committed as `docs/benchmarks/retrieval-benchmark-baseline.json`.
 
+Compatibility note: historical baseline snapshots created before EVI-111 may contain legacy `fixture_id` values derived from checkout absolute paths. Those snapshots remain useful for historical latency/result-count review, but they should not be treated as authoritative fixture identity evidence. Refresh with `make retrieval-benchmark-baseline-refresh` before using the baseline for new cross-workspace comparisons or downstream integrity checks.
+
 ### Secret-like Config Sanitization
 
 Before output, the summary dict is recursively scanned. Any key containing `api_key`, `access_key`, `secret`, `password`, `token`, `credential`, `private_key`, `dsn`, `service_account`, or `session_token` has its value replaced with `"[redacted]"`. This is verified by unit tests.
