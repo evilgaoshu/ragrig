@@ -51,6 +51,8 @@ def create_audit_event(
     knowledge_base_id=None,
     document_id=None,
     chunk_id=None,
+    run_id=None,
+    item_id=None,
     payload_json: dict[str, Any] | None = None,
 ) -> AuditEvent:
     event = AuditEvent(
@@ -59,6 +61,8 @@ def create_audit_event(
         knowledge_base_id=knowledge_base_id,
         document_id=document_id,
         chunk_id=chunk_id,
+        run_id=run_id,
+        item_id=item_id,
         payload_json=_safe_payload(payload_json or {}),
     )
     session.add(event)
@@ -71,10 +75,16 @@ def list_audit_events(
     *,
     event_type: AuditEventType | None = None,
     limit: int = 100,
+    run_id: str | None = None,
+    item_id: str | None = None,
 ) -> list[AuditEvent]:
     statement = select(AuditEvent).order_by(AuditEvent.occurred_at.desc()).limit(limit)
     if event_type is not None:
         statement = statement.where(AuditEvent.event_type == event_type)
+    if run_id is not None:
+        statement = statement.where(AuditEvent.run_id == run_id)
+    if item_id is not None:
+        statement = statement.where(AuditEvent.item_id == item_id)
     return list(session.scalars(statement))
 
 

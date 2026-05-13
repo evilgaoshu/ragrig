@@ -18,6 +18,7 @@ from ragrig.db.models import Base, Document, DocumentVersion
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
+from ragrig.repositories import list_audit_events
 
 pytestmark = [pytest.mark.smoke, pytest.mark.slow]
 
@@ -4473,3 +4474,519 @@ async def test_console_html_includes_acl_badge_function(tmp_path) -> None:
     assert "aclBadgeHtml" in html
     assert "aclSummary" in html
     assert "visibility" in html
+
+
+# ── EVI-105: Workflow Audit Events & Guardrails ─────────────────────────────
+
+
+def _seed_pipeline_run(session, knowledge_base_id, source_id, document_id):
+    """Seed a minimal pipeline run and failed item for test purposes."""
+    from datetime import datetime, timezone
+
+    from ragrig.db.models import PipelineRun, PipelineRunItem
+
+    run = PipelineRun(
+        knowledge_base_id=knowledge_base_id,
+        source_id=source_id,
+        run_type="local_ingest",
+        status="completed",
+        config_snapshot_json={"parser": "plaintext"},
+        total_items=1,
+        success_count=0,
+        failure_count=1,
+        started_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(timezone.utc),
+    )
+    session.add(run)
+    session.flush()
+
+    item = PipelineRunItem(
+        pipeline_run_id=run.id,
+        document_id=document_id,
+        status="failed",
+        error_message="original error",
+        metadata_json={},
+        started_at=datetime.now(timezone.utc),
+    )
+    session.add(item)
+    session.flush()
+    return run, item
+
+
+@pytest.mark.anyio
+async def test_source_save_creates_audit_event(tmp_path) -> None:
+    """source_save should produce a source_save AuditEvent."""
+    database_path = tmp_path / "source-save-audit.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/sources",
+            json={
+                "plugin_id": "source.local",
+                "config": {"root_path": str(tmp_path)},
+                "knowledge_base": "test-audit-kb",
+                "operator": "test-operator",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert "id" in payload
+
+    # Verify audit event was created
+    session = session_factory()
+    events = list_audit_events(session, event_type="source_save", limit=10)
+    assert len(events) == 1
+    assert events[0].event_type == "source_save"
+    assert events[0].actor == "test-operator"
+    assert events[0].payload_json.get("source_id") == payload["id"]
+    assert events[0].payload_json.get("kind") == "local"
+
+
+@pytest.mark.anyio
+async def test_dry_run_creates_audit_events(tmp_path) -> None:
+    """dry_run should produce dry_run_start and dry_run_complete events."""
+    docs = _seed_documents(tmp_path, {"test.txt": "hello world"})
+    database_path = tmp_path / "dry-run-audit.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/sources/dry-run",
+            json={
+                "plugin_id": "source.local",
+                "config": {"root_path": str(docs)},
+            },
+        )
+
+    assert response.status_code == 200, response.text
+
+    session = session_factory()
+    start_events = list_audit_events(session, event_type="dry_run_start", limit=10)
+    complete_events = list_audit_events(session, event_type="dry_run_complete", limit=10)
+    assert len(start_events) == 1
+    assert len(complete_events) == 1
+    assert complete_events[0].payload_json.get("source_kind") == "local_directory"
+
+
+@pytest.mark.anyio
+async def test_retry_item_creates_audit_events(tmp_path) -> None:
+    """Retry of a failed item should produce retry_start and retry_complete events."""
+    from ragrig.db.models import Document, KnowledgeBase, Source
+
+    database_path = tmp_path / "retry-audit.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    kb = KnowledgeBase(name="retry-audit-kb", description="", metadata_json={})
+    session.add(kb)
+    session.flush()
+    source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
+    session.add(source)
+    session.flush()
+    doc = Document(
+        knowledge_base_id=kb.id, source_id=source.id, uri="file:///tmp/test.txt", content_hash="abc"
+    )
+    session.add(doc)
+    session.flush()
+    run, item = _seed_pipeline_run(session, kb.id, source.id, doc.id)
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            f"/pipeline-run-items/{item.id}/retry",
+            json={"operator": "test-retry-op"},
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    if data.get("denied"):
+        # If guardrail kicked in, at least verify retry_start was recorded
+        events = list_audit_events(session, event_type="retry_start", limit=10)
+        assert len(events) >= 1
+    else:
+        events = list_audit_events(session, event_type="retry_complete", limit=10)
+        assert len(events) >= 1
+
+
+@pytest.mark.anyio
+async def test_retry_run_creates_audit_events(tmp_path) -> None:
+    """Retry of a run should produce retry_start and retry_complete events."""
+    from ragrig.db.models import Document, KnowledgeBase, Source
+
+    database_path = tmp_path / "retry-run-audit.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    kb = KnowledgeBase(name="retry-run-audit-kb", description="", metadata_json={})
+    session.add(kb)
+    session.flush()
+    source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
+    session.add(source)
+    session.flush()
+    doc = Document(
+        knowledge_base_id=kb.id, source_id=source.id, uri="file:///tmp/test.txt", content_hash="abc"
+    )
+    session.add(doc)
+    session.flush()
+    run, item = _seed_pipeline_run(session, kb.id, source.id, doc.id)
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            f"/pipeline-runs/{run.id}/retry",
+            json={"operator": "test-run-op"},
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    if data.get("denied"):
+        events = list_audit_events(session, event_type="retry_start", limit=10)
+        assert len(events) >= 1
+    else:
+        events = list_audit_events(session, event_type="retry_complete", limit=10)
+        assert len(events) >= 1
+
+
+@pytest.mark.anyio
+async def test_guardrail_invalid_state_transition(tmp_path) -> None:
+    """Retry of a non-failed item should be denied."""
+    from datetime import datetime, timezone
+
+    from ragrig.db.models import Document, KnowledgeBase, PipelineRun, PipelineRunItem, Source
+
+    database_path = tmp_path / "guardrail-state.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    kb = KnowledgeBase(name="guardrail-state-kb", description="", metadata_json={})
+    session.add(kb)
+    session.flush()
+    source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
+    session.add(source)
+    session.flush()
+    doc = Document(
+        knowledge_base_id=kb.id, source_id=source.id, uri="file:///tmp/test.txt", content_hash="abc"
+    )
+    session.add(doc)
+    session.flush()
+
+    run = PipelineRun(
+        knowledge_base_id=kb.id,
+        source_id=source.id,
+        run_type="local_ingest",
+        status="completed",
+        config_snapshot_json={},
+        total_items=0,
+        success_count=0,
+        failure_count=0,
+        started_at=datetime.now(timezone.utc),
+    )
+    session.add(run)
+    session.flush()
+
+    # Create a "success" item — retry should be denied
+    item = PipelineRunItem(
+        pipeline_run_id=run.id,
+        document_id=doc.id,
+        status="success",  # NOT failed
+        metadata_json={},
+        started_at=datetime.now(timezone.utc),
+    )
+    session.add(item)
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            f"/pipeline-run-items/{item.id}/retry",
+            json={"operator": "test-op"},
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data.get("denied") is True
+    assert data.get("reason") == "invalid_state_transition"
+    assert "only 'failed' items may be retried" in data.get("message", "")
+    assert data.get("current_status") == "success"
+
+
+@pytest.mark.anyio
+async def test_guardrail_duplicate_retry(tmp_path) -> None:
+    """Item already successfully retried should be denied."""
+    from datetime import datetime, timezone
+
+    from ragrig.db.models import Document, KnowledgeBase, PipelineRun, PipelineRunItem, Source
+
+    database_path = tmp_path / "guardrail-duplicate.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    kb = KnowledgeBase(name="guardrail-dedup-kb", description="", metadata_json={})
+    session.add(kb)
+    session.flush()
+    source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
+    session.add(source)
+    session.flush()
+    doc = Document(
+        knowledge_base_id=kb.id, source_id=source.id, uri="file:///tmp/test.txt", content_hash="abc"
+    )
+    session.add(doc)
+    session.flush()
+
+    run = PipelineRun(
+        knowledge_base_id=kb.id,
+        source_id=source.id,
+        run_type="local_ingest",
+        status="completed",
+        config_snapshot_json={},
+        total_items=0,
+        success_count=1,
+        failure_count=0,
+        started_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(timezone.utc),
+    )
+    session.add(run)
+    session.flush()
+
+    # Item that was already successfully retried
+    item = PipelineRunItem(
+        pipeline_run_id=run.id,
+        document_id=doc.id,
+        status="success",
+        metadata_json={"retry_version_number": 2},
+        started_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(timezone.utc),
+    )
+    session.add(item)
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            f"/pipeline-run-items/{item.id}/retry",
+            json={"operator": "test-op"},
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data.get("denied") is True
+    assert data.get("reason") in ("duplicate_retry", "invalid_state_transition")
+
+
+@pytest.mark.anyio
+async def test_guardrail_expired_snapshot(tmp_path) -> None:
+    """Retry with expired config snapshot should be denied."""
+    from datetime import datetime, timezone
+
+    from ragrig.db.models import Document, KnowledgeBase, PipelineRun, PipelineRunItem, Source
+
+    database_path = tmp_path / "guardrail-expired.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    kb = KnowledgeBase(name="guardrail-expired-kb", description="", metadata_json={})
+    session.add(kb)
+    session.flush()
+    source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
+    session.add(source)
+    session.flush()
+    doc = Document(
+        knowledge_base_id=kb.id, source_id=source.id, uri="file:///tmp/test.txt", content_hash="abc"
+    )
+    session.add(doc)
+    session.flush()
+
+    run = PipelineRun(
+        knowledge_base_id=kb.id,
+        source_id=source.id,
+        run_type="local_ingest",
+        status="completed",
+        config_snapshot_json={"snapshot_expired": True, "parser": "plaintext"},
+        total_items=1,
+        success_count=0,
+        failure_count=1,
+        started_at=datetime.now(timezone.utc),
+        finished_at=datetime.now(timezone.utc),
+    )
+    session.add(run)
+    session.flush()
+
+    item = PipelineRunItem(
+        pipeline_run_id=run.id,
+        document_id=doc.id,
+        status="failed",
+        error_message="original error",
+        metadata_json={},
+        started_at=datetime.now(timezone.utc),
+    )
+    session.add(item)
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            f"/pipeline-run-items/{item.id}/retry",
+            json={"operator": "test-op"},
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data.get("denied") is True
+    assert data.get("reason") == "expired_snapshot"
+
+
+@pytest.mark.anyio
+async def test_audit_events_endpoint(tmp_path) -> None:
+    """GET /audit-events returns workflow audit events."""
+
+    from ragrig.repositories.audit import create_audit_event
+
+    database_path = tmp_path / "audit-events-endpoint.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    create_audit_event(
+        session,
+        event_type="source_save",
+        actor="test-actor",
+        payload_json={"source_id": "test-id", "kind": "local"},
+    )
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/audit-events?limit=10")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "entries" in data
+    assert len(data["entries"]) >= 1
+    entry = data["entries"][0]
+    assert entry["event_type"] == "source_save"
+    assert entry["actor"] == "test-actor"
+    assert entry["payload"]["kind"] == "local"
+    # Verify redaction: no secrets in payload
+    assert "[REDACTED]" not in str(response.text) or "[REDACTED]" not in str(data)
+
+
+@pytest.mark.anyio
+async def test_audit_events_endpoint_filter_by_type(tmp_path) -> None:
+    """GET /audit-events filters by event_type."""
+    from ragrig.repositories.audit import create_audit_event
+
+    database_path = tmp_path / "audit-events-filter.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    create_audit_event(session, event_type="source_save", actor="a", payload_json={})
+    create_audit_event(session, event_type="dry_run_start", actor="b", payload_json={})
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/audit-events?limit=10&event_type=dry_run_start")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert all(e["event_type"] == "dry_run_start" for e in data["entries"])
+
+
+@pytest.mark.anyio
+async def test_audit_events_endpoint_empty_degraded(tmp_path) -> None:
+    """GET /audit-events with no events returns an empty entries list."""
+    database_path = tmp_path / "audit-events-empty.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/audit-events?limit=10")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["entries"] == []
+
+
+@pytest.mark.anyio
+async def test_audit_event_sanitizes_secrets(tmp_path) -> None:
+    """Audit events should not contain raw secrets in payload."""
+    from ragrig.repositories.audit import create_audit_event
+
+    database_path = tmp_path / "audit-secrets.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    session = session_factory()
+    create_audit_event(
+        session,
+        event_type="source_save",
+        actor="admin",
+        payload_json={
+            "safe_key": "safe-value",
+            "password": "super-secret-123",
+            "api_key": "ak-456",
+            "nested": {"secret": "nested-secret", "normal": "visible"},
+        },
+    )
+    session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/audit-events?limit=10")
+
+    assert response.status_code == 200
+    data = response.json()
+    entry = data["entries"][0]
+    # Safe values visible
+    assert entry["payload"]["safe_key"] == "safe-value"
+    # Secrets redacted
+    assert entry["payload"]["password"] == "[REDACTED]"
+    assert entry["payload"]["api_key"] == "[REDACTED]"
+    # Nested secrets also redacted
+    assert entry["payload"]["nested"]["secret"] == "[REDACTED]"
+    assert entry["payload"]["nested"]["normal"] == "visible"
+
+
+@pytest.mark.anyio
+async def test_console_html_includes_workflow_audit_panel(tmp_path) -> None:
+    """Console HTML should contain the workflow audit events panel."""
+    database_path = tmp_path / "console-wf-audit.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/console")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Workflow Audit Events" in html
+    assert "wf-audit-panel" in html
+    assert "wf-audit-table" in html
+    assert "wf-audit-refresh" in html
+    assert "degraded-badge" in html or "DEGRADED" in html

@@ -302,6 +302,14 @@ class AuditEvent(UUIDPrimaryKeyMixin, Base):
         UUID(as_uuid=True),
         ForeignKey("chunks.id", ondelete="SET NULL"),
     )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("pipeline_runs.id", ondelete="SET NULL"),
+    )
+    item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("pipeline_run_items.id", ondelete="SET NULL"),
+    )
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
