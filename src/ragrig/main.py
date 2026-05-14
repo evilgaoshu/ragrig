@@ -122,6 +122,7 @@ from ragrig.web_console import (
     resume_pipeline_dag,
     retry_pipeline_run,
     retry_pipeline_run_item,
+    run_source_ingest,
     save_source_config,
     validate_plugin_config_for_wizard,
     validate_source_config,
@@ -1875,6 +1876,12 @@ def create_app(
         plugin_id: str
         config: dict[str, Any] = Field(default_factory=dict)
 
+    class SourceRunIngestRequest(BaseModel):
+        plugin_id: str
+        config: dict[str, Any] = Field(default_factory=dict)
+        knowledge_base: str = "default"
+        operator: str | None = None
+
     @app.post("/sources/dry-run", response_model=None)
     def source_dry_run(
         request: SourceDryRunRequest,
@@ -1897,6 +1904,27 @@ def create_app(
                 content={"error": str(exc)},
             )
         return result
+
+    @app.post("/sources/run-ingest", response_model=None)
+    def source_run_ingest(
+        request: SourceRunIngestRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Run source ingestion and index newly created document versions."""
+        try:
+            result = run_source_ingest(
+                session,
+                plugin_id=request.plugin_id,
+                config=request.config,
+                knowledge_base_name=request.knowledge_base,
+                operator=request.operator,
+            )
+        except Exception as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": str(exc)},
+            )
+        return JSONResponse(status_code=202, content=result)
 
     # ── Pipeline Run Item Inspect & Retry ──────────────────────────────────
 

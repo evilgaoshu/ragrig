@@ -26,7 +26,9 @@ from ragrig.db.models import (
     UnderstandingRun,
 )
 from ragrig.formats import FormatStatus, get_format_registry
+from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
+from ragrig.plugins.sources.s3.connector import ingest_s3_source
 from ragrig.providers import get_provider_registry
 from ragrig.providers.model_catalog import serialize_provider_catalog
 from ragrig.repositories.audit import create_audit_event
@@ -1869,6 +1871,85 @@ def dry_run_source(
     )
     session.commit()
     return serialized
+
+
+def _serialize_ingestion_report(report) -> dict[str, Any]:
+    return {
+        "pipeline_run_id": str(report.pipeline_run_id),
+        "created_documents": report.created_documents,
+        "created_versions": report.created_versions,
+        "skipped_count": report.skipped_count,
+        "failed_count": report.failed_count,
+    }
+
+
+def _serialize_indexing_report(report) -> dict[str, Any]:
+    return {
+        "pipeline_run_id": str(report.pipeline_run_id),
+        "indexed_count": report.indexed_count,
+        "skipped_count": report.skipped_count,
+        "failed_count": report.failed_count,
+        "chunk_count": report.chunk_count,
+        "embedding_count": report.embedding_count,
+    }
+
+
+def run_source_ingest(
+    session: Session,
+    *,
+    plugin_id: str,
+    config: dict[str, Any],
+    knowledge_base_name: str,
+    operator: str | None = None,
+    env: dict[str, str] | None = None,
+    client=None,
+) -> dict[str, Any]:
+    """Run a source ingestion and immediately index newly created versions."""
+    registry = get_plugin_registry()
+    validated = registry.validate_config(plugin_id, config)
+
+    create_audit_event(
+        session,
+        event_type="source_ingest_start",
+        actor=operator,
+        payload_json=_safe_payload({"plugin_id": plugin_id, "knowledge_base": knowledge_base_name}),
+    )
+    session.commit()
+
+    if plugin_id != "source.s3":
+        raise ValueError(f"unsupported source plugin for run-ingest: {plugin_id}")
+
+    ingestion_report = ingest_s3_source(
+        session=session,
+        knowledge_base_name=knowledge_base_name,
+        config=validated,
+        env=env,
+        client=client,
+    )
+
+    indexing_payload: dict[str, Any] | None = None
+    if ingestion_report.created_versions > 0:
+        indexing_report = index_knowledge_base(
+            session=session,
+            knowledge_base_name=knowledge_base_name,
+        )
+        indexing_payload = _serialize_indexing_report(indexing_report)
+
+    payload = {
+        "plugin_id": plugin_id,
+        "knowledge_base": knowledge_base_name,
+        "source_kind": plugin_id.removeprefix("source."),
+        "ingestion": _serialize_ingestion_report(ingestion_report),
+        "indexing": indexing_payload,
+    }
+    create_audit_event(
+        session,
+        event_type="source_ingest_complete",
+        actor=operator,
+        payload_json=_safe_payload(payload),
+    )
+    session.commit()
+    return payload
 
 
 # ── Source Config Save ──────────────────────────────────────────────────────
