@@ -820,6 +820,8 @@
       .wf-event-source_save { color: #1565c0; font-weight: 700; }
       .wf-event-dry_run_start { color: #e65100; font-weight: 700; }
       .wf-event-dry_run_complete { color: #1b6e3a; font-weight: 700; }
+      .wf-event-source_ingest_start { color: #e65100; font-weight: 700; }
+      .wf-event-source_ingest_complete { color: #1b6e3a; font-weight: 700; }
       .wf-event-retry_start { color: #e65100; font-weight: 700; }
       .wf-event-retry_complete { color: #1b6e3a; font-weight: 700; }
       .wf-event-resume_start { color: #e65100; font-weight: 700; }
@@ -1642,6 +1644,8 @@
                     <option value="source_save">source_save</option>
                     <option value="dry_run_start">dry_run_start</option>
                     <option value="dry_run_complete">dry_run_complete</option>
+                    <option value="source_ingest_start">source_ingest_start</option>
+                    <option value="source_ingest_complete">source_ingest_complete</option>
                     <option value="retry_start">retry_start</option>
                     <option value="retry_complete">retry_complete</option>
                     <option value="resume_start">resume_start</option>
@@ -2284,13 +2288,17 @@
           root.innerHTML = empty('No sources configured. Configure one below.');
         } else {
           root.innerHTML = state.sources.map((source) => `
-            <div class="card">
+            <div class="card" data-source-id="${escapeHtml(source.id)}">
               <div class="name">${escapeHtml(source.knowledge_base)}</div>
               <div class="sub">${escapeHtml(source.kind)} · ${escapeHtml(source.uri)}</div>
               <div class="sub">include: ${escapeHtml((source.config.include_patterns || []).join(', ') || '.md,.txt (default)')}</div>
               <div class="sub">exclude: ${escapeHtml((source.config.exclude_patterns || []).join(', ') || 'none')}</div>
               <div class="sub">max size: ${escapeHtml(source.config.max_file_size_bytes || 'unknown')} bytes · schedule: manual only</div>
-              <div class="sub"><button class="btn small" onclick="dryRunSource('${escapeHtml(source.id)}', '${escapeHtml(source.kind)}')">Dry-run</button></div>
+              <div class="flex-row" style="gap:8px;margin-top:8px">
+                <button class="btn small" onclick="dryRunSource('${escapeHtml(source.id)}', '${escapeHtml(source.kind)}')">Dry-run</button>
+                <button class="btn small" onclick="runSavedSourceIngest('${escapeHtml(source.id)}')">Run ingest</button>
+              </div>
+              <div id="source-result-${escapeHtml(source.id)}"></div>
             </div>
           `).join('');
         }
@@ -2305,6 +2313,7 @@
             </div>
             <div id="source-form-area"></div>
             <div id="source-form-result"></div>
+            <div id="source-ingest-result"></div>
           </div>
         `;
       }
@@ -2328,6 +2337,7 @@
               <button class="btn" onclick="validateSourceForm()">Validate</button>
               <button class="btn" onclick="saveSourceForm()">Save</button>
               <button class="btn" onclick="dryRunForm()">Dry-run</button>
+              <button class="btn" onclick="runSourceIngestForm()">Run ingest</button>
             </div>
           `;
         } else if (pluginId === 'source.s3') {
@@ -2350,6 +2360,7 @@
               <button class="btn" onclick="validateSourceForm()">Validate</button>
               <button class="btn" onclick="saveSourceForm()">Save</button>
               <button class="btn" onclick="dryRunForm()">Dry-run</button>
+              <button class="btn" onclick="runSourceIngestForm()">Run ingest</button>
             </div>
           `;
         } else if (pluginId === 'source.fileshare') {
@@ -2375,6 +2386,7 @@
               <button class="btn" onclick="validateSourceForm()">Validate</button>
               <button class="btn" onclick="saveSourceForm()">Save</button>
               <button class="btn" onclick="dryRunForm()">Dry-run</button>
+              <button class="btn" onclick="runSourceIngestForm()">Run ingest</button>
             </div>
           `;
         }
@@ -2520,18 +2532,94 @@
         }
       }
 
+      function renderSourceIngestResult(data) {
+        const ingestion = data.ingestion || {};
+        const indexing = data.indexing || {};
+        const indexingLine = data.indexing
+          ? `Indexed: ${indexing.indexed_count || 0} docs · Chunks: ${indexing.chunk_count || 0} · Embeddings: ${indexing.embedding_count || 0}`
+          : 'Indexing skipped: no new document versions';
+        return `
+          <div class="card">
+            <div class="name">Run ingest: <span class="pill success">${escapeHtml(data.source_kind || data.plugin_id || 'source')}</span></div>
+            <div class="sub">Pipeline run: ${escapeHtml(ingestion.pipeline_run_id || '')}</div>
+            <div class="sub">Created docs: ${ingestion.created_documents || 0} · Versions: ${ingestion.created_versions || 0} · Skipped: ${ingestion.skipped_count || 0} · Failed: ${ingestion.failed_count || 0}</div>
+            <div class="sub">${escapeHtml(indexingLine)}</div>
+          </div>
+        `;
+      }
+
+      async function runSourceIngestForm() {
+        const resultArea = document.getElementById('source-ingest-result') || document.getElementById('source-form-result');
+        const pid = state.sourceFormPlugin;
+        const config = getSourceFormConfig();
+        const kb = getSourceFormKb();
+        resultArea.innerHTML = '<div class="sub">Running ingest and indexing...</div>';
+        try {
+          const resp = await fetch('/sources/run-ingest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_id: pid, config, knowledge_base: kb }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            resultArea.innerHTML = `<div class="card"><div class="name">Run ingest failed</div><div class="sub">${escapeHtml(err.error || 'unknown error')}</div></div>`;
+            return;
+          }
+          const data = await resp.json();
+          resultArea.innerHTML = renderSourceIngestResult(data);
+          await loadAll();
+        } catch (err) {
+          resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+
       async function dryRunSource(sourceId, sourceKind) {
-        const resultArea = document.createElement('div');
+        const source = state.sources.find((item) => item.id === sourceId);
+        const resultArea = document.getElementById(`source-result-${sourceId}`) || document.createElement('div');
         resultArea.innerHTML = '<div class="sub">Running dry-run...</div>';
-        const card = document.querySelector(`[data-source-id="${sourceId}"]`);
+        if (!source) {
+          resultArea.innerHTML = '<div class="sub">Source not found.</div>';
+          return;
+        }
         try {
           const resp = await fetch('/sources/dry-run', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ plugin_id: 'source.' + sourceKind, config: {} }),
+            body: JSON.stringify({ plugin_id: 'source.' + sourceKind, config: source.config || {} }),
           });
           const data = await resp.json();
           resultArea.innerHTML = `<div class="sub">Dry-run: ${data.total || 0} files found</div>`;
+        } catch (err) {
+          resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+
+      async function runSavedSourceIngest(sourceId) {
+        const source = state.sources.find((item) => item.id === sourceId);
+        const resultArea = document.getElementById(`source-result-${sourceId}`) || document.createElement('div');
+        if (!source) {
+          resultArea.innerHTML = '<div class="sub">Source not found.</div>';
+          return;
+        }
+        resultArea.innerHTML = '<div class="sub">Running ingest and indexing...</div>';
+        try {
+          const resp = await fetch('/sources/run-ingest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              plugin_id: 'source.' + source.kind,
+              config: source.config || {},
+              knowledge_base: source.knowledge_base || 'default',
+            }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            resultArea.innerHTML = `<div class="card"><div class="name">Run ingest failed</div><div class="sub">${escapeHtml(err.error || 'unknown error')}</div></div>`;
+            return;
+          }
+          const data = await resp.json();
+          resultArea.innerHTML = renderSourceIngestResult(data);
+          await loadAll();
         } catch (err) {
           resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
         }
