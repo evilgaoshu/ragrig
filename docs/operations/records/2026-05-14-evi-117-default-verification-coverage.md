@@ -14,10 +14,10 @@ Confirm where the retrieval benchmark legacy `fixture_id` guard is covered by de
 |---|---|---|---|---|
 | `make lint` | Yes | `lint` job | No | Style and static checks only. |
 | `make test` | Yes | Indirectly via `make test-fast` in `test` job | Yes | Runs retrieval benchmark unit tests, including legacy compare and integrity guard regressions. |
-| `make coverage` | Yes | `coverage` job | Yes | Local `make coverage` runs the full pytest suite; the CI `coverage` job additionally emits integrity artifact and summary after coverage completes. |
+| `make coverage` | Yes | `coverage` job | Yes | Local `make coverage` runs the full pytest suite; the CI `coverage` job focuses on coverage artifacts and evaluation output. |
 | `make web-check` | Yes | `web-smoke` job | Partial | Covers the Web Console integrity consumer, not the compare preflight failure text. |
-| `make retrieval-benchmark-compare` | Dedicated | Not in default CI job graph | Yes | Reproduces the active-baseline failure path with the raw compare error. |
-| `make retrieval-benchmark-integrity-artifact` | Dedicated | `coverage` job | Yes | Surfaces `legacy_fixture_id` as a degraded reason in a standard CI artifact path. |
+| `make retrieval-benchmark-compare` | Dedicated | `benchmark-guard` job | Yes | Reproduces the active-baseline failure path with the raw compare error. |
+| `make retrieval-benchmark-integrity-artifact` | Dedicated | `benchmark-guard` job | Yes | Surfaces `legacy_fixture_id` as a degraded reason in a standard CI artifact path. |
 
 ## Verified Failure and Warning Paths
 
@@ -50,9 +50,9 @@ Confirm where the retrieval benchmark legacy `fixture_id` guard is covered by de
 
 ## CI Acceptance Note
 
-- GitHub CI does not run `make retrieval-benchmark-compare` as a standalone required check today.
-- Accepted reason: the active-baseline failure path is already enforced by default pytest coverage in `make test-fast` and `make coverage`, while the `coverage` job also publishes the integrity artifact path for reviewer visibility.
-- This keeps CI lightweight and deterministic without refreshing or mutating snapshot-only benchmark artifacts during PR checks.
+- EVI-120 adds a standalone `RAGRig CI / benchmark-guard` check for `make retrieval-benchmark-compare`, `make retrieval-benchmark-integrity-artifact`, and `make retrieval-benchmark-integrity-summary`.
+- The `coverage` job no longer generates retrieval benchmark integrity artifacts, avoiding duplicate execution while keeping the failure signal visible in the PR check list.
+- The dedicated job stays deterministic because it does not refresh or mutate snapshot-only benchmark artifacts during PR checks.
 
 ## Snapshot Boundary Reconfirmed
 
