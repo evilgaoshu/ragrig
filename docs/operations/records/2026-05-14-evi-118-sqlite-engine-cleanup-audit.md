@@ -25,7 +25,7 @@ Audit the test-only SQLAlchemy sqlite engine cleanup boundary so it stays a tear
 ## Failure Signals
 
 - `tests/test_sqlite_engine_cleanup_audit.py::test_dispose_sqlite_engines_cleans_tracked_sqlalchemy_sqlite_engine` proves tracked SQLAlchemy sqlite engines are disposed by the teardown helper.
-- `tests/test_sqlite_engine_cleanup_audit.py::test_direct_sqlite3_leak_path_remains_outside_sqlalchemy_cleanup_scope` proves direct `sqlite3.connect(...)` leaks still emit `ResourceWarning` instead of being silently hidden.
+- `tests/test_sqlite_engine_cleanup_audit.py::test_direct_sqlite3_leak_path_remains_outside_sqlalchemy_cleanup_scope` proves direct `sqlite3.connect(...)` stays outside the SQLAlchemy tracking set, so pytest teardown cannot silently clean it up through `_cleanup_sqlite_engines`.
 - `tests/test_github_ci_docs.py::test_pytest_configuration_does_not_reintroduce_sqlite_resourcewarning_filter` guards against reintroducing the removed sqlite `ResourceWarning` warning filter in `pyproject.toml`.
 
 ## Maintenance Rules
@@ -43,10 +43,10 @@ make coverage
 make web-check
 ```
 
-If a future change makes the direct `sqlite3.connect(...)` leak test flaky on a specific interpreter build, re-run just that test with:
+Python runtime differences can make raw `sqlite3.Connection` finalization timing nondeterministic, so the leak visibility check remains a manual recheck instead of a hard assertion on warning capture. Re-run with:
 
 ```bash
-uv run pytest tests/test_sqlite_engine_cleanup_audit.py::test_direct_sqlite3_leak_path_remains_outside_sqlalchemy_cleanup_scope -q -s
+uv run python -W always::ResourceWarning -c 'import gc, sqlite3, tempfile; db = tempfile.NamedTemporaryFile(suffix=".db", delete=False); conn = sqlite3.connect(db.name); conn.execute("select 1"); del conn; gc.collect()'
 ```
 
-The expected signal is at least one captured `ResourceWarning`; zero warnings means the leak path is being suppressed or cleanup semantics changed.
+Expected outcome: if the active interpreter emits raw sqlite leak warnings, they must appear unsuppressed. If no warning is emitted on that interpreter build, the audit still relies on the automated non-coverage proof above: raw `sqlite3.connect(...)` never enters `_SQLITE_ENGINES`, so the SQLAlchemy teardown helper cannot silently suppress it.
