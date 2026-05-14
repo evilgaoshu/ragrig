@@ -4,11 +4,12 @@ from collections.abc import Callable
 
 import httpx
 import pytest
-from sqlalchemy import create_engine
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from ragrig.db.models import Base
+from ragrig.db.models import Base, Document, DocumentVersion, PipelineRun, PipelineRunItem
 from ragrig.ingestion.web_import import (
     MAX_WEBSITE_IMPORT_BYTES,
     WebsiteImportError,
@@ -183,6 +184,7 @@ async def test_website_import_endpoint_returns_accepted_and_failed_counts(
     from ragrig.ingestion import web_import
 
     def fake_collect_website_imports(*, urls, sitemap_url=None):
+        del sitemap_url
         return web_import.WebsiteImportResult(
             accepted_pages=[
                 web_import.ImportedPage(
@@ -200,7 +202,10 @@ async def test_website_import_endpoint_returns_accepted_and_failed_counts(
             ],
         )
 
-    monkeypatch.setattr("ragrig.main.collect_website_imports", fake_collect_website_imports)
+    monkeypatch.setattr(
+        "ragrig.local_pilot.service.collect_website_imports",
+        fake_collect_website_imports,
+    )
     app = create_app(check_database=lambda: None, session_factory=session_factory)
     transport = httpx.ASGITransport(app=app)
 
@@ -211,17 +216,33 @@ async def test_website_import_endpoint_returns_accepted_and_failed_counts(
         )
 
     assert response.status_code == 202
-    assert response.json() == {
-        "accepted_pages": 1,
-        "failed_pages": 1,
-        "failures": [
-            {
-                "source_url": "https://example.test/bad",
-                "reason": "http_status",
-                "message": "HTTP status 404",
-            }
-        ],
-    }
+    body = response.json()
+    assert body["pipeline_run_id"]
+    assert body["accepted_pages"] == 1
+    assert body["failed_pages"] == 1
+    assert body["failures"] == [
+        {
+            "source_url": "https://example.test/bad",
+            "reason": "http_status",
+            "message": "HTTP status 404",
+        }
+    ]
+    with session_factory() as session:
+        run = session.scalar(select(PipelineRun))
+        assert run is not None
+        assert str(run.id) == body["pipeline_run_id"]
+        assert run.run_type == "website_import"
+        assert run.total_items == 2
+        assert run.success_count == 1
+        assert run.failure_count == 1
+        assert session.scalar(select(DocumentVersion)) is not None
+        documents = list(session.scalars(select(Document).order_by(Document.uri)))
+        assert [document.uri for document in documents] == [
+            "https://example.test/bad",
+            "https://example.test/ok",
+        ]
+        items = list(session.scalars(select(PipelineRunItem).order_by(PipelineRunItem.status)))
+        assert {item.status for item in items} == {"failed", "success"}
 
 
 @pytest.mark.anyio
@@ -234,7 +255,10 @@ async def test_website_import_endpoint_returns_404_for_missing_kb(
     def fail_collect_website_imports(*, urls, sitemap_url=None):
         raise AssertionError("collector should not run for a missing knowledge base")
 
-    monkeypatch.setattr("ragrig.main.collect_website_imports", fail_collect_website_imports)
+    monkeypatch.setattr(
+        "ragrig.local_pilot.service.collect_website_imports",
+        fail_collect_website_imports,
+    )
     app = create_app(check_database=lambda: None, session_factory=session_factory)
     transport = httpx.ASGITransport(app=app)
 
@@ -246,3 +270,19 @@ async def test_website_import_endpoint_returns_404_for_missing_kb(
 
     assert response.status_code == 404
     assert response.json() == {"error": "knowledge base 'missing' not found"}
+
+
+def test_local_pilot_status_lists_required_capabilities(tmp_path) -> None:
+    session_factory = _create_file_session_factory(tmp_path / "local-pilot-status.db")
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    client = TestClient(app)
+
+    response = client.get("/local-pilot/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["upload"]["max_file_size_mb"] == 50
+    assert ".pdf" in body["upload"]["extensions"]
+    assert ".docx" in body["upload"]["extensions"]
+    assert body["website_import"]["max_pages"] == 25
+    assert "model.google_gemini" in body["models"]["required"]

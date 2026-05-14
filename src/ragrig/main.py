@@ -31,7 +31,8 @@ from ragrig.evaluation import (
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.health import create_database_check
 from ragrig.ingestion.pipeline import _select_parser
-from ragrig.ingestion.web_import import WebsiteImportError, collect_website_imports
+from ragrig.ingestion.web_import import WebsiteImportError
+from ragrig.local_pilot import build_local_pilot_status, import_website_pages
 from ragrig.parsers.base import ParserTimeoutError, parse_with_timeout
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.processing_profile import (
@@ -367,6 +368,10 @@ def create_app(
             database_ok=database_ok,
             database_detail=detail,
         )
+
+    @app.get("/local-pilot/status", response_model=None)
+    def local_pilot_status() -> dict[str, Any]:
+        return build_local_pilot_status().model_dump()
 
     @app.get("/knowledge-bases", response_model=None)
     def knowledge_bases(
@@ -942,28 +947,16 @@ def create_app(
             )
 
         try:
-            result = collect_website_imports(
+            result = import_website_pages(
+                session,
+                knowledge_base=kb,
                 urls=request.urls,
                 sitemap_url=request.sitemap_url,
             )
         except WebsiteImportError as exc:
             return JSONResponse(status_code=400, content={"error": str(exc)})
 
-        return JSONResponse(
-            status_code=202,
-            content={
-                "accepted_pages": len(result.accepted_pages),
-                "failed_pages": result.failed_pages,
-                "failures": [
-                    {
-                        "source_url": failure.source_url,
-                        "reason": failure.reason,
-                        "message": failure.message,
-                    }
-                    for failure in result.failures
-                ],
-            },
-        )
+        return JSONResponse(status_code=202, content=result)
 
     @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
     async def knowledge_base_upload(
