@@ -156,7 +156,7 @@ retrieval-benchmark-integrity-cleanup:
 Default verification coverage:
 
 - `make test` and `make coverage` run the integrity unit tests, including the regression that marks a legacy snapshot-only `fixture_id` as `legacy_fixture_id` degraded.
-- GitHub Actions `coverage` also runs `make retrieval-benchmark-integrity-artifact` and `make retrieval-benchmark-integrity-summary`, so the warning is visible in a standard CI artifact path even though the job remains advisory.
+- GitHub Actions `benchmark-guard` runs `make retrieval-benchmark-integrity-artifact` and `make retrieval-benchmark-integrity-summary`, so the warning is visible in a dedicated PR check and artifact path.
 - `make web-check` exercises the Web Console consumer of integrity status, not the compare failure path itself.
 
 ---
@@ -230,6 +230,7 @@ The cleanup target delegates to `scripts.artifact_cleanup`, which defaults to dr
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4 | 2026-05-14 | EVI-120: move integrity artifact generation from `coverage` to the dedicated `benchmark-guard` CI job. |
 | 1.3 | 2026-05-14 | EVI-117: document default local/CI integrity coverage and clarify that coverage job artifacts are the default visible path for `legacy_fixture_id` warnings. |
 | 1.2 | 2026-05-13 | Added EVI-111 legacy `fixture_id` compatibility notes, refresh path, and historical snapshot boundary for integrity artifacts. |
 | 1.1 | 2026-05-12 | Added summary target (SCHARP 9), retention & cleanup (SCHARP 10), updated Makefile targets (SCHARP 7) |
