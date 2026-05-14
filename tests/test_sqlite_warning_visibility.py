@@ -56,9 +56,14 @@ def test_sqlite_warning_check_only_flags_ignore_filters() -> None:
 
 def test_pyproject_has_no_sqlite_resourcewarning_ignore_filters() -> None:
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    filterwarnings = pyproject.get("tool", {}).get("pytest", {}).get("ini_options", {}).get(
-        "filterwarnings",
-        [],
+    filterwarnings = (
+        pyproject.get("tool", {})
+        .get("pytest", {})
+        .get("ini_options", {})
+        .get(
+            "filterwarnings",
+            [],
+        )
     )
 
     assert find_sqlite_resourcewarning_filters(filterwarnings) == []

@@ -13,9 +13,14 @@ SUPPRESSION_ACTION_PATTERN = re.compile(r"^\s*ignore\s*:", re.IGNORECASE)
 
 def load_pytest_filterwarnings() -> list[str]:
     pyproject = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
-    return pyproject.get("tool", {}).get("pytest", {}).get("ini_options", {}).get(
-        "filterwarnings",
-        [],
+    return (
+        pyproject.get("tool", {})
+        .get("pytest", {})
+        .get("ini_options", {})
+        .get(
+            "filterwarnings",
+            [],
+        )
     )
 
 
@@ -23,8 +28,7 @@ def find_sqlite_resourcewarning_filters(filterwarnings: list[str]) -> list[str]:
     return [
         entry
         for entry in filterwarnings
-        if SUPPRESSION_ACTION_PATTERN.search(entry)
-        and SQLITE_RESOURCEWARNING_PATTERN.search(entry)
+        if SUPPRESSION_ACTION_PATTERN.search(entry) and SQLITE_RESOURCEWARNING_PATTERN.search(entry)
     ]
 
 
