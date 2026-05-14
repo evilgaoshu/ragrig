@@ -81,6 +81,12 @@ The report is a JSON object with the following structure:
 - Else if any mode is `degraded` → `degraded`.
 - Else → `pass`.
 
+Manifest preflight note:
+
+- `scripts.retrieval_benchmark_compare._check_manifest_compatibility()` rejects known snapshot-only legacy `fixture_id` values before normal fixture comparison.
+- Failure text: `legacy path-derived fixture_id detected: 'X'; this snapshot-only artifact must be refreshed via make retrieval-benchmark-baseline-refresh before reuse as an active baseline`.
+- This check is covered by the default `pytest` suite (`make test`, `make coverage`) and remains reproducible manually via `make retrieval-benchmark-compare`.
+
 ### Delta calculation
 
 ```
@@ -145,4 +151,5 @@ Exit codes:
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| 1.1 | 2026-05-14 | DEV-mac-oc | Document legacy snapshot-only `fixture_id` preflight failure, refresh guidance, and default pytest coverage. |
 | 1.0 | 2026-05-11 | DEV-opencode-gpt5.4 | Initial SPEC for EVI-84. |

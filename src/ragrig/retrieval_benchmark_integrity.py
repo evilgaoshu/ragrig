@@ -15,7 +15,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from scripts.retrieval_benchmark_baseline_refresh import _compute_metrics_hash
+from scripts.retrieval_benchmark_baseline_refresh import (
+    _compute_metrics_hash,
+    _is_legacy_path_derived_fixture_id,
+    _legacy_fixture_id_reason,
+)
 
 DEFAULT_MANIFEST_PATH = Path("docs/benchmarks/retrieval-benchmark-baseline.manifest.json")
 DEFAULT_BASELINE_PATH = Path("docs/benchmarks/retrieval-benchmark-baseline.json")
@@ -149,6 +153,11 @@ def check_integrity(
         )
         return _redact_secrets(result)
 
+    if _is_legacy_path_derived_fixture_id(result["fixture_id"]):
+        result["reasons"].append(
+            f"legacy_fixture_id: {_legacy_fixture_id_reason(result['fixture_id'])}"
+        )
+
     # Baseline existence
     if not baseline_path.exists():
         result["reasons"].append("baseline_missing: baseline file not found")
@@ -216,6 +225,7 @@ def check_integrity(
         in {
             "baseline_stale",
             "baseline_age_invalid",
+            "legacy_fixture_id",
             "metrics_hash_mismatch",
             "metrics_hash_missing",
         }
