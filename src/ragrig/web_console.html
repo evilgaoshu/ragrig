@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>RAGRig Web Console</title>
+    <link rel="icon" href="data:,">
     <style>
       :root {
         --bg: #eef3ef;
@@ -293,6 +294,84 @@
 
       .wizard-result {
         min-height: 276px;
+      }
+
+      .pilot-grid {
+        display: grid;
+        grid-template-columns: minmax(180px, 0.52fr) minmax(0, 1fr);
+        gap: 14px;
+      }
+
+      .pilot-steps {
+        display: grid;
+        gap: 8px;
+      }
+
+      .pilot-step {
+        padding: 11px;
+        border: 1px solid #dfe6df;
+        border-radius: 8px;
+        background: var(--panel-strong);
+      }
+
+      .pilot-step.active {
+        border-color: var(--teal);
+        background: #eefaf7;
+      }
+
+      .pilot-step-num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        margin-right: 6px;
+        border-radius: 999px;
+        background: #101827;
+        color: white;
+        font-size: 11px;
+        font-weight: 900;
+      }
+
+      .pilot-board {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+        gap: 12px;
+      }
+
+      .pilot-card {
+        padding: 12px;
+        border: 1px solid #dfe6df;
+        border-radius: 8px;
+        background: var(--panel-strong);
+      }
+
+      .pilot-mini-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 10px;
+      }
+
+      .pilot-drop {
+        min-height: 104px;
+        display: grid;
+        place-items: center;
+        gap: 8px;
+        padding: 14px;
+        border: 1px dashed #b8c4bc;
+        border-radius: 8px;
+        background: #f8fbf6;
+        text-align: center;
+      }
+
+      .pilot-drop.drag-over {
+        border-color: var(--teal);
+        background: #d8f2ed;
+      }
+
+      .pilot-results {
+        max-height: 420px;
+        overflow: auto;
       }
 
       .facts {
@@ -955,43 +1034,100 @@
         <section class="panel" data-local-pilot-wizard>
           <div class="panel-head">
             <div>
-              <div class="panel-title">Local Pilot</div>
-              <div class="panel-meta">Roadmap milestone · upload/import, provider smoke, and retrieval debugging</div>
+              <div class="panel-title">Local Pilot Wizard</div>
+              <div class="panel-meta">Model check · website or file ingestion · run/chunk review · grounded answer</div>
             </div>
             <div id="local-pilot-status-pill" class="pill neutral">Ready</div>
           </div>
-          <div class="panel-body stack">
-            <div class="fact-grid">
-              <label>
-                <div class="fact-label">Knowledge base</div>
-                <input id="pilot-kb-name" value="local-pilot">
-              </label>
-              <label>
-                <div class="fact-label">Website URL or sitemap</div>
-                <input id="pilot-url" aria-label="Website URL or sitemap" value="">
-              </label>
-              <label>
-                <div class="fact-label">Model provider</div>
-                <select id="pilot-provider">
-                  <option value="deterministic-local">deterministic-local</option>
-                  <option value="model.ollama">Ollama</option>
-                  <option value="model.lm_studio">LM Studio</option>
-                  <option value="model.openai">OpenAI</option>
-                  <option value="model.openrouter">OpenRouter</option>
-                  <option value="model.google_gemini">Gemini</option>
-                </select>
-              </label>
-              <label>
-                <div class="fact-label">Model</div>
-                <input id="pilot-model" value="gemini-2.5-flash">
-              </label>
+          <div class="panel-body pilot-grid">
+            <div class="pilot-steps">
+              <div class="pilot-step active" id="pilot-step-model">
+                <div class="name"><span class="pilot-step-num">1</span>Model check</div>
+                <div class="sub" id="pilot-step-model-sub">Local-first provider smoke</div>
+              </div>
+              <div class="pilot-step" id="pilot-step-ingest">
+                <div class="name"><span class="pilot-step-num">2</span>Ingest</div>
+                <div class="sub" id="pilot-step-ingest-sub">Website, Markdown, PDF, DOCX</div>
+              </div>
+              <div class="pilot-step" id="pilot-step-review">
+                <div class="name"><span class="pilot-step-num">3</span>Review</div>
+                <div class="sub" id="pilot-step-review-sub">Run history and chunks</div>
+              </div>
+              <div class="pilot-step" id="pilot-step-playground">
+                <div class="name"><span class="pilot-step-num">4</span>Playground</div>
+                <div class="sub" id="pilot-step-playground-sub">Ask with citations</div>
+              </div>
             </div>
-            <div class="actions">
-              <button class="button" id="pilot-refresh-status" type="button">Check Pilot Status</button>
-              <button class="button" id="pilot-import-url" type="button">Import URL</button>
-              <button class="button" id="pilot-answer-smoke" type="button">Run Answer Smoke</button>
+
+            <div class="pilot-board">
+              <div class="stack">
+                <div class="pilot-card stack">
+                  <div class="pilot-mini-grid">
+                    <label>
+                      <div class="fact-label">Knowledge base</div>
+                      <input id="pilot-kb-name" value="local-pilot">
+                    </label>
+                    <label>
+                      <div class="fact-label">Model provider</div>
+                      <select id="pilot-provider">
+                        <option value="deterministic-local">deterministic-local</option>
+                        <option value="model.ollama">Ollama</option>
+                        <option value="model.lm_studio">LM Studio</option>
+                        <option value="model.openai">OpenAI</option>
+                        <option value="model.openrouter">OpenRouter</option>
+                        <option value="model.google_gemini">Gemini</option>
+                      </select>
+                    </label>
+                    <label>
+                      <div class="fact-label">Model</div>
+                      <input id="pilot-model" value="gemini-2.5-flash">
+                    </label>
+                    <label>
+                      <div class="fact-label">Endpoint hint</div>
+                      <input id="pilot-base-url" value="http://host.docker.internal:11434/v1">
+                    </label>
+                  </div>
+                  <div class="actions">
+                    <button class="button" id="pilot-refresh-status" type="button">Check Status</button>
+                    <button class="button primary" id="pilot-answer-smoke" type="button">Run Model Smoke</button>
+                  </div>
+                </div>
+
+                <div class="pilot-card stack">
+                  <div class="pilot-mini-grid">
+                    <label>
+                      <div class="fact-label">Website URL or sitemap</div>
+                      <input id="pilot-url" aria-label="Website URL or sitemap" value="">
+                    </label>
+                    <label>
+                      <div class="fact-label">Question</div>
+                      <input id="pilot-question" value="What does this knowledge base say?">
+                    </label>
+                  </div>
+                  <div class="pilot-drop" id="pilot-file-drop">
+                    <div>
+                      <div class="name">Upload local files</div>
+                      <div class="sub">.md, .txt, .pdf, .docx</div>
+                    </div>
+                    <button class="button" id="pilot-choose-files" type="button">Choose Files</button>
+                    <input type="file" id="pilot-file-input" multiple hidden accept=".md,.markdown,.txt,.text,.pdf,.docx">
+                  </div>
+                  <div id="pilot-file-list" class="stack"></div>
+                  <div class="actions">
+                    <button class="button" id="pilot-import-url" type="button">Import Website</button>
+                    <button class="button" id="pilot-upload-files" type="button" disabled>Upload Files</button>
+                    <button class="button primary" id="pilot-run-answer" type="button">Ask Playground</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="stack pilot-results">
+                <div id="pilot-run-summary" class="empty">Run summary will appear after import or upload.</div>
+                <div id="pilot-chunk-preview" class="empty">Chunk preview will appear after ingestion refresh.</div>
+                <div id="pilot-answer-result" class="empty">Playground answer will appear here.</div>
+                <pre id="pilot-output" class="empty" style="white-space:pre-wrap;text-align:left;overflow:auto;max-height:220px">Local Pilot output will appear here.</pre>
+              </div>
             </div>
-            <pre id="pilot-output" class="empty" style="white-space:pre-wrap;text-align:left;overflow:auto;max-height:260px">Local Pilot output will appear here.</pre>
           </div>
         </section>
 
@@ -1605,6 +1741,7 @@
         opsDiagnostics: null,
         permissionPreview: null,
         localPilot: null,
+        pilotFiles: [],
       };
 
       const WIZARD_FILTERS = [
@@ -1687,19 +1824,176 @@
         }
       }
 
+      function setPilotStep(stepKey, statusText) {
+        for (const key of ['model', 'ingest', 'review', 'playground']) {
+          const el = document.getElementById(`pilot-step-${key}`);
+          if (el) el.classList.toggle('active', key === stepKey);
+        }
+        if (statusText) {
+          const sub = document.getElementById(`pilot-step-${stepKey}-sub`);
+          if (sub) sub.textContent = statusText;
+        }
+      }
+
+      function pilotKbName() {
+        return document.getElementById('pilot-kb-name').value.trim() || 'local-pilot';
+      }
+
+      async function ensurePilotKnowledgeBase(kb) {
+        const result = await getJson('/knowledge-bases', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: kb }),
+        });
+        if (!state.knowledgeBases.some((item) => item.name === result.name)) {
+          state.knowledgeBases.push({
+            id: result.id,
+            name: result.name,
+            vector_backend: state.system?.vector?.backend || 'pgvector',
+            document_count: 0,
+            chunk_count: 0,
+            latest_pipeline_run: null,
+          });
+        }
+        renderStatusStrip();
+        renderKnowledgeBases();
+        renderRetrievalControls();
+        renderAnswerControls();
+        renderUploadKBSelect();
+        return result;
+      }
+
+      function renderPilotFiles() {
+        const root = document.getElementById('pilot-file-list');
+        const submit = document.getElementById('pilot-upload-files');
+        if (!root || !submit) return;
+        submit.disabled = state.pilotFiles.length === 0;
+        if (!state.pilotFiles.length) {
+          root.innerHTML = '';
+          return;
+        }
+        root.innerHTML = state.pilotFiles.map((file, index) => `
+          <div class="card collection-header">
+            <div>
+              <div class="name">${escapeHtml(file.name)}</div>
+              <div class="sub">${(file.size / 1024).toFixed(1)} KB · ready</div>
+            </div>
+            <button class="button" type="button" data-pilot-file-remove="${index}" style="font-size:12px;padding:0 8px;height:28px">Remove</button>
+          </div>
+        `).join('');
+      }
+
+      function handlePilotFiles(fileList) {
+        state.pilotFiles = Array.from(fileList || []);
+        renderPilotFiles();
+        setPilotStep('ingest', `${state.pilotFiles.length} file(s) selected`);
+      }
+
+      async function refreshPilotDataAfterIngest(preferredRunId) {
+        const [knowledgeBases, pipelineRuns, documents] = await Promise.all([
+          getJson('/knowledge-bases'),
+          getJson('/pipeline-runs'),
+          getJson('/documents'),
+        ]);
+        state.knowledgeBases = knowledgeBases.items;
+        state.pipelineRuns = pipelineRuns.items;
+        state.documents = documents.items;
+        renderStatusStrip();
+        renderKnowledgeBases();
+        await renderPipelineRuns();
+        try {
+          await renderDocumentPreview();
+        } catch (error) {
+          document.getElementById('document-preview').innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
+        renderRetrievalControls();
+        renderAnswerControls();
+        renderUploadKBSelect();
+        await renderPilotRunSummary(preferredRunId);
+        await renderPilotChunkPreview();
+      }
+
+      async function renderPilotRunSummary(preferredRunId) {
+        const root = document.getElementById('pilot-run-summary');
+        if (!root) return;
+        const run = preferredRunId
+          ? state.pipelineRuns.find((item) => item.id === preferredRunId)
+          : state.pipelineRuns[0];
+        if (!run) {
+          root.innerHTML = empty('No pipeline runs recorded yet.');
+          return;
+        }
+        let items = [];
+        try {
+          const detail = await getJson(`/pipeline-runs/${run.id}/items`);
+          items = detail.items || [];
+        } catch {
+          items = [];
+        }
+        root.innerHTML = `
+          <div class="card">
+            <div class="name">Latest run <span class="${pillClass(run.status)}">${escapeHtml(run.status)}</span></div>
+            <div class="sub">${escapeHtml(run.run_type)} · ${escapeHtml(run.source_name || 'source n/a')} · ${escapeHtml(run.started_at || '')}</div>
+            <div class="sub code">${escapeHtml(run.id)}</div>
+            ${items.length ? items.slice(0, 4).map((item) => {
+              const meta = item.metadata || {};
+              return `<div class="result" style="margin-top:8px"><div class="name">${escapeHtml(meta.file_name || item.document_uri || item.id)} <span class="${pillClass(item.status)}">${escapeHtml(item.status)}</span></div><div class="sub">${escapeHtml(meta.parser_id || 'parser n/a')} · ${escapeHtml(item.error_message || 'no error')}</div></div>`;
+            }).join('') : '<div class="sub">No item detail returned for this run.</div>'}
+          </div>
+        `;
+        setPilotStep('review', `${run.status} run loaded`);
+      }
+
+      async function renderPilotChunkPreview() {
+        const root = document.getElementById('pilot-chunk-preview');
+        if (!root) return;
+        const kb = pilotKbName();
+        const doc = state.documents.find((item) => item.knowledge_base === kb && item.latest_version);
+        if (!doc || !doc.latest_version) {
+          root.innerHTML = empty('No documents or chunks found for this pilot knowledge base yet.');
+          return;
+        }
+        try {
+          const chunkResponse = await getJson(`/document-versions/${doc.latest_version.id}/chunks`);
+          const chunks = chunkResponse.items || [];
+          if (!chunks.length) {
+            root.innerHTML = empty('Document exists, but no chunks are available yet.');
+            return;
+          }
+          root.innerHTML = `
+            <div class="card">
+              <div class="name">${escapeHtml(doc.uri)}</div>
+              <div class="sub">version ${escapeHtml(doc.latest_version.version_number)} · chunks preview</div>
+              ${chunks.slice(0, 3).map((chunk) => `
+                <div class="result" style="margin-top:8px">
+                  <div class="name">Chunk ${chunk.chunk_index}</div>
+                  <div class="sub">${escapeHtml(chunk.text.slice(0, 220))}</div>
+                </div>
+              `).join('')}
+            </div>
+          `;
+        } catch (error) {
+          root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
       async function refreshLocalPilotStatus() {
         const data = await getJson('/local-pilot/status');
         state.localPilot = data;
         renderPilotOutput(data, 'ready');
+        setPilotStep('model', 'Status loaded');
       }
 
       async function importPilotUrl() {
-        const kb = document.getElementById('pilot-kb-name').value || 'local-pilot';
+        const kb = pilotKbName();
         const url = document.getElementById('pilot-url').value.trim();
         if (!url) {
           renderPilotOutput({ error: 'website URL or sitemap is required' }, 'warning');
+          setPilotStep('ingest', 'Website URL required');
           return;
         }
+        setPilotStep('ingest', 'Importing website');
+        await ensurePilotKnowledgeBase(kb);
         const isSitemap = url.endsWith('.xml') || url.includes('sitemap');
         const payload = isSitemap ? { urls: [], sitemap_url: url } : { urls: [url] };
         const data = await getJson(`/knowledge-bases/${encodeURIComponent(kb)}/website-import`, {
@@ -1708,6 +2002,33 @@
           body: JSON.stringify(payload),
         });
         renderPilotOutput(data, data.failed_pages ? 'degraded' : 'completed');
+        await refreshPilotDataAfterIngest(data.pipeline_run_id);
+      }
+
+      async function runPilotFileUpload() {
+        const kb = pilotKbName();
+        if (!state.pilotFiles.length) {
+          renderPilotOutput({ error: 'select at least one local file' }, 'warning');
+          setPilotStep('ingest', 'Select local files');
+          return;
+        }
+        const formData = new FormData();
+        for (const file of state.pilotFiles) formData.append('files', file);
+        setPilotStep('ingest', 'Uploading files');
+        await ensurePilotKnowledgeBase(kb);
+        const response = await fetch(`/knowledge-bases/${encodeURIComponent(kb)}/upload`, {
+          method: 'POST',
+          body: formData,
+        });
+        const payload = await response.json().catch(() => ({ error: 'Server returned non-JSON response' }));
+        if (!response.ok) {
+          renderPilotOutput(payload, 'failed');
+          return;
+        }
+        state.pilotFiles = [];
+        renderPilotFiles();
+        renderPilotOutput(payload, payload.rejected_files ? 'degraded' : 'completed');
+        await refreshPilotDataAfterIngest(payload.pipeline_run_id);
       }
 
       async function runPilotAnswerSmoke() {
@@ -1721,6 +2042,50 @@
           body: JSON.stringify(payload),
         });
         renderPilotOutput(data, data.status || 'unknown');
+        setPilotStep('model', data.status === 'healthy' ? 'Model smoke healthy' : 'Model smoke needs attention');
+      }
+
+      async function runPilotPlaygroundAnswer() {
+        const root = document.getElementById('pilot-answer-result');
+        const kb = pilotKbName();
+        const query = document.getElementById('pilot-question').value.trim();
+        if (!query) {
+          root.innerHTML = empty('Please enter a pilot question.');
+          return;
+        }
+        setPilotStep('playground', 'Generating answer');
+        root.innerHTML = '<div class="sub">Generating grounded answer...</div>';
+        try {
+          await ensurePilotKnowledgeBase(kb);
+          const result = await getJson('/retrieval/answer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ knowledge_base: kb, query, top_k: 3 }),
+          });
+          const citations = result.citations || [];
+          const statusBadge = result.grounding_status === 'grounded'
+            ? `<span class="pill">grounded</span>`
+            : `<span class="${pillClass(result.grounding_status || 'degraded')}">${escapeHtml(result.grounding_status || 'degraded')}</span>`;
+          root.innerHTML = `
+            <div class="card">
+              <div class="name">Answer ${statusBadge}</div>
+              <div class="sub">${escapeHtml(result.answer || result.refusal_reason || 'No answer returned.').replace(/\\n/g, '<br>')}</div>
+              <div class="sub code">Provider: ${escapeHtml(result.provider || 'n/a')} · Model: ${escapeHtml(result.model || 'n/a')}</div>
+              ${citations.length ? citations.map((citation) => `
+                <div class="result" style="margin-top:8px">
+                  <div class="name">${escapeHtml(citation.citation_id)} · ${escapeHtml(citation.document_uri)}</div>
+                  <div class="sub">chunk ${escapeHtml(citation.chunk_index)} · score ${escapeHtml(citation.score)}</div>
+                  <div class="sub">${escapeHtml(citation.text_preview || '')}</div>
+                </div>
+              `).join('') : '<div class="sub">No citations returned.</div>'}
+            </div>
+          `;
+          renderPilotOutput(result, result.grounding_status || 'completed');
+          setPilotStep('playground', `${result.grounding_status || 'completed'} answer`);
+        } catch (error) {
+          root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+          renderPilotOutput({ error: error.message }, 'error');
+        }
       }
 
       async function loadInitialData() {
@@ -2591,8 +2956,13 @@
         const aclBadge = aclBadgeHtml(documentItem.acl_summary);
         const chunkResponse = await getJson(`/document-versions/${documentItem.latest_version.id}/chunks`);
         const chunks = chunkResponse.items;
-        const understandingResponse = await getJson(`/document-versions/${documentItem.latest_version.id}/understanding`);
-        const understanding = understandingResponse.error ? null : understandingResponse;
+        let understanding = null;
+        try {
+          const understandingResponse = await getJson(`/document-versions/${documentItem.latest_version.id}/understanding?allow_missing=true`);
+          understanding = understandingResponse.error ? null : understandingResponse;
+        } catch (error) {
+          if (!String(error.message || '').includes('understanding_not_found')) throw error;
+        }
         let understandingHtml = '';
         if (!understanding) {
           understandingHtml = `
@@ -5001,6 +5371,8 @@
         document.getElementById('pilot-refresh-status').addEventListener('click', refreshLocalPilotStatus);
         document.getElementById('pilot-import-url').addEventListener('click', importPilotUrl);
         document.getElementById('pilot-answer-smoke').addEventListener('click', runPilotAnswerSmoke);
+        document.getElementById('pilot-upload-files').addEventListener('click', runPilotFileUpload);
+        document.getElementById('pilot-run-answer').addEventListener('click', runPilotPlaygroundAnswer);
         document.getElementById('run-retrieval').addEventListener('click', runRetrieval);
         document.getElementById('run-permission-preview').addEventListener('click', runPermissionPreview);
         document.getElementById('retrieval-mode').addEventListener('change', function() {
@@ -5109,6 +5481,30 @@
             renderUploadFileList();
             updateUploadSubmitButton();
           }
+          const pilotRemoveBtn = event.target.closest('[data-pilot-file-remove]');
+          if (pilotRemoveBtn) {
+            const idx = parseInt(pilotRemoveBtn.dataset.pilotFileRemove, 10);
+            state.pilotFiles.splice(idx, 1);
+            renderPilotFiles();
+          }
+        });
+
+        const pilotDropZone = document.getElementById('pilot-file-drop');
+        const pilotFileInput = document.getElementById('pilot-file-input');
+        const pilotChooseBtn = document.getElementById('pilot-choose-files');
+        pilotChooseBtn.addEventListener('click', () => pilotFileInput.click());
+        pilotFileInput.addEventListener('change', () => handlePilotFiles(pilotFileInput.files));
+        pilotDropZone.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          pilotDropZone.classList.add('drag-over');
+        });
+        pilotDropZone.addEventListener('dragleave', () => {
+          pilotDropZone.classList.remove('drag-over');
+        });
+        pilotDropZone.addEventListener('drop', (e) => {
+          e.preventDefault();
+          pilotDropZone.classList.remove('drag-over');
+          if (e.dataTransfer.files.length) handlePilotFiles(e.dataTransfer.files);
         });
 
         const dropZone = document.getElementById('upload-drop-zone');

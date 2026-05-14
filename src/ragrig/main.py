@@ -30,6 +30,7 @@ from ragrig.evaluation import (
 )
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.health import create_database_check
+from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import _select_parser
 from ragrig.ingestion.web_import import WebsiteImportError
 from ragrig.local_pilot import build_local_pilot_status, import_website_pages, run_answer_smoke
@@ -54,6 +55,7 @@ from ragrig.repositories import (
     get_knowledge_base_by_name,
     get_next_version_number,
     get_or_create_document,
+    get_or_create_knowledge_base,
     get_or_create_source,
     list_audit_events,
 )
@@ -158,6 +160,10 @@ class RetrievalSearchRequest(BaseModel):
     candidate_k: int = Field(default=20, ge=1, le=200)
     reranker_provider: str | None = None
     reranker_model: str | None = None
+
+
+class KnowledgeBaseCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
 
 
 class EnterpriseConnectorProbeRequest(BaseModel):
@@ -388,6 +394,24 @@ def create_app(
     ) -> dict[str, list[dict[str, Any]]]:
         return {"items": list_knowledge_bases(session, settings=active_settings)}
 
+    @app.post("/knowledge-bases", response_model=None)
+    def create_knowledge_base(
+        request: KnowledgeBaseCreateRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> JSONResponse:
+        name = request.name.strip()
+        if not name:
+            return JSONResponse(
+                status_code=400, content={"error": "knowledge base name is required"}
+            )
+        existed = get_knowledge_base_by_name(session, name) is not None
+        kb = get_or_create_knowledge_base(session, name)
+        session.commit()
+        return JSONResponse(
+            status_code=200 if existed else 201,
+            content={"id": str(kb.id), "name": kb.name, "created": not existed},
+        )
+
     @app.get("/sources", response_model=None)
     def sources(
         session: Annotated[Session, Depends(get_session)],
@@ -576,17 +600,19 @@ def create_app(
     def get_document_understanding(
         document_version_id: str,
         session: Annotated[Session, Depends(get_session)],
+        allow_missing: bool = False,
     ) -> dict[str, Any] | JSONResponse:
         record = get_understanding_by_version(session, document_version_id)
         if record is None:
+            content = {
+                "error": "understanding_not_found",
+                "message": f"No understanding result for document version '{document_version_id}'.",
+            }
+            if allow_missing:
+                return JSONResponse(status_code=200, content=content)
             return JSONResponse(
                 status_code=404,
-                content={
-                    "error": "understanding_not_found",
-                    "message": (
-                        f"No understanding result for document version '{document_version_id}'."
-                    ),
-                },
+                content=content,
             )
         return {
             "id": record.id,
@@ -1217,10 +1243,26 @@ def create_app(
             run.finished_at = datetime.now(timezone.utc)
             session.commit()
 
+            indexing_payload: dict[str, Any] | None = None
+            if created_versions > 0:
+                indexing_report = index_knowledge_base(
+                    session=session,
+                    knowledge_base_name=kb.name,
+                )
+                indexing_payload = {
+                    "pipeline_run_id": str(indexing_report.pipeline_run_id),
+                    "indexed_count": indexing_report.indexed_count,
+                    "skipped_count": indexing_report.skipped_count,
+                    "failed_count": indexing_report.failed_count,
+                    "chunk_count": indexing_report.chunk_count,
+                    "embedding_count": indexing_report.embedding_count,
+                }
+
             return JSONResponse(
                 status_code=202,
                 content={
                     "pipeline_run_id": str(run.id),
+                    "indexing": indexing_payload,
                     "accepted_files": len(saved_paths),
                     "rejected_files": len(rejected),
                     "rejections": rejected,
