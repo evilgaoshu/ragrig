@@ -38,3 +38,16 @@ def test_console_local_pilot_wizard_has_file_and_playground_controls() -> None:
     assert "ensurePilotKnowledgeBase" in html
     assert "runPilotFileUpload" in html
     assert "runPilotPlaygroundAnswer" in html
+
+
+def test_console_local_pilot_wizard_has_model_config_controls() -> None:
+    html = Path("src/ragrig/web_console.html").read_text(encoding="utf-8")
+
+    assert 'id="pilot-api-key-ref"' in html
+    assert 'id="pilot-model-health"' in html
+    assert 'id="pilot-model" value="hash-8d"' in html
+    assert "/local-pilot/model-health" in html
+    assert "buildPilotModelConfig" in html
+    assert "syncPilotProviderDefaults" in html
+    assert "env:VARIABLE_NAME" in html
+    assert "raw API keys are not accepted" in html

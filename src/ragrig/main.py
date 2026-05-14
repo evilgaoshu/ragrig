@@ -33,7 +33,13 @@ from ragrig.health import create_database_check
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import _select_parser
 from ragrig.ingestion.web_import import WebsiteImportError
-from ragrig.local_pilot import build_local_pilot_status, import_website_pages, run_answer_smoke
+from ragrig.local_pilot import (
+    ModelConfigError,
+    build_local_pilot_status,
+    import_website_pages,
+    model_health_check,
+    run_answer_smoke,
+)
 from ragrig.parsers.base import ParserTimeoutError, parse_with_timeout
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.processing_profile import (
@@ -250,6 +256,13 @@ class WebsiteImportRequest(BaseModel):
 class LocalPilotAnswerSmokeRequest(BaseModel):
     provider: str
     model: str | None = None
+    config: dict[str, Any] | None = None
+
+
+class LocalPilotModelHealthRequest(BaseModel):
+    provider: str
+    model: str | None = None
+    config: dict[str, Any] | None = None
 
 
 def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
@@ -385,8 +398,36 @@ def create_app(
         return build_local_pilot_status().model_dump()
 
     @app.post("/local-pilot/answer-smoke", response_model=None)
-    def local_pilot_answer_smoke(request: LocalPilotAnswerSmokeRequest) -> dict[str, Any]:
-        return run_answer_smoke(provider=request.provider, model=request.model)
+    def local_pilot_answer_smoke(
+        request: LocalPilotAnswerSmokeRequest,
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            return run_answer_smoke(
+                provider=request.provider,
+                model=request.model,
+                config=request.config,
+            )
+        except ModelConfigError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": exc.code, "message": str(exc), "field": exc.field},
+            )
+
+    @app.post("/local-pilot/model-health", response_model=None)
+    def local_pilot_model_health(
+        request: LocalPilotModelHealthRequest,
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            return model_health_check(
+                provider=request.provider,
+                model=request.model,
+                config=request.config,
+            )
+        except ModelConfigError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": exc.code, "message": str(exc), "field": exc.field},
+            )
 
     @app.get("/knowledge-bases", response_model=None)
     def knowledge_bases(

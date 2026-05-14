@@ -1080,15 +1080,21 @@
                     </label>
                     <label>
                       <div class="fact-label">Model</div>
-                      <input id="pilot-model" value="gemini-2.5-flash">
+                      <input id="pilot-model" value="hash-8d">
                     </label>
                     <label>
                       <div class="fact-label">Endpoint hint</div>
                       <input id="pilot-base-url" value="http://host.docker.internal:11434/v1">
                     </label>
+                    <label>
+                      <div class="fact-label">API key env ref</div>
+                      <input id="pilot-api-key-ref" placeholder="env:VARIABLE_NAME">
+                    </label>
                   </div>
+                  <div class="sub">Provider secrets use env:VARIABLE_NAME only; raw API keys are not accepted.</div>
                   <div class="actions">
                     <button class="button" id="pilot-refresh-status" type="button">Check Status</button>
+                    <button class="button" id="pilot-model-health" type="button">Check Model Health</button>
                     <button class="button primary" id="pilot-answer-smoke" type="button">Run Model Smoke</button>
                   </div>
                 </div>
@@ -2031,11 +2037,62 @@
         await refreshPilotDataAfterIngest(payload.pipeline_run_id);
       }
 
-      async function runPilotAnswerSmoke() {
+      function buildPilotModelConfig() {
         const provider = document.getElementById('pilot-provider').value;
+        const baseUrl = document.getElementById('pilot-base-url').value.trim();
+        const apiKeyRef = document.getElementById('pilot-api-key-ref').value.trim();
+        const config = {};
+        if (baseUrl) {
+          if (provider === 'model.ollama') {
+            config.host = baseUrl.replace(/\/v1\/?$/, '');
+          } else if (provider !== 'deterministic-local') {
+            config.base_url = baseUrl;
+          }
+        }
+        if (apiKeyRef) config.api_key = apiKeyRef;
+        return config;
+      }
+
+      function syncPilotProviderDefaults() {
+        const provider = document.getElementById('pilot-provider').value;
+        const model = document.getElementById('pilot-model');
+        const baseUrl = document.getElementById('pilot-base-url');
+        const apiKeyRef = document.getElementById('pilot-api-key-ref');
+        const defaults = {
+          'deterministic-local': { model: 'hash-8d', baseUrl: '', apiKeyRef: '' },
+          'model.ollama': { model: 'llama3.2', baseUrl: 'http://host.docker.internal:11434', apiKeyRef: '' },
+          'model.lm_studio': { model: 'local-model', baseUrl: 'http://host.docker.internal:1234/v1', apiKeyRef: '' },
+          'model.openai': { model: 'gpt-4.1-mini', baseUrl: 'https://api.openai.com/v1', apiKeyRef: 'env:OPENAI_API_KEY' },
+          'model.openrouter': { model: 'openai/gpt-4.1-mini', baseUrl: 'https://openrouter.ai/api/v1', apiKeyRef: 'env:OPENROUTER_API_KEY' },
+          'model.google_gemini': { model: 'gemini-2.5-flash', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', apiKeyRef: 'env:GEMINI_API_KEY' },
+        }[provider];
+        if (!defaults) return;
+        model.value = defaults.model;
+        baseUrl.value = defaults.baseUrl;
+        apiKeyRef.value = defaults.apiKeyRef;
+      }
+
+      function buildPilotModelPayload() {
+        const provider = document.getElementById('pilot-provider').value;
+        const payload = { provider, config: buildPilotModelConfig() };
         const modelValue = document.getElementById('pilot-model').value.trim();
-        const payload = { provider };
         if (modelValue) payload.model = modelValue;
+        return payload;
+      }
+
+      async function runPilotModelHealth() {
+        const payload = buildPilotModelPayload();
+        const data = await getJson('/local-pilot/model-health', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        renderPilotOutput(data, data.status || 'unknown');
+        setPilotStep('model', data.status === 'healthy' ? 'Model health healthy' : 'Model health needs attention');
+      }
+
+      async function runPilotAnswerSmoke() {
+        const payload = buildPilotModelPayload();
         const data = await getJson('/local-pilot/answer-smoke', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -5368,8 +5425,10 @@
         }
 
         document.getElementById('run-evaluation-btn').addEventListener('click', runEvaluationFromConsole);
+        document.getElementById('pilot-provider').addEventListener('change', syncPilotProviderDefaults);
         document.getElementById('pilot-refresh-status').addEventListener('click', refreshLocalPilotStatus);
         document.getElementById('pilot-import-url').addEventListener('click', importPilotUrl);
+        document.getElementById('pilot-model-health').addEventListener('click', runPilotModelHealth);
         document.getElementById('pilot-answer-smoke').addEventListener('click', runPilotAnswerSmoke);
         document.getElementById('pilot-upload-files').addEventListener('click', runPilotFileUpload);
         document.getElementById('pilot-run-answer').addEventListener('click', runPilotPlaygroundAnswer);

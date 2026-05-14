@@ -12,6 +12,7 @@ from ragrig.answer.schema import EvidenceChunk
 from ragrig.db.models import DocumentVersion, KnowledgeBase
 from ragrig.ingestion.pipeline import _select_parser
 from ragrig.ingestion.web_import import MAX_WEBSITE_IMPORT_URLS, collect_website_imports
+from ragrig.local_pilot.model_config import configured_answer_smoke
 from ragrig.local_pilot.schema import (
     LocalPilotModelStatus,
     LocalPilotStatus,
@@ -203,7 +204,15 @@ def import_website_pages(
     }
 
 
-def run_answer_smoke(*, provider: str, model: str | None = None) -> dict[str, Any]:
+def run_answer_smoke(
+    *,
+    provider: str,
+    model: str | None = None,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if config is not None:
+        return configured_answer_smoke(provider=provider, model=model, config=config)
+
     evidence = [
         EvidenceChunk(
             citation_id="cit-1",
@@ -235,4 +244,5 @@ def run_answer_smoke(*, provider: str, model: str | None = None) -> dict[str, An
         "model": model,
         "status": status,
         "detail": answer[:240],
+        "secret_policy": "env_refs_only",
     }
