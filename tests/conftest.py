@@ -49,6 +49,8 @@ def _dispose_sqlite_engines() -> None:
 @pytest.fixture(autouse=True)
 def _cleanup_sqlite_engines() -> Iterator[None]:
     yield
+    # Scope boundary: only SQLAlchemy-created sqlite engines are tracked here.
+    # Raw sqlite3.connect leaks must still surface as ResourceWarning failures.
     _dispose_sqlite_engines()
 
 
