@@ -62,6 +62,12 @@ def test_docker_compose_uses_existing_qdrant_image_tag() -> None:
     assert "image: qdrant/qdrant:v1.14.1" in compose
 
 
+def test_pytest_configuration_does_not_reintroduce_sqlite_resourcewarning_filter() -> None:
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "ignore:unclosed database in <sqlite3.Connection object" not in pyproject
+
+
 def test_ruff_configuration_excludes_nested_worktrees_from_repo_lint() -> None:
     pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
