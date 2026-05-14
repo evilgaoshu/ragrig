@@ -31,6 +31,7 @@ from ragrig.evaluation import (
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.health import create_database_check
 from ragrig.ingestion.pipeline import _select_parser
+from ragrig.ingestion.web_import import WebsiteImportError, collect_website_imports
 from ragrig.parsers.base import ParserTimeoutError, parse_with_timeout
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.processing_profile import (
@@ -232,6 +233,11 @@ class DiffPreviewRequest(BaseModel):
 class RollbackRequest(BaseModel):
     audit_id: str
     actor: str | None = None
+
+
+class WebsiteImportRequest(BaseModel):
+    urls: list[str]
+    sitemap_url: str | None = None
 
 
 def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
@@ -921,6 +927,43 @@ def create_app(
         Never includes raw secret fragments.
         """
         return get_advanced_parser_corpus()
+
+    @app.post("/knowledge-bases/{kb_name}/website-import", response_model=None)
+    def knowledge_base_website_import(
+        kb_name: str,
+        request: WebsiteImportRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> JSONResponse:
+        kb = get_knowledge_base_by_name(session, kb_name)
+        if kb is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"knowledge base '{kb_name}' not found"},
+            )
+
+        try:
+            result = collect_website_imports(
+                urls=request.urls,
+                sitemap_url=request.sitemap_url,
+            )
+        except WebsiteImportError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
+
+        return JSONResponse(
+            status_code=202,
+            content={
+                "accepted_pages": len(result.accepted_pages),
+                "failed_pages": result.failed_pages,
+                "failures": [
+                    {
+                        "source_url": failure.source_url,
+                        "reason": failure.reason,
+                        "message": failure.message,
+                    }
+                    for failure in result.failures
+                ],
+            },
+        )
 
     @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
     async def knowledge_base_upload(
