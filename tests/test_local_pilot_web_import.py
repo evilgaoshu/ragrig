@@ -151,10 +151,7 @@ def test_collect_website_imports_expands_sitemap_loc_entries() -> None:
         return httpx.Response(
             200,
             headers={"content-type": "text/html"},
-            text=(
-                f"<html><head><title>{request.url.path}</title></head>"
-                "<body>ok</body></html>"
-            ),
+            text=(f"<html><head><title>{request.url.path}</title></head><body>ok</body></html>"),
         )
 
     result = collect_website_imports(

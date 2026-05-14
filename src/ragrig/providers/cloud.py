@@ -758,8 +758,7 @@ class GeminiProvider(BaseProvider):
 
     def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         prompt = "\n\n".join(
-            f"{message.get('role', 'user')}: {message.get('content', '')}"
-            for message in messages
+            f"{message.get('role', 'user')}: {message.get('content', '')}" for message in messages
         )
         text = self.generate(prompt)
         return {"choices": [{"message": {"content": text}}]}

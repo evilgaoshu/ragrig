@@ -140,6 +140,12 @@ make index-local
 make retrieve-check QUERY="RAGRig Guide"
 ```
 
+运行 Local Pilot API smoke：
+
+```bash
+make local-pilot-smoke
+```
+
 启动 Web Console：
 
 ```bash
@@ -178,6 +184,7 @@ make lint
 make test
 make coverage
 make web-check
+make local-pilot-smoke
 make dependency-inventory
 ```
 
