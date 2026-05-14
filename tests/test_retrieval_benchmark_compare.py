@@ -290,6 +290,33 @@ class TestLegacyBaselineCompatibility:
         assert "refresh baseline" in reason
 
 
+class TestLegacyFixtureGuard:
+    """Known snapshot-only legacy fixture IDs are rejected early."""
+
+    def test_legacy_fixture_id_mismatch_includes_refresh_guidance(self):
+        baseline = _make_baseline([_make_mode("dense", p50=10.0, p95=20.0, result_count=30)])
+        baseline["_manifest"] = {
+            "schema_version": "1.0",
+            "fixture_id": "eb323cc73a16db53",
+            "iteration_count": 2,
+            "metrics_hash": retrieval_benchmark_compare._compute_metrics_hash(baseline),
+        }
+        current = _make_baseline([_make_mode("dense", p50=10.0, p95=20.0, result_count=30)])
+        current["_manifest"] = {
+            "schema_version": "1.0",
+            "fixture_id": "stable-content-id",
+            "iteration_count": 2,
+            "metrics_hash": retrieval_benchmark_compare._compute_metrics_hash(current),
+        }
+
+        ok, reason = retrieval_benchmark_compare._check_manifest_compatibility(baseline, current)
+
+        assert ok is False
+        assert "legacy path-derived fixture_id detected" in reason
+        assert "snapshot-only artifact" in reason
+        assert "make retrieval-benchmark-baseline-refresh" in reason
+
+
 # ── Secret-like config sanitization ────────────────────────────────────────────
 
 
