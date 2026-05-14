@@ -116,6 +116,40 @@ Prototype:
 
 ## Quick Start
 
+### Docker Local Pilot
+
+Build and start the local pilot stack:
+
+```bash
+make pilot-up
+make pilot-docker-smoke
+```
+
+Open:
+
+```text
+http://localhost:8000/console
+```
+
+Stop the stack:
+
+```bash
+make pilot-down
+```
+
+The Docker image does not bundle LLM weights or model runtimes. For local models,
+run Ollama or LM Studio on the host and configure an OpenAI-compatible endpoint
+with `RAGRIG_ANSWER_BASE_URL`. Cloud providers such as Gemini, OpenAI, and
+OpenRouter are enabled by passing their API keys as environment variables.
+
+To build only the application image:
+
+```bash
+make pilot-docker-build
+```
+
+### Developer Setup
+
 Install dependencies:
 
 ```bash

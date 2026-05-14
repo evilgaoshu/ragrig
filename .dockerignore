@@ -4,6 +4,11 @@
 __pycache__
 .pytest_cache
 .ruff_cache
+.worktrees
+.coverage
+coverage.json
+docs/operations/artifacts
+evaluation_runs
 dist
 build
 tmp

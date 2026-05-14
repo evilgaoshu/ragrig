@@ -112,6 +112,39 @@ Web Console 是 RAGRig 的主要操作界面。第一版形态：
 
 ## 快速部署
 
+### Docker 本地试点
+
+构建并启动本地试点栈：
+
+```bash
+make pilot-up
+make pilot-docker-smoke
+```
+
+打开：
+
+```text
+http://localhost:8000/console
+```
+
+停止：
+
+```bash
+make pilot-down
+```
+
+Docker 镜像不内置 LLM 权重或模型运行时。本地模型建议在宿主机运行
+Ollama 或 LM Studio，再用 `RAGRIG_ANSWER_BASE_URL` 配置 OpenAI-compatible
+endpoint。Gemini、OpenAI、OpenRouter 等云端模型通过环境变量传入 API key。
+
+只构建应用镜像：
+
+```bash
+make pilot-docker-build
+```
+
+### 开发环境
+
 安装依赖：
 
 ```bash

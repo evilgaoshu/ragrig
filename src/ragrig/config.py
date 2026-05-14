@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     db_host_port: int = 5432
+    db_runtime_host: str = "localhost"
     database_url: str = Field(
         default="postgresql://ragrig:ragrig_dev@localhost:5432/ragrig",
         description="PostgreSQL connection string for RAGRig.",
@@ -37,7 +38,7 @@ class Settings(BaseSettings):
         return urlunsplit(
             (
                 parts.scheme,
-                f"{auth}localhost:{self.db_host_port}",
+                f"{auth}{self.db_runtime_host}:{self.db_host_port}",
                 parts.path,
                 parts.query,
                 parts.fragment,

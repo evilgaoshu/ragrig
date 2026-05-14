@@ -33,3 +33,13 @@ def test_create_runtime_settings_retargets_host_side_web_app_to_runtime_database
         "postgresql+psycopg://ragrig:ragrig_dev@localhost:25433/ragrig"
     )
     assert runtime_settings.app_port == 8000
+
+
+def test_runtime_database_url_can_target_container_network_host() -> None:
+    settings = Settings(
+        database_url="postgresql://ragrig:ragrig_dev@db:5432/ragrig",
+        db_host_port=5432,
+        db_runtime_host="db",
+    )
+
+    assert settings.runtime_database_url == "postgresql://ragrig:ragrig_dev@db:5432/ragrig"
