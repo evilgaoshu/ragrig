@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -37,6 +40,8 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "make migrate" in workflow
     assert "make db-check" in workflow
     assert "docker build -t ragrig:ci ." in workflow
+    assert "make sqlite-warning-check" not in workflow
+    assert "-W always::ResourceWarning" not in workflow
 
 
 def test_github_ci_spec_exists_and_documents_required_scope() -> None:
@@ -63,9 +68,16 @@ def test_docker_compose_uses_existing_qdrant_image_tag() -> None:
 
 
 def test_pytest_configuration_does_not_reintroduce_sqlite_resourcewarning_filter() -> None:
-    pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "scripts.sqlite_warning_check"],
+        capture_output=True,
+        check=False,
+        cwd=REPO_ROOT,
+        text=True,
+    )
 
-    assert "ignore:unclosed database in <sqlite3.Connection object" not in pyproject
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["has_sqlite_resourcewarning_suppression"] is False
 
 
 def test_ruff_configuration_excludes_nested_worktrees_from_repo_lint() -> None:
