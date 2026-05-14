@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -325,25 +326,25 @@ ANTHROPIC_METADATA = build_cloud_model_metadata(
 
 GOOGLE_GEMINI_METADATA = build_cloud_model_metadata(
     name="model.google_gemini",
-    description="Contract-only Google Gemini API provider stub.",
+    description="Google Gemini API provider for Local Pilot answer smoke.",
     capabilities={
         ProviderCapability.CHAT,
         ProviderCapability.GENERATE,
         ProviderCapability.EMBEDDING,
         ProviderCapability.BATCH,
     },
-    required_secrets=["GOOGLE_API_KEY"],
+    required_secrets=["GEMINI_API_KEY"],
     config_schema={
         "api_base_url": {
             "type": "string",
             "default": "https://generativelanguage.googleapis.com/v1beta",
         },
-        "model_name": {"type": "string", "default": "gemini-3-pro"},
+        "model_name": {"type": "string", "default": "gemini-2.5-flash"},
         "embedding_model_name": {"type": "string", "default": "text-embedding-004"},
     },
-    sdk_protocol="gemini-rest-api",
+    sdk_protocol="google-genai-sdk",
     dependency_group="cloud-google",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret", "request_failed"],
     audit_fields=["provider", "api_base_url", "model", "embedding_model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "managed_api"],
@@ -711,12 +712,72 @@ OPENAI_COMPATIBLE_METADATA = build_cloud_model_metadata(
 )
 
 
+class GeminiProvider(BaseProvider):
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model_name: str = "gemini-2.5-flash",
+        client: Any | None = None,
+    ) -> None:
+        self.metadata = GOOGLE_GEMINI_METADATA
+        self._api_key = api_key or os.getenv("GEMINI_API_KEY")
+        self._model_name = model_name
+        self._client = client
+
+    def _resolve_client(self) -> Any:
+        if self._client is not None:
+            return self._client
+        if not self._api_key:
+            raise ProviderError(
+                "GEMINI_API_KEY is required for Gemini",
+                code="missing_required_secret",
+                retryable=False,
+                details={"provider": "model.google_gemini", "secret": "GEMINI_API_KEY"},
+            )
+        try:
+            from google import genai
+        except Exception as exc:
+            raise _optional_dependency_error(
+                provider="model.google_gemini",
+                dependencies=["google-genai"],
+            ) from exc
+        self._client = genai.Client(api_key=self._api_key)
+        return self._client
+
+    def health_check(self) -> ProviderHealth:
+        try:
+            self._resolve_client()
+        except ProviderError as exc:
+            return ProviderHealth(status="unavailable", detail=str(exc), metrics=exc.details)
+        return ProviderHealth(
+            status="healthy",
+            detail="Gemini client is configured",
+            metrics={"provider": "model.google_gemini", "model": self._model_name},
+        )
+
+    def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        prompt = "\n\n".join(
+            f"{message.get('role', 'user')}: {message.get('content', '')}"
+            for message in messages
+        )
+        text = self.generate(prompt)
+        return {"choices": [{"message": {"content": text}}]}
+
+    def generate(self, prompt: str) -> str:
+        response = self._resolve_client().models.generate_content(
+            model=self._model_name,
+            contents=prompt,
+        )
+        return str(getattr(response, "text", "") or "")
+
+
 CLOUD_MODEL_METADATA = {
     VERTEX_AI_METADATA.name: (VERTEX_AI_METADATA, ["google-cloud-aiplatform"]),
     BEDROCK_METADATA.name: (BEDROCK_METADATA, ["boto3"]),
     AZURE_OPENAI_METADATA.name: (AZURE_OPENAI_METADATA, ["openai"]),
     ANTHROPIC_METADATA.name: (ANTHROPIC_METADATA, []),
-    GOOGLE_GEMINI_METADATA.name: (GOOGLE_GEMINI_METADATA, ["google-cloud-aiplatform"]),
+    GOOGLE_GEMINI_METADATA.name: (GOOGLE_GEMINI_METADATA, ["google-genai"]),
     MISTRAL_METADATA.name: (MISTRAL_METADATA, []),
     OPENROUTER_METADATA.name: (OPENROUTER_METADATA, ["openai"]),
     OPENAI_METADATA.name: (OPENAI_METADATA, ["openai"]),
@@ -808,6 +869,7 @@ __all__ = [
     "CloudStubProvider",
     "DEEPSEEK_METADATA",
     "FIREWORKS_METADATA",
+    "GeminiProvider",
     "GOOGLE_GEMINI_METADATA",
     "GROQ_METADATA",
     "JINA_METADATA",

@@ -7,6 +7,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ragrig.answer.provider import get_answer_provider
+from ragrig.answer.schema import EvidenceChunk
 from ragrig.db.models import DocumentVersion, KnowledgeBase
 from ragrig.ingestion.pipeline import _select_parser
 from ragrig.ingestion.web_import import MAX_WEBSITE_IMPORT_URLS, collect_website_imports
@@ -198,4 +200,39 @@ def import_website_pages(
             }
             for failure in result.failures
         ],
+    }
+
+
+def run_answer_smoke(*, provider: str, model: str | None = None) -> dict[str, Any]:
+    evidence = [
+        EvidenceChunk(
+            citation_id="cit-1",
+            document_uri="local-pilot://smoke",
+            chunk_id="smoke",
+            chunk_index=0,
+            text="RAGRig Local Pilot verifies grounded answers with citations.",
+            score=1.0,
+            distance=0.0,
+        )
+    ]
+    try:
+        answer_provider = get_answer_provider(provider, model=model)
+        answer, citation_ids = answer_provider.generate(
+            "What does Local Pilot verify?",
+            evidence,
+        )
+    except Exception as exc:
+        return {
+            "provider": provider,
+            "model": model,
+            "status": "unavailable",
+            "detail": str(exc),
+        }
+
+    status = "healthy" if "cit-1" in citation_ids or "[cit-1]" in answer else "degraded"
+    return {
+        "provider": provider,
+        "model": model,
+        "status": status,
+        "detail": answer[:240],
     }

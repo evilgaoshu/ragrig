@@ -32,7 +32,7 @@ from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.health import create_database_check
 from ragrig.ingestion.pipeline import _select_parser
 from ragrig.ingestion.web_import import WebsiteImportError
-from ragrig.local_pilot import build_local_pilot_status, import_website_pages
+from ragrig.local_pilot import build_local_pilot_status, import_website_pages, run_answer_smoke
 from ragrig.parsers.base import ParserTimeoutError, parse_with_timeout
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.processing_profile import (
@@ -241,6 +241,11 @@ class WebsiteImportRequest(BaseModel):
     sitemap_url: str | None = None
 
 
+class LocalPilotAnswerSmokeRequest(BaseModel):
+    provider: str
+    model: str | None = None
+
+
 def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
     return {
         "error": {
@@ -372,6 +377,10 @@ def create_app(
     @app.get("/local-pilot/status", response_model=None)
     def local_pilot_status() -> dict[str, Any]:
         return build_local_pilot_status().model_dump()
+
+    @app.post("/local-pilot/answer-smoke", response_model=None)
+    def local_pilot_answer_smoke(request: LocalPilotAnswerSmokeRequest) -> dict[str, Any]:
+        return run_answer_smoke(provider=request.provider, model=request.model)
 
     @app.get("/knowledge-bases", response_model=None)
     def knowledge_bases(

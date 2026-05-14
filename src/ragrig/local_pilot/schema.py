@@ -23,3 +23,15 @@ class LocalPilotStatus(BaseModel):
     upload: LocalPilotUploadStatus
     website_import: LocalPilotWebsiteStatus
     models: LocalPilotModelStatus
+
+
+class LocalPilotAnswerSmokeRequest(BaseModel):
+    provider: str
+    model: str | None = None
+
+
+class LocalPilotAnswerSmokeReport(BaseModel):
+    provider: str
+    model: str | None
+    status: str
+    detail: str

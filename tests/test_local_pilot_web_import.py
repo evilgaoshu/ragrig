@@ -286,3 +286,25 @@ def test_local_pilot_status_lists_required_capabilities(tmp_path) -> None:
     assert ".docx" in body["upload"]["extensions"]
     assert body["website_import"]["max_pages"] == 25
     assert "model.google_gemini" in body["models"]["required"]
+
+
+def test_local_pilot_answer_smoke_reports_unavailable_without_secret(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    session_factory = _create_file_session_factory(tmp_path / "local-pilot-smoke.db")
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    client = TestClient(app)
+
+    response = client.post(
+        "/local-pilot/answer-smoke",
+        json={"provider": "model.google_gemini", "model": "gemini-2.5-flash"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "model.google_gemini"
+    assert body["model"] == "gemini-2.5-flash"
+    assert body["status"] == "unavailable"
+    assert "GEMINI_API_KEY" in body["detail"]
