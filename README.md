@@ -144,6 +144,12 @@ make index-local
 make retrieve-check QUERY="RAGRig Guide"
 ```
 
+Run the Local Pilot API smoke:
+
+```bash
+make local-pilot-smoke
+```
+
 Start the Web Console:
 
 ```bash
@@ -182,6 +188,7 @@ make lint
 make test
 make coverage
 make web-check
+make local-pilot-smoke
 make dependency-inventory
 ```
 

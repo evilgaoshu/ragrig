@@ -1220,7 +1220,8 @@ async def test_supported_formats_filter_by_status(tmp_path) -> None:
     supported = {fmt["extension"] for fmt in supported_resp.json()["formats"]}
     assert ".md" in supported
     assert ".txt" in supported
-    assert ".pdf" not in supported
+    assert ".pdf" in supported
+    assert ".docx" in supported
 
     assert preview_resp.status_code == 200
     preview = {fmt["extension"] for fmt in preview_resp.json()["formats"]}
@@ -1229,8 +1230,8 @@ async def test_supported_formats_filter_by_status(tmp_path) -> None:
 
     assert planned_resp.status_code == 200
     planned = {fmt["extension"] for fmt in planned_resp.json()["formats"]}
-    assert ".pdf" in planned
-    assert ".docx" in planned
+    assert ".pdf" not in planned
+    assert ".docx" not in planned
 
 
 @pytest.mark.anyio
@@ -1411,8 +1412,8 @@ async def test_upload_nonexistent_kb_returns_404(tmp_path) -> None:
 
 
 @pytest.mark.anyio
-async def test_upload_planned_format_returns_415(tmp_path) -> None:
-    database_path = tmp_path / "web-console-upload-planned.db"
+async def test_upload_supported_pdf_returns_202(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-pdf.db"
     session_factory = _create_file_session_factory(database_path)
 
     # Create a minimal PDF-like file
@@ -1435,10 +1436,11 @@ async def test_upload_planned_format_returns_415(tmp_path) -> None:
                 files={"files": ("document.pdf", f, "application/pdf")},
             )
 
-    assert response.status_code == 415
+    assert response.status_code == 202
     payload = response.json()
-    assert payload["rejections"][0]["reason"] == "unsupported_format"
-    assert ".pdf" in payload["rejections"][0]["extension"]
+    assert payload["accepted_files"] == 1
+    assert payload["pipeline_run_id"] is not None
+    assert payload["rejected_files"] == 0
 
 
 @pytest.mark.anyio

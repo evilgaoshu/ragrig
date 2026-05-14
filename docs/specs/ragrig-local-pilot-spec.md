@@ -4,6 +4,14 @@ Date: 2026-05-14
 Branch: `codex/local-pilot-spec`
 Status: draft for owner review
 
+## Implementation Status
+
+- PDF and DOCX parser support: implemented for Local Pilot text extraction boundaries.
+- Website import: implemented for single URL, sitemap, and docs URL list with a 25-page cap, private-network guardrails, and response-size limits.
+- Local Pilot API: implemented for status, website import runs, and answer smoke.
+- Gemini: implemented with `google-genai` configuration health and answer smoke support.
+- Web Console: Local Pilot panel implemented for status, URL import, and answer smoke.
+
 ## Purpose
 
 RAGRig's next product step is a simple local pilot, not an enterprise pilot.

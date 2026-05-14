@@ -8,6 +8,36 @@ ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
 
 OPTIONAL_GROUP_DETAILS = {
+    "cloud-aws": {
+        "sdk_examples": ["boto3"],
+        "category": "official cloud SDKs",
+        "rule": "Use the official AWS SDK behind explicit Bedrock and AWS storage plugins.",
+    },
+    "cloud-cohere": {
+        "sdk_examples": ["cohere"],
+        "category": "official cloud SDKs",
+        "rule": "Use only behind explicit Cohere model and rerank plugins.",
+    },
+    "cloud-google": {
+        "sdk_examples": ["google-genai", "google-cloud-aiplatform"],
+        "category": "official cloud SDKs",
+        "rule": "Use official Gemini and Vertex SDKs behind explicit cloud model plugins.",
+    },
+    "cloud-jina": {
+        "sdk_examples": ["Jina HTTP API"],
+        "category": "cloud embedding / rerank API",
+        "rule": "Prefer official SDKs when available; otherwise isolate HTTP clients in plugins.",
+    },
+    "cloud-openai": {
+        "sdk_examples": ["openai"],
+        "category": "official cloud SDKs",
+        "rule": "Use the official OpenAI SDK behind explicit cloud model plugins.",
+    },
+    "cloud-voyage": {
+        "sdk_examples": ["voyageai"],
+        "category": "official cloud SDKs",
+        "rule": "Use only behind explicit Voyage embedding and rerank plugins.",
+    },
     "local-ml": {
         "sdk_examples": ["ollama", "FlagEmbedding", "sentence-transformers", "torch"],
         "category": "local runtime / heavy ML",
@@ -44,6 +74,27 @@ OPTIONAL_GROUP_DETAILS = {
             "or extra licenses."
         ),
     },
+    "s3": {
+        "sdk_examples": ["boto3", "S3-compatible API"],
+        "category": "object storage SDKs",
+        "rule": "Keep S3-compatible storage connectors optional and plugin-scoped.",
+    },
+    "parquet": {
+        "sdk_examples": ["pyarrow"],
+        "category": "analytics export SDKs",
+        "rule": "Install only for structured export and lakehouse connector work.",
+    },
+    "fileshare": {
+        "sdk_examples": ["httpx", "paramiko", "smbprotocol"],
+        "category": "file share connector SDKs",
+        "rule": "Keep network filesystem clients optional and isolate credential handling.",
+    },
+}
+
+DEFAULT_OPTIONAL_GROUP_DETAIL = {
+    "sdk_examples": ["plugin-scoped SDKs"],
+    "category": "optional plugin SDKs",
+    "rule": "Keep optional dependencies out of core imports and document network/auth impact.",
 }
 
 
@@ -74,11 +125,14 @@ def build_inventory_markdown() -> str:
     optional_rows = "\n".join(
         "| `{group}` | {category} | {examples} | {rule} |".format(
             group=group,
-            category=OPTIONAL_GROUP_DETAILS[group]["category"],
+            category=OPTIONAL_GROUP_DETAILS.get(group, DEFAULT_OPTIONAL_GROUP_DETAIL)["category"],
             examples=", ".join(
-                f"`{item}`" for item in OPTIONAL_GROUP_DETAILS[group]["sdk_examples"]
+                f"`{item}`"
+                for item in OPTIONAL_GROUP_DETAILS.get(group, DEFAULT_OPTIONAL_GROUP_DETAIL)[
+                    "sdk_examples"
+                ]
             ),
-            rule=OPTIONAL_GROUP_DETAILS[group]["rule"],
+            rule=OPTIONAL_GROUP_DETAILS.get(group, DEFAULT_OPTIONAL_GROUP_DETAIL)["rule"],
         )
         for group in optional_dependencies
     )
@@ -101,8 +155,8 @@ Generated from `pyproject.toml` by `python -m scripts.dependency_inventory`.
 
 ## Planned Optional Plugin SDK Groups
 
-The extras are intentionally empty in `pyproject.toml` today. They reserve install
-boundaries without pulling real cloud, OCR, or heavy ML SDKs into the default environment.
+Optional extras keep cloud, storage, parsing, and heavy ML SDKs behind explicit
+install boundaries instead of pulling them into the default local-first environment.
 
 | Extra group | Category | Preferred SDKs | Governance |
 | --- | --- | --- | --- |

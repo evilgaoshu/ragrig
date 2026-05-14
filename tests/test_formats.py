@@ -120,10 +120,13 @@ def test_default_registry_loads_from_yaml() -> None:
     assert FormatStatus.PREVIEW in statuses
     assert FormatStatus.PLANNED in statuses
 
-    # Test check on a planned format through the default registry
+    # Test check on a Local Pilot supported document format through the default registry
     result = registry.check(".docx")
     assert result["supported"] is True
-    assert result["status"] == "planned"
+    assert result["status"] == "supported"
+    docx_format = registry.lookup(".docx")
+    assert docx_format is not None
+    assert docx_format.capabilities == ["parse", "chunk", "embed"]
 
 
 def test_registry_check_planned_format_status_message() -> None:

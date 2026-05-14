@@ -125,20 +125,26 @@
   mime_type: "application/pdf"
   display_name: "PDF (.pdf)"
   parser_id: "parser.pdf"
-  status: "planned"
+  status: "supported"
   max_file_size_mb: 50
-  capabilities: []
-  limitations: "Requires PDF parser plugin."
+  capabilities:
+    - parse
+    - chunk
+    - embed
+  limitations: "Local Pilot supports text-based PDFs only; encrypted, scanned, image-only, form-heavy, and layout-critical PDFs are not supported."
   docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
 
 - extension: ".docx"
   mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   display_name: "Microsoft Word (.docx)"
-  parser_id: "parser.advanced_documents"
-  status: "planned"
+  parser_id: "parser.docx"
+  status: "supported"
   max_file_size_mb: 50
-  capabilities: []
-  limitations: "Requires DOCX parser."
+  capabilities:
+    - parse
+    - chunk
+    - embed
+  limitations: "Local Pilot extracts paragraph, heading, and list body text only; tables, images, headers, footers, comments, and tracked changes are not structurally preserved."
   docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
 
 - extension: ".xlsx"

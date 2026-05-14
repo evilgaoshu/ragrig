@@ -233,6 +233,7 @@ def create_provider_registry() -> ProviderRegistry:
         VOYAGE_METADATA,
         XAI_METADATA,
         ZHIPU_METADATA,
+        GeminiProvider,
         create_cloud_stub_provider,
     )
     from ragrig.providers.local import (
@@ -292,7 +293,11 @@ def create_provider_registry() -> ProviderRegistry:
     )
     registry.register(
         GOOGLE_GEMINI_METADATA,
-        lambda **config: create_cloud_stub_provider("model.google_gemini", **config),
+        lambda **config: GeminiProvider(
+            api_key=config.get("api_key"),
+            model_name=config.get("model_name", "gemini-2.5-flash"),
+            client=config.get("client"),
+        ),
     )
     registry.register(
         OPENROUTER_METADATA,

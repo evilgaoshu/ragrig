@@ -952,6 +952,49 @@
           <div class="status-card"><div class="status-head">Parser Corpus</div><strong id="advanced-parser-corpus-status">—</strong><span id="advanced-parser-corpus-subtext">Advanced parser corpus health</span></div>
         </section>
 
+        <section class="panel" data-local-pilot-wizard>
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Local Pilot</div>
+              <div class="panel-meta">Roadmap milestone · upload/import, provider smoke, and retrieval debugging</div>
+            </div>
+            <div id="local-pilot-status-pill" class="pill neutral">Ready</div>
+          </div>
+          <div class="panel-body stack">
+            <div class="fact-grid">
+              <label>
+                <div class="fact-label">Knowledge base</div>
+                <input id="pilot-kb-name" value="local-pilot">
+              </label>
+              <label>
+                <div class="fact-label">Website URL or sitemap</div>
+                <input id="pilot-url" aria-label="Website URL or sitemap" value="">
+              </label>
+              <label>
+                <div class="fact-label">Model provider</div>
+                <select id="pilot-provider">
+                  <option value="deterministic-local">deterministic-local</option>
+                  <option value="model.ollama">Ollama</option>
+                  <option value="model.lm_studio">LM Studio</option>
+                  <option value="model.openai">OpenAI</option>
+                  <option value="model.openrouter">OpenRouter</option>
+                  <option value="model.google_gemini">Gemini</option>
+                </select>
+              </label>
+              <label>
+                <div class="fact-label">Model</div>
+                <input id="pilot-model" value="gemini-2.5-flash">
+              </label>
+            </div>
+            <div class="actions">
+              <button class="button" id="pilot-refresh-status" type="button">Check Pilot Status</button>
+              <button class="button" id="pilot-import-url" type="button">Import URL</button>
+              <button class="button" id="pilot-answer-smoke" type="button">Run Answer Smoke</button>
+            </div>
+            <pre id="pilot-output" class="empty" style="white-space:pre-wrap;text-align:left;overflow:auto;max-height:260px">Local Pilot output will appear here.</pre>
+          </div>
+        </section>
+
         <section class="panel">
           <div class="panel-head"><div class="panel-title">Vector Backend Readiness</div><div class="panel-meta">GET /system/status · no secrets</div><div id="vector-panel-status" class="pill neutral">Loading</div></div>
           <div class="panel-body vector-layout">
@@ -1164,7 +1207,7 @@
                 <div class="upload-drop-zone" id="upload-drop-zone">
                   <div class="upload-drop-text">Drag and drop files here<br><span class="sub">or</span></div>
                   <button class="button primary" id="upload-choose-btn" type="button">Choose Files</button>
-                  <input type="file" id="upload-file-input" multiple hidden accept=".md,.markdown,.txt,.text,.rst,.csv,.json,.xml,.html">
+                  <input type="file" id="upload-file-input" multiple hidden accept=".md,.markdown,.txt,.text,.pdf,.docx,.rst,.csv,.json,.xml,.html">
                 </div>
                 <div id="upload-file-list" class="stack"></div>
                 <div class="actions">
@@ -1561,6 +1604,7 @@
         answerLiveSmoke: null,
         opsDiagnostics: null,
         permissionPreview: null,
+        localPilot: null,
       };
 
       const WIZARD_FILTERS = [
@@ -1631,6 +1675,52 @@
           throw new Error(`${url} -> ${response.status} ${text}`);
         }
         return response.json();
+      }
+
+      function renderPilotOutput(payload, status = 'ready') {
+        const output = document.getElementById('pilot-output');
+        const pill = document.getElementById('local-pilot-status-pill');
+        if (output) output.textContent = JSON.stringify(payload, null, 2);
+        if (pill) {
+          pill.className = pillClass(status);
+          pill.textContent = status;
+        }
+      }
+
+      async function refreshLocalPilotStatus() {
+        const data = await getJson('/local-pilot/status');
+        state.localPilot = data;
+        renderPilotOutput(data, 'ready');
+      }
+
+      async function importPilotUrl() {
+        const kb = document.getElementById('pilot-kb-name').value || 'local-pilot';
+        const url = document.getElementById('pilot-url').value.trim();
+        if (!url) {
+          renderPilotOutput({ error: 'website URL or sitemap is required' }, 'warning');
+          return;
+        }
+        const isSitemap = url.endsWith('.xml') || url.includes('sitemap');
+        const payload = isSitemap ? { urls: [], sitemap_url: url } : { urls: [url] };
+        const data = await getJson(`/knowledge-bases/${encodeURIComponent(kb)}/website-import`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        renderPilotOutput(data, data.failed_pages ? 'degraded' : 'completed');
+      }
+
+      async function runPilotAnswerSmoke() {
+        const provider = document.getElementById('pilot-provider').value;
+        const modelValue = document.getElementById('pilot-model').value.trim();
+        const payload = { provider };
+        if (modelValue) payload.model = modelValue;
+        const data = await getJson('/local-pilot/answer-smoke', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        renderPilotOutput(data, data.status || 'unknown');
       }
 
       async function loadInitialData() {
@@ -1782,7 +1872,7 @@
             </div>
           `).join('');
         }
-        root.innerHTML += \`
+        root.innerHTML += `
           <div class="card" style="margin-top:12px">
             <div class="name">Configure New Source</div>
             <div class="sub">Select type:</div>
@@ -1794,14 +1884,14 @@
             <div id="source-form-area"></div>
             <div id="source-form-result"></div>
           </div>
-        \`;
+        `;
       }
 
       function showSourceForm(pluginId) {
         const area = document.getElementById('source-form-area');
         state.sourceFormPlugin = pluginId;
         if (pluginId === 'source.local') {
-          area.innerHTML = \`
+          area.innerHTML = `
             <div class="sub">Knowledge base name:</div>
             <input id="src-local-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
             <div class="sub">Root path:</div>
@@ -1817,9 +1907,9 @@
               <button class="btn" onclick="saveSourceForm()">Save</button>
               <button class="btn" onclick="dryRunForm()">Dry-run</button>
             </div>
-          \`;
+          `;
         } else if (pluginId === 'source.s3') {
-          area.innerHTML = \`
+          area.innerHTML = `
             <div class="sub">Knowledge base name:</div>
             <input id="src-s3-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
             <div class="sub">Bucket:</div>
@@ -1839,9 +1929,9 @@
               <button class="btn" onclick="saveSourceForm()">Save</button>
               <button class="btn" onclick="dryRunForm()">Dry-run</button>
             </div>
-          \`;
+          `;
         } else if (pluginId === 'source.fileshare') {
-          area.innerHTML = \`
+          area.innerHTML = `
             <div class="sub">Knowledge base name:</div>
             <input id="src-fs-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
             <div class="sub">Protocol:</div>
@@ -1864,7 +1954,7 @@
               <button class="btn" onclick="saveSourceForm()">Save</button>
               <button class="btn" onclick="dryRunForm()">Dry-run</button>
             </div>
-          \`;
+          `;
         }
       }
 
@@ -1920,25 +2010,25 @@
           const data = await resp.json();
           if (data.valid) {
             const statusPill = data.status === 'ready' ? 'success' : data.status === 'degraded' ? 'warn' : 'error';
-            resultArea.innerHTML = \`
+            resultArea.innerHTML = `
               <div class="card">
-                <div class="name">Validation: <span class="pill \${statusPill}">\${escapeHtml(data.status)}</span></div>
-                \${data.reason ? '<div class="sub">' + escapeHtml(data.reason) + '</div>' : ''}
-                \${data.missing_dependencies && data.missing_dependencies.length ? '<div class="sub">Missing deps: ' + escapeHtml(data.missing_dependencies.join(', ')) + '</div>' : ''}
-                \${data.credential_issues && data.credential_issues.length ? '<div class="sub">Credential issues: ' + escapeHtml(data.credential_issues.join('; ')) + '</div>' : ''}
-                \${data.next_steps && data.next_steps.length ? '<div class="sub">Next: ' + escapeHtml(data.next_steps.join(' ')) + '</div>' : ''}
+                <div class="name">Validation: <span class="pill ${statusPill}">${escapeHtml(data.status)}</span></div>
+                ${data.reason ? '<div class="sub">' + escapeHtml(data.reason) + '</div>' : ''}
+                ${data.missing_dependencies && data.missing_dependencies.length ? '<div class="sub">Missing deps: ' + escapeHtml(data.missing_dependencies.join(', ')) + '</div>' : ''}
+                ${data.credential_issues && data.credential_issues.length ? '<div class="sub">Credential issues: ' + escapeHtml(data.credential_issues.join('; ')) + '</div>' : ''}
+                ${data.next_steps && data.next_steps.length ? '<div class="sub">Next: ' + escapeHtml(data.next_steps.join(' ')) + '</div>' : ''}
               </div>
-            \`;
+            `;
           } else {
-            resultArea.innerHTML = \`
+            resultArea.innerHTML = `
               <div class="card">
                 <div class="name">Validation: <span class="pill error">invalid</span></div>
-                <div class="sub">\${escapeHtml(data.reason || data.error?.message || 'unknown error')}</div>
+                <div class="sub">${escapeHtml(data.reason || data.error?.message || 'unknown error')}</div>
               </div>
-            \`;
+            `;
           }
         } catch (err) {
-          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+          resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
         }
       }
 
@@ -1956,14 +2046,14 @@
           });
           if (!resp.ok) {
             const err = await resp.json();
-            resultArea.innerHTML = \`<div class="card"><div class="name">Save failed</div><div class="sub">\${escapeHtml(err.error || 'unknown error')}</div></div>\`;
+            resultArea.innerHTML = `<div class="card"><div class="name">Save failed</div><div class="sub">${escapeHtml(err.error || 'unknown error')}</div></div>`;
             return;
           }
           const data = await resp.json();
-          resultArea.innerHTML = \`<div class="card"><div class="name">Saved: <span class="pill success">\${escapeHtml(data.kind)}</span></div><div class="sub">URI: \${escapeHtml(data.uri)}</div></div>\`;
+          resultArea.innerHTML = `<div class="card"><div class="name">Saved: <span class="pill success">${escapeHtml(data.kind)}</span></div><div class="sub">URI: ${escapeHtml(data.uri)}</div></div>`;
           await loadAll();
         } catch (err) {
-          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+          resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
         }
       }
 
@@ -1980,7 +2070,7 @@
           });
           if (!resp.ok) {
             const err = await resp.json();
-            resultArea.innerHTML = \`<div class="card"><div class="name">Dry-run failed</div><div class="sub">\${escapeHtml(err.error || 'unknown error')}</div></div>\`;
+            resultArea.innerHTML = `<div class="card"><div class="name">Dry-run failed</div><div class="sub">${escapeHtml(err.error || 'unknown error')}</div></div>`;
             return;
           }
           const data = await resp.json();
@@ -1995,23 +2085,23 @@
               (allFiles.length > 50 ? '<div class="sub">... and ' + (allFiles.length - 50) + ' more</div>' : '') +
               '</div>';
           }
-          resultArea.innerHTML = \`
+          resultArea.innerHTML = `
             <div class="card">
-              <div class="name">Dry-run: <span class="pill success">\${escapeHtml(data.source_kind)}</span></div>
-              <div class="sub">Total: \${data.total} files · Discovered: \${data.discovered_count} · Skipped: \${data.skipped_count} · Failed: \${data.failed_count}</div>
-              \${filesHtml}
+              <div class="name">Dry-run: <span class="pill success">${escapeHtml(data.source_kind)}</span></div>
+              <div class="sub">Total: ${data.total} files · Discovered: ${data.discovered_count} · Skipped: ${data.skipped_count} · Failed: ${data.failed_count}</div>
+              ${filesHtml}
               <div class="sub" style="margin-top:4px"><em>dry-run does not write documents, chunks, or embeddings</em></div>
             </div>
-          \`;
+          `;
         } catch (err) {
-          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+          resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
         }
       }
 
       async function dryRunSource(sourceId, sourceKind) {
         const resultArea = document.createElement('div');
         resultArea.innerHTML = '<div class="sub">Running dry-run...</div>';
-        const card = document.querySelector(\`[data-source-id="\${sourceId}"]\`);
+        const card = document.querySelector(`[data-source-id="${sourceId}"]`);
         try {
           const resp = await fetch('/sources/dry-run', {
             method: 'POST',
@@ -2019,9 +2109,9 @@
             body: JSON.stringify({ plugin_id: 'source.' + sourceKind, config: {} }),
           });
           const data = await resp.json();
-          resultArea.innerHTML = \`<div class="sub">Dry-run: \${data.total || 0} files found</div>\`;
+          resultArea.innerHTML = `<div class="sub">Dry-run: ${data.total || 0} files found</div>`;
         } catch (err) {
-          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+          resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
         }
       }
 
@@ -4611,9 +4701,12 @@
         var limit = parseInt(document.getElementById('audit-log-limit').value, 10) || 25;
         var body = document.getElementById('audit-log-body');
         var empty = document.getElementById('audit-log-empty');
-        var profileFilter = document.getElementById('audit-filter-profile').value.trim();
-        var providerFilter = document.getElementById('audit-filter-provider').value.trim();
-        var taskFilter = document.getElementById('audit-filter-task').value;
+        var profileFilterEl = document.getElementById('audit-filter-profile');
+        var providerFilterEl = document.getElementById('audit-filter-provider');
+        var taskFilterEl = document.getElementById('audit-filter-task');
+        var profileFilter = profileFilterEl ? profileFilterEl.value.trim() : '';
+        var providerFilter = providerFilterEl ? providerFilterEl.value.trim() : '';
+        var taskFilter = taskFilterEl ? taskFilterEl.value : '';
         var url = '/processing-profiles/audit-log?limit=' + limit;
         if (profileFilter) url += '&profile_id=' + encodeURIComponent(profileFilter);
         if (providerFilter) url += '&provider=' + encodeURIComponent(providerFilter);
@@ -4703,7 +4796,6 @@
 
       // ── Diff Preview & Inline Edit ──
 
-      var state = window.state || {};
       state.editProfileId = null;
 
       async function openEditForm(profileId) {
@@ -4898,12 +4990,17 @@
           renderAdvancedParserCorpus();
           renderOpsDiagnostics();
           renderUploadKBSelect();
+          await refreshLocalPilotStatus();
         } catch (error) {
+          console.error('Console boot failed', error);
           document.body.innerHTML = `<main class="main">${empty(error.message)}</main>`;
           return;
         }
 
         document.getElementById('run-evaluation-btn').addEventListener('click', runEvaluationFromConsole);
+        document.getElementById('pilot-refresh-status').addEventListener('click', refreshLocalPilotStatus);
+        document.getElementById('pilot-import-url').addEventListener('click', importPilotUrl);
+        document.getElementById('pilot-answer-smoke').addEventListener('click', runPilotAnswerSmoke);
         document.getElementById('run-retrieval').addEventListener('click', runRetrieval);
         document.getElementById('run-permission-preview').addEventListener('click', runPermissionPreview);
         document.getElementById('retrieval-mode').addEventListener('change', function() {
@@ -4949,15 +5046,21 @@
         document.getElementById('wf-audit-refresh').addEventListener('click', () => renderWorkflowAuditEvents());
         document.getElementById('wf-audit-limit').addEventListener('change', () => renderWorkflowAuditEvents());
         document.getElementById('wf-audit-type').addEventListener('change', () => renderWorkflowAuditEvents());
-        document.getElementById('audit-filter-provider').addEventListener('change', () => renderAuditLog());
-        document.getElementById('audit-filter-task').addEventListener('change', () => renderAuditLog());
-        document.getElementById('audit-filter-profile').addEventListener('input', debounce(function() { renderAuditLog(); }, 300));
-        document.getElementById('audit-filter-provider').addEventListener('input', debounce(function() { renderAuditLog(); }, 300));
+        const auditFilterProvider = document.getElementById('audit-filter-provider');
+        const auditFilterTask = document.getElementById('audit-filter-task');
+        const auditFilterProfile = document.getElementById('audit-filter-profile');
+        if (auditFilterProvider) auditFilterProvider.addEventListener('change', () => renderAuditLog());
+        if (auditFilterTask) auditFilterTask.addEventListener('change', () => renderAuditLog());
+        if (auditFilterProfile) auditFilterProfile.addEventListener('input', debounce(function() { renderAuditLog(); }, 300));
+        if (auditFilterProvider) auditFilterProvider.addEventListener('input', debounce(function() { renderAuditLog(); }, 300));
         document.getElementById('profile-create-cancel').addEventListener('click', () => showProfileCreateForm(false));
         document.getElementById('profile-create-submit').addEventListener('click', submitProfileCreate);
-        document.getElementById('diff-preview-close').addEventListener('click', closeEditForm);
-        document.getElementById('diff-preview-submit').addEventListener('click', saveEdit);
-        document.getElementById('preview-diff-btn').addEventListener('click', previewDiff);
+        const diffPreviewClose = document.getElementById('diff-preview-close');
+        const diffPreviewSubmit = document.getElementById('diff-preview-submit');
+        const previewDiffButton = document.getElementById('preview-diff-btn');
+        if (diffPreviewClose) diffPreviewClose.addEventListener('click', closeEditForm);
+        if (diffPreviewSubmit) diffPreviewSubmit.addEventListener('click', saveEdit);
+        if (previewDiffButton) previewDiffButton.addEventListener('click', previewDiff);
         document.getElementById('profile-matrix-body').addEventListener('click', (event) => {
           const editBtn = event.target.closest('[data-profile-action="edit"]');
           if (editBtn) {

@@ -8,7 +8,14 @@ from sqlalchemy.orm import Session
 
 from ragrig.db.models import DocumentVersion
 from ragrig.ingestion.scanner import scan_paths
-from ragrig.parsers import CsvParser, HtmlParser, MarkdownParser, PlainTextParser
+from ragrig.parsers import (
+    CsvParser,
+    DocxParser,
+    HtmlParser,
+    MarkdownParser,
+    PdfParser,
+    PlainTextParser,
+)
 from ragrig.plugins import get_plugin_registry
 from ragrig.processing_profile import TaskType, resolve_profile
 from ragrig.repositories import (
@@ -40,6 +47,10 @@ def _select_parser(path: Path):
         return CsvParser()
     if ext == ".html":
         return HtmlParser()
+    if ext == ".pdf":
+        return PdfParser()
+    if ext == ".docx":
+        return DocxParser()
     return PlainTextParser()
 
 

@@ -31,6 +31,8 @@ from ragrig.evaluation import (
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.health import create_database_check
 from ragrig.ingestion.pipeline import _select_parser
+from ragrig.ingestion.web_import import WebsiteImportError
+from ragrig.local_pilot import build_local_pilot_status, import_website_pages, run_answer_smoke
 from ragrig.parsers.base import ParserTimeoutError, parse_with_timeout
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.processing_profile import (
@@ -234,6 +236,16 @@ class RollbackRequest(BaseModel):
     actor: str | None = None
 
 
+class WebsiteImportRequest(BaseModel):
+    urls: list[str]
+    sitemap_url: str | None = None
+
+
+class LocalPilotAnswerSmokeRequest(BaseModel):
+    provider: str
+    model: str | None = None
+
+
 def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
     return {
         "error": {
@@ -361,6 +373,14 @@ def create_app(
             database_ok=database_ok,
             database_detail=detail,
         )
+
+    @app.get("/local-pilot/status", response_model=None)
+    def local_pilot_status() -> dict[str, Any]:
+        return build_local_pilot_status().model_dump()
+
+    @app.post("/local-pilot/answer-smoke", response_model=None)
+    def local_pilot_answer_smoke(request: LocalPilotAnswerSmokeRequest) -> dict[str, Any]:
+        return run_answer_smoke(provider=request.provider, model=request.model)
 
     @app.get("/knowledge-bases", response_model=None)
     def knowledge_bases(
@@ -921,6 +941,31 @@ def create_app(
         Never includes raw secret fragments.
         """
         return get_advanced_parser_corpus()
+
+    @app.post("/knowledge-bases/{kb_name}/website-import", response_model=None)
+    def knowledge_base_website_import(
+        kb_name: str,
+        request: WebsiteImportRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> JSONResponse:
+        kb = get_knowledge_base_by_name(session, kb_name)
+        if kb is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"knowledge base '{kb_name}' not found"},
+            )
+
+        try:
+            result = import_website_pages(
+                session,
+                knowledge_base=kb,
+                urls=request.urls,
+                sitemap_url=request.sitemap_url,
+            )
+        except WebsiteImportError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
+
+        return JSONResponse(status_code=202, content=result)
 
     @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
     async def knowledge_base_upload(
