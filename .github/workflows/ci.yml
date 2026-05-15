@@ -90,7 +90,7 @@ jobs:
           path: docs/operations/artifacts/sanitizer-coverage-summary.json
 
       - name: Generate latest evaluation report
-        run: make eval-local --output evaluation_runs/latest-ci-report.json || true
+        run: uv run python -m scripts.eval_local --ephemeral-sqlite --output evaluation_runs/latest-ci-report.json || true
         continue-on-error: true
 
       - name: Upload evaluation report artifact
