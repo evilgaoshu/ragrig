@@ -1,0 +1,17 @@
+[
+  {
+    "question": "What does the RAGRig Local Pilot demonstrate?",
+    "expected_source": "company-handbook.md",
+    "expected_terms": ["pipeline run", "citations", "Web Console"]
+  },
+  {
+    "question": "Do I need Gemini or OpenAI keys to start the demo?",
+    "expected_source": "support-faq.md",
+    "expected_terms": ["optional readiness", "startup failure"]
+  },
+  {
+    "question": "Which local model providers are recommended first?",
+    "expected_source": "support-faq.md",
+    "expected_terms": ["Ollama", "LM Studio"]
+  }
+]

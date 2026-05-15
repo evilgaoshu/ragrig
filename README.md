@@ -116,6 +116,49 @@ Prototype:
 
 ## Quick Start
 
+### 10-Minute Local Pilot Demo
+
+Run the minimal preflight first. It checks only startup-critical items such as the
+app import path, an ephemeral database health check, writable artifacts, and Docker
+availability for Docker mode.
+
+```bash
+make pilot-docker-preflight
+```
+
+Model configuration is optional for startup. Ollama, LM Studio, Gemini, OpenAI,
+OpenRouter, rerankers, and external stores are reported as readiness items elsewhere;
+missing model credentials should not stop the app from booting.
+
+Start the demo stack:
+
+```bash
+make pilot-up
+make pilot-docker-smoke
+```
+
+Open the Web Console:
+
+```text
+http://localhost:8000/console
+```
+
+Create a knowledge base, then upload the demo documents:
+
+```text
+examples/local-pilot/company-handbook.md
+examples/local-pilot/support-faq.md
+```
+
+Use the suggested questions in:
+
+```text
+examples/local-pilot/demo-questions.json
+```
+
+After upload, inspect the pipeline run, open chunk preview, ask a Playground
+question, and confirm the answer is grounded with citations.
+
 ### Docker Local Pilot
 
 Build and start the local pilot stack:
