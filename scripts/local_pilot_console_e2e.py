@@ -92,6 +92,12 @@ def _create_fixture_files(root: Path) -> list[Path]:
     return [md_path, pdf_path, docx_path]
 
 
+def _create_failure_fixture(root: Path) -> Path:
+    bad_path = root / "pilot-console-e2e-bad.txt"
+    bad_path.write_bytes(b"\xff\xfe\x00\x01")
+    return bad_path
+
+
 def _wait_for_server(base_url: str, timeout_seconds: float) -> None:
     deadline = time.monotonic() + timeout_seconds
     last_error: Exception | None = None
@@ -110,6 +116,7 @@ def _run_playwright(
     *,
     base_url: str,
     files: list[Path],
+    failure_file: Path,
     output: Path | None,
     headed: bool,
     timeout_ms: int,
@@ -126,6 +133,7 @@ def _run_playwright(
         {
             "RAGRIG_CONSOLE_E2E_BASE_URL": base_url,
             "RAGRIG_CONSOLE_E2E_FILES": json.dumps([str(path) for path in files]),
+            "RAGRIG_CONSOLE_E2E_FAILURE_FILE": str(failure_file),
             "RAGRIG_CONSOLE_E2E_HEADLESS": "0" if headed else "1",
             "RAGRIG_CONSOLE_E2E_TIMEOUT_MS": str(timeout_ms),
             "RAGRIG_CONSOLE_E2E_BROWSER_CHANNEL": os.environ.get(
@@ -222,10 +230,13 @@ def run_e2e(
     try:
         _wait_for_server(base_url, timeout_ms / 1000)
         with tempfile.TemporaryDirectory(prefix="ragrig-console-e2e-files-") as fixture_dir:
-            files = _create_fixture_files(Path(fixture_dir))
+            fixture_root = Path(fixture_dir)
+            files = _create_fixture_files(fixture_root)
+            failure_file = _create_failure_fixture(fixture_root)
             return _run_playwright(
                 base_url=base_url,
                 files=files,
+                failure_file=failure_file,
                 output=output,
                 headed=headed,
                 timeout_ms=timeout_ms,

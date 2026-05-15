@@ -4,6 +4,7 @@ import { chromium } from 'playwright';
 const baseURL = process.env.RAGRIG_CONSOLE_E2E_BASE_URL;
 const outputPath = process.env.RAGRIG_CONSOLE_E2E_OUTPUT;
 const filePaths = JSON.parse(process.env.RAGRIG_CONSOLE_E2E_FILES || '[]');
+const failureFilePath = process.env.RAGRIG_CONSOLE_E2E_FAILURE_FILE;
 const headless = process.env.RAGRIG_CONSOLE_E2E_HEADLESS !== '0';
 const browserChannel = process.env.RAGRIG_CONSOLE_E2E_BROWSER_CHANNEL || '';
 const timeout = Number(process.env.RAGRIG_CONSOLE_E2E_TIMEOUT_MS || 30000);
@@ -32,6 +33,7 @@ async function waitForText(page, selector, pattern) {
 async function run() {
   assert(baseURL, 'RAGRIG_CONSOLE_E2E_BASE_URL is required');
   assert(filePaths.length >= 3, 'RAGRIG_CONSOLE_E2E_FILES must include md/pdf/docx fixtures');
+  assert(failureFilePath, 'RAGRIG_CONSOLE_E2E_FAILURE_FILE is required');
 
   const launchOptions = browserChannel ? { headless, channel: browserChannel } : { headless };
   const browser = await chromium.launch(launchOptions);
@@ -56,6 +58,39 @@ async function run() {
     await page.click('#pilot-answer-smoke');
     await waitForText(page, '#pilot-output', /"detail"/);
 
+    await page.fill('#pilot-kb-name', 'local-pilot-e2e-failure');
+    await page.setInputFiles('#pilot-file-input', failureFilePath);
+    await waitForText(page, '#pilot-file-list', /pilot-console-e2e-bad\.txt/);
+    const failureUploadResponsePromise = page.waitForResponse(
+      (response) => response.url().includes('/knowledge-bases/local-pilot-e2e-failure/upload')
+        && response.request().method() === 'POST',
+      { timeout },
+    );
+    await page.click('#pilot-upload-files');
+    const failureUploadResponse = await failureUploadResponsePromise;
+    assert(failureUploadResponse.status() === 202, `failure upload returned ${failureUploadResponse.status()}`);
+    const failureUpload = await failureUploadResponse.json();
+    assert(failureUpload.ingestion?.failed_count === 1, `expected one parser failure: ${JSON.stringify(failureUpload)}`);
+    await waitForText(page, '#pilot-run-summary', /Action required/);
+    await waitForText(page, '#pilot-run-summary', /pilot-console-e2e-bad\.txt/);
+    await waitForText(page, '#pilot-run-summary', /failure_reason|error:/);
+    await page.locator('[data-pilot-retry-run]').waitFor({ timeout });
+
+    const retryResponsePromise = page.waitForResponse(
+      (response) => response.url().includes('/pipeline-runs/')
+        && response.url().includes('/retry')
+        && response.request().method() === 'POST',
+      { timeout },
+    );
+    await page.click('[data-pilot-retry-run]');
+    const retryResponse = await retryResponsePromise;
+    assert(retryResponse.status() === 200, `retry returned ${retryResponse.status()}`);
+    const retry = await retryResponse.json();
+    assert(retry.failed === 1, `expected retry to preserve parser failure, not lose source file: ${JSON.stringify(retry)}`);
+    assert(!JSON.stringify(retry).toLowerCase().includes('file not found'), `retry lost upload source file: ${JSON.stringify(retry)}`);
+    await waitForText(page, '#pilot-output', /"failed": 1/);
+
+    await page.fill('#pilot-kb-name', 'local-pilot-e2e');
     await page.setInputFiles('#pilot-file-input', filePaths);
     await waitForText(page, '#pilot-file-list', /pilot-console-e2e\.md/);
     await waitForText(page, '#pilot-file-list', /pilot-console-e2e\.pdf/);
@@ -107,6 +142,10 @@ async function run() {
         indexed_count: upload.indexing.indexed_count,
         chunk_count: upload.indexing.chunk_count,
         failed_count: upload.indexing.failed_count,
+      },
+      failure_status: {
+        ingestion_failed_count: failureUpload.ingestion.failed_count,
+        retry_failed_count: retry.failed,
       },
       answer: {
         grounding_status: answer.grounding_status,

@@ -3045,6 +3045,54 @@ async def test_upload_binary_garbled_html_is_handled_as_failed(tmp_path) -> None
 
 
 @pytest.mark.anyio
+async def test_web_upload_failed_item_keeps_file_available_for_retry(tmp_path) -> None:
+    """A failed browser upload should retain the staged file so retry can re-parse it."""
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "web-upload-retry-source.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    bad_file = tmp_path / "bad.txt"
+    bad_file.write_bytes(b"\xff\xfe\x00\x01")
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with bad_file.open("rb") as file_obj:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("bad.txt", file_obj, "text/plain")},
+            )
+
+    assert response.status_code == 202
+    upload = response.json()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        items_response = await client.get(f"/pipeline-runs/{upload['pipeline_run_id']}/items")
+    assert items_response.status_code == 200
+    item = items_response.json()["items"][0]
+    assert item["status"] == "failed"
+    assert Path(item["document_uri"]).exists()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        retry_response = await client.post(
+            f"/pipeline-run-items/{item['id']}/retry",
+            json={"operator": "local-pilot-test"},
+        )
+
+    assert retry_response.status_code == 200
+    retry = retry_response.json()
+    assert retry["status"] == "failed"
+    assert retry["error_message"] is not None
+    assert "file not found" not in retry["error_message"].lower()
+
+
+@pytest.mark.anyio
 async def test_console_renders_degraded_status_without_white_screen(tmp_path) -> None:
     """After uploading a preview fixture, the console HTML must include degraded/failed
     status indicators and not white-screen."""
