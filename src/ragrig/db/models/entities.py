@@ -324,6 +324,10 @@ class TaskRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     result_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    progress: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class UnderstandingRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):

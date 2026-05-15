@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -338,8 +339,21 @@ def create_app(
             expire_on_commit=False,
         )
 
-    app = FastAPI(title="RAGRig", version=__version__)
     active_task_executor = task_executor or default_task_executor()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            shutdown_task_executor()
+
+    app = FastAPI(title="RAGRig", version=__version__, lifespan=lifespan)
+
+    def shutdown_task_executor() -> None:
+        shutdown = getattr(active_task_executor, "shutdown", None)
+        if shutdown is not None:
+            shutdown(wait=True)
 
     def resolve_vector_backend():
         if active_settings.vector_backend == "pgvector":
@@ -499,8 +513,13 @@ def create_app(
         return {"items": list_pipeline_run_items(session, pipeline_run_id)}
 
     @app.get("/tasks/{task_id}", response_model=None)
-    def task_status(task_id: str) -> dict[str, Any] | JSONResponse:
-        payload = get_task_payload(session_factory=get_session_factory(), task_id=task_id)
+    def task_status(task_id: str, include: str | None = None) -> dict[str, Any] | JSONResponse:
+        include_values = {item.strip() for item in include.split(",")} if include else set()
+        payload = get_task_payload(
+            session_factory=get_session_factory(),
+            task_id=task_id,
+            include_pipeline_run="pipeline_run" in include_values,
+        )
         if payload is None:
             return JSONResponse(status_code=404, content={"error": "task_not_found"})
         return payload
