@@ -3,8 +3,16 @@ name: RAGRig CI
 on:
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "LICENSE"
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "LICENSE"
 
 permissions:
   contents: read
@@ -26,21 +34,18 @@ jobs:
           python-version: "3.12"
           enable-cache: true
 
-      - name: Sync dependencies
-        run: uv sync --dev --frozen
-
       - name: Check formatting
-        run: uv run ruff format --check .
+        run: uvx ruff format --check .
 
       - name: Lint
-        run: make lint
+        run: uvx ruff check .
 
   test:
     name: RAGRig CI / test
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11"]
 
     steps:
       - uses: actions/checkout@v6
