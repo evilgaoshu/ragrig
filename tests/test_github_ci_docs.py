@@ -30,10 +30,16 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "pull_request:" in workflow
     assert "push:" in workflow
     assert "branches: [main]" in workflow
-    assert 'python-version: ["3.11", "3.12"]' in workflow
-    assert "uv sync --dev --frozen" in workflow
-    assert "uv run ruff format --check ." in workflow
-    assert "make lint" in workflow
+    assert 'python-version: ["3.11"]' in workflow
+    assert 'python-version: ["3.11", "3.12"]' not in workflow
+    assert "paths-ignore:" in workflow
+    assert '- "docs/**"' in workflow
+    assert '- "*.md"' in workflow
+    assert '- "LICENSE"' in workflow
+    lint_job = workflow.split("  test:", maxsplit=1)[0]
+    assert "uv sync --dev --frozen" not in lint_job
+    assert "uvx ruff format --check ." in workflow
+    assert "uvx ruff check ." in workflow
     assert "make test-fast" in workflow
     assert "make coverage" in workflow
     assert "make web-check" in workflow
