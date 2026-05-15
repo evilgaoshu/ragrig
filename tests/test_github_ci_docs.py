@@ -30,7 +30,8 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "pull_request:" in workflow
     assert "push:" in workflow
     assert "branches: [main]" in workflow
-    assert 'python-version: ["3.11"]' in workflow
+    assert 'python-version: ["3.12"]' in workflow
+    assert 'python-version: ["3.11"]' not in workflow
     assert 'python-version: ["3.11", "3.12"]' not in workflow
     assert "paths-ignore:" in workflow
     assert '- "docs/**"' in workflow
