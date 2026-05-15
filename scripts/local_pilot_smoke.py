@@ -62,6 +62,14 @@ def _assert(condition: bool, message: str) -> None:
         raise LocalPilotSmokeError(message)
 
 
+def _wait_for_task_completion(client: TestClient, task_id: str, *, attempts: int = 40) -> dict[str, Any]:
+    for _ in range(attempts):
+        payload = _json_response(client.get(f"/tasks/{task_id}"))
+        if payload["status"] in {"completed", "failed"}:
+            return payload
+    raise LocalPilotSmokeError(f"task {task_id} did not complete within timeout")
+
+
 def run_smoke(database_path: Path) -> dict[str, Any]:
     session_factory, engine = _create_file_session_factory(database_path)
     try:
@@ -127,10 +135,14 @@ def run_smoke(database_path: Path) -> dict[str, Any]:
             ),
             expected_status=202,
         )
-        indexing = upload.get("indexing") or {}
-        _assert(indexing.get("indexed_count", 0) >= 1, f"upload did not index: {upload}")
-        _assert(indexing.get("chunk_count", 0) >= 1, f"upload created no chunks: {upload}")
-        _assert(indexing.get("failed_count", 0) == 0, f"indexing failed: {upload}")
+        task_id = upload.get("task_id")
+        _assert(task_id, f"upload did not return task id: {upload}")
+        task_result = _wait_for_task_completion(client, task_id)
+        _assert(task_result["status"] == "completed", f"upload task failed: {task_result}")
+        indexing = (task_result.get("result") or {}).get("indexing") or {}
+        _assert(indexing.get("indexed_count", 0) >= 1, f"upload did not index: {task_result}")
+        _assert(indexing.get("chunk_count", 0) >= 1, f"upload created no chunks: {task_result}")
+        _assert(indexing.get("failed_count", 0) == 0, f"indexing failed: {task_result}")
 
         query = "What does the Local Pilot prove about citations?"
         search = _json_response(
@@ -171,7 +183,12 @@ def run_smoke(database_path: Path) -> dict[str, Any]:
             "model_health": model_health,
             "answer_smoke": answer_smoke,
             "knowledge_base": kb,
-            "upload": upload,
+            "upload": {
+                **upload,
+                "task_status": task_result["status"],
+                "result": task_result.get("result"),
+                "indexing": indexing,
+            },
             "retrieval": {
                 "query": query,
                 "total_results": search["total_results"],

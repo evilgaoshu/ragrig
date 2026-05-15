@@ -1796,17 +1796,6 @@ async def test_upload_supported_md_file_to_kb(tmp_path) -> None:
     assert payload["task_id"] != ""
     assert payload["pipeline_run_id"] is not None
     assert payload["rejected_files"] == 0
-    assert payload["indexing"]["chunk_count"] >= 1
-    assert payload["indexing"]["embedding_count"] >= 1
-
-    with session_factory() as session:
-        from ragrig.db.models import Chunk, Embedding
-
-        chunks = session.scalars(select(Chunk)).all()
-        embeddings = session.scalars(select(Embedding)).all()
-
-    assert len(chunks) >= 1
-    assert len(embeddings) == len(chunks)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         pending = await client.get(f"/tasks/{payload['task_id']}")
@@ -1823,8 +1812,12 @@ async def test_upload_supported_md_file_to_kb(tmp_path) -> None:
     assert completed.status_code == 200
     assert completed.json()["status"] == "completed"
     assert completed.json()["result"]["pipeline_run_id"] == payload["pipeline_run_id"]
+    assert completed.json()["result"]["indexing"]["chunk_count"] >= 1
+    assert completed.json()["result"]["indexing"]["embedding_count"] >= 1
 
     with session_factory() as session:
+        from ragrig.db.models import Chunk, Embedding
+
         versions = session.scalars(select(DocumentVersion)).all()
         chunks = session.scalars(select(Chunk)).all()
         embeddings = session.scalars(select(Embedding)).all()
@@ -1944,6 +1937,7 @@ async def test_create_knowledge_base_endpoint_is_idempotent(tmp_path) -> None:
 async def test_upload_supported_pdf_returns_202(tmp_path) -> None:
     database_path = tmp_path / "web-console-upload-pdf.db"
     session_factory = _create_file_session_factory(database_path)
+    task_executor = ImmediateTaskExecutor()
 
     # Create a minimal PDF-like file
     test_file = tmp_path / "document.pdf"
@@ -1955,7 +1949,11 @@ async def test_upload_supported_pdf_returns_202(tmp_path) -> None:
         get_or_create_knowledge_base(session, "fixture-local")
         session.commit()
 
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -1969,7 +1967,14 @@ async def test_upload_supported_pdf_returns_202(tmp_path) -> None:
     payload = response.json()
     assert payload["accepted_files"] == 1
     assert payload["pipeline_run_id"] is not None
+    assert payload["task_id"] is not None
     assert payload["rejected_files"] == 0
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        completed = await _wait_for_task_completion(client, payload["task_id"])
+
+    assert completed["status"] == "completed"
+    task_executor.join()
 
 
 @pytest.mark.anyio
@@ -3565,12 +3570,17 @@ async def test_console_renders_degraded_status_without_white_screen(tmp_path) ->
 
     database_path = tmp_path / "fixture-console-degraded.db"
     session_factory = _create_file_session_factory(database_path)
+    task_executor = ImmediateTaskExecutor()
 
     with session_factory() as session:
         get_or_create_knowledge_base(session, "fixture-local")
         session.commit()
 
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
     transport = httpx.ASGITransport(app=app)
 
     # Upload a CSV (preview/degraded)
@@ -3579,10 +3589,13 @@ async def test_console_renders_degraded_status_without_white_screen(tmp_path) ->
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         with open(test_file, "rb") as f:
-            await client.post(
+            response = await client.post(
                 "/knowledge-bases/fixture-local/upload",
                 files={"files": ("data.csv", f, "text/csv")},
             )
+
+        payload = response.json()
+        await _wait_for_task_completion(client, payload["task_id"])
 
         # Console page must render without error
         console = await client.get("/console")
@@ -3597,6 +3610,8 @@ async def test_console_renders_degraded_status_without_white_screen(tmp_path) ->
         # Pipeline runs section must be present
         assert "Pipeline Runs" in html or "pipeline" in html.lower()
 
+    task_executor.join()
+
 
 @pytest.mark.anyio
 async def test_console_no_horizontal_overflow_for_long_metadata(tmp_path) -> None:
@@ -3606,12 +3621,17 @@ async def test_console_no_horizontal_overflow_for_long_metadata(tmp_path) -> Non
 
     database_path = tmp_path / "fixture-console-overflow.db"
     session_factory = _create_file_session_factory(database_path)
+    task_executor = ImmediateTaskExecutor()
 
     with session_factory() as session:
         get_or_create_knowledge_base(session, "fixture-local")
         session.commit()
 
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
     transport = httpx.ASGITransport(app=app)
 
     test_file = tmp_path / "data.csv"
@@ -3619,10 +3639,13 @@ async def test_console_no_horizontal_overflow_for_long_metadata(tmp_path) -> Non
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         with open(test_file, "rb") as f:
-            await client.post(
+            response = await client.post(
                 "/knowledge-bases/fixture-local/upload",
                 files={"files": ("data.csv", f, "text/csv")},
             )
+
+        payload = response.json()
+        await _wait_for_task_completion(client, payload["task_id"])
 
         console = await client.get("/console")
         html = console.text
@@ -3636,6 +3659,8 @@ async def test_console_no_horizontal_overflow_for_long_metadata(tmp_path) -> Non
             or "overflow-x: hidden" in html
             or "overflow-x:hidden" in html
         )
+
+    task_executor.join()
 
 
 @pytest.mark.anyio
