@@ -12,6 +12,7 @@ from ragrig.db.models.entities import (
     ProcessingProfileAuditLog,
     ProcessingProfileOverride,
     Source,
+    TaskRecord,
     UnderstandingRun,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "ProcessingProfileAuditLog",
     "ProcessingProfileOverride",
     "Source",
+    "TaskRecord",
     "UnderstandingRun",
 ]

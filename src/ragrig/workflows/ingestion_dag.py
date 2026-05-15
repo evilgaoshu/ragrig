@@ -60,7 +60,7 @@ class IngestionDagReport:
         }
 
 
-def run_ingestion_dag(
+def create_ingestion_dag_run(
     session: Session,
     *,
     knowledge_base_name: str,
@@ -69,7 +69,7 @@ def run_ingestion_dag(
     exclude_patterns: list[str] | None = None,
     max_file_size_bytes: int = 10 * 1024 * 1024,
     failure_node: str | None = None,
-) -> IngestionDagReport:
+) -> PipelineRun:
     if failure_node is not None and failure_node not in DAG_NODE_IDS:
         raise IngestionDagRejected(f"unknown DAG failure node: {failure_node}")
     request = {
@@ -93,6 +93,39 @@ def run_ingestion_dag(
         },
     )
     session.commit()
+    return run
+
+
+def execute_ingestion_dag_run(
+    session: Session,
+    *,
+    pipeline_run_id: str,
+) -> IngestionDagReport:
+    run = session.get(PipelineRun, uuid.UUID(pipeline_run_id))
+    if run is None or run.run_type != "ingestion_dag":
+        raise IngestionDagRejected(f"pipeline run '{pipeline_run_id}' is not an ingestion_dag")
+    return _execute_dag(session, run=run, resumed=False)
+
+
+def run_ingestion_dag(
+    session: Session,
+    *,
+    knowledge_base_name: str,
+    root_path: Path,
+    include_patterns: list[str] | None = None,
+    exclude_patterns: list[str] | None = None,
+    max_file_size_bytes: int = 10 * 1024 * 1024,
+    failure_node: str | None = None,
+) -> IngestionDagReport:
+    run = create_ingestion_dag_run(
+        session,
+        knowledge_base_name=knowledge_base_name,
+        root_path=root_path,
+        include_patterns=include_patterns,
+        exclude_patterns=exclude_patterns,
+        max_file_size_bytes=max_file_size_bytes,
+        failure_node=failure_node,
+    )
     return _execute_dag(session, run=run, resumed=False)
 
 

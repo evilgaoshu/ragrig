@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import gc
+import asyncio
 import json
+import threading
+import time
 import uuid
 import warnings
 from collections.abc import Callable
@@ -17,7 +20,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from ragrig.config import Settings
-from ragrig.db.models import Base, Document, DocumentVersion
+from ragrig.db.models import Base, Chunk, Document, DocumentVersion, Embedding, PipelineRun, TaskRecord
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
@@ -76,6 +79,74 @@ def _seed_documents(tmp_path, files: dict[str, str]):
     for name, content in files.items():
         (docs / name).write_text(content, encoding="utf-8")
     return docs
+
+
+async def _wait_for_task_completion(
+    client: httpx.AsyncClient,
+    task_id: str,
+    *,
+    attempts: int = 40,
+    delay_seconds: float = 0.05,
+) -> dict[str, object]:
+    for _ in range(attempts):
+        response = await client.get(f"/tasks/{task_id}")
+        payload = response.json()
+        if payload["status"] in {"completed", "failed"}:
+            return payload
+        await asyncio.sleep(delay_seconds)
+    raise AssertionError(f"task {task_id} did not complete within timeout")
+
+
+class ControlledTaskExecutor:
+    def __init__(self) -> None:
+        self.jobs: list[Callable[[], None]] = []
+
+    def submit(self, job: Callable[[], None]) -> None:
+        self.jobs.append(job)
+
+    def run_next(self) -> None:
+        assert self.jobs, "expected at least one queued job"
+        job = self.jobs.pop(0)
+        job()
+
+
+class BlockingTaskExecutor:
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.threads: list[threading.Thread] = []
+
+    def submit(self, job: Callable[[], None]) -> None:
+        def _run() -> None:
+            self.started.set()
+            self.release.wait(timeout=5)
+            job()
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+        self.threads.append(thread)
+
+    def wait_until_started(self) -> None:
+        assert self.started.wait(timeout=5), "background job did not start"
+
+    def finish(self) -> None:
+        self.release.set()
+        for thread in self.threads:
+            thread.join(timeout=5)
+
+
+class ImmediateTaskExecutor:
+    def __init__(self) -> None:
+        self.threads: list[threading.Thread] = []
+
+    def submit(self, job: Callable[[], None]) -> None:
+        thread = threading.Thread(target=job, daemon=True)
+        thread.start()
+        self.threads.append(thread)
+
+    def join(self) -> None:
+        for thread in self.threads:
+            thread.join(timeout=5)
 
 
 @pytest.mark.anyio
@@ -306,9 +377,15 @@ async def test_console_api_exposes_real_operations_data(tmp_path) -> None:
 async def test_ingestion_dag_console_api_exposes_failure_and_resume(tmp_path) -> None:
     database_path = tmp_path / "web-console-dag.db"
     session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
+    task_executor = ControlledTaskExecutor()
     docs = _seed_documents(tmp_path, {"dag.md": "# DAG\n\nfixture"})
+
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
+    transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         created = await client.post(
@@ -319,16 +396,26 @@ async def test_ingestion_dag_console_api_exposes_failure_and_resume(tmp_path) ->
                 "failure_node": "embed",
             },
         )
+
+    assert created.status_code == 202
+    task_id = created.json()["task_id"]
+    pipeline_run_id = created.json()["pipeline_run_id"]
+
+    task_executor.run_next()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        task_payload = await client.get(f"/tasks/{task_id}")
         resumed = await client.post(
-            f"/pipeline-runs/{created.json()['pipeline_run_id']}/dag-resume"
+            f"/pipeline-runs/{pipeline_run_id}/dag-resume"
         )
         duplicate = await client.post(
-            f"/pipeline-runs/{created.json()['pipeline_run_id']}/dag-resume"
+            f"/pipeline-runs/{pipeline_run_id}/dag-resume"
         )
 
-    assert created.status_code == 200
-    assert created.json()["status"] == "completed_with_failures"
-    assert created.json()["failure_queue"][0]["node_id"] == "embed"
+    assert task_payload.status_code == 200
+    assert task_payload.json()["status"] == "completed"
+    assert task_payload.json()["result"]["status"] == "completed_with_failures"
+    assert task_payload.json()["result"]["failure_queue"][0]["node_id"] == "embed"
     assert resumed.status_code == 200
     assert resumed.json()["status"] == "completed"
     assert resumed.json()["failure_queue"][0]["status"] == "resolved"
@@ -355,6 +442,376 @@ async def test_model_list_and_speed_test_endpoints_degrade_without_credentials(t
     assert speed.status_code == 200
     assert speed.json()["status"] == "missing_credentials"
     assert speed.json()["measurement"] == "model_list_latency_ms"
+
+
+@pytest.mark.anyio
+async def test_task_status_endpoint_returns_404_for_unknown_task(tmp_path) -> None:
+    database_path = tmp_path / "web-console-task-404.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get(f"/tasks/{uuid.uuid4()}")
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "task_not_found"
+
+
+@pytest.mark.anyio
+async def test_task_status_endpoint_returns_404_for_invalid_uuid(tmp_path) -> None:
+    database_path = tmp_path / "web-console-task-invalid-id.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/tasks/abc")
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "task_not_found"
+
+
+@pytest.mark.anyio
+async def test_ingestion_dag_returns_task_id_and_runs_in_background(tmp_path) -> None:
+    database_path = tmp_path / "web-console-dag-async.db"
+    session_factory = _create_file_session_factory(database_path)
+    task_executor = ControlledTaskExecutor()
+    docs = _seed_documents(tmp_path, {"dag.md": "# DAG\n\nfixture"})
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        created = await client.post(
+            "/pipeline-dags/ingestion",
+            json={
+                "knowledge_base": "dag-console",
+                "root_path": str(docs),
+            },
+        )
+
+    assert created.status_code == 202
+    payload = created.json()
+    assert payload["task_id"]
+    assert payload["pipeline_run_id"]
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        pending = await client.get(f"/tasks/{payload['task_id']}")
+
+    assert pending.status_code == 200
+    assert pending.json()["status"] == "pending"
+    assert pending.json()["result"] is None
+
+    task_executor.run_next()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        completed = await client.get(f"/tasks/{payload['task_id']}")
+
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["result"]["pipeline_run_id"] == payload["pipeline_run_id"]
+    assert completed.json()["result"]["status"] in {"completed", "completed_with_failures"}
+
+
+@pytest.mark.anyio
+async def test_health_stays_reachable_during_concurrent_background_uploads(tmp_path) -> None:
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "web-console-upload-concurrency.db"
+    session_factory = _create_file_session_factory(database_path)
+    blocking_executor = BlockingTaskExecutor()
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    upload_files: list[Path] = []
+    for index in range(3):
+        test_file = tmp_path / f"upload-{index}.md"
+        test_file.write_text(f"# Upload {index}\n\ncontent", encoding="utf-8")
+        upload_files.append(test_file)
+
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=blocking_executor,
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async def _upload(path: Path) -> httpx.Response:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with open(path, "rb") as handle:
+                return await client.post(
+                    "/knowledge-bases/fixture-local/upload",
+                    files={"files": (path.name, handle, "text/markdown")},
+                )
+
+    tasks = [
+        asyncio.create_task(_upload(path))
+        for path in upload_files
+    ]
+    await asyncio.sleep(0.1)
+    blocking_executor.wait_until_started()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        health = await client.get("/health")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "healthy"
+
+    blocking_executor.finish()
+    responses = await asyncio.gather(*tasks)
+    assert all(response.status_code == 202 for response in responses)
+
+
+@pytest.mark.anyio
+async def test_upload_more_than_ten_files_returns_400(tmp_path) -> None:
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "web-console-upload-too-many.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    upload_files: list[Path] = []
+    for index in range(11):
+        test_file = tmp_path / f"too-many-{index}.md"
+        test_file.write_text(f"# Upload {index}\n", encoding="utf-8")
+        upload_files.append(test_file)
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    request_files = []
+    handles = []
+    try:
+        for path in upload_files:
+            handle = open(path, "rb")
+            handles.append(handle)
+            request_files.append(("files", (path.name, handle, "text/markdown")))
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files=request_files,
+            )
+    finally:
+        for handle in handles:
+            handle.close()
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "too many files: 11. Maximum 10 files per request."
+
+
+@pytest.mark.anyio
+async def test_upload_background_task_cleans_up_staging_dir(tmp_path) -> None:
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "web-console-upload-cleanup.db"
+    session_factory = _create_file_session_factory(database_path)
+    task_executor = ControlledTaskExecutor()
+    test_file = tmp_path / "cleanup.md"
+    test_file.write_text("# cleanup\n", encoding="utf-8")
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as handle:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": (test_file.name, handle, "text/markdown")},
+            )
+
+    assert response.status_code == 202
+    task_id = response.json()["task_id"]
+
+    with session_factory() as session:
+        task_record = session.get(TaskRecord, uuid.UUID(task_id))
+        assert task_record is not None
+        staged_path = Path(task_record.payload_json["staged_files"][0]["path"])
+
+    assert staged_path.exists()
+    assert staged_path.parent.exists()
+
+    task_executor.run_next()
+
+    assert not staged_path.exists()
+    assert not staged_path.parent.exists()
+
+
+@pytest.mark.anyio
+async def test_upload_rejected_files_do_not_leave_staging_dir(tmp_path, monkeypatch) -> None:
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "web-console-upload-rejected-cleanup.db"
+    session_factory = _create_file_session_factory(database_path)
+    staged_root = tmp_path / "rejected-stage"
+
+    def fake_mkdtemp(*args, **kwargs) -> str:
+        staged_root.mkdir(exist_ok=True)
+        return str(staged_root)
+
+    monkeypatch.setattr("ragrig.tasks.tempfile.mkdtemp", fake_mkdtemp)
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    test_file = tmp_path / "unsupported.jpg"
+    test_file.write_bytes(b"\xff\xd8\xff")
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as handle:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": (test_file.name, handle, "image/jpeg")},
+            )
+
+    assert response.status_code == 415
+    assert not staged_root.exists()
+
+
+@pytest.mark.anyio
+async def test_upload_tasks_serialize_indexing_per_knowledge_base(tmp_path, monkeypatch) -> None:
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "web-console-upload-serialized-indexing.db"
+    session_factory = _create_file_session_factory(database_path)
+    task_executor = ImmediateTaskExecutor()
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    upload_files: list[Path] = []
+    for index in range(2):
+        test_file = tmp_path / f"serialize-{index}.md"
+        test_file.write_text(f"# Serialize {index}\n", encoding="utf-8")
+        upload_files.append(test_file)
+
+    active_calls = 0
+    max_active_calls = 0
+    lock = threading.Lock()
+
+    def fake_index_knowledge_base(*, session, knowledge_base_name: str, **_kwargs):
+        nonlocal active_calls, max_active_calls
+        with lock:
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+        time.sleep(0.1)
+        with lock:
+            active_calls -= 1
+
+        class _Report:
+            pipeline_run_id = uuid.uuid4()
+            indexed_count = 1
+            skipped_count = 0
+            failed_count = 0
+            chunk_count = 1
+            embedding_count = 1
+
+        return _Report()
+
+    monkeypatch.setattr("ragrig.tasks.index_knowledge_base", fake_index_knowledge_base)
+
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async def _upload(path: Path) -> str:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            with open(path, "rb") as handle:
+                response = await client.post(
+                    "/knowledge-bases/fixture-local/upload",
+                    files={"files": (path.name, handle, "text/markdown")},
+                )
+        assert response.status_code == 202
+        return response.json()["task_id"]
+
+    task_ids = await asyncio.gather(*[_upload(path) for path in upload_files])
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        for task_id in task_ids:
+            payload = await _wait_for_task_completion(client, task_id)
+            assert payload["status"] == "completed"
+
+    task_executor.join()
+
+    assert max_active_calls == 1
+
+
+@pytest.mark.anyio
+async def test_upload_task_marks_pipeline_run_failed_when_indexing_fails(tmp_path, monkeypatch) -> None:
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "web-console-upload-index-failure.db"
+    session_factory = _create_file_session_factory(database_path)
+    task_executor = ControlledTaskExecutor()
+    test_file = tmp_path / "index-failure.md"
+    test_file.write_text("# failure\n", encoding="utf-8")
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    def fake_index_knowledge_base(*, session, knowledge_base_name: str, **_kwargs):
+        raise RuntimeError("indexing exploded")
+
+    monkeypatch.setattr("ragrig.tasks.index_knowledge_base", fake_index_knowledge_base)
+
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as handle:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": (test_file.name, handle, "text/markdown")},
+            )
+
+    assert response.status_code == 202
+    task_id = response.json()["task_id"]
+    pipeline_run_id = response.json()["pipeline_run_id"]
+
+    task_executor.run_next()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        task_payload = await client.get(f"/tasks/{task_id}")
+
+    assert task_payload.status_code == 200
+    assert task_payload.json()["status"] == "failed"
+    assert task_payload.json()["error"] == "indexing exploded"
+
+    with session_factory() as session:
+        run = session.get(PipelineRun, uuid.UUID(pipeline_run_id))
+
+    assert run is not None
+    assert run.status == "failed"
+    assert run.error_message == "indexing exploded"
 
 
 @pytest.mark.anyio
@@ -1307,6 +1764,7 @@ async def test_console_shows_upload_section(tmp_path) -> None:
 async def test_upload_supported_md_file_to_kb(tmp_path) -> None:
     database_path = tmp_path / "web-console-upload-md.db"
     session_factory = _create_file_session_factory(database_path)
+    task_executor = ControlledTaskExecutor()
 
     test_file = tmp_path / "test-upload.md"
     test_file.write_text("# Test Upload\n\nThis is a test document.", encoding="utf-8")
@@ -1317,7 +1775,11 @@ async def test_upload_supported_md_file_to_kb(tmp_path) -> None:
         get_or_create_knowledge_base(session, "fixture-local")
         session.commit()
 
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -1330,8 +1792,9 @@ async def test_upload_supported_md_file_to_kb(tmp_path) -> None:
     assert response.status_code == 202
     payload = response.json()
     assert payload["accepted_files"] == 1
+    assert payload["task_id"] is not None
+    assert payload["task_id"] != ""
     assert payload["pipeline_run_id"] is not None
-    assert payload["pipeline_run_id"] != ""
     assert payload["rejected_files"] == 0
     assert payload["indexing"]["chunk_count"] >= 1
     assert payload["indexing"]["embedding_count"] >= 1
@@ -1344,6 +1807,31 @@ async def test_upload_supported_md_file_to_kb(tmp_path) -> None:
 
     assert len(chunks) >= 1
     assert len(embeddings) == len(chunks)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        pending = await client.get(f"/tasks/{payload['task_id']}")
+
+    assert pending.status_code == 200
+    assert pending.json()["status"] == "pending"
+    assert pending.json()["result"] is None
+
+    task_executor.run_next()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        completed = await client.get(f"/tasks/{payload['task_id']}")
+
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["result"]["pipeline_run_id"] == payload["pipeline_run_id"]
+
+    with session_factory() as session:
+        versions = session.scalars(select(DocumentVersion)).all()
+        chunks = session.scalars(select(Chunk)).all()
+        embeddings = session.scalars(select(Embedding)).all()
+
+    assert len(versions) == 1
+    assert len(chunks) >= 1
+    assert len(embeddings) >= 1
 
 
 @pytest.mark.anyio
@@ -1405,6 +1893,11 @@ async def test_upload_preview_format_produces_warning(tmp_path) -> None:
     assert payload["accepted_files"] == 1
     assert len(payload["warnings"]) >= 1
     assert payload["warnings"][0]["status"] == "preview"
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        completed = await _wait_for_task_completion(client, payload["task_id"])
+
+    assert completed["status"] == "completed"
 
 
 @pytest.mark.anyio
@@ -1483,6 +1976,7 @@ async def test_upload_supported_pdf_returns_202(tmp_path) -> None:
 async def test_upload_preview_format_tracks_parser_in_pipeline_items(tmp_path) -> None:
     database_path = tmp_path / "web-console-upload-preview-items.db"
     session_factory = _create_file_session_factory(database_path)
+    task_executor = ControlledTaskExecutor()
 
     test_file = tmp_path / "data.csv"
     test_file.write_text("col1,col2\na,b", encoding="utf-8")
@@ -1493,7 +1987,11 @@ async def test_upload_preview_format_tracks_parser_in_pipeline_items(tmp_path) -
         get_or_create_knowledge_base(session, "fixture-local")
         session.commit()
 
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -1507,8 +2005,11 @@ async def test_upload_preview_format_tracks_parser_in_pipeline_items(tmp_path) -
     payload = response.json()
     assert payload["pipeline_run_id"] is not None
     assert payload["pipeline_run_id"] != ""
+    assert payload["task_id"] is not None
     assert payload["warnings"][0]["parser_id"] == "parser.csv"
     assert payload["warnings"][0]["fallback_policy"] == "parse_as_plaintext"
+
+    task_executor.run_next()
 
     # Query pipeline run items
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -1528,6 +2029,7 @@ async def test_upload_preview_format_tracks_parser_in_pipeline_items(tmp_path) -
 async def test_upload_preview_html_tracks_parser_and_stripped_reason(tmp_path) -> None:
     database_path = tmp_path / "web-console-upload-html-items.db"
     session_factory = _create_file_session_factory(database_path)
+    task_executor = ControlledTaskExecutor()
 
     test_file = tmp_path / "page.html"
     test_file.write_text("<html><body><p>hello</p></body></html>", encoding="utf-8")
@@ -1538,7 +2040,11 @@ async def test_upload_preview_html_tracks_parser_and_stripped_reason(tmp_path) -
         get_or_create_knowledge_base(session, "fixture-local")
         session.commit()
 
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -1550,8 +2056,11 @@ async def test_upload_preview_html_tracks_parser_and_stripped_reason(tmp_path) -
 
     assert response.status_code == 202
     payload = response.json()
+    assert payload["task_id"] is not None
     assert payload["warnings"][0]["parser_id"] == "parser.html"
     assert payload["warnings"][0]["fallback_policy"] == "strip_tags_then_plaintext"
+
+    task_executor.run_next()
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         items_response = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
@@ -2899,6 +3408,7 @@ async def test_upload_csv_fixture_corpus_items_have_stable_metadata(tmp_path) ->
         assert payload["pipeline_run_id"] is not None
 
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            await _wait_for_task_completion(client, payload["task_id"])
             items_resp = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
         assert items_resp.status_code == 200
         items = items_resp.json()["items"]
@@ -2953,6 +3463,7 @@ async def test_upload_html_fixture_corpus_items_have_stable_metadata(tmp_path) -
         payload = response.json()
 
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            await _wait_for_task_completion(client, payload["task_id"])
             items_resp = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
         assert items_resp.status_code == 200
         items = items_resp.json()["items"]
@@ -2996,6 +3507,7 @@ async def test_upload_binary_garbled_csv_is_handled_as_failed(tmp_path) -> None:
     assert payload["pipeline_run_id"] is not None
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await _wait_for_task_completion(client, payload["task_id"])
         items_resp = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
     assert items_resp.status_code == 200
     items = items_resp.json()["items"]
@@ -3037,6 +3549,7 @@ async def test_upload_binary_garbled_html_is_handled_as_failed(tmp_path) -> None
     payload = response.json()
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await _wait_for_task_completion(client, payload["task_id"])
         items_resp = await client.get(f"/pipeline-runs/{payload['pipeline_run_id']}/items")
     assert items_resp.status_code == 200
     items = items_resp.json()["items"]
@@ -3138,7 +3651,12 @@ async def test_pipeline_run_items_failure_is_deterministic(tmp_path) -> None:
         get_or_create_knowledge_base(session, "fixture-local")
         session.commit()
 
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    task_executor = ControlledTaskExecutor()
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
 
     test_file = tmp_path / "bad.csv"
     test_file.write_bytes(b"\xff\xfe\x00")
@@ -3151,6 +3669,7 @@ async def test_pipeline_run_items_failure_is_deterministic(tmp_path) -> None:
                     "/knowledge-bases/fixture-local/upload",
                     files={"files": (test_file.name, f, "text/csv")},
                 )
+            task_executor.run_next()
             run_id = resp.json()["pipeline_run_id"]
             items_resp = await client.get(f"/pipeline-runs/{run_id}/items")
             item = items_resp.json()["items"][0]
