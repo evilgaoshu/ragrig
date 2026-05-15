@@ -431,6 +431,149 @@ async def test_ingestion_dag_console_api_exposes_failure_and_resume(tmp_path) ->
 
 
 @pytest.mark.anyio
+async def test_task_retry_recovers_failed_ingestion_dag_without_overwriting_history(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "web-console-task-retry.db"
+    session_factory = _create_file_session_factory(database_path)
+    task_executor = ControlledTaskExecutor()
+    docs = _seed_documents(tmp_path, {"notes.md": "# Notes\n"})
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        created = await client.post(
+            "/pipeline-dags/ingestion",
+            json={
+                "knowledge_base": "fixture-local",
+                "root_path": str(docs),
+                "failure_node": "embed",
+            },
+        )
+
+    assert created.status_code == 202
+    original_task_id = created.json()["task_id"]
+    original_run_id = created.json()["pipeline_run_id"]
+    task_executor.run_next()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        original_before = await client.get(f"/tasks/{original_task_id}?include=pipeline_run")
+        retried = await client.post(f"/tasks/{original_task_id}/retry")
+
+    assert original_before.status_code == 200
+    original_payload = original_before.json()
+    assert original_payload["status"] == "completed"
+    assert original_payload["result"]["status"] == "completed_with_failures"
+    assert original_payload["retryable"] is True
+    assert original_payload["attempt_count"] == 1
+    assert original_payload["last_error"] == "embed_failure_fixture"
+    assert original_payload["pipeline_run"]["status"] == "completed_with_failures"
+
+    assert retried.status_code == 202
+    retry_payload = retried.json()
+    retry_task_id = retry_payload["task_id"]
+    retry_run_id = retry_payload["pipeline_run_id"]
+    assert retry_payload["previous_task_id"] == original_task_id
+    assert retry_run_id != original_run_id
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        original_after = await client.get(f"/tasks/{original_task_id}")
+
+    assert original_after.json()["retryable"] is False
+    assert original_after.json()["next_task_id"] == retry_task_id
+
+    task_executor.run_next()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        retry_result = await client.get(f"/tasks/{retry_task_id}?include=pipeline_run")
+
+    assert retry_result.status_code == 200
+    retry_result_payload = retry_result.json()
+    assert retry_result_payload["status"] == "completed"
+    assert retry_result_payload["result"]["status"] == "completed"
+    assert retry_result_payload["attempt_count"] == 2
+    assert retry_result_payload["previous_task_id"] == original_task_id
+    assert retry_result_payload["pipeline_run"]["status"] == "completed"
+
+    with session_factory() as session:
+        original_task = session.get(TaskRecord, uuid.UUID(original_task_id))
+        retry_task = session.get(TaskRecord, uuid.UUID(retry_task_id))
+        original_run = session.get(PipelineRun, uuid.UUID(original_run_id))
+        retry_run = session.get(PipelineRun, uuid.UUID(retry_run_id))
+
+    assert original_task is not None
+    assert original_task.status == "completed"
+    assert original_task.result_json["status"] == "completed_with_failures"
+    assert original_task.payload_json["next_task_id"] == retry_task_id
+    assert retry_task is not None
+    assert retry_task.status == "completed"
+    assert retry_task.payload_json["previous_task_id"] == original_task_id
+    assert original_run is not None
+    assert original_run.status == "completed_with_failures"
+    assert retry_run is not None
+    assert retry_run.status == "completed"
+
+
+@pytest.mark.anyio
+async def test_task_retry_rejects_duplicate_retry_before_retry_runs(tmp_path) -> None:
+    database_path = tmp_path / "web-console-task-retry-duplicate.db"
+    session_factory = _create_file_session_factory(database_path)
+    task_executor = ControlledTaskExecutor()
+    docs = _seed_documents(tmp_path, {"notes.md": "# Notes\n"})
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        created = await client.post(
+            "/pipeline-dags/ingestion",
+            json={
+                "knowledge_base": "fixture-local",
+                "root_path": str(docs),
+                "failure_node": "index",
+            },
+        )
+
+    assert created.status_code == 202
+    original_task_id = created.json()["task_id"]
+    original_run_id = created.json()["pipeline_run_id"]
+    task_executor.run_next()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        first_retry = await client.post(f"/tasks/{original_task_id}/retry")
+        duplicate_retry = await client.post(f"/tasks/{original_task_id}/retry")
+
+    assert first_retry.status_code == 202
+    assert duplicate_retry.status_code == 409
+    assert duplicate_retry.json() == {
+        "error": "task_not_retryable",
+        "message": "A retry task already exists for this task.",
+        "retryable": False,
+    }
+    assert len(task_executor.jobs) == 1
+
+    with session_factory() as session:
+        original_task = session.get(TaskRecord, uuid.UUID(original_task_id))
+        original_run = session.get(PipelineRun, uuid.UUID(original_run_id))
+        retry_run = session.get(PipelineRun, uuid.UUID(first_retry.json()["pipeline_run_id"]))
+
+    assert original_task is not None
+    assert original_task.result_json["status"] == "completed_with_failures"
+    assert original_task.payload_json["next_task_id"] == first_retry.json()["task_id"]
+    assert original_run is not None
+    assert original_run.status == "completed_with_failures"
+    assert retry_run is not None
+    assert retry_run.status == "running"
+
+
+@pytest.mark.anyio
 async def test_model_list_and_speed_test_endpoints_degrade_without_credentials(tmp_path) -> None:
     database_path = tmp_path / "web-console-model-probes.db"
     session_factory = _create_file_session_factory(database_path)

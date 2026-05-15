@@ -35,6 +35,8 @@ from ragrig.workflows import IngestionDagRejected, execute_ingestion_dag_run
 TaskJob = Callable[[], None]
 _INDEX_LOCKS_GUARD = threading.Lock()
 _INDEX_LOCKS: dict[str, threading.Lock] = {}
+_TASK_RETRY_LOCKS_GUARD = threading.Lock()
+_TASK_RETRY_LOCKS: dict[str, threading.Lock] = {}
 
 
 class TaskExecutor:
@@ -75,9 +77,18 @@ def enqueue_task(
     task_type: str,
     payload_json: dict[str, Any],
     runner: Callable[[], dict[str, Any]],
+    initial_attempt_count: int = 0,
+    on_task_created: Callable[[Session, Any], None] | None = None,
 ) -> str:
     with session_factory() as session:
-        task = create_task_record(session, task_type=task_type, payload_json=payload_json)
+        task = create_task_record(
+            session,
+            task_type=task_type,
+            payload_json=payload_json,
+            attempt_count=initial_attempt_count,
+        )
+        if on_task_created is not None:
+            on_task_created(session, task)
         session.commit()
         task_id = str(task.id)
 
@@ -126,15 +137,254 @@ def summarize_exception(exc: BaseException, *, max_chars: int = 2000) -> str:
 
 
 def serialize_task_record(task) -> dict[str, Any]:
+    payload = task.payload_json or {}
     return {
         "task_id": str(task.id),
         "status": task.status,
         "result": task.result_json,
         "error": task.error,
+        "attempt_count": task.attempt_count,
+        "retryable": is_task_retryable(task),
+        "last_error": task_last_error(task),
+        "previous_task_id": payload.get("previous_task_id"),
+        "next_task_id": payload.get("next_task_id"),
         "started_at": task.started_at.isoformat() if task.started_at else None,
         "finished_at": task.finished_at.isoformat() if task.finished_at else None,
         "progress": task.progress,
     }
+
+
+class TaskRetryError(Exception):
+    def __init__(self, code: str, message: str, *, status_code: int = 409) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+
+
+def task_last_error(task) -> str | None:
+    if task.error:
+        return task.error
+    result = task.result_json or {}
+    if isinstance(result, dict):
+        failure_queue = result.get("failure_queue")
+        if isinstance(failure_queue, list):
+            for entry in failure_queue:
+                if isinstance(entry, dict) and entry.get("reason"):
+                    return str(entry["reason"])
+        failed_node = result.get("failed_node")
+        if failed_node:
+            return str(failed_node)
+    return None
+
+
+def is_task_retryable(task) -> bool:
+    if (task.payload_json or {}).get("next_task_id"):
+        return False
+    if task.task_type == "pipeline_dag_ingestion":
+        result = task.result_json or {}
+        return (
+            task.status in {"completed", "failed"}
+            and isinstance(result, dict)
+            and result.get("status") == "completed_with_failures"
+        )
+    if task.task_type == "knowledge_base_upload":
+        return task.status == "failed" and _staged_files_available(task.payload_json or {})
+    return False
+
+
+def retry_task(
+    *,
+    session_factory: Callable[[], Session],
+    task_executor: TaskExecutor,
+    task_id: str,
+) -> dict[str, Any]:
+    with task_retry_lock(task_id):
+        with session_factory() as session:
+            task = get_task_record(session, task_id)
+            if task is None:
+                raise TaskRetryError(
+                    "task_not_found",
+                    "Task not found.",
+                    status_code=404,
+                )
+            if not is_task_retryable(task):
+                raise TaskRetryError("task_not_retryable", _not_retryable_reason(task))
+            previous_attempt_count = task.attempt_count
+            previous_payload = dict(task.payload_json or {})
+            previous_pipeline_run_id = previous_payload.get("pipeline_run_id")
+            task_type = task.task_type
+
+        if task_type == "pipeline_dag_ingestion":
+            prepared = _prepare_pipeline_dag_retry(
+                session_factory=session_factory,
+                previous_task_id=task_id,
+                previous_payload=previous_payload,
+            )
+        elif task_type == "knowledge_base_upload":
+            prepared = _prepare_upload_retry(
+                session_factory=session_factory,
+                previous_task_id=task_id,
+                previous_payload=previous_payload,
+            )
+        else:
+            raise TaskRetryError("unsupported_task_type", f"Task type '{task_type}' cannot retry.")
+
+        payload_json = {
+            **prepared["payload_json"],
+            "previous_task_id": task_id,
+            "previous_pipeline_run_id": previous_pipeline_run_id,
+            "retry_idempotency_key": _retry_idempotency_key(
+                task_type=task_type,
+                previous_task_id=task_id,
+                pipeline_run_id=prepared.get("pipeline_run_id"),
+            ),
+        }
+
+        def _link_previous(session: Session, new_task) -> None:
+            previous = get_task_record(session, task_id)
+            if previous is None:
+                raise TaskRetryError("task_not_found", "Task not found.", status_code=404)
+            if (previous.payload_json or {}).get("next_task_id"):
+                raise TaskRetryError(
+                    "duplicate_retry",
+                    "A retry task already exists for this task.",
+                )
+            previous.payload_json = {
+                **(previous.payload_json or {}),
+                "next_task_id": str(new_task.id),
+                "next_pipeline_run_id": prepared.get("pipeline_run_id"),
+            }
+
+        new_task_id = enqueue_task(
+            session_factory=session_factory,
+            task_executor=task_executor,
+            task_type=task_type,
+            payload_json=payload_json,
+            runner=prepared["runner"],
+            initial_attempt_count=previous_attempt_count,
+            on_task_created=_link_previous,
+        )
+        return {
+            "task_id": new_task_id,
+            "previous_task_id": task_id,
+            "pipeline_run_id": prepared.get("pipeline_run_id"),
+            "status": "pending",
+        }
+
+
+def task_retry_lock(task_id: str) -> threading.Lock:
+    with _TASK_RETRY_LOCKS_GUARD:
+        lock = _TASK_RETRY_LOCKS.get(task_id)
+        if lock is None:
+            lock = threading.Lock()
+            _TASK_RETRY_LOCKS[task_id] = lock
+        return lock
+
+
+def _prepare_pipeline_dag_retry(
+    *,
+    session_factory: Callable[[], Session],
+    previous_task_id: str,
+    previous_payload: dict[str, Any],
+) -> dict[str, Any]:
+    from ragrig.workflows import create_ingestion_dag_run
+
+    request = {
+        "knowledge_base": previous_payload.get("knowledge_base", "fixture-local"),
+        "root_path": previous_payload["root_path"],
+        "include_patterns": previous_payload.get("include_patterns"),
+        "exclude_patterns": previous_payload.get("exclude_patterns"),
+        "max_file_size_bytes": previous_payload.get("max_file_size_bytes", 10 * 1024 * 1024),
+        "failure_node": None,
+    }
+    with session_factory() as session:
+        run = create_ingestion_dag_run(
+            session,
+            knowledge_base_name=str(request["knowledge_base"]),
+            root_path=Path(str(request["root_path"])),
+            include_patterns=request["include_patterns"],
+            exclude_patterns=request["exclude_patterns"],
+            max_file_size_bytes=int(request["max_file_size_bytes"]),
+            failure_node=None,
+        )
+        pipeline_run_id = str(run.id)
+    payload_json = {
+        **request,
+        "pipeline_run_id": pipeline_run_id,
+        "retry_of": previous_task_id,
+    }
+    return {
+        "payload_json": payload_json,
+        "pipeline_run_id": pipeline_run_id,
+        "runner": lambda: run_ingestion_dag_task(
+            session_factory=session_factory,
+            pipeline_run_id=pipeline_run_id,
+        ),
+    }
+
+
+def _prepare_upload_retry(
+    *,
+    session_factory: Callable[[], Session],
+    previous_task_id: str,
+    previous_payload: dict[str, Any],
+) -> dict[str, Any]:
+    staged_files = list(previous_payload.get("staged_files") or [])
+    knowledge_base = str(previous_payload["knowledge_base"])
+    with session_factory() as session:
+        pipeline_run_id, _source_id = create_upload_pipeline_run(
+            session,
+            kb_name=knowledge_base,
+            staged_files=staged_files,
+        )
+    payload_json = {
+        "knowledge_base": knowledge_base,
+        "pipeline_run_id": pipeline_run_id,
+        "staged_files": staged_files,
+        "retry_of": previous_task_id,
+    }
+    return {
+        "payload_json": payload_json,
+        "pipeline_run_id": pipeline_run_id,
+        "runner": lambda: run_upload_pipeline(
+            session_factory=session_factory,
+            kb_name=knowledge_base,
+            pipeline_run_id=pipeline_run_id,
+            staged_files=staged_files,
+        ),
+    }
+
+
+def _staged_files_available(payload_json: dict[str, Any]) -> bool:
+    staged_files = payload_json.get("staged_files")
+    if not isinstance(staged_files, list) or not staged_files:
+        return False
+    return all(
+        isinstance(staged, dict)
+        and isinstance(staged.get("path"), str)
+        and Path(staged["path"]).exists()
+        for staged in staged_files
+    )
+
+
+def _not_retryable_reason(task) -> str:
+    if (task.payload_json or {}).get("next_task_id"):
+        return "A retry task already exists for this task."
+    if task.task_type == "knowledge_base_upload" and task.status == "failed":
+        return "Upload retry requires retained staged files, but they are not available."
+    if task.task_type not in {"pipeline_dag_ingestion", "knowledge_base_upload"}:
+        return f"Task type '{task.task_type}' cannot retry."
+    return f"Task status '{task.status}' is not retryable."
+
+
+def _retry_idempotency_key(
+    *,
+    task_type: str,
+    previous_task_id: str,
+    pipeline_run_id: str | None,
+) -> str:
+    return f"{task_type}:{previous_task_id}:{pipeline_run_id}"
 
 
 def get_task_payload(
