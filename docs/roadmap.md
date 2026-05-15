@@ -1,65 +1,114 @@
 # RAGRig Roadmap
 
-This roadmap captures the first product shape for RAGRig. It is intentionally small enough to ship as an open-source foundation before expanding into a full knowledge governance platform.
+This roadmap reflects the current state of the project as of May 2026. Completed work is marked. Open items represent active or upcoming scope.
 
-## Phase 0: Project Foundation
+---
 
-- Define project positioning, icon, README, license, and contribution guidelines.
-- Document the initial architecture and RAG pipeline concepts.
-- Choose the first implementation stack and local development workflow.
+## Phase 0: Project Foundation — Done
 
-## Phase 1: Minimal RAG Pipeline
+- Defined project positioning, README, license, and contribution guidelines.
+- Documented initial architecture and RAG pipeline concepts.
+- Chose implementation stack (Python/FastAPI, PostgreSQL/pgvector) and local development workflow.
+- Published MVP spec and supply chain policy.
 
-Phase 1 starts with a scaffold-only checkpoint before the first end-to-end ingestion loop lands.
+---
+
+## Phase 1: Minimal RAG Pipeline — Done
 
 ### Phase 1a: Scaffold and Developer Workflow
 
-- Commit the Python/FastAPI project skeleton.
-- Ship Docker Compose for app + PostgreSQL/pgvector.
-- Add typed configuration, env example, lint/format/test commands, and minimal health-check tests.
-- Keep ingestion, parsing, chunking, embedding, and retrieval as later follow-up issues.
+- Python/FastAPI project skeleton with typed configuration and env example.
+- Docker Compose for app and PostgreSQL/pgvector.
+- Lint, format, test, and coverage commands via Makefile.
+- Health-check tests and GitHub Actions baseline CI.
 
 ### Phase 1b: Local Ingestion Foundation
 
-- Ingest explicit local fixture directories into a named knowledge base.
-- Parse Markdown and plain text into real `document_versions`.
+- Ingest local fixture directories into named knowledge bases.
+- Parse Markdown and plain text into `document_versions`.
 - Record pipeline runs, file-level skip reasons, and file-level failures.
-- Keep host-side Compose DB port override support for shared-machine verification.
-- Defer chunking, embedding, retrieval, PDF, and richer connectors to later issues.
+- Host-side Compose DB port override for shared-machine verification.
 
 ### Phase 1c: Retrieval Loop Completion
 
-- Add deterministic cleaning and chunking.
-- Generate embeddings.
-- Index into pgvector.
-- Provide a retrieval API with citations.
+- Deterministic cleaning and chunking pipeline.
+- Embedding generation indexed into pgvector.
+- Hybrid retrieval: dense vector + lexical fusion + optional reranking.
+- Retrieval API with per-result `rank_stage_trace` for full pipeline transparency.
+- Citations linking answers back to source chunks and document versions.
 
-### Phase 1d: Source And Format Expansion
+### Phase 1d: Source and Format Expansion
 
-- Add PDF, DOCX, PPTX, and XLSX parsing.
-- Expand source connectors beyond local directories.
+- PDF, DOCX, PPTX, and XLSX parsing with OCR degradation gate.
+- S3-compatible source connector.
+- Fileshare source plugin (SMB/NFS via paramiko/smbprotocol).
+- Object storage sink plugin.
+- Optional Qdrant vector backend alongside pgvector.
 
-## Phase 2: Governance Core
+---
 
-- Add knowledge base, document, chunk, and pipeline-run versioning.
-- Add metadata schemas and validation.
-- Add document-level and chunk-level access control.
-- Enforce pre-retrieval permission filtering.
-- Add audit events for ingestion, indexing, retrieval, and deletion.
+## Phase 2: Governance Core — Done
 
-## Phase 3: Workflow and Connector Expansion
+- Document-level and chunk-level access control with pre-retrieval permission filtering.
+- ACL policy regression hardening and explain-mode audit.
+- Audit trail for ingestion, indexing, retrieval, and deletion events (EVI-105).
+- Metadata schema validation across pipeline stages.
+- Pipeline-run and document-version versioning.
 
-- Add a lightweight DAG runner for ingestion workflows.
-- Support retries, resumable runs, dry-run mode, and failure queues.
-- Add SMB, NFS, S3, database, Google Drive, wiki, WPS, and OnlyOffice integrations.
-- Add exports to S3, NFS, databases, Markdown, JSONL, and Parquet.
+---
 
-## Phase 4: Evaluation and Operations
+## Phase 3: Workflow and Connector Expansion — Substantially Done
 
-- Add golden question sets.
-- Track retrieval quality, citation quality, refusal behavior, latency, and cost.
-- Compare pipeline and model changes before reindexing production knowledge bases.
-- Add Docker Compose deployment, backup, restore, and upgrade guides.
+**Done:**
+- Lightweight DAG runner for ingestion workflows (`workflows/ingestion_dag.py`).
+- Retries, resumable runs, dry-run mode, and failure queues.
+- Operational console: source config drafts, dry-run ingestion, retry/resume UI.
+- Enterprise connector workflow stubs.
+- Google Workspace source connector (pilot, contract-aligned).
+- S3 source connector fully wired into console ingest flow.
+- Parquet export dependency in place (`pyarrow`).
+
+**Open:**
+- Database source connectors (PostgreSQL, MySQL read path).
+- Markdown, JSONL, and NFS export sinks.
+- Wiki, WPS, and OnlyOffice connectors.
+
+---
+
+## Phase 4: Evaluation and Operations — Substantially Done
+
+**Done:**
+- Docker Compose deployment, backup, restore, and upgrade smoke (EVI-108).
+- Retrieval benchmark integrity guard with CI artifact and PR summary badge.
+- Evaluation baseline: schema compatibility, manifest canonicalization, hash-mismatch fixes.
+- Sanitizer drift history CI artifact and console badge.
+- Answer live smoke diagnostics with JSON report and CI badge.
+- Understanding export diff summary and artifact retention.
+
+**Open:**
+- Authored golden question sets for domain-specific retrieval quality regression.
+- Cost and latency tracking across pipeline and model changes.
+- Full evaluation comparison workflow: before/after reindex diff report.
+
+---
+
+## Local Pilot — Active
+
+This section was not in the original roadmap. It emerged to give contributors and operators a fast diagnostic path without needing a full production deployment.
+
+**Done:**
+- Dockerized local pilot environment.
+- Interactive console wizard for local setup.
+- Model provider smoke tests (Ollama, LM Studio, OpenAI-compatible).
+- S3 ingest console flow.
+- Go/no-go evidence pack generation for CI.
+- SQLite-backed local storage with ResourceWarning audit and cleanup.
+
+**Open:**
+- Google Workspace pilot diagnostics parity with production contract.
+- Automated nightly evidence smoke in CI.
+
+---
 
 ## Non-goals for the First Release
 
