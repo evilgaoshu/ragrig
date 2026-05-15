@@ -1,5 +1,6 @@
 import tempfile
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
@@ -1138,7 +1139,9 @@ def create_app(
                 },
             )
 
-        with tempfile.TemporaryDirectory(prefix="ragrig-upload-") as staging_dir:
+        # Keep browser-uploaded source files available after the request so failed
+        # pipeline items can be retried from the Web Console.
+        with nullcontext(tempfile.mkdtemp(prefix="ragrig-upload-")) as staging_dir:
             staging_path = Path(staging_dir)
             saved_paths: list[Path] = []
 
@@ -1310,6 +1313,11 @@ def create_app(
                 content={
                     "pipeline_run_id": str(run.id),
                     "indexing": indexing_payload,
+                    "ingestion": {
+                        "created_documents": created_documents,
+                        "created_versions": created_versions,
+                        "failed_count": failed_count,
+                    },
                     "accepted_files": len(saved_paths),
                     "rejected_files": len(rejected),
                     "rejections": rejected,
