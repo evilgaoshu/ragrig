@@ -16,6 +16,11 @@ def test_alembic_upgrade_sql_renders_successfully() -> None:
     assert result.returncode == 0, result.stderr
     assert "CREATE EXTENSION IF NOT EXISTS vector" in result.stdout
     assert "CREATE TABLE knowledge_bases" in result.stdout
+    assert "CREATE TABLE workspaces" in result.stdout
+    assert "CREATE TABLE api_keys" in result.stdout
+    assert "CREATE TABLE user_sessions" in result.stdout
+    assert "INSERT INTO workspaces" in result.stdout
+    assert "'default'" in result.stdout
 
 
 def test_alembic_downgrade_sql_renders_successfully() -> None:

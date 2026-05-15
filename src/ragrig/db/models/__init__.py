@@ -1,5 +1,6 @@
 from ragrig.db.models.base import Base
 from ragrig.db.models.entities import (
+    ApiKey,
     AuditEvent,
     Chunk,
     Document,
@@ -14,10 +15,15 @@ from ragrig.db.models.entities import (
     Source,
     TaskRecord,
     UnderstandingRun,
+    User,
+    UserSession,
+    Workspace,
+    WorkspaceMembership,
 )
 
 __all__ = [
     "Base",
+    "ApiKey",
     "AuditEvent",
     "Chunk",
     "Document",
@@ -32,4 +38,8 @@ __all__ = [
     "Source",
     "TaskRecord",
     "UnderstandingRun",
+    "User",
+    "UserSession",
+    "Workspace",
+    "WorkspaceMembership",
 ]
