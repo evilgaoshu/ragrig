@@ -29,6 +29,8 @@ from scripts.retrieval_benchmark_baseline_refresh import (
     SCHEMA_VERSION,
     _compute_fixture_id,
     _compute_metrics_hash,
+    _is_legacy_path_derived_fixture_id,
+    _legacy_fixture_id_reason,
 )
 
 DEFAULT_BASELINE_PATH = Path("docs/benchmarks/retrieval-benchmark-baseline.json")
@@ -233,6 +235,9 @@ def _check_manifest_compatibility(baseline: dict, current: dict) -> tuple[bool, 
 
     # fixture_id
     baseline_fixture_id = manifest.get("fixture_id")
+    if _is_legacy_path_derived_fixture_id(baseline_fixture_id):
+        return False, _legacy_fixture_id_reason(baseline_fixture_id)
+
     current_fixture_id = current.get("_manifest", {}).get("fixture_id")
     if current_fixture_id is None:
         from scripts.retrieval_benchmark import FIXTURE_ROOT

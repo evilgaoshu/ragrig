@@ -128,6 +128,18 @@ class TestBuildManifest:
 
         assert updated_fixture_id != original_fixture_id
 
+    def test_fixture_id_rejects_known_legacy_snapshot_id(self, monkeypatch):
+        data = _make_baseline([_make_mode("dense")])
+
+        monkeypatch.setattr(
+            retrieval_benchmark_baseline_refresh,
+            "_compute_fixture_id",
+            lambda fixture_root: "eb323cc73a16db53",
+        )
+
+        with pytest.raises(ValueError, match="legacy path-derived fixture_id"):
+            retrieval_benchmark_baseline_refresh.build_manifest(data)
+
     def test_metrics_hash_changes_with_structure(self):
         data1 = _make_baseline([_make_mode("dense", result_count=10)])
         data2 = _make_baseline([_make_mode("dense", result_count=20)])
@@ -265,6 +277,27 @@ class TestManifestCompatibility:
         ok, reason = _check_manifest_compatibility(baseline, current)
         assert ok is False
         assert "fixture_id mismatch" in reason
+
+    def test_fail_when_baseline_uses_legacy_path_derived_fixture_id(self, tmp_path):
+        baseline = retrieval_benchmark_baseline_refresh.refresh_baseline(
+            iterations=1,
+            top_k=3,
+            candidate_k=5,
+            fixture_root=tmp_path,
+        )
+        current = retrieval_benchmark_baseline_refresh.refresh_baseline(
+            iterations=1,
+            top_k=3,
+            candidate_k=5,
+            fixture_root=tmp_path,
+        )
+        baseline["_manifest"]["fixture_id"] = "eb323cc73a16db53"
+
+        from scripts.retrieval_benchmark_compare import _check_manifest_compatibility
+
+        ok, reason = _check_manifest_compatibility(baseline, current)
+        assert ok is False
+        assert "legacy path-derived fixture_id" in reason
 
     def test_fail_when_iteration_count_mismatch(self, tmp_path):
         baseline = retrieval_benchmark_baseline_refresh.refresh_baseline(

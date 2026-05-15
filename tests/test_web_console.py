@@ -859,6 +859,12 @@ async def test_document_understanding_endpoints(tmp_path) -> None:
         assert get_before.status_code == 404
         assert get_before.json()["error"] == "understanding_not_found"
 
+        get_before_console = await client.get(
+            f"/document-versions/{version_id}/understanding?allow_missing=true"
+        )
+        assert get_before_console.status_code == 200
+        assert get_before_console.json()["error"] == "understanding_not_found"
+
         # POST to generate
         post_response = await client.post(
             f"/document-versions/{version_id}/understand",
@@ -1220,7 +1226,8 @@ async def test_supported_formats_filter_by_status(tmp_path) -> None:
     supported = {fmt["extension"] for fmt in supported_resp.json()["formats"]}
     assert ".md" in supported
     assert ".txt" in supported
-    assert ".pdf" not in supported
+    assert ".pdf" in supported
+    assert ".docx" in supported
 
     assert preview_resp.status_code == 200
     preview = {fmt["extension"] for fmt in preview_resp.json()["formats"]}
@@ -1229,8 +1236,8 @@ async def test_supported_formats_filter_by_status(tmp_path) -> None:
 
     assert planned_resp.status_code == 200
     planned = {fmt["extension"] for fmt in planned_resp.json()["formats"]}
-    assert ".pdf" in planned
-    assert ".docx" in planned
+    assert ".pdf" not in planned
+    assert ".docx" not in planned
 
 
 @pytest.mark.anyio
@@ -1326,6 +1333,17 @@ async def test_upload_supported_md_file_to_kb(tmp_path) -> None:
     assert payload["pipeline_run_id"] is not None
     assert payload["pipeline_run_id"] != ""
     assert payload["rejected_files"] == 0
+    assert payload["indexing"]["chunk_count"] >= 1
+    assert payload["indexing"]["embedding_count"] >= 1
+
+    with session_factory() as session:
+        from ragrig.db.models import Chunk, Embedding
+
+        chunks = session.scalars(select(Chunk)).all()
+        embeddings = session.scalars(select(Embedding)).all()
+
+    assert len(chunks) >= 1
+    assert len(embeddings) == len(chunks)
 
 
 @pytest.mark.anyio
@@ -1411,8 +1429,27 @@ async def test_upload_nonexistent_kb_returns_404(tmp_path) -> None:
 
 
 @pytest.mark.anyio
-async def test_upload_planned_format_returns_415(tmp_path) -> None:
-    database_path = tmp_path / "web-console-upload-planned.db"
+async def test_create_knowledge_base_endpoint_is_idempotent(tmp_path) -> None:
+    database_path = tmp_path / "web-console-create-kb.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        first = await client.post("/knowledge-bases", json={"name": "local-pilot"})
+        second = await client.post("/knowledge-bases", json={"name": "local-pilot"})
+        listed = await client.get("/knowledge-bases")
+
+    assert first.status_code == 201
+    assert first.json()["name"] == "local-pilot"
+    assert second.status_code == 200
+    assert second.json()["name"] == "local-pilot"
+    assert [item["name"] for item in listed.json()["items"]] == ["local-pilot"]
+
+
+@pytest.mark.anyio
+async def test_upload_supported_pdf_returns_202(tmp_path) -> None:
+    database_path = tmp_path / "web-console-upload-pdf.db"
     session_factory = _create_file_session_factory(database_path)
 
     # Create a minimal PDF-like file
@@ -1435,10 +1472,11 @@ async def test_upload_planned_format_returns_415(tmp_path) -> None:
                 files={"files": ("document.pdf", f, "application/pdf")},
             )
 
-    assert response.status_code == 415
+    assert response.status_code == 202
     payload = response.json()
-    assert payload["rejections"][0]["reason"] == "unsupported_format"
-    assert ".pdf" in payload["rejections"][0]["extension"]
+    assert payload["accepted_files"] == 1
+    assert payload["pipeline_run_id"] is not None
+    assert payload["rejected_files"] == 0
 
 
 @pytest.mark.anyio

@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>RAGRig Web Console</title>
+    <link rel="icon" href="data:,">
     <style>
       :root {
         --bg: #eef3ef;
@@ -293,6 +294,84 @@
 
       .wizard-result {
         min-height: 276px;
+      }
+
+      .pilot-grid {
+        display: grid;
+        grid-template-columns: minmax(180px, 0.52fr) minmax(0, 1fr);
+        gap: 14px;
+      }
+
+      .pilot-steps {
+        display: grid;
+        gap: 8px;
+      }
+
+      .pilot-step {
+        padding: 11px;
+        border: 1px solid #dfe6df;
+        border-radius: 8px;
+        background: var(--panel-strong);
+      }
+
+      .pilot-step.active {
+        border-color: var(--teal);
+        background: #eefaf7;
+      }
+
+      .pilot-step-num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        margin-right: 6px;
+        border-radius: 999px;
+        background: #101827;
+        color: white;
+        font-size: 11px;
+        font-weight: 900;
+      }
+
+      .pilot-board {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+        gap: 12px;
+      }
+
+      .pilot-card {
+        padding: 12px;
+        border: 1px solid #dfe6df;
+        border-radius: 8px;
+        background: var(--panel-strong);
+      }
+
+      .pilot-mini-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 10px;
+      }
+
+      .pilot-drop {
+        min-height: 104px;
+        display: grid;
+        place-items: center;
+        gap: 8px;
+        padding: 14px;
+        border: 1px dashed #b8c4bc;
+        border-radius: 8px;
+        background: #f8fbf6;
+        text-align: center;
+      }
+
+      .pilot-drop.drag-over {
+        border-color: var(--teal);
+        background: #d8f2ed;
+      }
+
+      .pilot-results {
+        max-height: 420px;
+        overflow: auto;
       }
 
       .facts {
@@ -741,6 +820,8 @@
       .wf-event-source_save { color: #1565c0; font-weight: 700; }
       .wf-event-dry_run_start { color: #e65100; font-weight: 700; }
       .wf-event-dry_run_complete { color: #1b6e3a; font-weight: 700; }
+      .wf-event-source_ingest_start { color: #e65100; font-weight: 700; }
+      .wf-event-source_ingest_complete { color: #1b6e3a; font-weight: 700; }
       .wf-event-retry_start { color: #e65100; font-weight: 700; }
       .wf-event-retry_complete { color: #1b6e3a; font-weight: 700; }
       .wf-event-resume_start { color: #e65100; font-weight: 700; }
@@ -950,6 +1031,112 @@
           <div class="status-card"><div class="status-head">LLM Smoke</div><strong id="answer-smoke-status">—</strong><span id="answer-smoke-subtext">Answer live smoke health</span></div>
           <div class="status-card"><div class="status-head">Contract Matrix</div><strong id="contract-matrix-status">—</strong><span id="contract-matrix-subtext">Sanitizer contract badge</span></div>
           <div class="status-card"><div class="status-head">Parser Corpus</div><strong id="advanced-parser-corpus-status">—</strong><span id="advanced-parser-corpus-subtext">Advanced parser corpus health</span></div>
+        </section>
+
+        <section class="panel" data-local-pilot-wizard>
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Local Pilot Wizard</div>
+              <div class="panel-meta">Model check · website or file ingestion · run/chunk review · grounded answer</div>
+            </div>
+            <div id="local-pilot-status-pill" class="pill neutral">Ready</div>
+          </div>
+          <div class="panel-body pilot-grid">
+            <div class="pilot-steps">
+              <div class="pilot-step active" id="pilot-step-model">
+                <div class="name"><span class="pilot-step-num">1</span>Model check</div>
+                <div class="sub" id="pilot-step-model-sub">Local-first provider smoke</div>
+              </div>
+              <div class="pilot-step" id="pilot-step-ingest">
+                <div class="name"><span class="pilot-step-num">2</span>Ingest</div>
+                <div class="sub" id="pilot-step-ingest-sub">Website, Markdown, PDF, DOCX</div>
+              </div>
+              <div class="pilot-step" id="pilot-step-review">
+                <div class="name"><span class="pilot-step-num">3</span>Review</div>
+                <div class="sub" id="pilot-step-review-sub">Run history and chunks</div>
+              </div>
+              <div class="pilot-step" id="pilot-step-playground">
+                <div class="name"><span class="pilot-step-num">4</span>Playground</div>
+                <div class="sub" id="pilot-step-playground-sub">Ask with citations</div>
+              </div>
+            </div>
+
+            <div class="pilot-board">
+              <div class="stack">
+                <div class="pilot-card stack">
+                  <div class="pilot-mini-grid">
+                    <label>
+                      <div class="fact-label">Knowledge base</div>
+                      <input id="pilot-kb-name" value="local-pilot">
+                    </label>
+                    <label>
+                      <div class="fact-label">Model provider</div>
+                      <select id="pilot-provider">
+                        <option value="deterministic-local">deterministic-local</option>
+                        <option value="model.ollama">Ollama</option>
+                        <option value="model.lm_studio">LM Studio</option>
+                        <option value="model.openai">OpenAI</option>
+                        <option value="model.openrouter">OpenRouter</option>
+                        <option value="model.google_gemini">Gemini</option>
+                      </select>
+                    </label>
+                    <label>
+                      <div class="fact-label">Model</div>
+                      <input id="pilot-model" value="hash-8d">
+                    </label>
+                    <label>
+                      <div class="fact-label">Endpoint hint</div>
+                      <input id="pilot-base-url" value="http://host.docker.internal:11434/v1">
+                    </label>
+                    <label>
+                      <div class="fact-label">API key env ref</div>
+                      <input id="pilot-api-key-ref" placeholder="env:VARIABLE_NAME">
+                    </label>
+                  </div>
+                  <div class="sub">Provider secrets use env:VARIABLE_NAME only; raw API keys are not accepted.</div>
+                  <div class="actions">
+                    <button class="button" id="pilot-refresh-status" type="button">Check Status</button>
+                    <button class="button" id="pilot-model-health" type="button">Check Model Health</button>
+                    <button class="button primary" id="pilot-answer-smoke" type="button">Run Model Smoke</button>
+                  </div>
+                </div>
+
+                <div class="pilot-card stack">
+                  <div class="pilot-mini-grid">
+                    <label>
+                      <div class="fact-label">Website URL or sitemap</div>
+                      <input id="pilot-url" aria-label="Website URL or sitemap" value="">
+                    </label>
+                    <label>
+                      <div class="fact-label">Question</div>
+                      <input id="pilot-question" value="What does this knowledge base say?">
+                    </label>
+                  </div>
+                  <div class="pilot-drop" id="pilot-file-drop">
+                    <div>
+                      <div class="name">Upload local files</div>
+                      <div class="sub">.md, .txt, .pdf, .docx</div>
+                    </div>
+                    <button class="button" id="pilot-choose-files" type="button">Choose Files</button>
+                    <input type="file" id="pilot-file-input" multiple hidden accept=".md,.markdown,.txt,.text,.pdf,.docx">
+                  </div>
+                  <div id="pilot-file-list" class="stack"></div>
+                  <div class="actions">
+                    <button class="button" id="pilot-import-url" type="button">Import Website</button>
+                    <button class="button" id="pilot-upload-files" type="button" disabled>Upload Files</button>
+                    <button class="button primary" id="pilot-run-answer" type="button">Ask Playground</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="stack pilot-results">
+                <div id="pilot-run-summary" class="empty">Run summary will appear after import or upload.</div>
+                <div id="pilot-chunk-preview" class="empty">Chunk preview will appear after ingestion refresh.</div>
+                <div id="pilot-answer-result" class="empty">Playground answer will appear here.</div>
+                <pre id="pilot-output" class="empty" style="white-space:pre-wrap;text-align:left;overflow:auto;max-height:220px">Local Pilot output will appear here.</pre>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section class="panel">
@@ -1164,7 +1351,7 @@
                 <div class="upload-drop-zone" id="upload-drop-zone">
                   <div class="upload-drop-text">Drag and drop files here<br><span class="sub">or</span></div>
                   <button class="button primary" id="upload-choose-btn" type="button">Choose Files</button>
-                  <input type="file" id="upload-file-input" multiple hidden accept=".md,.markdown,.txt,.text,.rst,.csv,.json,.xml,.html">
+                  <input type="file" id="upload-file-input" multiple hidden accept=".md,.markdown,.txt,.text,.pdf,.docx,.rst,.csv,.json,.xml,.html">
                 </div>
                 <div id="upload-file-list" class="stack"></div>
                 <div class="actions">
@@ -1457,6 +1644,8 @@
                     <option value="source_save">source_save</option>
                     <option value="dry_run_start">dry_run_start</option>
                     <option value="dry_run_complete">dry_run_complete</option>
+                    <option value="source_ingest_start">source_ingest_start</option>
+                    <option value="source_ingest_complete">source_ingest_complete</option>
                     <option value="retry_start">retry_start</option>
                     <option value="retry_complete">retry_complete</option>
                     <option value="resume_start">resume_start</option>
@@ -1561,6 +1750,8 @@
         answerLiveSmoke: null,
         opsDiagnostics: null,
         permissionPreview: null,
+        localPilot: null,
+        pilotFiles: [],
       };
 
       const WIZARD_FILTERS = [
@@ -1631,6 +1822,331 @@
           throw new Error(`${url} -> ${response.status} ${text}`);
         }
         return response.json();
+      }
+
+      function renderPilotOutput(payload, status = 'ready') {
+        const output = document.getElementById('pilot-output');
+        const pill = document.getElementById('local-pilot-status-pill');
+        if (output) output.textContent = JSON.stringify(payload, null, 2);
+        if (pill) {
+          pill.className = pillClass(status);
+          pill.textContent = status;
+        }
+      }
+
+      function setPilotStep(stepKey, statusText) {
+        for (const key of ['model', 'ingest', 'review', 'playground']) {
+          const el = document.getElementById(`pilot-step-${key}`);
+          if (el) el.classList.toggle('active', key === stepKey);
+        }
+        if (statusText) {
+          const sub = document.getElementById(`pilot-step-${stepKey}-sub`);
+          if (sub) sub.textContent = statusText;
+        }
+      }
+
+      function pilotKbName() {
+        return document.getElementById('pilot-kb-name').value.trim() || 'local-pilot';
+      }
+
+      async function ensurePilotKnowledgeBase(kb) {
+        const result = await getJson('/knowledge-bases', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: kb }),
+        });
+        if (!state.knowledgeBases.some((item) => item.name === result.name)) {
+          state.knowledgeBases.push({
+            id: result.id,
+            name: result.name,
+            vector_backend: state.system?.vector?.backend || 'pgvector',
+            document_count: 0,
+            chunk_count: 0,
+            latest_pipeline_run: null,
+          });
+        }
+        renderStatusStrip();
+        renderKnowledgeBases();
+        renderRetrievalControls();
+        renderAnswerControls();
+        renderUploadKBSelect();
+        return result;
+      }
+
+      function renderPilotFiles() {
+        const root = document.getElementById('pilot-file-list');
+        const submit = document.getElementById('pilot-upload-files');
+        if (!root || !submit) return;
+        submit.disabled = state.pilotFiles.length === 0;
+        if (!state.pilotFiles.length) {
+          root.innerHTML = '';
+          return;
+        }
+        root.innerHTML = state.pilotFiles.map((file, index) => `
+          <div class="card collection-header">
+            <div>
+              <div class="name">${escapeHtml(file.name)}</div>
+              <div class="sub">${(file.size / 1024).toFixed(1)} KB · ready</div>
+            </div>
+            <button class="button" type="button" data-pilot-file-remove="${index}" style="font-size:12px;padding:0 8px;height:28px">Remove</button>
+          </div>
+        `).join('');
+      }
+
+      function handlePilotFiles(fileList) {
+        state.pilotFiles = Array.from(fileList || []);
+        renderPilotFiles();
+        setPilotStep('ingest', `${state.pilotFiles.length} file(s) selected`);
+      }
+
+      async function refreshPilotDataAfterIngest(preferredRunId) {
+        const [knowledgeBases, pipelineRuns, documents] = await Promise.all([
+          getJson('/knowledge-bases'),
+          getJson('/pipeline-runs'),
+          getJson('/documents'),
+        ]);
+        state.knowledgeBases = knowledgeBases.items;
+        state.pipelineRuns = pipelineRuns.items;
+        state.documents = documents.items;
+        renderStatusStrip();
+        renderKnowledgeBases();
+        await renderPipelineRuns();
+        try {
+          await renderDocumentPreview();
+        } catch (error) {
+          document.getElementById('document-preview').innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
+        renderRetrievalControls();
+        renderAnswerControls();
+        renderUploadKBSelect();
+        await renderPilotRunSummary(preferredRunId);
+        await renderPilotChunkPreview();
+      }
+
+      async function renderPilotRunSummary(preferredRunId) {
+        const root = document.getElementById('pilot-run-summary');
+        if (!root) return;
+        const run = preferredRunId
+          ? state.pipelineRuns.find((item) => item.id === preferredRunId)
+          : state.pipelineRuns[0];
+        if (!run) {
+          root.innerHTML = empty('No pipeline runs recorded yet.');
+          return;
+        }
+        let items = [];
+        try {
+          const detail = await getJson(`/pipeline-runs/${run.id}/items`);
+          items = detail.items || [];
+        } catch {
+          items = [];
+        }
+        root.innerHTML = `
+          <div class="card">
+            <div class="name">Latest run <span class="${pillClass(run.status)}">${escapeHtml(run.status)}</span></div>
+            <div class="sub">${escapeHtml(run.run_type)} · ${escapeHtml(run.source_name || 'source n/a')} · ${escapeHtml(run.started_at || '')}</div>
+            <div class="sub code">${escapeHtml(run.id)}</div>
+            ${items.length ? items.slice(0, 4).map((item) => {
+              const meta = item.metadata || {};
+              return `<div class="result" style="margin-top:8px"><div class="name">${escapeHtml(meta.file_name || item.document_uri || item.id)} <span class="${pillClass(item.status)}">${escapeHtml(item.status)}</span></div><div class="sub">${escapeHtml(meta.parser_id || 'parser n/a')} · ${escapeHtml(item.error_message || 'no error')}</div></div>`;
+            }).join('') : '<div class="sub">No item detail returned for this run.</div>'}
+          </div>
+        `;
+        setPilotStep('review', `${run.status} run loaded`);
+      }
+
+      async function renderPilotChunkPreview() {
+        const root = document.getElementById('pilot-chunk-preview');
+        if (!root) return;
+        const kb = pilotKbName();
+        const doc = state.documents.find((item) => item.knowledge_base === kb && item.latest_version);
+        if (!doc || !doc.latest_version) {
+          root.innerHTML = empty('No documents or chunks found for this pilot knowledge base yet.');
+          return;
+        }
+        try {
+          const chunkResponse = await getJson(`/document-versions/${doc.latest_version.id}/chunks`);
+          const chunks = chunkResponse.items || [];
+          if (!chunks.length) {
+            root.innerHTML = empty('Document exists, but no chunks are available yet.');
+            return;
+          }
+          root.innerHTML = `
+            <div class="card">
+              <div class="name">${escapeHtml(doc.uri)}</div>
+              <div class="sub">version ${escapeHtml(doc.latest_version.version_number)} · chunks preview</div>
+              ${chunks.slice(0, 3).map((chunk) => `
+                <div class="result" style="margin-top:8px">
+                  <div class="name">Chunk ${chunk.chunk_index}</div>
+                  <div class="sub">${escapeHtml(chunk.text.slice(0, 220))}</div>
+                </div>
+              `).join('')}
+            </div>
+          `;
+        } catch (error) {
+          root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
+      async function refreshLocalPilotStatus() {
+        const data = await getJson('/local-pilot/status');
+        state.localPilot = data;
+        renderPilotOutput(data, 'ready');
+        setPilotStep('model', 'Status loaded');
+      }
+
+      async function importPilotUrl() {
+        const kb = pilotKbName();
+        const url = document.getElementById('pilot-url').value.trim();
+        if (!url) {
+          renderPilotOutput({ error: 'website URL or sitemap is required' }, 'warning');
+          setPilotStep('ingest', 'Website URL required');
+          return;
+        }
+        setPilotStep('ingest', 'Importing website');
+        await ensurePilotKnowledgeBase(kb);
+        const isSitemap = url.endsWith('.xml') || url.includes('sitemap');
+        const payload = isSitemap ? { urls: [], sitemap_url: url } : { urls: [url] };
+        const data = await getJson(`/knowledge-bases/${encodeURIComponent(kb)}/website-import`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        renderPilotOutput(data, data.failed_pages ? 'degraded' : 'completed');
+        await refreshPilotDataAfterIngest(data.pipeline_run_id);
+      }
+
+      async function runPilotFileUpload() {
+        const kb = pilotKbName();
+        if (!state.pilotFiles.length) {
+          renderPilotOutput({ error: 'select at least one local file' }, 'warning');
+          setPilotStep('ingest', 'Select local files');
+          return;
+        }
+        const formData = new FormData();
+        for (const file of state.pilotFiles) formData.append('files', file);
+        setPilotStep('ingest', 'Uploading files');
+        await ensurePilotKnowledgeBase(kb);
+        const response = await fetch(`/knowledge-bases/${encodeURIComponent(kb)}/upload`, {
+          method: 'POST',
+          body: formData,
+        });
+        const payload = await response.json().catch(() => ({ error: 'Server returned non-JSON response' }));
+        if (!response.ok) {
+          renderPilotOutput(payload, 'failed');
+          return;
+        }
+        state.pilotFiles = [];
+        renderPilotFiles();
+        renderPilotOutput(payload, payload.rejected_files ? 'degraded' : 'completed');
+        await refreshPilotDataAfterIngest(payload.pipeline_run_id);
+      }
+
+      function buildPilotModelConfig() {
+        const provider = document.getElementById('pilot-provider').value;
+        const baseUrl = document.getElementById('pilot-base-url').value.trim();
+        const apiKeyRef = document.getElementById('pilot-api-key-ref').value.trim();
+        const config = {};
+        if (baseUrl) {
+          if (provider === 'model.ollama') {
+            config.host = baseUrl.replace(/\/v1\/?$/, '');
+          } else if (provider !== 'deterministic-local') {
+            config.base_url = baseUrl;
+          }
+        }
+        if (apiKeyRef) config.api_key = apiKeyRef;
+        return config;
+      }
+
+      function syncPilotProviderDefaults() {
+        const provider = document.getElementById('pilot-provider').value;
+        const model = document.getElementById('pilot-model');
+        const baseUrl = document.getElementById('pilot-base-url');
+        const apiKeyRef = document.getElementById('pilot-api-key-ref');
+        const defaults = {
+          'deterministic-local': { model: 'hash-8d', baseUrl: '', apiKeyRef: '' },
+          'model.ollama': { model: 'llama3.2', baseUrl: 'http://host.docker.internal:11434', apiKeyRef: '' },
+          'model.lm_studio': { model: 'local-model', baseUrl: 'http://host.docker.internal:1234/v1', apiKeyRef: '' },
+          'model.openai': { model: 'gpt-4.1-mini', baseUrl: 'https://api.openai.com/v1', apiKeyRef: 'env:OPENAI_API_KEY' },
+          'model.openrouter': { model: 'openai/gpt-4.1-mini', baseUrl: 'https://openrouter.ai/api/v1', apiKeyRef: 'env:OPENROUTER_API_KEY' },
+          'model.google_gemini': { model: 'gemini-2.5-flash', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', apiKeyRef: 'env:GEMINI_API_KEY' },
+        }[provider];
+        if (!defaults) return;
+        model.value = defaults.model;
+        baseUrl.value = defaults.baseUrl;
+        apiKeyRef.value = defaults.apiKeyRef;
+      }
+
+      function buildPilotModelPayload() {
+        const provider = document.getElementById('pilot-provider').value;
+        const payload = { provider, config: buildPilotModelConfig() };
+        const modelValue = document.getElementById('pilot-model').value.trim();
+        if (modelValue) payload.model = modelValue;
+        return payload;
+      }
+
+      async function runPilotModelHealth() {
+        const payload = buildPilotModelPayload();
+        const data = await getJson('/local-pilot/model-health', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        renderPilotOutput(data, data.status || 'unknown');
+        setPilotStep('model', data.status === 'healthy' ? 'Model health healthy' : 'Model health needs attention');
+      }
+
+      async function runPilotAnswerSmoke() {
+        const payload = buildPilotModelPayload();
+        const data = await getJson('/local-pilot/answer-smoke', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        renderPilotOutput(data, data.status || 'unknown');
+        setPilotStep('model', data.status === 'healthy' ? 'Model smoke healthy' : 'Model smoke needs attention');
+      }
+
+      async function runPilotPlaygroundAnswer() {
+        const root = document.getElementById('pilot-answer-result');
+        const kb = pilotKbName();
+        const query = document.getElementById('pilot-question').value.trim();
+        if (!query) {
+          root.innerHTML = empty('Please enter a pilot question.');
+          return;
+        }
+        setPilotStep('playground', 'Generating answer');
+        root.innerHTML = '<div class="sub">Generating grounded answer...</div>';
+        try {
+          await ensurePilotKnowledgeBase(kb);
+          const result = await getJson('/retrieval/answer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ knowledge_base: kb, query, top_k: 3 }),
+          });
+          const citations = result.citations || [];
+          const statusBadge = result.grounding_status === 'grounded'
+            ? `<span class="pill">grounded</span>`
+            : `<span class="${pillClass(result.grounding_status || 'degraded')}">${escapeHtml(result.grounding_status || 'degraded')}</span>`;
+          root.innerHTML = `
+            <div class="card">
+              <div class="name">Answer ${statusBadge}</div>
+              <div class="sub">${escapeHtml(result.answer || result.refusal_reason || 'No answer returned.').replace(/\\n/g, '<br>')}</div>
+              <div class="sub code">Provider: ${escapeHtml(result.provider || 'n/a')} · Model: ${escapeHtml(result.model || 'n/a')}</div>
+              ${citations.length ? citations.map((citation) => `
+                <div class="result" style="margin-top:8px">
+                  <div class="name">${escapeHtml(citation.citation_id)} · ${escapeHtml(citation.document_uri)}</div>
+                  <div class="sub">chunk ${escapeHtml(citation.chunk_index)} · score ${escapeHtml(citation.score)}</div>
+                  <div class="sub">${escapeHtml(citation.text_preview || '')}</div>
+                </div>
+              `).join('') : '<div class="sub">No citations returned.</div>'}
+            </div>
+          `;
+          renderPilotOutput(result, result.grounding_status || 'completed');
+          setPilotStep('playground', `${result.grounding_status || 'completed'} answer`);
+        } catch (error) {
+          root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+          renderPilotOutput({ error: error.message }, 'error');
+        }
       }
 
       async function loadInitialData() {
@@ -1772,17 +2288,21 @@
           root.innerHTML = empty('No sources configured. Configure one below.');
         } else {
           root.innerHTML = state.sources.map((source) => `
-            <div class="card">
+            <div class="card" data-source-id="${escapeHtml(source.id)}">
               <div class="name">${escapeHtml(source.knowledge_base)}</div>
               <div class="sub">${escapeHtml(source.kind)} · ${escapeHtml(source.uri)}</div>
               <div class="sub">include: ${escapeHtml((source.config.include_patterns || []).join(', ') || '.md,.txt (default)')}</div>
               <div class="sub">exclude: ${escapeHtml((source.config.exclude_patterns || []).join(', ') || 'none')}</div>
               <div class="sub">max size: ${escapeHtml(source.config.max_file_size_bytes || 'unknown')} bytes · schedule: manual only</div>
-              <div class="sub"><button class="btn small" onclick="dryRunSource('${escapeHtml(source.id)}', '${escapeHtml(source.kind)}')">Dry-run</button></div>
+              <div class="flex-row" style="gap:8px;margin-top:8px">
+                <button class="btn small" onclick="dryRunSource('${escapeHtml(source.id)}', '${escapeHtml(source.kind)}')">Dry-run</button>
+                <button class="btn small" onclick="runSavedSourceIngest('${escapeHtml(source.id)}')">Run ingest</button>
+              </div>
+              <div id="source-result-${escapeHtml(source.id)}"></div>
             </div>
           `).join('');
         }
-        root.innerHTML += \`
+        root.innerHTML += `
           <div class="card" style="margin-top:12px">
             <div class="name">Configure New Source</div>
             <div class="sub">Select type:</div>
@@ -1793,15 +2313,16 @@
             </div>
             <div id="source-form-area"></div>
             <div id="source-form-result"></div>
+            <div id="source-ingest-result"></div>
           </div>
-        \`;
+        `;
       }
 
       function showSourceForm(pluginId) {
         const area = document.getElementById('source-form-area');
         state.sourceFormPlugin = pluginId;
         if (pluginId === 'source.local') {
-          area.innerHTML = \`
+          area.innerHTML = `
             <div class="sub">Knowledge base name:</div>
             <input id="src-local-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
             <div class="sub">Root path:</div>
@@ -1816,10 +2337,11 @@
               <button class="btn" onclick="validateSourceForm()">Validate</button>
               <button class="btn" onclick="saveSourceForm()">Save</button>
               <button class="btn" onclick="dryRunForm()">Dry-run</button>
+              <button class="btn" onclick="runSourceIngestForm()">Run ingest</button>
             </div>
-          \`;
+          `;
         } else if (pluginId === 'source.s3') {
-          area.innerHTML = \`
+          area.innerHTML = `
             <div class="sub">Knowledge base name:</div>
             <input id="src-s3-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
             <div class="sub">Bucket:</div>
@@ -1838,10 +2360,11 @@
               <button class="btn" onclick="validateSourceForm()">Validate</button>
               <button class="btn" onclick="saveSourceForm()">Save</button>
               <button class="btn" onclick="dryRunForm()">Dry-run</button>
+              <button class="btn" onclick="runSourceIngestForm()">Run ingest</button>
             </div>
-          \`;
+          `;
         } else if (pluginId === 'source.fileshare') {
-          area.innerHTML = \`
+          area.innerHTML = `
             <div class="sub">Knowledge base name:</div>
             <input id="src-fs-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
             <div class="sub">Protocol:</div>
@@ -1863,8 +2386,9 @@
               <button class="btn" onclick="validateSourceForm()">Validate</button>
               <button class="btn" onclick="saveSourceForm()">Save</button>
               <button class="btn" onclick="dryRunForm()">Dry-run</button>
+              <button class="btn" onclick="runSourceIngestForm()">Run ingest</button>
             </div>
-          \`;
+          `;
         }
       }
 
@@ -1920,25 +2444,25 @@
           const data = await resp.json();
           if (data.valid) {
             const statusPill = data.status === 'ready' ? 'success' : data.status === 'degraded' ? 'warn' : 'error';
-            resultArea.innerHTML = \`
+            resultArea.innerHTML = `
               <div class="card">
-                <div class="name">Validation: <span class="pill \${statusPill}">\${escapeHtml(data.status)}</span></div>
-                \${data.reason ? '<div class="sub">' + escapeHtml(data.reason) + '</div>' : ''}
-                \${data.missing_dependencies && data.missing_dependencies.length ? '<div class="sub">Missing deps: ' + escapeHtml(data.missing_dependencies.join(', ')) + '</div>' : ''}
-                \${data.credential_issues && data.credential_issues.length ? '<div class="sub">Credential issues: ' + escapeHtml(data.credential_issues.join('; ')) + '</div>' : ''}
-                \${data.next_steps && data.next_steps.length ? '<div class="sub">Next: ' + escapeHtml(data.next_steps.join(' ')) + '</div>' : ''}
+                <div class="name">Validation: <span class="pill ${statusPill}">${escapeHtml(data.status)}</span></div>
+                ${data.reason ? '<div class="sub">' + escapeHtml(data.reason) + '</div>' : ''}
+                ${data.missing_dependencies && data.missing_dependencies.length ? '<div class="sub">Missing deps: ' + escapeHtml(data.missing_dependencies.join(', ')) + '</div>' : ''}
+                ${data.credential_issues && data.credential_issues.length ? '<div class="sub">Credential issues: ' + escapeHtml(data.credential_issues.join('; ')) + '</div>' : ''}
+                ${data.next_steps && data.next_steps.length ? '<div class="sub">Next: ' + escapeHtml(data.next_steps.join(' ')) + '</div>' : ''}
               </div>
-            \`;
+            `;
           } else {
-            resultArea.innerHTML = \`
+            resultArea.innerHTML = `
               <div class="card">
                 <div class="name">Validation: <span class="pill error">invalid</span></div>
-                <div class="sub">\${escapeHtml(data.reason || data.error?.message || 'unknown error')}</div>
+                <div class="sub">${escapeHtml(data.reason || data.error?.message || 'unknown error')}</div>
               </div>
-            \`;
+            `;
           }
         } catch (err) {
-          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+          resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
         }
       }
 
@@ -1956,14 +2480,14 @@
           });
           if (!resp.ok) {
             const err = await resp.json();
-            resultArea.innerHTML = \`<div class="card"><div class="name">Save failed</div><div class="sub">\${escapeHtml(err.error || 'unknown error')}</div></div>\`;
+            resultArea.innerHTML = `<div class="card"><div class="name">Save failed</div><div class="sub">${escapeHtml(err.error || 'unknown error')}</div></div>`;
             return;
           }
           const data = await resp.json();
-          resultArea.innerHTML = \`<div class="card"><div class="name">Saved: <span class="pill success">\${escapeHtml(data.kind)}</span></div><div class="sub">URI: \${escapeHtml(data.uri)}</div></div>\`;
+          resultArea.innerHTML = `<div class="card"><div class="name">Saved: <span class="pill success">${escapeHtml(data.kind)}</span></div><div class="sub">URI: ${escapeHtml(data.uri)}</div></div>`;
           await loadAll();
         } catch (err) {
-          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+          resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
         }
       }
 
@@ -1980,7 +2504,7 @@
           });
           if (!resp.ok) {
             const err = await resp.json();
-            resultArea.innerHTML = \`<div class="card"><div class="name">Dry-run failed</div><div class="sub">\${escapeHtml(err.error || 'unknown error')}</div></div>\`;
+            resultArea.innerHTML = `<div class="card"><div class="name">Dry-run failed</div><div class="sub">${escapeHtml(err.error || 'unknown error')}</div></div>`;
             return;
           }
           const data = await resp.json();
@@ -1995,33 +2519,109 @@
               (allFiles.length > 50 ? '<div class="sub">... and ' + (allFiles.length - 50) + ' more</div>' : '') +
               '</div>';
           }
-          resultArea.innerHTML = \`
+          resultArea.innerHTML = `
             <div class="card">
-              <div class="name">Dry-run: <span class="pill success">\${escapeHtml(data.source_kind)}</span></div>
-              <div class="sub">Total: \${data.total} files · Discovered: \${data.discovered_count} · Skipped: \${data.skipped_count} · Failed: \${data.failed_count}</div>
-              \${filesHtml}
+              <div class="name">Dry-run: <span class="pill success">${escapeHtml(data.source_kind)}</span></div>
+              <div class="sub">Total: ${data.total} files · Discovered: ${data.discovered_count} · Skipped: ${data.skipped_count} · Failed: ${data.failed_count}</div>
+              ${filesHtml}
               <div class="sub" style="margin-top:4px"><em>dry-run does not write documents, chunks, or embeddings</em></div>
             </div>
-          \`;
+          `;
         } catch (err) {
-          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+          resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+
+      function renderSourceIngestResult(data) {
+        const ingestion = data.ingestion || {};
+        const indexing = data.indexing || {};
+        const indexingLine = data.indexing
+          ? `Indexed: ${indexing.indexed_count || 0} docs · Chunks: ${indexing.chunk_count || 0} · Embeddings: ${indexing.embedding_count || 0}`
+          : 'Indexing skipped: no new document versions';
+        return `
+          <div class="card">
+            <div class="name">Run ingest: <span class="pill success">${escapeHtml(data.source_kind || data.plugin_id || 'source')}</span></div>
+            <div class="sub">Pipeline run: ${escapeHtml(ingestion.pipeline_run_id || '')}</div>
+            <div class="sub">Created docs: ${ingestion.created_documents || 0} · Versions: ${ingestion.created_versions || 0} · Skipped: ${ingestion.skipped_count || 0} · Failed: ${ingestion.failed_count || 0}</div>
+            <div class="sub">${escapeHtml(indexingLine)}</div>
+          </div>
+        `;
+      }
+
+      async function runSourceIngestForm() {
+        const resultArea = document.getElementById('source-ingest-result') || document.getElementById('source-form-result');
+        const pid = state.sourceFormPlugin;
+        const config = getSourceFormConfig();
+        const kb = getSourceFormKb();
+        resultArea.innerHTML = '<div class="sub">Running ingest and indexing...</div>';
+        try {
+          const resp = await fetch('/sources/run-ingest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_id: pid, config, knowledge_base: kb }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            resultArea.innerHTML = `<div class="card"><div class="name">Run ingest failed</div><div class="sub">${escapeHtml(err.error || 'unknown error')}</div></div>`;
+            return;
+          }
+          const data = await resp.json();
+          resultArea.innerHTML = renderSourceIngestResult(data);
+          await loadAll();
+        } catch (err) {
+          resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
         }
       }
 
       async function dryRunSource(sourceId, sourceKind) {
-        const resultArea = document.createElement('div');
+        const source = state.sources.find((item) => item.id === sourceId);
+        const resultArea = document.getElementById(`source-result-${sourceId}`) || document.createElement('div');
         resultArea.innerHTML = '<div class="sub">Running dry-run...</div>';
-        const card = document.querySelector(\`[data-source-id="\${sourceId}"]\`);
+        if (!source) {
+          resultArea.innerHTML = '<div class="sub">Source not found.</div>';
+          return;
+        }
         try {
           const resp = await fetch('/sources/dry-run', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ plugin_id: 'source.' + sourceKind, config: {} }),
+            body: JSON.stringify({ plugin_id: 'source.' + sourceKind, config: source.config || {} }),
           });
           const data = await resp.json();
-          resultArea.innerHTML = \`<div class="sub">Dry-run: \${data.total || 0} files found</div>\`;
+          resultArea.innerHTML = `<div class="sub">Dry-run: ${data.total || 0} files found</div>`;
         } catch (err) {
-          resultArea.innerHTML = \`<div class="sub">Error: \${escapeHtml(err.message)}</div>\`;
+          resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+
+      async function runSavedSourceIngest(sourceId) {
+        const source = state.sources.find((item) => item.id === sourceId);
+        const resultArea = document.getElementById(`source-result-${sourceId}`) || document.createElement('div');
+        if (!source) {
+          resultArea.innerHTML = '<div class="sub">Source not found.</div>';
+          return;
+        }
+        resultArea.innerHTML = '<div class="sub">Running ingest and indexing...</div>';
+        try {
+          const resp = await fetch('/sources/run-ingest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              plugin_id: 'source.' + source.kind,
+              config: source.config || {},
+              knowledge_base: source.knowledge_base || 'default',
+            }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            resultArea.innerHTML = `<div class="card"><div class="name">Run ingest failed</div><div class="sub">${escapeHtml(err.error || 'unknown error')}</div></div>`;
+            return;
+          }
+          const data = await resp.json();
+          resultArea.innerHTML = renderSourceIngestResult(data);
+          await loadAll();
+        } catch (err) {
+          resultArea.innerHTML = `<div class="sub">Error: ${escapeHtml(err.message)}</div>`;
         }
       }
 
@@ -2501,8 +3101,13 @@
         const aclBadge = aclBadgeHtml(documentItem.acl_summary);
         const chunkResponse = await getJson(`/document-versions/${documentItem.latest_version.id}/chunks`);
         const chunks = chunkResponse.items;
-        const understandingResponse = await getJson(`/document-versions/${documentItem.latest_version.id}/understanding`);
-        const understanding = understandingResponse.error ? null : understandingResponse;
+        let understanding = null;
+        try {
+          const understandingResponse = await getJson(`/document-versions/${documentItem.latest_version.id}/understanding?allow_missing=true`);
+          understanding = understandingResponse.error ? null : understandingResponse;
+        } catch (error) {
+          if (!String(error.message || '').includes('understanding_not_found')) throw error;
+        }
         let understandingHtml = '';
         if (!understanding) {
           understandingHtml = `
@@ -4611,9 +5216,12 @@
         var limit = parseInt(document.getElementById('audit-log-limit').value, 10) || 25;
         var body = document.getElementById('audit-log-body');
         var empty = document.getElementById('audit-log-empty');
-        var profileFilter = document.getElementById('audit-filter-profile').value.trim();
-        var providerFilter = document.getElementById('audit-filter-provider').value.trim();
-        var taskFilter = document.getElementById('audit-filter-task').value;
+        var profileFilterEl = document.getElementById('audit-filter-profile');
+        var providerFilterEl = document.getElementById('audit-filter-provider');
+        var taskFilterEl = document.getElementById('audit-filter-task');
+        var profileFilter = profileFilterEl ? profileFilterEl.value.trim() : '';
+        var providerFilter = providerFilterEl ? providerFilterEl.value.trim() : '';
+        var taskFilter = taskFilterEl ? taskFilterEl.value : '';
         var url = '/processing-profiles/audit-log?limit=' + limit;
         if (profileFilter) url += '&profile_id=' + encodeURIComponent(profileFilter);
         if (providerFilter) url += '&provider=' + encodeURIComponent(providerFilter);
@@ -4703,7 +5311,6 @@
 
       // ── Diff Preview & Inline Edit ──
 
-      var state = window.state || {};
       state.editProfileId = null;
 
       async function openEditForm(profileId) {
@@ -4898,12 +5505,21 @@
           renderAdvancedParserCorpus();
           renderOpsDiagnostics();
           renderUploadKBSelect();
+          await refreshLocalPilotStatus();
         } catch (error) {
+          console.error('Console boot failed', error);
           document.body.innerHTML = `<main class="main">${empty(error.message)}</main>`;
           return;
         }
 
         document.getElementById('run-evaluation-btn').addEventListener('click', runEvaluationFromConsole);
+        document.getElementById('pilot-provider').addEventListener('change', syncPilotProviderDefaults);
+        document.getElementById('pilot-refresh-status').addEventListener('click', refreshLocalPilotStatus);
+        document.getElementById('pilot-import-url').addEventListener('click', importPilotUrl);
+        document.getElementById('pilot-model-health').addEventListener('click', runPilotModelHealth);
+        document.getElementById('pilot-answer-smoke').addEventListener('click', runPilotAnswerSmoke);
+        document.getElementById('pilot-upload-files').addEventListener('click', runPilotFileUpload);
+        document.getElementById('pilot-run-answer').addEventListener('click', runPilotPlaygroundAnswer);
         document.getElementById('run-retrieval').addEventListener('click', runRetrieval);
         document.getElementById('run-permission-preview').addEventListener('click', runPermissionPreview);
         document.getElementById('retrieval-mode').addEventListener('change', function() {
@@ -4949,15 +5565,21 @@
         document.getElementById('wf-audit-refresh').addEventListener('click', () => renderWorkflowAuditEvents());
         document.getElementById('wf-audit-limit').addEventListener('change', () => renderWorkflowAuditEvents());
         document.getElementById('wf-audit-type').addEventListener('change', () => renderWorkflowAuditEvents());
-        document.getElementById('audit-filter-provider').addEventListener('change', () => renderAuditLog());
-        document.getElementById('audit-filter-task').addEventListener('change', () => renderAuditLog());
-        document.getElementById('audit-filter-profile').addEventListener('input', debounce(function() { renderAuditLog(); }, 300));
-        document.getElementById('audit-filter-provider').addEventListener('input', debounce(function() { renderAuditLog(); }, 300));
+        const auditFilterProvider = document.getElementById('audit-filter-provider');
+        const auditFilterTask = document.getElementById('audit-filter-task');
+        const auditFilterProfile = document.getElementById('audit-filter-profile');
+        if (auditFilterProvider) auditFilterProvider.addEventListener('change', () => renderAuditLog());
+        if (auditFilterTask) auditFilterTask.addEventListener('change', () => renderAuditLog());
+        if (auditFilterProfile) auditFilterProfile.addEventListener('input', debounce(function() { renderAuditLog(); }, 300));
+        if (auditFilterProvider) auditFilterProvider.addEventListener('input', debounce(function() { renderAuditLog(); }, 300));
         document.getElementById('profile-create-cancel').addEventListener('click', () => showProfileCreateForm(false));
         document.getElementById('profile-create-submit').addEventListener('click', submitProfileCreate);
-        document.getElementById('diff-preview-close').addEventListener('click', closeEditForm);
-        document.getElementById('diff-preview-submit').addEventListener('click', saveEdit);
-        document.getElementById('preview-diff-btn').addEventListener('click', previewDiff);
+        const diffPreviewClose = document.getElementById('diff-preview-close');
+        const diffPreviewSubmit = document.getElementById('diff-preview-submit');
+        const previewDiffButton = document.getElementById('preview-diff-btn');
+        if (diffPreviewClose) diffPreviewClose.addEventListener('click', closeEditForm);
+        if (diffPreviewSubmit) diffPreviewSubmit.addEventListener('click', saveEdit);
+        if (previewDiffButton) previewDiffButton.addEventListener('click', previewDiff);
         document.getElementById('profile-matrix-body').addEventListener('click', (event) => {
           const editBtn = event.target.closest('[data-profile-action="edit"]');
           if (editBtn) {
@@ -5006,6 +5628,30 @@
             renderUploadFileList();
             updateUploadSubmitButton();
           }
+          const pilotRemoveBtn = event.target.closest('[data-pilot-file-remove]');
+          if (pilotRemoveBtn) {
+            const idx = parseInt(pilotRemoveBtn.dataset.pilotFileRemove, 10);
+            state.pilotFiles.splice(idx, 1);
+            renderPilotFiles();
+          }
+        });
+
+        const pilotDropZone = document.getElementById('pilot-file-drop');
+        const pilotFileInput = document.getElementById('pilot-file-input');
+        const pilotChooseBtn = document.getElementById('pilot-choose-files');
+        pilotChooseBtn.addEventListener('click', () => pilotFileInput.click());
+        pilotFileInput.addEventListener('change', () => handlePilotFiles(pilotFileInput.files));
+        pilotDropZone.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          pilotDropZone.classList.add('drag-over');
+        });
+        pilotDropZone.addEventListener('dragleave', () => {
+          pilotDropZone.classList.remove('drag-over');
+        });
+        pilotDropZone.addEventListener('drop', (e) => {
+          e.preventDefault();
+          pilotDropZone.classList.remove('drag-over');
+          if (e.dataTransfer.files.length) handlePilotFiles(e.dataTransfer.files);
         });
 
         const dropZone = document.getElementById('upload-drop-zone');

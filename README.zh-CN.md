@@ -5,7 +5,7 @@
 <h1 align="center">RAGRig 源栈</h1>
 
 <p align="center">
-  <strong>面向企业知识的开源 RAG 治理与流水线平台。</strong>
+  <strong>面向可追溯、模型可用知识流水线的开源 RAG 工作台。</strong>
 </p>
 
 <p align="center">
@@ -16,106 +16,134 @@
 
 ## 项目定位
 
-RAGRig 是一个面向中小型团队的轻量化企业知识治理与 RAGOps 平台。
+RAGRig 是一个面向中小型团队的开源 RAG 工作台。
 
-它的目标不是再做一个“上传文件然后聊天”的通用壳子，而是把企业知识从分散来源变成可追溯、可权限控制、可评测、可迁移、可被模型使用的知识资产。
+RAGRig 不是另一个“上传文件然后聊天”的壳子。它关注 RAG 真正难长期维护的工程层：入库、解析、清洗、chunk、embedding、索引、检索、答案引用、模型 Provider、评测和可追溯性。
 
-RAGRig 关注的是 RAG 周围真正麻烦的工程层：
+## 优势特点
 
-- 多来源接入：文件、共享盘、对象存储、Wiki、数据库、企业文档系统。
-- 文档解析、清洗、chunk、embedding、indexing 的可配置流水线。
-- Qdrant 与 PostgreSQL/pgvector 等向量后端。
-- 文档、版本、chunk、embedding、pipeline run 的完整追踪。
-- 检索前权限过滤、审计、元数据、版本治理。
-- RAG 质量评测、引用准确性、延迟与成本观测。
-- Web 管理台用于知识库、数据源、入库任务、文档/chunk、模型和检索调试。
-- 本地优先：默认优先支持本地文件、pgvector、Ollama、LM Studio、BGE 和自托管模型运行时；云端服务作为第二层插件。
-
-一句话：
-
-```text
-RAGRig 把分散企业知识变成可治理、可追溯、模型可用的 RAG 数据底座。
-```
-
-## 为什么做 RAGRig
-
-很多 RAG 工具可以很快搭一个问答 demo，但企业落地需要更多东西：
-
-- 这个答案来自哪个源文件、哪个版本、哪个 chunk？
-- 源文件是不是过期了？
-- 这个用户有没有权限检索这段内容？
-- 换了 embedding 模型后，哪些知识库需要重建索引？
-- pipeline 变更后，召回质量是变好了还是变差了？
-- 数据能不能导出、备份、迁移？
-- 本地部署时能不能只用 Postgres/pgvector 跑起来？
-
-RAGRig 把 RAG 当成一个运维系统，而不是聊天界面。
+- **本地优先：** 默认从本地文件、Postgres/pgvector、Ollama、LM Studio、BGE、自托管 OpenAI-compatible runtime 开始。
+- **云端兼容：** 支持 OpenAI、OpenRouter、Gemini 等主流入口，Vertex AI、Bedrock 等先进入模型目录和 roadmap。
+- **全链路可追溯：** 答案能回到 source URI、文档版本、chunk、pipeline run 和模型诊断。
+- **模型可插拔：** LLM、embedding、reranker、OCR、parser 都走清晰的 Provider Registry。
+- **向量库可迁移：** 默认 pgvector，Qdrant 可选。
+- **流水线可观察：** 解析、清洗、切分、向量化、索引、重排都能被检查，而不是藏在聊天框后面。
+- **插件化扩展：** source、sink、model、vector backend、parser、preview、workflow node 都可通过插件扩展。
+- **质量门禁：** 核心模块目标 100% 测试覆盖；云端和企业插件通过 contract test 与显式 live smoke 验证。
 
 ## 架构图
 
 ```mermaid
 flowchart LR
-    sources["Source plugins<br/>文件、对象存储、文档系统、Wiki、DB"]
-    pipeline["Pipeline engine<br/>扫描、解析、清洗、切分、向量化、索引"]
-    core["RAGRig core<br/>知识库、版本、chunk、run、审计"]
-    vectors["Vector backends<br/>pgvector、Qdrant、其他后端"]
-    console["Web Console<br/>运营、审核、调试"]
-    api["Retrieval API / MCP / exports"]
+    inputs["输入<br/>文件、URL、对象存储、文档系统、DB"]
+    pipeline["流水线<br/>解析、清洗、切分、向量化、索引"]
+    core["RAGRig core<br/>知识库、文档、版本、chunk、run、审计"]
+    providers["Provider registry<br/>LLM、embedding、reranker、parser"]
+    vectors["向量后端<br/>默认 pgvector，可选 Qdrant"]
+    console["Web Console<br/>配置、预览、健康检查、Playground"]
+    answer["检索 + 答案<br/>命中、引用、诊断"]
 
-    sources --> pipeline --> core
+    inputs --> pipeline
+    providers --> pipeline
+    pipeline --> core
     core --> vectors
+    vectors --> answer
     core --> console
-    vectors --> api
-    core --> api
+    providers --> console
+    answer --> console
 ```
 
-## 当前状态
+## 技术栈
 
-项目处于早期开发阶段。
+| 层级 | 当前 / 默认 | 可选 / Roadmap |
+| --- | --- | --- |
+| App/API | Python、FastAPI | MCP / export surface |
+| Web Console | FastAPI 内置轻量 Console | 更完整的 workflow UI |
+| 元数据数据库 | PostgreSQL | SQLite 用于 smoke/test |
+| 向量后端 | pgvector | Qdrant |
+| 本地模型 | Ollama、LM Studio、OpenAI-compatible endpoint | vLLM、llama.cpp、Xinference、LocalAI |
+| 云端模型 | OpenAI、OpenRouter、Gemini | Vertex AI、Bedrock、Azure OpenAI、Anthropic 等目录项 |
+| 输入源 | 本地文件、Markdown/TXT、S3-compatible source | PDF/DOCX 上传、URL、企业连接器 |
+| 质量验证 | pytest、coverage、contract tests | 显式 opt-in live provider smoke |
 
-当前 main 已经包含：
+## Roadmap
 
-1. FastAPI 服务骨架与 `GET /health`。
-2. Docker Compose 本地开发栈。
-3. PostgreSQL + pgvector metadata schema。
-4. Alembic migration。
-5. 本地 Markdown/Text ingestion。
-6. `document_versions`、`pipeline_runs`、`pipeline_run_items` 记录。
-7. deterministic local chunking 与 embedding。
-8. `chunks` 与 `embeddings` 写入。
-9. 最小 Retrieval API 与检索 smoke 路径。
-10. Provider registry core contract，并已把 `deterministic-local` 接入 registry。
-11. Phase 1e PR-2 已补齐 Ollama、LM Studio、OpenAI-compatible 本地模型运行时，以及可选 BGE embedding / reranker 的 provider 边界。
-12. Phase 1e PR-3 已补齐 Vertex AI、Bedrock、Azure OpenAI、OpenRouter、OpenAI、Cohere、Voyage、Jina 的 cloud-second stub/provider metadata 边界。
-13. `source.s3` 已支持真实 S3-compatible Markdown/Text 入库，默认测试仍保持 fake-client-first。
+### Local Pilot
 
-还未完成：
+下一阶段 roadmap 里先做简单本地试点。它是平台演进的一环，不是项目定位本身。
 
-- 生产级 embedding provider。
-- 生产级 cloud provider adapter。
-- Qdrant backend。
-- 真正可运行的 Web Console。
-- ACL enforcement。
-- 企业连接器。
+目标用户路径：
 
-权威规格文档：
+1. 启动本地栈。
+2. 打开 Web Console。
+3. 创建知识库。
+4. 上传 Markdown、TXT、PDF、DOCX，或导入单网页 URL、sitemap、docs 页面列表。
+5. 选择模型 Provider。
+6. 运行入库和索引。
+7. 在 Playground 提问，并检查答案引用、检索命中、chunk 和模型诊断。
 
-- [MVP spec](./docs/specs/ragrig-mvp-spec.md)
-- [Phase 1a scaffold spec](./docs/specs/ragrig-phase-1a-scaffold-spec.md)
-- [Phase 1a metadata DB spec](./docs/specs/ragrig-phase-1a-metadata-db-spec.md)
-- [Phase 1b local ingestion spec](./docs/specs/ragrig-phase-1b-local-ingestion-spec.md)
-- [Phase 1c chunking and embedding spec](./docs/specs/ragrig-phase-1c-chunking-embedding-spec.md)
-- [Phase 1d retrieval API spec](./docs/specs/ragrig-phase-1d-retrieval-api-spec.md)
-- [Phase 1e local model provider plugin spec](./docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md)
-- [GitHub CI checks spec](./docs/specs/ragrig-github-ci-checks-spec.md)
-- [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
-- [Web Console plugin/source setup wizard spec](./docs/specs/ragrig-web-console-plugin-source-wizard-spec.md)
-- [Vector backend status console spec](./docs/specs/ragrig-vector-backend-status-console-spec.md)
-- [Local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
-- [Core coverage and supply chain gates](./docs/specs/ragrig-core-coverage-supply-chain-gates.md)
-- [Web Console prototype](./docs/prototypes/web-console/index.html)
+范围和验收条件见 [Local Pilot spec](./docs/specs/ragrig-local-pilot-spec.md)。
 
-## 快速开始
+### 后续里程碑
+
+- 更完整的 Web Console workflow 管理
+- 高级 PDF/DOCX/OCR 解析
+- 更丰富的 source 和 sink 插件
+- evaluation dashboard 与回归质量门
+- 企业权限、审计和连接器加固
+
+## Web Console
+
+Web Console 是 RAGRig 的主要操作界面。第一版形态：
+
+- 知识库列表
+- source 配置与入库任务
+- 模型配置和健康检查
+- pipeline run 历史
+- 文档和 chunk 预览
+- 检索与答案 Playground
+- 健康检查和数据库/向量状态
+
+原型图：
+
+<p align="center">
+  <img src="./docs/prototypes/web-console/ragrig-web-console-prototype.png" alt="RAGRig Web Console 原型图" width="860">
+</p>
+
+## 快速部署
+
+### Docker 本地试点
+
+构建并启动本地试点栈：
+
+```bash
+make pilot-up
+make pilot-docker-smoke
+```
+
+打开：
+
+```text
+http://localhost:8000/console
+```
+
+停止：
+
+```bash
+make pilot-down
+```
+
+Docker 镜像不内置 LLM 权重或模型运行时。本地模型建议在宿主机运行
+Ollama 或 LM Studio，再用 `RAGRIG_ANSWER_BASE_URL` 配置 OpenAI-compatible
+endpoint。Gemini、OpenAI、OpenRouter 等云端模型通过环境变量传入 API key。
+
+只构建应用镜像：
+
+```bash
+make pilot-docker-build
+```
+
+### 开发环境
 
 安装依赖：
 
@@ -129,6 +157,40 @@ make sync
 cp .env.example .env
 ```
 
+启动数据库并执行 migration：
+
+```bash
+docker compose up --build -d db
+make migrate
+make db-check
+```
+
+运行当前本地入库和索引 smoke：
+
+```bash
+make ingest-local
+make index-local
+make retrieve-check QUERY="RAGRig Guide"
+```
+
+运行 Local Pilot API smoke：
+
+```bash
+make local-pilot-smoke
+```
+
+启动 Web Console：
+
+```bash
+make run-web
+```
+
+打开：
+
+```text
+http://localhost:8000/console
+```
+
 如果宿主机的 `8000` 或 `5432` 已被占用，可以在 `.env` 里改端口：
 
 ```bash
@@ -136,75 +198,7 @@ APP_HOST_PORT=18000
 DB_HOST_PORT=15433
 ```
 
-运行检查：
-
-```bash
-make format
-make lint
-make test
-make coverage
-make dependency-inventory
-```
-
-运行供应链检查：
-
-```bash
-make licenses
-make sbom
-make audit
-```
-
-`make audit` 需要网络访问漏洞服务。离线环境请改跑 `make audit-dry-run`，并把漏洞审计记录为 blocker，而不是默认跳过。
-
-启动数据库：
-
-```bash
-docker compose up --build -d db
-```
-
-执行 migration：
-
-```bash
-make migrate
-```
-
-检查 pgvector 与 schema：
-
-```bash
-make db-check
-```
-
-预览本地 fixture 入库，不写数据库：
-
-```bash
-make ingest-local-dry-run
-```
-
-执行本地 Markdown/Text 入库：
-
-```bash
-make ingest-local
-```
-
-查看最近 ingestion 结果：
-
-```bash
-make ingest-check
-```
-
-执行 chunking 和 deterministic local embedding：
-
-```bash
-make index-local
-```
-
-查看最近 indexing 结果：
-
-```bash
-make index-check
-```
-
-默认向量后端仍然是 `pgvector`。如果要显式启用 Qdrant，可选路径如下：
+可选 Qdrant 路径：
 
 ```bash
 docker compose --profile qdrant up -d qdrant
@@ -213,562 +207,59 @@ VECTOR_BACKEND=qdrant make index-local
 VECTOR_BACKEND=qdrant make retrieve-check QUERY="RAGRig Guide"
 ```
 
-`qdrant-client` 是 optional extra。fresh clone 下不安装该依赖、也不启动 Qdrant，`make test` 和 `make coverage` 仍然必须通过。
+## 验证
 
-检查当前插件 readiness：
-
-```bash
-make plugins-check
-```
-
-`source.s3` 在未安装可选 S3 SDK 时会显示 `unavailable`。启用真实 connector 需要：
+默认检查：
 
 ```bash
-uv sync --extra s3
+make format
+make lint
+make test
+make coverage
+make web-check
+make local-pilot-smoke
+make dependency-inventory
 ```
 
-使用 MinIO 或其他 S3-compatible endpoint 做本地 smoke：
+供应链检查：
 
 ```bash
-docker compose --profile minio up -d minio
-uv sync --extra s3
-make s3-check
+make licenses
+make sbom
+make audit
 ```
 
-默认 `.env.example` 已提供本地 MinIO 所需变量。`make s3-check` 会先把
-`tests/fixtures/local_ingestion/` 上传到目标 bucket，再执行 S3 ingest。
+`make audit` 需要网络访问漏洞服务。离线环境请改跑 `make audit-dry-run`，并把缺失的 live audit 记录为发布 blocker。
 
-最小配置只允许通过 manifest 声明的 secret refs 传入凭据：
+## 文档
 
-```json
-{
-  "bucket": "ragrig-smoke",
-  "prefix": "ragrig-smoke",
-  "endpoint_url": "http://127.0.0.1:9000",
-  "region": "us-east-1",
-  "use_path_style": true,
-  "verify_tls": false,
-  "access_key": "env:AWS_ACCESS_KEY_ID",
-  "secret_key": "env:AWS_SECRET_ACCESS_KEY",
-  "session_token": "env:AWS_SESSION_TOKEN"
-}
-```
+核心文档：
 
-当前 `source.s3` 边界：
-
-- 只解析 Markdown 和纯文本对象
-- 不支持扩展、二进制对象、超大对象会 skip 并记录 reason
-- 暂不实现 delete detection、tombstone、独立 cursor state
-
-启动完整本地 API 栈：
-
-```bash
-docker compose up --build
-```
-
-健康检查：
-
-```bash
-curl http://localhost:8000/health
-```
-
-如果你改了 `APP_HOST_PORT`，把 URL 里的端口替换成对应值。
-
-## 插件化架构
-
-RAGRig 应该是 plugin-first architecture，但不是第一天就做插件市场。
-
-README 里优先放各平台官方链接，不直接嵌入第三方 logo。后续可以在 `docs/` 下做单独的集成生态墙，逐个确认 logo 的商标和使用规则后再放。
-
-插件优先级采用本地优先、云端第二的原则。用户应该先能用本地模型、本地 embedding、本地 reranker 和自托管向量库跑通，再按需启用云端模型或云存储。
-
-更稳的路线是：
-
-```text
-小内核
-  + 稳定插件接口
-  + 内置核心插件
-  + 官方插件
-  + 后续第三方插件生态
-```
-
-核心内核负责：
-
-- workspace / knowledge base
-- source / document / document_version
-- chunk / embedding
-- pipeline_run / pipeline_run_item
-- metadata / permission boundary / audit event
-- plugin registry
-- workflow execution
-
-## Provider Registry
-
-Phase 1e PR-1 建立了 `src/ragrig/providers/` 的 core contract，PR-2 在此基础上补齐本地 provider 边界。
-
-当前已经落地：
-
-- provider metadata / capability / health / structured error contract
-- register/get/read/list/health-check registry 操作
-- `deterministic-local` 通过 registry 注册
-- indexing / retrieval 默认路径通过 registry resolve provider
-- `GET /models` 暴露只读 provider metadata，供后续 Web Console Models 页复用
-- `model.ollama` 本地 adapter 元数据与 fake-client contract tests
-- `model.lm_studio` 本地 OpenAI-compatible adapter 元数据与 fake-client contract tests
-- `model.llama_cpp`、`model.vllm`、`model.xinference`、`model.localai` 的共享本地 adapter contract
-- `embedding.bge` 与 `reranker.bge` 的可选依赖边界
-- `/models` 与 `/plugins` 对以上 provider 的只读暴露
-- `model.vertex_ai`、`model.bedrock`、`model.azure_openai`、`model.openrouter`、`model.openai`、`model.cohere`、`model.voyage`、`model.jina` 的 cloud-second stub metadata
-- `/models` 与 `/plugins` 对以上 cloud stub 的只读暴露
-
-当前仍不做：
-
-- 生产级 cloud provider 调用
-- DB 持久化 model profile
-- 默认测试里的 live 本地运行时 smoke
-
-`deterministic-local` 仍然只用于 CI / smoke / secret-free 本地验证，不能视为生产语义 embedding。
-
-### Model Provider Catalog
-
-RAGRig 现在还提供一个基于官方文档链接维护的模型厂商与协议目录，并通过 `GET /models` 和 Web Console Models 面板暴露。
-
-当前目录覆盖 OpenAI-compatible providers / gateways、Anthropic、Google Gemini、Azure OpenAI、Amazon Bedrock、OpenRouter、Mistral、Cohere、Together、Fireworks、Groq、DeepSeek、Moonshot/Kimi、MiniMax、阿里 DashScope、SiliconFlow、智谱/Z.ai、百度千帆、火山方舟、xAI、Perplexity、NVIDIA NIM、Ollama、LM Studio、llama.cpp、vLLM、Xinference、LocalAI、BGE embedding 和 BGE reranking。
-
-运行时探测接口：
-
-```text
-GET  /models/{provider_name}/available-models
-POST /models/{provider_name}/speed-test
-```
-
-没有配置真实 key 时，接口返回 `missing_credentials` 和所需环境变量名，不发起网络请求。配置 key 后，当前测速实现测量 provider 的模型列表端点延迟，不消耗生成 token。
-
-## 本地 Provider 可选依赖
-
-PR-2 继续坚持 local-first，但不会把本地运行时 SDK 和重型 ML 包放进默认安装。
-
-如需启用本地模型 provider，可安装：
-
-```bash
-uv sync --extra local-ml --dev
-```
-
-`local-ml` extra 当前包含：
-
-- `ollama`
-- `openai`
-- `FlagEmbedding`
-- `sentence-transformers`
-- `torch`
-
-默认 `make test` 仍然只跑 fake client 和 optional-safe loader，不要求 Ollama、LM Studio、GPU 或真实模型下载。
-
-PR-2 文档化的默认本地地址：
-
-- `model.ollama`: `http://localhost:11434`
-- `model.lm_studio`: `http://localhost:1234/v1`
-- `model.llama_cpp`: `http://localhost:8080/v1`
-- `model.vllm`: `http://localhost:8000/v1`
-- `model.xinference`: `http://localhost:9997/v1`
-- `model.localai`: `http://localhost:8080/v1`
-
-## Cloud Provider 可选依赖
-
-PR-3 只交付 cloud-second stub 和文档，不把 cloud SDK 放进默认安装。
-
-可选 dependency groups：
-
-- `cloud-google`: `google-cloud-aiplatform`
-- `cloud-aws`: `boto3`
-- `cloud-openai`: `openai`
-- `cloud-cohere`: `cohere`
-- `cloud-voyage`: `voyageai`
-- `cloud-jina`: 暂无独立 SDK 依赖，当前只文档化 HTTP API stub 边界
-
-示例：
-
-```bash
-uv sync --extra cloud-openai --extra cloud-google --dev
-uv sync --extra cloud-aws --extra cloud-cohere --dev
-```
-
-当前 cloud stub 边界：
-
-- 默认 `make test` 不访问网络、不读取真实 API key、不调用外部云服务
-- `/models`、`/plugins`、`make plugins-check` 只暴露 metadata、required secrets、config schema 和当前 stub 状态
-- 真正的生产级 cloud adapter 需在后续 PR 单独实现，不在本轮 PR-3 内完成
-
-插件负责：
-
-- 输入来源
-- 文档解析
-- OCR
-- 清洗
-- chunking
-- embedding
-- rerank
-- vector store
-- 输出写入
-- 预览与编辑
-- 评测
-- workflow node
-
-### 插件分类
-
-| 类型 | 作用 | 例子 |
-| --- | --- | --- |
-| Source connector | 从外部系统读取知识 | local、SMB/NFS、S3/R2、[Google Drive](https://www.google.com/drive/)、[SharePoint](https://www.microsoft.com/en-us/microsoft-365/sharepoint/collaboration)、[Confluence](https://www.atlassian.com/software/confluence)、数据库 |
-| Parser / OCR | 把原始文件转成文本和结构 | Markdown、Text、PDF、DOCX、XLSX、[Docling](https://github.com/docling-project/docling)、[MinerU](https://github.com/opendatalab/MinerU)、[Tesseract](https://github.com/tesseract-ocr/tesseract)、[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) |
-| Cleaner | 规范化、脱敏、分类、去重、补 metadata | deterministic cleaner、LLM cleaner、PII redaction |
-| Chunker | 把 document version 切成可追溯 chunk | character window、Markdown heading、recursive chunk、table-aware chunk |
-| Model provider | 接入 LLM、embedding、reranker、OCR 模型 | 本地 [Ollama](https://ollama.com/)、[LM Studio](https://lmstudio.ai/)、[vLLM](https://www.vllm.ai/)、[llama.cpp](https://github.com/ggml-org/llama.cpp)、[Xinference](https://inference.readthedocs.io/)、[BAAI BGE](https://huggingface.co/BAAI)，以及云端 [Google Vertex AI](https://cloud.google.com/vertex-ai)、[Amazon Bedrock](https://aws.amazon.com/bedrock/)、[OpenRouter](https://openrouter.ai/)、[OpenAI](https://platform.openai.com/docs/overview)、[Cohere](https://cohere.com/)、[Voyage AI](https://www.voyageai.com/) |
-| Vector backend | 存储和检索向量 | [pgvector](https://github.com/pgvector/pgvector)、[Qdrant](https://qdrant.tech/)、[Milvus](https://milvus.io/)/[Zilliz](https://zilliz.com/)、[Weaviate](https://weaviate.io/)、[OpenSearch](https://opensearch.org/)、[Redis](https://redis.io/)/[Valkey](https://valkey.io/) |
-| Output sink | 把治理后的知识或检索产物写出去 | [AWS S3](https://aws.amazon.com/s3/)/[Cloudflare R2](https://www.cloudflare.com/developer-platform/products/r2/)/[MinIO](https://www.min.io/)、NFS、DB、JSONL、[Parquet](https://parquet.apache.org/)、Markdown、webhook、[MCP](https://modelcontextprotocol.io/) |
-| Preview/Edit | 预览或编辑文档和清洗结果 | Markdown editor、[WPS](https://www.wps.com/)、[OnlyOffice](https://www.onlyoffice.com/)、[Collabora Online](https://www.collaboraonline.com/) |
-| Evaluation | 评测 RAG 质量 | golden questions、citation coverage、latency/cost、regression checks |
-| Workflow node | 拼装 pipeline 步骤 | scan、parse、clean、chunk、embed、index、retrieve、evaluate、export、notify |
-
-### 插件优先级与归属
-
-| 层级 | 含义 | 是否随 core 发布 | 扩展方式 |
-| --- | --- | --- | --- |
-| 内置核心插件 | 最小可复现 RAG 闭环必需 | 是 | 仓库内维护，无外部服务依赖 |
-| 官方插件 | 高频企业集成，由 RAGRig 项目维护 | 可选 | 先放 monorepo，接口稳定后可拆包 |
-| 社区插件 | 第三方按公开 contract 实现 | 否 | 后续通过 Python package 或 manifest 安装 |
-
-### 内置核心插件
-
-| 插件 | 类型 | 读写能力 | 为什么内置 |
-| --- | --- | --- | --- |
-| `source.local` | Source connector | 读 | fresh clone、本地 fixture、共享环境 smoke 的基础 |
-| `parser.markdown` | Parser | 读 | 企业文档和开发文档高频格式 |
-| `parser.text` | Parser | 读 | 最小文本入库路径 |
-| `chunker.character_window` | Chunker | 写 chunk | 可复现、容易测试 |
-| `embedding.deterministic_local` | Model provider | 写 embedding | 无 secret、可 CI、可 smoke |
-| `vector.pgvector` | Vector backend | 读/写 | 默认轻量后端，Postgres 一套即可跑 |
-| `sink.jsonl` | Output sink | 写 | 调试和迁移最方便 |
-| `preview.markdown` | Preview/Edit | 读/写草稿 | 清洗结果和 chunk 人工 review 的基础 |
-
-### 官方插件优先级
-
-| 优先级 | 插件方向 | 优先支持平台/协议 |
-| --- | --- | --- |
-| P0 | `vector.qdrant` | [自托管 Qdrant](https://qdrant.tech/documentation/) 优先，[Qdrant Cloud](https://qdrant.tech/cloud/) 第二 |
-| P0 | `model.local_runtime` | [Ollama](https://ollama.com/)、[LM Studio](https://lmstudio.ai/)、[llama.cpp](https://github.com/ggml-org/llama.cpp) server、[vLLM](https://www.vllm.ai/)、[Xinference](https://inference.readthedocs.io/)、[LocalAI](https://localai.io/)，通过官方 SDK 或 OpenAI-compatible 本地 API 接入 |
-| P0 | `embedding.bge` / `reranker.bge` | [BAAI BGE](https://huggingface.co/BAAI) embedding 与 reranker，通过本地 `FlagEmbedding`、`sentence-transformers` 或 OpenAI-compatible serving 接入 |
-| P1 | `model.cloud_provider` | [Google Vertex AI](https://cloud.google.com/vertex-ai)、[Amazon Bedrock](https://aws.amazon.com/bedrock/)、[OpenRouter](https://openrouter.ai/)、[OpenAI](https://platform.openai.com/docs/overview)、[Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service)、[Cohere](https://cohere.com/)、[Voyage AI](https://www.voyageai.com/)、[Jina AI](https://jina.ai/) |
-| P1 | `source.s3` | [AWS S3](https://aws.amazon.com/s3/)、[Cloudflare R2](https://www.cloudflare.com/developer-platform/products/r2/)、[MinIO](https://www.min.io/)、[Ceph RGW](https://docs.ceph.com/en/latest/radosgw/)、[Wasabi](https://wasabi.com/)、[Backblaze B2 S3 API](https://www.backblaze.com/cloud-storage)、[腾讯 COS S3 API](https://www.tencentcloud.com/products/cos)、[阿里 OSS](https://www.alibabacloud.com/product/oss) S3-compatible 模式 |
-| P1 | `sink.object_storage` | [AWS S3](https://aws.amazon.com/s3/)、[Cloudflare R2](https://www.cloudflare.com/developer-platform/products/r2/)、[MinIO](https://www.min.io/)、[Ceph RGW](https://docs.ceph.com/en/latest/radosgw/)、[Wasabi](https://wasabi.com/)、[Backblaze B2](https://www.backblaze.com/cloud-storage)、[Google Cloud Storage](https://cloud.google.com/storage)、[Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs) |
-| P1 | `source.fileshare` | [SMB/CIFS](https://learn.microsoft.com/en-us/windows-server/storage/file-server/file-server-smb-overview)、[NFS](https://docs.kernel.org/admin-guide/nfs/index.html)、[WebDAV](https://www.rfc-editor.org/rfc/rfc4918)、[SFTP/OpenSSH](https://www.openssh.com/) |
-| P1 | `source.google_workspace` | [Google Drive](https://www.google.com/drive/)、[Google Docs](https://www.google.com/docs/about/)、[Google Sheets](https://www.google.com/sheets/about/)、[Google Slides](https://www.google.com/slides/about/) |
-| P1 | `source.microsoft_365` | [SharePoint](https://www.microsoft.com/en-us/microsoft-365/sharepoint/collaboration)、[OneDrive](https://www.microsoft.com/en-us/microsoft-365/onedrive/online-cloud-storage)、[Word](https://www.microsoft.com/en-us/microsoft-365/word)、[Excel](https://www.microsoft.com/en-us/microsoft-365/excel)、[PowerPoint](https://www.microsoft.com/en-us/microsoft-365/powerpoint) |
-| P1 | `source.wiki` | [Confluence](https://www.atlassian.com/software/confluence)、[MediaWiki](https://www.mediawiki.org/wiki/MediaWiki)、[GitBook](https://www.gitbook.com/)、[Docusaurus](https://docusaurus.io/)、[MkDocs](https://www.mkdocs.org/) |
-| P1 | `source.database` | [PostgreSQL](https://www.postgresql.org/)、[MySQL](https://www.mysql.com/)/[MariaDB](https://mariadb.org/)、[SQL Server](https://www.microsoft.com/en-us/sql-server)、[Oracle Database](https://www.oracle.com/database/)、[SQLite](https://www.sqlite.org/)、[MongoDB](https://www.mongodb.com/)、[Elasticsearch](https://www.elastic.co/elasticsearch)/[OpenSearch](https://opensearch.org/) |
-| P1 | `preview.office` | [WPS 文档中台](https://www.wps.com/)、[OnlyOffice](https://www.onlyoffice.com/)、[Collabora Online](https://www.collaboraonline.com/) |
-| P2 | `source.collaboration` | [Notion](https://www.notion.com/)、[飞书](https://www.feishu.cn/)/[Lark Docs](https://www.larksuite.com/)、[钉钉文档](https://www.dingtalk.com/)、[企业微信文档](https://work.weixin.qq.com/)、[Slack files](https://slack.com/)、[Teams files](https://www.microsoft.com/en-us/microsoft-teams/group-chat-software) |
-| P2 | `parser.advanced_documents` | PDF layout、DOCX/PPTX/XLSX、[Docling](https://github.com/docling-project/docling)、[MinerU](https://github.com/opendatalab/MinerU)、[Unstructured](https://unstructured.io/) |
-| P2 | `ocr` | [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)、[Tesseract](https://github.com/tesseract-ocr/tesseract)、[AWS Textract](https://aws.amazon.com/textract/)、[Azure Document Intelligence](https://azure.microsoft.com/en-us/products/ai-services/ai-document-intelligence)、[Google Document AI](https://cloud.google.com/document-ai) |
-| P2 | `vector.enterprise` | [Milvus](https://milvus.io/)/[Zilliz](https://zilliz.com/)、[Weaviate](https://weaviate.io/)、[OpenSearch](https://opensearch.org/)/[Elasticsearch](https://www.elastic.co/elasticsearch) vector、[Redis](https://redis.io/)/[Valkey](https://valkey.io/) vector、[Vespa](https://vespa.ai/) |
-| P2 | `sink.analytics` | [Parquet](https://parquet.apache.org/)、[DuckDB](https://duckdb.org/)、[ClickHouse](https://clickhouse.com/)、[BigQuery](https://cloud.google.com/bigquery)、[Snowflake](https://www.snowflake.com/) |
-| P2 | `sink.agent_access` | [MCP](https://modelcontextprotocol.io/) server、webhook、retrieval API export adapter |
-
-### 插件能力声明
-
-每个插件都应该声明：
-
-- plugin id、type、version、owner
-- 支持 read/write 哪些操作
-- config schema
-- secret requirements
-- capability matrix
-- local / cloud 分类
-- dimensions / context window 元数据（如适用）
-- SDK / protocol 边界
-- 是否支持 cursor / incremental sync
-- 是否支持 delete detection
-- 是否支持 permission mapping
-- 失败和重试策略
-- metrics 和 audit events
-
-示例：
-
-```yaml
-manifest_version: 1
-id: source.s3
-type: source
-version: 0.1.0
-capabilities:
-  - read
-  - incremental_sync
-  - delete_detection
-config_model: S3SourceConfig
-secret_requirements:
-  - AWS_ACCESS_KEY_ID
-  - AWS_SECRET_ACCESS_KEY
-```
-
-当前 contract-first 实现已经补上：
-
-- `src/ragrig/plugins/`：registry、manifest schema、dependency guard、内置插件和官方 stub。
-- `GET /plugins`：默认离线可用的插件发现 API，可返回 readiness、缺失依赖、是否可配置、secret requirements。
-- `POST /plugins/{plugin_id}/validate-config`：供 Web Console 安全校验插件配置草稿，不收集原始 secret。
-- `make plugins-check`：离线 JSON 输出当前 registry 状态。
-- `source.fileshare`：已升级为真实官方 source plugin，支持 mounted NFS/local path、SMB/WebDAV/SFTP fake-client contract tests，以及协议级 readiness 展示。
-- `make fileshare-check`：离线验证 mounted path 和 fake SMB/WebDAV/SFTP scanner 行为。
-
-### 企业连接器目录与工作流引擎
-
-RAGRig 现在把“企业连接器发现”和“真实连接器执行”分开暴露。目录覆盖
-local files、fileshare、S3-compatible storage、Google Workspace、Microsoft 365、
-wiki、database、collaboration suites、Notion、Slack files、Box、Dropbox、GitHub
-repository contents，并记录官方文档链接、协议、credential 环境变量名和 workflow
-operation 映射。
-
-新增 API：
-
-- `GET /enterprise-connectors`：列出 connector family、protocol、credential env var name、官方文档链接和 workflow operation。
-- `POST /enterprise-connectors/{connector_id}/probe`：安全本地探测。没有 credential 时，云/SaaS connector 返回 `missing_credentials`，不会发起网络请求。
-- `GET /workflows/operations`：列出可用 workflow node operation。
-- `POST /workflows/runs`：运行或 dry-run 一个带依赖校验的轻量 DAG。
-
-当前 workflow operation：
-
-- `ingest.local`
-- `ingest.fileshare`
-- `ingest.s3`
-- `ingest.connector`
-- `index.knowledge_base`
-- `noop`
-
-工作流引擎按拓扑顺序执行 step，拒绝重复 step、未知依赖、循环依赖和未知
-operation，支持 dry-run、step retry、依赖失败后的跳过，并在真实 ingest/index
-step 结果中返回对应的 `pipeline_run_id`。默认测试仍保持无网络、无 secret。
-
-### Fileshare Source
-
-`source.fileshare` 现在是企业共享盘接入的本地优先入口。
-
-当前支持：
-
-- `protocol = nfs_mounted`：先由操作系统挂载 NFS，再把挂载目录交给 RAGRig
-- `protocol = smb`：SMB/CIFS contract、readiness、fake-client tests，运行时可选依赖 `smbprotocol`
-- `protocol = webdav`：WebDAV contract、readiness、fake-client tests，运行时可选依赖 `httpx`
-- `protocol = sftp`：SFTP contract、readiness、fake-client tests，运行时可选依赖 `paramiko`
-
-当前边界：
-
-- 默认 `make test` / `make coverage` 仍然不依赖网络、secret 或真实共享盘
-- delete detection 目前只是占位审计信号，会记录 `deleted_upstream`，不会真的删除 DB 中的 document
-- permission mapping 目前只记录 metadata，不做真实权限过滤
-- 默认 parser 路径仍只处理 Markdown/Text
-
-安装可选运行时依赖：
-
-```bash
-uv sync --extra fileshare --dev
-```
-
-离线 smoke：
-
-```bash
-make fileshare-check
-```
-
-SMB 配置示例：
-
-```json
-{
-  "protocol": "smb",
-  "host": "files.example.internal",
-  "share": "knowledge",
-  "root_path": "/docs",
-  "username": "env:FILESHARE_USERNAME",
-  "password": "env:FILESHARE_PASSWORD",
-  "include_patterns": ["*.md", "*.txt"],
-  "exclude_patterns": [],
-  "max_file_size_mb": 50,
-  "page_size": 1000,
-  "max_retries": 3,
-  "connect_timeout_seconds": 10,
-  "read_timeout_seconds": 30
-}
-```
-
-mounted NFS/local path 配置示例：
-
-```json
-{
-  "protocol": "nfs_mounted",
-  "root_path": "/mnt/company-knowledge",
-  "include_patterns": ["*.md", "*.txt"],
-  "exclude_patterns": [],
-  "max_file_size_mb": 50,
-  "page_size": 1000,
-  "max_retries": 1,
-  "connect_timeout_seconds": 10,
-  "read_timeout_seconds": 30
-}
-```
-
-## 质量与供应链
-
-RAGRig 需要把质量门槛和依赖治理写进项目规则：
-
-- 核心模块测试覆盖率必须达到并保持 100%。
-- 默认测试不能依赖网络、云账号或 secret。
-- Provider SDK 优先使用官方 SDK 或活跃维护的开源 SDK。
-- 重型 ML SDK、云端 SDK 和企业系统 SDK 必须通过可选插件依赖引入，不能进入 core runtime。
-- `uv.lock` 必须提交；发布前需要做漏洞检查、许可证检查和 SBOM 生成。
-
-当前仓库里的可执行质量门命令：
-
-- `make coverage`：对硬范围 core 模块执行 100% line coverage gate，范围包括 `db`、`repositories`、`ingestion`、`parsers`、`chunkers`、`embeddings`、`indexing`、`plugins`、`retrieval.py`、`config.py`、`health.py`。
-- `make plugins-check`：输出插件 registry 的离线 JSON 状态。
-- `make export-object-storage-check`：执行可选的对象存储导出 smoke 命令，默认走 `dry_run`。
-- `make licenses`：对已安装的第三方依赖执行许可证检查，阻止 GPL、AGPL、SSPL 和 source-available 依赖进入默认路径。
-- `make sbom`：输出 CycloneDX JSON SBOM 到 `docs/operations/artifacts/sbom.cyclonedx.json`。
-- `make audit`：对当前本地环境做漏洞审计，并输出 `docs/operations/artifacts/pip-audit.json`。
-- `make dependency-inventory`：刷新 `docs/operations/dependency-inventory.md`。
-- `make supply-chain-check`：串行执行许可证检查、SBOM 导出和漏洞审计。
-
-## Object Storage Sink
-
-`sink.object_storage` 已支持通过可选 `boto3` 把最小治理产物导出到 S3-compatible 对象存储。
-
-本阶段 runtime-ready：
-
-- AWS S3
-- Cloudflare R2
-- MinIO
-- Ceph RGW
-- Wasabi
-- Backblaze B2 S3 API
-- 腾讯 COS S3 API
-- 阿里 OSS S3-compatible 模式
-
-本阶段仅 contract/stub：
-
-- Google Cloud Storage
-- Azure Blob Storage
-
-示例配置：
-
-```json
-{
-  "bucket": "exports",
-  "prefix": "team-a",
-  "endpoint_url": "http://localhost:9000",
-  "region": "us-east-1",
-  "use_path_style": true,
-  "verify_tls": true,
-  "access_key": "env:AWS_ACCESS_KEY_ID",
-  "secret_key": "env:AWS_SECRET_ACCESS_KEY",
-  "session_token": "env:AWS_SESSION_TOKEN",
-  "path_template": "{knowledge_base}/{run_id}/{artifact}.{format}",
-  "overwrite": false,
-  "dry_run": true,
-  "include_markdown_summary": true,
-  "object_metadata": {
-    "environment": "dev"
-  }
-}
-```
-
-行为说明：
-
-- JSONL 导出使用 `application/x-ndjson`。
-- Markdown 汇总使用 `text/markdown; charset=utf-8`。
-- `overwrite=false` 时遇到已存在对象会跳过。
-- `dry_run=true` 只生成导出计划，不真正上传。
-- retrieval / evaluation 导出目前会明确标记为 unsupported/degraded，不假装 ready。
-
-本轮显式不纳入 coverage hard gate 的路径：
-
-- `src/ragrig/main.py`：FastAPI app wiring，不属于本轮 core 逻辑
-- `src/ragrig/web_console.py`：Web Console 适配层，不属于本轮 hard scope
-- `src/ragrig/cleaners/*`、`src/ragrig/vectorstore/*`：当前仍是占位包，没有实际行为
-
-SDK 清单、供应链策略和覆盖率要求见 [local-first, quality, and supply chain policy](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)。
-可执行命令说明见 [core coverage and supply chain gates](./docs/specs/ragrig-core-coverage-supply-chain-gates.md)、[supply chain operations](./docs/operations/supply-chain.md)、[dependency inventory](./docs/operations/dependency-inventory.md)。
-
-## GitHub CI
-
-RAGRig 现在包含一个最小 GitHub Actions workflow，名称固定为 `RAGRig CI`，并在 Python `3.11` 和 `3.12` 上运行。
-
-它在 `pull_request` 到 `main` 和 `push` 到 `main` 时运行，当前覆盖：
-
-- 基于 `uv.lock` 的冻结依赖安装：`uv sync --dev --frozen`
-- 格式检查：`uv run ruff format --check .`
-- lint：`uv run ruff check .`
-- 仓库测试基线：`make test`
-- 核心硬范围 coverage gate：`make coverage`
-- Web Console smoke contract：`make web-check`
-
-当前不覆盖：
-
-- `192.168.3.100` 共享环境运行态验证
-- Docker Compose 部署检查
-- 默认 GitHub CI 里仍未纳入的 supply-chain、SBOM、license、vulnerability gates
-- 任何依赖 secret、云账号、GPU、Ollama、LM Studio 或模型下载的流程
-
-验证边界：
-
-- GitHub CI 负责证明 fresh clone 下的 lint 和测试基线可以在 GitHub Actions 中执行。
-- 本地 DEV 验证仍然负责定向复现、调试迭代和提 PR 前确认。
-- 如果某个 issue 明确要求 `192.168.3.100` 证据，仍然需要单独做共享环境验证，不能由 GitHub CI 替代。
-
-首次 workflow 在 GitHub 上成功运行后，owner 仍可能需要在 GitHub Settings 里手动配置 branch protection required checks。
-
-## Web Console
-
-Web Console 的第一版目标是轻量管理台，而不是聊天页面。
-
-第一版必须覆盖：
-
-- 知识库列表
-- 数据源配置
-- 本地文件/Markdown 入库任务
-- pipeline run 历史
-- 文档/chunk 预览
-- 模型配置
-- 检索调试 Playground
-- 健康检查和数据库状态
-- 插件/数据源配置向导：读取真实 registry metadata，生成配置草稿，要求使用 `env:VARIABLE_NAME` 引用 secret，并调用 `POST /plugins/{plugin_id}/validate-config` 做后端校验
-
-当前边界：
-
-- 向导不会持久化插件配置，也不会从浏览器创建 source。
-- 向导只展示真实 ready/degraded/unavailable 状态、缺失依赖、secret requirements 和下一步 CLI/配置提示。
-
-设计文档：
-
+- [Local Pilot spec](./docs/specs/ragrig-local-pilot-spec.md)
+- [MVP spec](./docs/specs/ragrig-mvp-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)
-- [Web Console plugin/source setup wizard spec](./docs/specs/ragrig-web-console-plugin-source-wizard-spec.md)
-- [Web Console prototype](./docs/prototypes/web-console/index.html)
+- [插件/数据源向导 spec](./docs/specs/ragrig-web-console-plugin-source-wizard-spec.md)
+- [本地优先、质量与供应链策略](./docs/specs/ragrig-local-first-quality-supply-chain-policy.md)
+- [核心覆盖率与供应链门禁](./docs/specs/ragrig-core-coverage-supply-chain-gates.md)
 
-<p align="center">
-  <img src="./docs/prototypes/web-console/ragrig-web-console-prototype.png" alt="RAGRig Web Console 原型图" width="860">
-</p>
+运维文档：
+
+- [Dependency inventory](./docs/operations/dependency-inventory.md)
+- [Supply chain](./docs/operations/supply-chain.md)
+- [Roadmap](./docs/roadmap.md)
 
 ## 仓库结构
 
 ```text
 .
-├── assets/
-│   ├── ragrig-icon.png
-│   └── ragrig-icon.svg
-├── docs/
-│   ├── operations/
-│   ├── prototypes/
-│   ├── roadmap.md
-│   └── specs/
-├── scripts/
-├── src/ragrig/
-├── tests/
-├── README.md
-├── README.zh-CN.md
-└── LICENSE
+├── assets/             # 项目图标
+├── docs/               # 规格、运维文档、原型图
+├── scripts/            # smoke、运维、验证命令
+├── src/ragrig/         # RAGRig 应用代码
+├── tests/              # 单元测试和 contract tests
+├── docker-compose.yml  # 本地 Postgres/pgvector 与可选服务
+├── pyproject.toml      # Python 依赖和工具配置
+└── Makefile            # 常用开发命令
 ```
 
 ## License

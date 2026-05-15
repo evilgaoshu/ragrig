@@ -30,7 +30,16 @@ from ragrig.evaluation import (
 )
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.health import create_database_check
+from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import _select_parser
+from ragrig.ingestion.web_import import WebsiteImportError
+from ragrig.local_pilot import (
+    ModelConfigError,
+    build_local_pilot_status,
+    import_website_pages,
+    model_health_check,
+    run_answer_smoke,
+)
 from ragrig.parsers.base import ParserTimeoutError, parse_with_timeout
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.processing_profile import (
@@ -52,6 +61,7 @@ from ragrig.repositories import (
     get_knowledge_base_by_name,
     get_next_version_number,
     get_or_create_document,
+    get_or_create_knowledge_base,
     get_or_create_source,
     list_audit_events,
 )
@@ -112,6 +122,7 @@ from ragrig.web_console import (
     resume_pipeline_dag,
     retry_pipeline_run,
     retry_pipeline_run_item,
+    run_source_ingest,
     save_source_config,
     validate_plugin_config_for_wizard,
     validate_source_config,
@@ -156,6 +167,10 @@ class RetrievalSearchRequest(BaseModel):
     candidate_k: int = Field(default=20, ge=1, le=200)
     reranker_provider: str | None = None
     reranker_model: str | None = None
+
+
+class KnowledgeBaseCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
 
 
 class EnterpriseConnectorProbeRequest(BaseModel):
@@ -232,6 +247,23 @@ class DiffPreviewRequest(BaseModel):
 class RollbackRequest(BaseModel):
     audit_id: str
     actor: str | None = None
+
+
+class WebsiteImportRequest(BaseModel):
+    urls: list[str]
+    sitemap_url: str | None = None
+
+
+class LocalPilotAnswerSmokeRequest(BaseModel):
+    provider: str
+    model: str | None = None
+    config: dict[str, Any] | None = None
+
+
+class LocalPilotModelHealthRequest(BaseModel):
+    provider: str
+    model: str | None = None
+    config: dict[str, Any] | None = None
 
 
 def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
@@ -362,11 +394,65 @@ def create_app(
             database_detail=detail,
         )
 
+    @app.get("/local-pilot/status", response_model=None)
+    def local_pilot_status() -> dict[str, Any]:
+        return build_local_pilot_status().model_dump()
+
+    @app.post("/local-pilot/answer-smoke", response_model=None)
+    def local_pilot_answer_smoke(
+        request: LocalPilotAnswerSmokeRequest,
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            return run_answer_smoke(
+                provider=request.provider,
+                model=request.model,
+                config=request.config,
+            )
+        except ModelConfigError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": exc.code, "message": str(exc), "field": exc.field},
+            )
+
+    @app.post("/local-pilot/model-health", response_model=None)
+    def local_pilot_model_health(
+        request: LocalPilotModelHealthRequest,
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            return model_health_check(
+                provider=request.provider,
+                model=request.model,
+                config=request.config,
+            )
+        except ModelConfigError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": exc.code, "message": str(exc), "field": exc.field},
+            )
+
     @app.get("/knowledge-bases", response_model=None)
     def knowledge_bases(
         session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, list[dict[str, Any]]]:
         return {"items": list_knowledge_bases(session, settings=active_settings)}
+
+    @app.post("/knowledge-bases", response_model=None)
+    def create_knowledge_base(
+        request: KnowledgeBaseCreateRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> JSONResponse:
+        name = request.name.strip()
+        if not name:
+            return JSONResponse(
+                status_code=400, content={"error": "knowledge base name is required"}
+            )
+        existed = get_knowledge_base_by_name(session, name) is not None
+        kb = get_or_create_knowledge_base(session, name)
+        session.commit()
+        return JSONResponse(
+            status_code=200 if existed else 201,
+            content={"id": str(kb.id), "name": kb.name, "created": not existed},
+        )
 
     @app.get("/sources", response_model=None)
     def sources(
@@ -556,17 +642,19 @@ def create_app(
     def get_document_understanding(
         document_version_id: str,
         session: Annotated[Session, Depends(get_session)],
+        allow_missing: bool = False,
     ) -> dict[str, Any] | JSONResponse:
         record = get_understanding_by_version(session, document_version_id)
         if record is None:
+            content = {
+                "error": "understanding_not_found",
+                "message": f"No understanding result for document version '{document_version_id}'.",
+            }
+            if allow_missing:
+                return JSONResponse(status_code=200, content=content)
             return JSONResponse(
                 status_code=404,
-                content={
-                    "error": "understanding_not_found",
-                    "message": (
-                        f"No understanding result for document version '{document_version_id}'."
-                    ),
-                },
+                content=content,
             )
         return {
             "id": record.id,
@@ -922,6 +1010,31 @@ def create_app(
         """
         return get_advanced_parser_corpus()
 
+    @app.post("/knowledge-bases/{kb_name}/website-import", response_model=None)
+    def knowledge_base_website_import(
+        kb_name: str,
+        request: WebsiteImportRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> JSONResponse:
+        kb = get_knowledge_base_by_name(session, kb_name)
+        if kb is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"knowledge base '{kb_name}' not found"},
+            )
+
+        try:
+            result = import_website_pages(
+                session,
+                knowledge_base=kb,
+                urls=request.urls,
+                sitemap_url=request.sitemap_url,
+            )
+        except WebsiteImportError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
+
+        return JSONResponse(status_code=202, content=result)
+
     @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
     async def knowledge_base_upload(
         kb_name: str,
@@ -1172,10 +1285,26 @@ def create_app(
             run.finished_at = datetime.now(timezone.utc)
             session.commit()
 
+            indexing_payload: dict[str, Any] | None = None
+            if created_versions > 0:
+                indexing_report = index_knowledge_base(
+                    session=session,
+                    knowledge_base_name=kb.name,
+                )
+                indexing_payload = {
+                    "pipeline_run_id": str(indexing_report.pipeline_run_id),
+                    "indexed_count": indexing_report.indexed_count,
+                    "skipped_count": indexing_report.skipped_count,
+                    "failed_count": indexing_report.failed_count,
+                    "chunk_count": indexing_report.chunk_count,
+                    "embedding_count": indexing_report.embedding_count,
+                }
+
             return JSONResponse(
                 status_code=202,
                 content={
                     "pipeline_run_id": str(run.id),
+                    "indexing": indexing_payload,
                     "accepted_files": len(saved_paths),
                     "rejected_files": len(rejected),
                     "rejections": rejected,
@@ -1747,6 +1876,12 @@ def create_app(
         plugin_id: str
         config: dict[str, Any] = Field(default_factory=dict)
 
+    class SourceRunIngestRequest(BaseModel):
+        plugin_id: str
+        config: dict[str, Any] = Field(default_factory=dict)
+        knowledge_base: str = "default"
+        operator: str | None = None
+
     @app.post("/sources/dry-run", response_model=None)
     def source_dry_run(
         request: SourceDryRunRequest,
@@ -1769,6 +1904,27 @@ def create_app(
                 content={"error": str(exc)},
             )
         return result
+
+    @app.post("/sources/run-ingest", response_model=None)
+    def source_run_ingest(
+        request: SourceRunIngestRequest,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        """Run source ingestion and index newly created document versions."""
+        try:
+            result = run_source_ingest(
+                session,
+                plugin_id=request.plugin_id,
+                config=request.config,
+                knowledge_base_name=request.knowledge_base,
+                operator=request.operator,
+            )
+        except Exception as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": str(exc)},
+            )
+        return JSONResponse(status_code=202, content=result)
 
     # ── Pipeline Run Item Inspect & Retry ──────────────────────────────────
 

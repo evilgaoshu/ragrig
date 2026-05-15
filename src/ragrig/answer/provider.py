@@ -150,7 +150,11 @@ class LLMAnswerProvider(AnswerProvider):
         return result
 
 
-def get_answer_provider(provider_name: str, model: str | None = None) -> AnswerProvider:
+def get_answer_provider(
+    provider_name: str,
+    model: str | None = None,
+    provider_config: dict[str, Any] | None = None,
+) -> AnswerProvider:
     """Factory to resolve an answer provider by name.
 
     'deterministic-local' returns a DeterministicAnswerProvider.
@@ -163,7 +167,10 @@ def get_answer_provider(provider_name: str, model: str | None = None) -> AnswerP
     from ragrig.providers import get_provider_registry
 
     registry = get_provider_registry()
-    base = registry.get(provider_name)
+    config = dict(provider_config or {})
+    if model is not None:
+        config.setdefault("model_name", model)
+    base = registry.get(provider_name, **config)
 
     capabilities = base.metadata.capabilities
     if (
