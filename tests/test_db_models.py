@@ -72,3 +72,35 @@ def test_sources_expose_composite_key_for_same_knowledge_base_references() -> No
     ]
 
     assert ("knowledge_base_id", "id") in composite_uniques
+
+
+def test_workspace_auth_phase_1_tables_match_design_contract() -> None:
+    metadata: MetaData = Base.metadata
+
+    assert {
+        "workspaces",
+        "users",
+        "workspace_memberships",
+        "api_keys",
+        "user_sessions",
+    }.issubset(metadata.tables.keys())
+
+    workspaces = metadata.tables["workspaces"]
+    users = metadata.tables["users"]
+    memberships = metadata.tables["workspace_memberships"]
+    api_keys = metadata.tables["api_keys"]
+    user_sessions = metadata.tables["user_sessions"]
+
+    assert workspaces.c.slug.unique
+    assert workspaces.c.display_name.nullable is False
+    assert users.c.email.unique
+    assert memberships.c.workspace_id.references(workspaces.c.id)
+    assert memberships.c.user_id.references(users.c.id)
+    assert api_keys.c.workspace_id.references(workspaces.c.id)
+    assert api_keys.c.created_by_user_id.references(users.c.id)
+    assert api_keys.c.prefix.unique
+    assert "secret" not in api_keys.c
+    assert "secret_hash" in api_keys.c
+    assert user_sessions.c.token_hash.unique
+    assert "token" not in user_sessions.c
+    assert user_sessions.c.expires_at.nullable is False
