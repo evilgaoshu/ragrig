@@ -221,6 +221,14 @@ make local-pilot-smoke
 make dependency-inventory
 ```
 
+浏览器级 Local Pilot Console 检查：
+
+```bash
+make local-pilot-console-e2e
+```
+
+该命令会启动临时 SQLite 应用，验证一次失败上传/重试路径，再通过 Web Console 上传 Markdown/PDF/DOCX，检查 pipeline/chunk UI，并在 Playground 发起一次 grounded answer。它需要 `npm` 和本地 Chrome/Chromium；如果没有 Chrome，可设置 `RAGRIG_CONSOLE_E2E_BROWSER_CHANNEL=chromium`。
+
 供应链检查：
 
 ```bash

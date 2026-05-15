@@ -284,6 +284,7 @@ def run_upload_pipeline(
     pipeline_run_id: str,
     staged_files: list[dict[str, str]],
 ) -> dict[str, Any]:
+    retain_staged_files = False
     try:
         with session_factory() as session:
             kb = get_knowledge_base_by_name(session, kb_name)
@@ -394,6 +395,7 @@ def run_upload_pipeline(
             run.status = "completed_with_failures" if failed_count else "completed"
             run.finished_at = datetime.now(timezone.utc)
             run_status = run.status
+            retain_staged_files = failed_count > 0
             session.commit()
 
         try:
@@ -425,7 +427,8 @@ def run_upload_pipeline(
             },
         }
     finally:
-        cleanup_staged_files(staged_files)
+        if not retain_staged_files:
+            cleanup_staged_files(staged_files)
 
 
 def run_ingestion_dag_task(

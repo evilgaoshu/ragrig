@@ -3564,6 +3564,55 @@ async def test_upload_binary_garbled_html_is_handled_as_failed(tmp_path) -> None
 
 
 @pytest.mark.anyio
+async def test_web_upload_failed_item_keeps_file_available_for_retry(tmp_path) -> None:
+    """A failed browser upload should retain the staged file so retry can re-parse it."""
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "web-upload-retry-source.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    bad_file = tmp_path / "bad.txt"
+    bad_file.write_bytes(b"\xff\xfe\x00\x01")
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with bad_file.open("rb") as file_obj:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": ("bad.txt", file_obj, "text/plain")},
+            )
+
+    assert response.status_code == 202
+    upload = response.json()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await _wait_for_task_completion(client, upload["task_id"])
+        items_response = await client.get(f"/pipeline-runs/{upload['pipeline_run_id']}/items")
+    assert items_response.status_code == 200
+    item = items_response.json()["items"][0]
+    assert item["status"] == "failed"
+    assert Path(item["document_uri"]).exists()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        retry_response = await client.post(
+            f"/pipeline-run-items/{item['id']}/retry",
+            json={"operator": "local-pilot-test"},
+        )
+
+    assert retry_response.status_code == 200
+    retry = retry_response.json()
+    assert retry["status"] == "failed"
+    assert retry["error_message"] is not None
+    assert "file not found" not in retry["error_message"].lower()
+
+
+@pytest.mark.anyio
 async def test_console_renders_degraded_status_without_white_screen(tmp_path) -> None:
     """After uploading a preview fixture, the console HTML must include degraded/failed
     status indicators and not white-screen."""
@@ -4073,6 +4122,149 @@ async def test_answer_api_no_secrets_in_response(tmp_path) -> None:
     # The response should not contain secret-like terms from provider/config leaks
     for secret_term in ["api_key", "password", "token"]:
         assert secret_term not in text, f"Secret term '{secret_term}' found in answer response"
+
+
+@pytest.mark.anyio
+async def test_answer_api_passes_env_resolved_provider_config(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ragrig.answer.schema import AnswerReport, Citation, EvidenceChunk
+
+    captured: dict[str, object] = {}
+
+    def fake_generate_answer(**kwargs):
+        captured.update(kwargs)
+        return AnswerReport(
+            answer="configured answer [cit-1]",
+            citations=[
+                Citation(
+                    citation_id="cit-1",
+                    document_uri="memory://doc",
+                    chunk_id="chunk-1",
+                    chunk_index=0,
+                    text_preview="configured evidence",
+                    score=1.0,
+                )
+            ],
+            evidence_chunks=[
+                EvidenceChunk(
+                    citation_id="cit-1",
+                    document_uri="memory://doc",
+                    chunk_id="chunk-1",
+                    text="configured evidence",
+                    chunk_index=0,
+                    score=1.0,
+                    distance=0.0,
+                )
+            ],
+            model="gemini-2.5-flash",
+            provider="model.google_gemini",
+            retrieval_trace={"total_results": 1},
+            grounding_status="grounded",
+        )
+
+    monkeypatch.setenv("RAGRIG_TEST_MODEL_KEY", "resolved-test-secret")
+    monkeypatch.setattr("ragrig.main.generate_answer", fake_generate_answer)
+
+    database_path = tmp_path / "web-console-answer-config.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/retrieval/answer",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "What is configured?",
+                "top_k": 3,
+                "provider": "model.google_gemini",
+                "model": "gemini-2.5-flash",
+                "config": {
+                    "api_key": "env:RAGRIG_TEST_MODEL_KEY",
+                    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert "resolved-test-secret" not in response.text
+    assert captured["provider"] == "model.google_gemini"
+    assert captured["model"] == "gemini-2.5-flash"
+    assert captured["provider_config"] == {
+        "api_key": "resolved-test-secret",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta",
+    }
+
+
+@pytest.mark.anyio
+async def test_answer_api_supports_separate_answer_provider_config(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ragrig.answer.schema import AnswerReport, Citation, EvidenceChunk
+
+    captured: dict[str, object] = {}
+
+    def fake_generate_answer(**kwargs):
+        captured.update(kwargs)
+        return AnswerReport(
+            answer="cloud answer over deterministic retrieval [cit-1]",
+            citations=[
+                Citation(
+                    citation_id="cit-1",
+                    document_uri="memory://doc",
+                    chunk_id="chunk-1",
+                    chunk_index=0,
+                    text_preview="retrieved evidence",
+                    score=1.0,
+                )
+            ],
+            evidence_chunks=[
+                EvidenceChunk(
+                    citation_id="cit-1",
+                    document_uri="memory://doc",
+                    chunk_id="chunk-1",
+                    text="retrieved evidence",
+                    chunk_index=0,
+                    score=1.0,
+                    distance=0.0,
+                )
+            ],
+            model="gemini-2.5-flash",
+            provider="model.google_gemini",
+            retrieval_trace={"provider": "deterministic-local", "total_results": 1},
+            grounding_status="grounded",
+        )
+
+    monkeypatch.setenv("RAGRIG_TEST_GEMINI_KEY", "resolved-gemini-secret")
+    monkeypatch.setattr("ragrig.main.generate_answer", fake_generate_answer)
+
+    database_path = tmp_path / "web-console-answer-provider-config.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/retrieval/answer",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "What is configured?",
+                "top_k": 3,
+                "provider": "deterministic-local",
+                "answer_provider": "model.google_gemini",
+                "answer_model": "gemini-2.5-flash",
+                "answer_config": {"api_key": "env:RAGRIG_TEST_GEMINI_KEY"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert "resolved-gemini-secret" not in response.text
+    assert captured["provider"] == "deterministic-local"
+    assert captured["model"] is None
+    assert captured["answer_provider"] == "model.google_gemini"
+    assert captured["answer_model"] == "gemini-2.5-flash"
+    assert captured["answer_provider_config"] == {"api_key": "resolved-gemini-secret"}
 
 
 @pytest.mark.anyio

@@ -1940,18 +1940,98 @@
         } catch {
           items = [];
         }
+        const retryAllBtn = run.failure_count > 0
+          ? `<button class="button" type="button" data-pilot-retry-run="${escapeHtml(run.id)}" style="font-size:12px;padding:0 10px;height:30px">Retry all failed (${escapeHtml(run.failure_count)})</button>`
+          : '';
         root.innerHTML = `
           <div class="card">
             <div class="name">Latest run <span class="${pillClass(run.status)}">${escapeHtml(run.status)}</span></div>
             <div class="sub">${escapeHtml(run.run_type)} · ${escapeHtml(run.source_name || 'source n/a')} · ${escapeHtml(run.started_at || '')}</div>
+            <div class="sub">total ${escapeHtml(run.total_items || 0)} · success ${escapeHtml(run.success_count || 0)} · skipped ${escapeHtml(run.skipped_count || 0)} · failed ${escapeHtml(run.failure_count || 0)}</div>
             <div class="sub code">${escapeHtml(run.id)}</div>
+            ${pilotRunFailureSummary(run, items)}
             ${items.length ? items.slice(0, 4).map((item) => {
-              const meta = item.metadata || {};
-              return `<div class="result" style="margin-top:8px"><div class="name">${escapeHtml(meta.file_name || item.document_uri || item.id)} <span class="${pillClass(item.status)}">${escapeHtml(item.status)}</span></div><div class="sub">${escapeHtml(meta.parser_id || 'parser n/a')} · ${escapeHtml(item.error_message || 'no error')}</div></div>`;
+              return pilotRunItemDetail(item);
             }).join('') : '<div class="sub">No item detail returned for this run.</div>'}
+            <div class="sub" style="margin-top:8px">${retryAllBtn}</div>
           </div>
         `;
         setPilotStep('review', `${run.status} run loaded`);
+      }
+
+      function pilotRunFailureSummary(run, items) {
+        const failedItems = items.filter((item) => item.status === 'failed');
+        const degradedItems = items.filter((item) => item.status === 'degraded');
+        if (!failedItems.length && !degradedItems.length && Number(run.failure_count || 0) === 0) {
+          return '';
+        }
+        const firstFailed = failedItems[0] || degradedItems[0] || {};
+        const meta = firstFailed.metadata || {};
+        const reason = firstFailed.error_message || meta.failure_reason || meta.degraded_reason || 'Review item details before continuing.';
+        return `
+          <div class="result" style="margin-top:8px">
+            <div class="name">Action required <span class="${pillClass(failedItems.length ? 'failed' : 'degraded')}">${escapeHtml(failedItems.length ? 'failed' : 'degraded')}</span></div>
+            <div class="sub">failed ${escapeHtml(failedItems.length || run.failure_count || 0)} · degraded ${escapeHtml(degradedItems.length)} · ${escapeHtml(reason)}</div>
+          </div>
+        `;
+      }
+
+      function pilotRunItemDetail(item) {
+        const meta = item.metadata || {};
+        const parserInfo = meta.parser_id || meta.parser_name || 'parser n/a';
+        const failureReason = meta.failure_reason || '';
+        const degradedReason = meta.degraded_reason || '';
+        const retryBtn = item.status === 'failed'
+          ? `<button class="button" type="button" data-pilot-retry-item="${escapeHtml(item.id)}" data-pilot-retry-run-id="${escapeHtml(item.pipeline_run_id || '')}" style="font-size:12px;padding:0 8px;height:28px">Retry</button>`
+          : '';
+        const detailParts = [
+          parserInfo,
+          failureReason ? `failure_reason: ${failureReason}` : '',
+          degradedReason ? `degraded_reason: ${degradedReason}` : '',
+          item.error_message ? `error: ${item.error_message}` : 'no error',
+        ].filter(Boolean);
+        return `
+          <div class="result" style="margin-top:8px">
+            <div class="name">${escapeHtml(meta.file_name || item.document_uri || item.id)} <span class="${pillClass(item.status)}">${escapeHtml(item.status)}</span> ${retryBtn}</div>
+            <div class="sub">${escapeHtml(detailParts.join(' · '))}</div>
+          </div>
+        `;
+      }
+
+      async function retryPilotPipelineItem(itemId, runId) {
+        try {
+          setPilotStep('review', 'Retrying failed item');
+          const resp = await fetch('/pipeline-run-items/' + encodeURIComponent(itemId) + '/retry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ operator: 'local-pilot-console' }),
+          });
+          const data = await resp.json();
+          renderPilotOutput(data, data.status === 'success' ? 'completed' : 'degraded');
+          showToast(data.status === 'success' ? 'Pilot item retried successfully' : 'Pilot retry still needs review');
+          await refreshPilotDataAfterIngest(runId || data.pipeline_run_id);
+        } catch (err) {
+          renderPilotOutput({ error: err.message }, 'error');
+          showToast('Retry error: ' + err.message);
+        }
+      }
+
+      async function retryPilotPipelineRun(runId) {
+        try {
+          setPilotStep('review', 'Retrying failed items');
+          const resp = await fetch('/pipeline-runs/' + encodeURIComponent(runId) + '/retry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ operator: 'local-pilot-console' }),
+          });
+          const data = await resp.json();
+          renderPilotOutput(data, Number(data.failed || 0) > 0 ? 'degraded' : 'completed');
+          showToast('Retried ' + (data.retried || 0) + ' pilot item(s)');
+          await refreshPilotDataAfterIngest(runId);
+        } catch (err) {
+          renderPilotOutput({ error: err.message }, 'error');
+          showToast('Retry error: ' + err.message);
+        }
       }
 
       async function renderPilotChunkPreview() {
@@ -2037,8 +2117,22 @@
         }
         state.pilotFiles = [];
         renderPilotFiles();
-        renderPilotOutput(payload, payload.rejected_files ? 'degraded' : 'completed');
+        const uploadStatus = pilotUploadStatus(payload);
+        renderPilotOutput(payload, uploadStatus);
+        setPilotStep('ingest', uploadStatus === 'completed' ? 'Files indexed' : 'Upload needs review');
         await refreshPilotDataAfterIngest(payload.pipeline_run_id);
+      }
+
+      function pilotUploadStatus(payload) {
+        const ingestion = payload.ingestion || {};
+        const indexing = payload.indexing || {};
+        const rejectedCount = Array.isArray(payload.rejected_files)
+          ? payload.rejected_files.length
+          : Number(payload.rejected_files || 0);
+        const hasRejectedFiles = rejectedCount > 0;
+        const hasIngestionFailures = Number(ingestion.failed_count || 0) > 0;
+        const hasIndexingFailures = Number(indexing.failed_count || 0) > 0;
+        return hasRejectedFiles || hasIngestionFailures || hasIndexingFailures ? 'degraded' : 'completed';
       }
 
       function buildPilotModelConfig() {
@@ -2118,10 +2212,19 @@
         root.innerHTML = '<div class="sub">Generating grounded answer...</div>';
         try {
           await ensurePilotKnowledgeBase(kb);
+          const modelPayload = buildPilotModelPayload();
           const result = await getJson('/retrieval/answer', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ knowledge_base: kb, query, top_k: 3 }),
+            body: JSON.stringify({
+              knowledge_base: kb,
+              query,
+              top_k: 3,
+              provider: 'deterministic-local',
+              answer_provider: modelPayload.provider,
+              answer_model: modelPayload.model,
+              answer_config: modelPayload.config,
+            }),
           });
           const citations = result.citations || [];
           const statusBadge = result.grounding_status === 'grounded'
@@ -5633,6 +5736,19 @@
             const idx = parseInt(pilotRemoveBtn.dataset.pilotFileRemove, 10);
             state.pilotFiles.splice(idx, 1);
             renderPilotFiles();
+            return;
+          }
+          const pilotRetryItemBtn = event.target.closest('[data-pilot-retry-item]');
+          if (pilotRetryItemBtn) {
+            retryPilotPipelineItem(
+              pilotRetryItemBtn.dataset.pilotRetryItem,
+              pilotRetryItemBtn.dataset.pilotRetryRunId,
+            );
+            return;
+          }
+          const pilotRetryRunBtn = event.target.closest('[data-pilot-retry-run]');
+          if (pilotRetryRunBtn) {
+            retryPilotPipelineRun(pilotRetryRunBtn.dataset.pilotRetryRun);
           }
         });
 

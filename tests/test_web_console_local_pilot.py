@@ -51,3 +51,47 @@ def test_console_local_pilot_wizard_has_model_config_controls() -> None:
     assert "syncPilotProviderDefaults" in html
     assert "env:VARIABLE_NAME" in html
     assert "raw API keys are not accepted" in html
+
+
+def test_console_local_pilot_playground_uses_selected_model_config() -> None:
+    html = Path("src/ragrig/web_console.html").read_text(encoding="utf-8")
+    function_body = html.split("async function runPilotPlaygroundAnswer()", 1)[1].split(
+        "async function loadInitialData()", 1
+    )[0]
+
+    assert "const modelPayload = buildPilotModelPayload();" in function_body
+    assert "provider: 'deterministic-local'" in function_body
+    assert "answer_provider: modelPayload.provider" in function_body
+    assert "answer_model: modelPayload.model" in function_body
+    assert "answer_config: modelPayload.config" in function_body
+
+
+def test_console_local_pilot_upload_status_counts_real_failures_only() -> None:
+    html = Path("src/ragrig/web_console.html").read_text(encoding="utf-8")
+    function_body = html.split("async function runPilotFileUpload()", 1)[1].split(
+        "function buildPilotModelConfig()", 1
+    )[0]
+
+    assert "function pilotUploadStatus(payload)" in html
+    assert "const rejectedCount = Array.isArray(payload.rejected_files)" in html
+    assert "Number(payload.rejected_files || 0)" in html
+    assert "payload.ingestion || {}" in html
+    assert "Number(ingestion.failed_count || 0) > 0" in html
+    assert "Number(indexing.failed_count || 0) > 0" in html
+    assert "pilotUploadStatus(payload)" in function_body
+
+
+def test_console_local_pilot_run_summary_exposes_failures_and_retry_actions() -> None:
+    html = Path("src/ragrig/web_console.html").read_text(encoding="utf-8")
+    function_body = html.split("async function renderPilotRunSummary", 1)[1].split(
+        "async function renderPilotChunkPreview", 1
+    )[0]
+
+    assert "pilotRunFailureSummary(run, items)" in function_body
+    assert "pilotRunItemDetail(item)" in html
+    assert "retryPilotPipelineItem" in html
+    assert "retryPilotPipelineRun" in html
+    assert "data-pilot-retry-item" in html
+    assert "data-pilot-retry-run" in html
+    assert "failure_reason" in html
+    assert "degraded_reason" in html
