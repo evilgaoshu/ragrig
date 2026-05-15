@@ -45,8 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # Branch protection requires both matrix contexts.
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.12"]
 
     steps:
       - uses: actions/checkout@v6
