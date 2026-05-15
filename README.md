@@ -226,6 +226,14 @@ make local-pilot-smoke
 make dependency-inventory
 ```
 
+Browser-level Local Pilot Console check:
+
+```bash
+make local-pilot-console-e2e
+```
+
+This starts an ephemeral SQLite-backed app, uploads Markdown/PDF/DOCX through the Web Console, verifies pipeline/chunk UI, and asks one grounded Playground question. It requires `npm` and a local Chrome/Chromium browser; set `RAGRIG_CONSOLE_E2E_BROWSER_CHANNEL=chromium` if Chrome is not available.
+
 Supply-chain checks:
 
 ```bash

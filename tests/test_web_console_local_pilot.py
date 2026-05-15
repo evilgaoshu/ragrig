@@ -64,3 +64,15 @@ def test_console_local_pilot_playground_uses_selected_model_config() -> None:
     assert "answer_provider: modelPayload.provider" in function_body
     assert "answer_model: modelPayload.model" in function_body
     assert "answer_config: modelPayload.config" in function_body
+
+
+def test_console_local_pilot_upload_status_counts_real_failures_only() -> None:
+    html = Path("src/ragrig/web_console.html").read_text(encoding="utf-8")
+    function_body = html.split("async function runPilotFileUpload()", 1)[1].split(
+        "function buildPilotModelConfig()", 1
+    )[0]
+
+    assert "function pilotUploadStatus(payload)" in html
+    assert "Array.isArray(payload.rejected_files) && payload.rejected_files.length" in html
+    assert "Number(indexing.failed_count || 0) > 0" in html
+    assert "pilotUploadStatus(payload)" in function_body
