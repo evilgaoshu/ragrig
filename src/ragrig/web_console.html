@@ -2037,8 +2037,17 @@
         }
         state.pilotFiles = [];
         renderPilotFiles();
-        renderPilotOutput(payload, payload.rejected_files ? 'degraded' : 'completed');
+        const uploadStatus = pilotUploadStatus(payload);
+        renderPilotOutput(payload, uploadStatus);
+        setPilotStep('ingest', uploadStatus === 'completed' ? 'Files indexed' : 'Upload needs review');
         await refreshPilotDataAfterIngest(payload.pipeline_run_id);
+      }
+
+      function pilotUploadStatus(payload) {
+        const indexing = payload.indexing || {};
+        const hasRejectedFiles = Array.isArray(payload.rejected_files) && payload.rejected_files.length > 0;
+        const hasIndexingFailures = Number(indexing.failed_count || 0) > 0;
+        return hasRejectedFiles || hasIndexingFailures ? 'degraded' : 'completed';
       }
 
       function buildPilotModelConfig() {
