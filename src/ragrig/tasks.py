@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import threading
+import traceback
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -40,6 +41,9 @@ class TaskExecutor:
     def submit(self, job: TaskJob) -> None:
         raise NotImplementedError
 
+    def shutdown(self, wait: bool = True) -> None:
+        raise NotImplementedError
+
 
 class ThreadPoolTaskExecutor(TaskExecutor):
     def __init__(self, max_workers: int = 4) -> None:
@@ -47,6 +51,9 @@ class ThreadPoolTaskExecutor(TaskExecutor):
 
     def submit(self, job: TaskJob) -> None:
         self._pool.submit(job)
+
+    def shutdown(self, wait: bool = True) -> None:
+        self._pool.shutdown(wait=wait, cancel_futures=not wait)
 
 
 @dataclass(frozen=True)
@@ -76,21 +83,46 @@ def enqueue_task(
 
     def _wrapped() -> None:
         with session_factory() as session:
-            update_task_status(session, task_id=task_id, status="running")
+            update_task_status(
+                session,
+                task_id=task_id,
+                status="running",
+                progress={"current": 0, "total": 1, "message": "Task started."},
+            )
             session.commit()
         try:
             result = runner()
         except Exception as exc:
+            error_summary = summarize_exception(exc)
             with session_factory() as session:
-                update_task_status(session, task_id=task_id, status="failed", error=str(exc))
+                update_task_status(
+                    session,
+                    task_id=task_id,
+                    status="failed",
+                    error=error_summary,
+                    progress={"current": 1, "total": 1, "message": "Task failed."},
+                )
                 session.commit()
             return
         with session_factory() as session:
-            update_task_status(session, task_id=task_id, status="completed", result_json=result)
+            update_task_status(
+                session,
+                task_id=task_id,
+                status="completed",
+                result_json=result,
+                progress={"current": 1, "total": 1, "message": "Task completed."},
+            )
             session.commit()
 
     task_executor.submit(_wrapped)
     return task_id
+
+
+def summarize_exception(exc: BaseException, *, max_chars: int = 2000) -> str:
+    summary = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip()
+    if len(summary) <= max_chars:
+        return summary
+    return summary[: max_chars - 3] + "..."
 
 
 def serialize_task_record(task) -> dict[str, Any]:
@@ -99,6 +131,9 @@ def serialize_task_record(task) -> dict[str, Any]:
         "status": task.status,
         "result": task.result_json,
         "error": task.error,
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+        "progress": task.progress,
     }
 
 
@@ -106,12 +141,31 @@ def get_task_payload(
     *,
     session_factory: Callable[[], Session],
     task_id: str,
+    include_pipeline_run: bool = False,
 ) -> dict[str, Any] | None:
     with session_factory() as session:
         task = get_task_record(session, task_id)
         if task is None:
             return None
-        return serialize_task_record(task)
+        payload = serialize_task_record(task)
+        if include_pipeline_run:
+            pipeline_run_id = (task.payload_json or {}).get("pipeline_run_id")
+            try:
+                run_uuid = uuid.UUID(str(pipeline_run_id))
+            except (TypeError, ValueError, AttributeError):
+                run_uuid = None
+            if run_uuid is not None:
+                run = session.get(PipelineRun, run_uuid)
+                if run is not None:
+                    payload["pipeline_run"] = {
+                        "pipeline_run_id": str(run.id),
+                        "status": run.status,
+                        "run_type": run.run_type,
+                        "started_at": run.started_at.isoformat(),
+                        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+                        "error_message": run.error_message,
+                    }
+        return payload
 
 
 def validate_and_stage_uploads(

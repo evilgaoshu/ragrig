@@ -106,6 +106,7 @@ async def _wait_for_task_completion(
 class ControlledTaskExecutor:
     def __init__(self) -> None:
         self.jobs: list[Callable[[], None]] = []
+        self.shutdown_calls: list[bool] = []
 
     def submit(self, job: Callable[[], None]) -> None:
         self.jobs.append(job)
@@ -114,6 +115,9 @@ class ControlledTaskExecutor:
         assert self.jobs, "expected at least one queued job"
         job = self.jobs.pop(0)
         job()
+
+    def shutdown(self, wait: bool = True) -> None:
+        self.shutdown_calls.append(wait)
 
 
 class BlockingTaskExecutor:
@@ -642,6 +646,10 @@ async def test_upload_background_task_cleans_up_staging_dir(tmp_path) -> None:
     with session_factory() as session:
         task_record = session.get(TaskRecord, uuid.UUID(task_id))
         assert task_record is not None
+        assert task_record.started_at is None
+        assert task_record.finished_at is None
+        assert task_record.progress is None
+        assert task_record.attempt_count == 0
         staged_path = Path(task_record.payload_json["staged_files"][0]["path"])
 
     assert staged_path.exists()
@@ -802,17 +810,52 @@ async def test_upload_task_marks_pipeline_run_failed_when_indexing_fails(
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         task_payload = await client.get(f"/tasks/{task_id}")
+        task_with_run = await client.get(f"/tasks/{task_id}?include=pipeline_run")
 
     assert task_payload.status_code == 200
-    assert task_payload.json()["status"] == "failed"
-    assert task_payload.json()["error"] == "indexing exploded"
+    payload = task_payload.json()
+    assert payload["status"] == "failed"
+    assert "RuntimeError: indexing exploded" in payload["error"]
+    assert len(payload["error"]) <= 2000
+    assert payload["started_at"] is not None
+    assert payload["finished_at"] is not None
+    assert payload["progress"] == {"current": 1, "total": 1, "message": "Task failed."}
+
+    assert task_with_run.status_code == 200
+    assert task_with_run.json()["pipeline_run"]["pipeline_run_id"] == pipeline_run_id
+    assert task_with_run.json()["pipeline_run"]["status"] == "failed"
 
     with session_factory() as session:
+        task = session.get(TaskRecord, uuid.UUID(task_id))
         run = session.get(PipelineRun, uuid.UUID(pipeline_run_id))
 
+    assert task is not None
+    assert task.status == "failed"
+    assert task.error is not None
+    assert "RuntimeError: indexing exploded" in task.error
+    assert task.started_at is not None
+    assert task.finished_at is not None
+    assert task.attempt_count == 1
     assert run is not None
     assert run.status == "failed"
     assert run.error_message == "indexing exploded"
+
+
+@pytest.mark.anyio
+async def test_app_shutdown_calls_task_executor_shutdown(tmp_path) -> None:
+    database_path = tmp_path / "web-console-task-shutdown.db"
+    session_factory = _create_file_session_factory(database_path)
+    task_executor = ControlledTaskExecutor()
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
+
+    async with app.router.lifespan_context(app):
+        pass
+
+    assert task_executor.shutdown_calls == [True]
 
 
 @pytest.mark.anyio
