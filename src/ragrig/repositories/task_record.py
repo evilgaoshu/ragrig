@@ -15,6 +15,7 @@ def create_task_record(
     task_type: str,
     payload_json: dict[str, Any],
     status: str = "pending",
+    attempt_count: int = 0,
 ) -> TaskRecord:
     task = TaskRecord(
         task_type=task_type,
@@ -25,7 +26,7 @@ def create_task_record(
         started_at=None,
         finished_at=None,
         progress=None,
-        attempt_count=0,
+        attempt_count=attempt_count,
     )
     session.add(task)
     session.flush()

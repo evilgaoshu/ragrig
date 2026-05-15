@@ -65,11 +65,13 @@ from ragrig.retrieval import (
     search_knowledge_base,
 )
 from ragrig.tasks import (
+    TaskRetryError,
     cleanup_staging_dir,
     create_upload_pipeline_run,
     default_task_executor,
     enqueue_task,
     get_task_payload,
+    retry_task,
     run_ingestion_dag_task,
     run_upload_pipeline,
     sanitize_filename,
@@ -523,6 +525,25 @@ def create_app(
         if payload is None:
             return JSONResponse(status_code=404, content={"error": "task_not_found"})
         return payload
+
+    @app.post("/tasks/{task_id}/retry", response_model=None)
+    def retry_task_status(task_id: str) -> dict[str, Any] | JSONResponse:
+        try:
+            result = retry_task(
+                session_factory=get_session_factory(),
+                task_executor=active_task_executor,
+                task_id=task_id,
+            )
+        except TaskRetryError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "error": exc.code,
+                    "message": exc.message,
+                    "retryable": False,
+                },
+            )
+        return JSONResponse(status_code=202, content=result)
 
     @app.post("/pipeline-dags/ingestion", response_model=None)
     def ingestion_dag_run(
