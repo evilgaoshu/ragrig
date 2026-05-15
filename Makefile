@@ -165,7 +165,7 @@ sanitizer-coverage-summary:
 	$(UV) run python -m scripts.sanitizer_coverage
 
 eval-local:
-	$(UV) run python -m scripts.eval_local
+	@$(UV) run python -m scripts.eval_local --ephemeral-sqlite
 
 # ── Baseline management ───────────────────────────────────────
 # Promote a run to baseline: make eval-baseline RUN_ID=<uuid>
