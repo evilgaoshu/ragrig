@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -120,6 +122,14 @@ def find_latest_backup(backup_dir: Path) -> Path | None:
     return backups[-1] if backups else None
 
 
+def find_latest_restorable_backup(backup_dir: Path) -> Path | None:
+    backups = sorted(backup_dir.glob("backup_*"), reverse=True)
+    for backup in backups:
+        if _find_dump_file(backup) is not None:
+            return backup
+    return None
+
+
 def _find_dump_file(backup_path: Path) -> Path | None:
     pg_dir = backup_path / "postgres"
     if not pg_dir.exists():
@@ -181,38 +191,86 @@ def check_entity_counts(dsn: str, expected: dict[str, int]) -> dict[str, Any]:
 def restore_postgres(dsn: str, dump_path: Path) -> dict[str, Any]:
     result: dict[str, Any] = {"name": "postgres_restore", "status": "pass", "detail": None}
     try:
-        restore_env = os.environ.copy()
-        restore_env["PGPASSWORD"] = "ragrig_dev"
-        cmd = [
-            "pg_restore",
-            "--clean",
-            "--if-exists",
-            "--no-owner",
-            "--no-acl",
-            "-d",
-            dsn,
-            str(dump_path),
-        ]
-        subprocess.run(
+        resolved = _resolve_pg_restore_command(dsn)
+        if resolved is None:
+            result["status"] = "degraded"
+            result["detail"] = (
+                "pg_restore not found on PATH and Docker Compose db fallback is unavailable; "
+                "set PG_RESTORE=/path/to/pg_restore or use PG_RESTORE_COMMAND with a "
+                "pg_restore-compatible command."
+            )
+            return result
+
+        cmd, stdin_dump, source = resolved
+        cmd = [*cmd, "--clean", "--if-exists", "--no-owner", "--no-acl"]
+        input_bytes = None
+        if stdin_dump:
+            input_bytes = dump_path.read_bytes()
+        else:
+            cmd.append(str(dump_path))
+        proc = subprocess.run(
             cmd,
-            env=restore_env,
-            check=True,
+            input=input_bytes,
+            env=os.environ.copy(),
+            check=False,
             capture_output=True,
-            text=True,
             timeout=300,
+            cwd=str(REPO_ROOT),
         )
-        result["detail"] = f"restored from {dump_path.name}"
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or b"").decode("utf-8", errors="replace")
+            result["status"] = "failure"
+            result["detail"] = f"pg_restore failed via {source}: {detail[:500]}"
+        else:
+            result["detail"] = f"restored from {dump_path.name} via {source}"
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr or exc.stdout or ""
         result["status"] = "failure"
         result["detail"] = f"pg_restore failed: {detail[:500]}"
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         result["status"] = "degraded"
-        result["detail"] = "pg_restore not found on PATH"
+        result["detail"] = f"pg_restore command not found: {exc.filename}"
     except Exception as exc:
         result["status"] = "failure"
         result["detail"] = str(exc)
     return result
+
+
+def _resolve_pg_restore_command(dsn: str) -> tuple[list[str], bool, str] | None:
+    command = os.environ.get("PG_RESTORE_COMMAND")
+    if command:
+        return shlex.split(command), True, "PG_RESTORE_COMMAND"
+
+    executable = os.environ.get("PG_RESTORE", "pg_restore")
+    if shutil.which(executable):
+        return [executable, "-d", dsn], False, "host pg_restore"
+
+    docker_tool = [
+        "docker",
+        "compose",
+        "exec",
+        "-T",
+        "db",
+        "pg_restore",
+    ]
+    docker_cmd = [
+        *docker_tool,
+        "-U",
+        "ragrig",
+        "-d",
+        "ragrig",
+    ]
+    probe = subprocess.run(
+        [*docker_tool, "--version"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        cwd=str(REPO_ROOT),
+    )
+    if probe.returncode == 0:
+        return docker_cmd, True, "docker compose db pg_restore"
+
+    return None
 
 
 def restore_config(backup_path: Path) -> dict[str, Any]:
@@ -223,9 +281,9 @@ def restore_config(backup_path: Path) -> dict[str, Any]:
         result["detail"] = "config backup not found"
         return result
 
-    env_files = list(cfg_dir.glob(".env*"))
-    if env_files:
-        result["detail"] = f"config backup available at {env_files[0].name}"
+    config_files = [*cfg_dir.glob(".env*"), *cfg_dir.glob("settings.redacted.json")]
+    if config_files:
+        result["detail"] = f"config backup available at {config_files[0].name}"
     else:
         result["status"] = "degraded"
         result["detail"] = "no config files in backup"
@@ -238,9 +296,8 @@ def run_restore(settings, backup_dir: Path | None = None) -> dict[str, Any]:
     timestamp = datetime.now(timezone.utc)
     snapshot_id = timestamp.strftime("%Y%m%dT%H%M%SZ")
 
-    latest = find_latest_backup(backup_dir)
+    latest = find_latest_restorable_backup(backup_dir) or find_latest_backup(backup_dir)
     if latest is None:
-        _write_failure_summary(snapshot_id, timestamp, "no backup found")
         return {
             "artifact": "ops-restore-summary",
             "version": "1.0.0",
@@ -302,22 +359,6 @@ def run_restore(settings, backup_dir: Path | None = None) -> dict[str, Any]:
     summary = _redact(summary)
     _assert_no_raw_secrets(summary, "ops-restore-summary")
     return summary
-
-
-def _write_failure_summary(snapshot_id: str, timestamp: datetime, reason: str) -> None:
-    summary = {
-        "artifact": "ops-restore-summary",
-        "version": "1.0.0",
-        "generated_at": timestamp.isoformat(),
-        "snapshot_id": snapshot_id,
-        "schema_revision": "unknown",
-        "operation_status": "failure",
-        "verification_checks": [{"name": "backup_exists", "status": "failure", "detail": reason}],
-        "report_path": str(ARTIFACTS_DIR / "ops-restore-summary.json"),
-    }
-    output_path = ARTIFACTS_DIR / "ops-restore-summary.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
 
 def main() -> int:

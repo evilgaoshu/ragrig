@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -102,24 +104,87 @@ def backup_postgres(settings, backup_dir: Path) -> dict[str, Any]:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         dump_path = pg_dir / f"ragrig_{timestamp}.dump"
 
-        env = os.environ.copy()
-        cmd = ["pg_dump", "--format=custom", "--no-owner", "--no-acl", "-f", str(dump_path)]
-        subprocess.run(cmd, env=env, check=True, capture_output=True, text=True, timeout=120)
+        resolved = _resolve_pg_dump_command(settings)
+        if resolved is None:
+            result["status"] = "degraded"
+            result["detail"] = (
+                "pg_dump not found on PATH and Docker Compose db fallback is unavailable; "
+                "set PG_DUMP=/path/to/pg_dump or use PG_DUMP_COMMAND with a "
+                "pg_dump-compatible command."
+            )
+            return result
+
+        cmd, include_dsn, source = resolved
+        cmd = [*cmd, "--format=custom", "--no-owner", "--no-acl"]
+        if include_dsn:
+            cmd.append(settings.database_url)
+        with dump_path.open("wb") as dump_file:
+            proc = subprocess.run(
+                cmd,
+                env=os.environ.copy(),
+                check=False,
+                stdout=dump_file,
+                stderr=subprocess.PIPE,
+                text=False,
+                timeout=120,
+                cwd=str(REPO_ROOT),
+            )
+        if proc.returncode != 0:
+            result["status"] = "failure"
+            detail = proc.stderr.decode("utf-8", errors="replace") if proc.stderr else ""
+            result["detail"] = f"pg_dump failed via {source}: {detail[:500]}"
+            return result
 
         result["dump_path"] = str(dump_path)
         result["size_bytes"] = dump_path.stat().st_size if dump_path.exists() else 0
+        result["detail"] = f"pg_dump completed via {source}"
     except subprocess.CalledProcessError as exc:
         result["status"] = "failure"
         result["detail"] = f"pg_dump failed: {exc.stderr or exc.stdout}"
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         result["status"] = "degraded"
-        result["detail"] = (
-            "pg_dump not found on PATH; try `make ops-backup-smoke PG_DUMP=/path/to/pg_dump`"
-        )
+        result["detail"] = f"pg_dump command not found: {exc.filename}"
     except Exception as exc:
         result["status"] = "failure"
         result["detail"] = str(exc)
     return result
+
+
+def _resolve_pg_dump_command(settings) -> tuple[list[str], bool, str] | None:
+    command = os.environ.get("PG_DUMP_COMMAND")
+    if command:
+        return shlex.split(command), False, "PG_DUMP_COMMAND"
+
+    executable = os.environ.get("PG_DUMP", "pg_dump")
+    if shutil.which(executable):
+        return [executable], True, "host pg_dump"
+
+    docker_tool = [
+        "docker",
+        "compose",
+        "exec",
+        "-T",
+        "db",
+        "pg_dump",
+    ]
+    docker_cmd = [
+        *docker_tool,
+        "-U",
+        "ragrig",
+        "-d",
+        "ragrig",
+    ]
+    probe = subprocess.run(
+        [*docker_tool, "--version"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        cwd=str(REPO_ROOT),
+    )
+    if probe.returncode == 0:
+        return docker_cmd, False, "docker compose db pg_dump"
+
+    return None
 
 
 def backup_config(settings, backup_dir: Path) -> dict[str, Any]:
@@ -144,8 +209,14 @@ def backup_config(settings, backup_dir: Path) -> dict[str, Any]:
             cfg_copy.write_text("".join(redacted_lines), encoding="utf-8")
             result["config_path"] = str(cfg_copy)
         else:
-            result["status"] = "degraded"
-            result["detail"] = ".env not found"
+            settings_snapshot = _redact_config(settings.model_dump(mode="json"))
+            settings_path = cfg_dir / "settings.redacted.json"
+            settings_path.write_text(
+                json.dumps(settings_snapshot, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            result["detail"] = ".env not found; wrote redacted runtime settings snapshot"
+            result["config_path"] = str(settings_path)
     except Exception as exc:
         result["status"] = "failure"
         result["detail"] = str(exc)
@@ -251,6 +322,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    import os
-
     raise SystemExit(main())

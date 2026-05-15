@@ -20,6 +20,26 @@ LIVE_CORPUS_ROOT = REPO_ROOT / "tests" / "fixtures" / "fileshare_live"
 
 EVIDENCE_REQUIREMENTS = (
     {
+        "id": "local_pilot_acceptance",
+        "title": "Local Pilot upload, retrieval, and grounded answer acceptance",
+        "command": "make local-pilot-smoke",
+        "artifact": "local-pilot-smoke.json",
+        "go_rule": (
+            "Secret-free Local Pilot smoke uploads a document, indexes chunks, "
+            "retrieves evidence, and returns a grounded answer with citations."
+        ),
+    },
+    {
+        "id": "dockerized_local_pilot",
+        "title": "Dockerized Local Pilot app and database smoke",
+        "command": "make pilot-up && make pilot-docker-smoke",
+        "artifact": "pilot-docker-smoke.json",
+        "go_rule": (
+            "Dockerized app and Postgres/pgvector stack serve health, console, "
+            "Local Pilot status, and deterministic answer smoke."
+        ),
+    },
+    {
         "id": "real_source_connector",
         "title": "Equivalent real-source connector path",
         "command": "make test-live-fileshare",
@@ -135,11 +155,15 @@ def _observed_status(path: Path) -> str:
     if not isinstance(data, dict):
         return "unknown"
     meta = data.get("meta")
+    answer = data.get("answer")
+    answer_smoke = data.get("answer_smoke")
     candidates = [
         meta.get("result") if isinstance(meta, dict) else None,
+        answer.get("grounding_status") if isinstance(answer, dict) else None,
+        answer_smoke.get("status") if isinstance(answer_smoke, dict) else None,
         data.get("operation_status"),
         data.get("overall_status"),
-        data.get("status"),
+        data.get("status") if isinstance(data.get("status"), str) else None,
         data.get("resume_status"),
     ]
     return next((str(value) for value in candidates if value is not None), "unknown")
@@ -193,7 +217,7 @@ def build_pack(
         "requirements": requirements,
         "go_no_go": {
             "go_when": [
-                "All five evidence groups are recorded from the documented commands.",
+                "All seven evidence groups are recorded from the documented commands.",
                 "ACL regression and citation/refusal checks remain covered by make test.",
                 (
                     "Required repository gates make lint, make test, make coverage, "

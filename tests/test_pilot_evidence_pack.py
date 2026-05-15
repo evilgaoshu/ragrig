@@ -27,6 +27,8 @@ def test_build_pack_marks_all_requirement_groups_recorded(tmp_path) -> None:
     artifacts_dir = tmp_path / "artifacts"
     artifacts_dir.mkdir()
     for name in (
+        "local-pilot-smoke.json",
+        "pilot-docker-smoke.json",
         "fileshare-live-smoke-record.json",
         "pilot-eval-local.json",
         "pilot-retrieval-benchmark-compare.json",
@@ -39,6 +41,14 @@ def test_build_pack_marks_all_requirement_groups_recorded(tmp_path) -> None:
         (artifacts_dir / name).write_text("{}", encoding="utf-8")
     (artifacts_dir / "ops-backup-summary.json").write_text(
         '{"operation_status": "degraded"}',
+        encoding="utf-8",
+    )
+    (artifacts_dir / "local-pilot-smoke.json").write_text(
+        '{"answer": {"grounding_status": "grounded"}, "status": {"upload": {}}}',
+        encoding="utf-8",
+    )
+    (artifacts_dir / "pilot-docker-smoke.json").write_text(
+        '{"answer_smoke": {"status": "healthy"}, "health": {"status": "healthy"}}',
         encoding="utf-8",
     )
 
@@ -58,6 +68,14 @@ def test_build_pack_marks_all_requirement_groups_recorded(tmp_path) -> None:
     assert pack["pilot_corpus"]["file_count"] == 1
     assert pack["golden_questions"][0]["query"] == "pilot question"
     assert {item["evidence_status"] for item in pack["requirements"]} == {"recorded"}
+    acceptance = next(
+        item for item in pack["requirements"] if item["id"] == "local_pilot_acceptance"
+    )
+    assert acceptance["artifact_status"]["observed_status"] == "grounded"
+    dockerized = next(
+        item for item in pack["requirements"] if item["id"] == "dockerized_local_pilot"
+    )
+    assert dockerized["artifact_status"]["observed_status"] == "healthy"
     operations = next(item for item in pack["requirements"] if item["id"] == "operations_smoke")
     assert operations["artifact_status"]["observed_status"] == "degraded"
 
