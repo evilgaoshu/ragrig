@@ -1,7 +1,7 @@
 """Add workspace and auth core tables.
 
-Revision ID: 20260515_0006
-Revises: 20260515_0005
+Revision ID: 20260515_0008
+Revises: 20260515_0007
 Create Date: 2026-05-15 12:30:00.000000
 """
 
@@ -11,8 +11,8 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "20260515_0006"
-down_revision = "20260515_0005"
+revision = "20260515_0008"
+down_revision = "20260515_0007"
 branch_labels = None
 depends_on = None
 
