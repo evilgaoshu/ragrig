@@ -78,7 +78,7 @@ web-check:
 	$(UV) run pytest tests/test_web_console.py tests/test_web_console_local_pilot.py
 
 local-pilot-smoke:
-	$(UV) run python -m scripts.local_pilot_smoke
+	$(UV) run python -m scripts.local_pilot_smoke --output $(ARTIFACTS_DIR)/local-pilot-smoke.json
 
 pilot-docker-build:
 	docker build -t $(RAGRIG_IMAGE) .
@@ -93,7 +93,7 @@ pilot-logs:
 	docker compose logs -f app db
 
 pilot-docker-smoke:
-	$(UV) run python -m scripts.pilot_docker_smoke --base-url "$(PILOT_BASE_URL)"
+	$(UV) run python -m scripts.pilot_docker_smoke --base-url "$(PILOT_BASE_URL)" --output $(ARTIFACTS_DIR)/pilot-docker-smoke.json
 
 sqlite-warning-check:
 	$(UV) run python -m scripts.sqlite_warning_check

@@ -54,6 +54,7 @@ def test_makefile_exposes_pilot_docker_targets() -> None:
     assert "pilot-down:" in makefile
     assert "pilot-docker-smoke:" in makefile
     assert "scripts.pilot_docker_smoke" in makefile
+    assert "--output $(ARTIFACTS_DIR)/pilot-docker-smoke.json" in makefile
 
 
 class _PilotSmokeHandler(BaseHTTPRequestHandler):

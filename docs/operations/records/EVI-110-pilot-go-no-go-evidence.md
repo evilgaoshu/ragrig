@@ -1,6 +1,6 @@
 # EVI-110 Pilot Go/No-Go Evidence Pack
 
-Generated: `2026-05-13T04:39:46.199776Z`
+Generated: `2026-05-15T01:18:53.119464Z`
 Decision evidence status: `evidence_recorded`
 
 ## Pilot Source And Corpus
@@ -37,19 +37,21 @@ Decision evidence status: `evidence_recorded`
 
 | Evidence | Command | Primary artifact | Evidence | Observed outcome |
 | --- | --- | --- | --- | --- |
-| Equivalent real-source connector path | `make test-live-fileshare` | `docs/operations/artifacts/fileshare-live-smoke-record.json` | `recorded` | `blocked` |
+| Local Pilot upload, retrieval, and grounded answer acceptance | `make local-pilot-smoke` | `docs/operations/artifacts/local-pilot-smoke.json` | `recorded` | `grounded` |
+| Dockerized Local Pilot app and database smoke | `make pilot-up && make pilot-docker-smoke` | `docs/operations/artifacts/pilot-docker-smoke.json` | `recorded` | `healthy` |
+| Equivalent real-source connector path | `make test-live-fileshare` | `docs/operations/artifacts/fileshare-live-smoke-record.json` | `recorded` | `passed` |
 | Retrieval and answer quality baseline | `uv run python -m scripts.eval_local --ephemeral-sqlite --output docs/operations/artifacts/pilot-eval-local.json && uv run python -m scripts.retrieval_benchmark_compare --pretty --latency-threshold-pct 500 --output docs/operations/artifacts/pilot-retrieval-benchmark-compare.json` | `docs/operations/artifacts/pilot-eval-local.json` | `recorded` | `completed` |
 | Supporting artifact | - | `docs/operations/artifacts/pilot-retrieval-benchmark-compare.json` | - | `pass` |
-| Citation, refusal, and degraded answer diagnostics | `make answer-live-smoke` | `docs/operations/artifacts/answer-live-smoke.json` | `recorded` | `skip` |
+| Citation, refusal, and degraded answer diagnostics | `make answer-live-smoke` | `docs/operations/artifacts/answer-live-smoke.json` | `recorded` | `healthy` |
 | Failure inspect, retry, and audit trail | `make pipeline-dag-smoke` | `docs/operations/artifacts/pipeline-dag-smoke.json` | `recorded` | `completed` |
-| Backup, restore, and upgrade summary | `make ops-backup-smoke && make ops-restore-smoke && make ops-upgrade-smoke` | `docs/operations/artifacts/ops-backup-summary.json` | `recorded` | `degraded` |
-| Supporting artifact | - | `docs/operations/artifacts/ops-restore-summary.json` | - | `failure` |
-| Supporting artifact | - | `docs/operations/artifacts/ops-upgrade-summary.json` | - | `failure` |
+| Backup, restore, and upgrade summary | `make ops-backup-smoke && make ops-restore-smoke && make ops-upgrade-smoke` | `docs/operations/artifacts/ops-backup-summary.json` | `recorded` | `success` |
+| Supporting artifact | - | `docs/operations/artifacts/ops-restore-summary.json` | - | `success` |
+| Supporting artifact | - | `docs/operations/artifacts/ops-upgrade-summary.json` | - | `success` |
 
 ## Go / No-Go Rules
 
 Go when:
-- All five evidence groups are recorded from the documented commands.
+- All seven evidence groups are recorded from the documented commands.
 - ACL regression and citation/refusal checks remain covered by make test.
 - Required repository gates make lint, make test, make coverage, and make web-check pass.
 

@@ -12,6 +12,7 @@ from scripts.ops_restore import (
     _find_dump_file,
     _redact,
     find_latest_backup,
+    find_latest_restorable_backup,
 )
 from scripts.ops_upgrade import run_upgrade
 
@@ -101,13 +102,22 @@ def test_backup_produces_files_on_disk(tmp_path) -> None:
 
 def test_restore_fails_without_backup(tmp_path) -> None:
     from ragrig.config import Settings
+    from scripts import ops_restore
     from scripts.ops_restore import run_restore
 
     settings = Settings(database_url="sqlite:///:memory:")
+    output_path = tmp_path / "ops-restore-summary.json"
+    original_output = ops_restore.ARTIFACTS_DIR / "ops-restore-summary.json"
+    original_content = (
+        original_output.read_text(encoding="utf-8") if original_output.exists() else None
+    )
     summary = run_restore(settings, backup_dir=tmp_path / "nonexistent")
 
     assert summary["artifact"] == "ops-restore-summary"
     assert summary["operation_status"] == "failure"
+    assert not output_path.exists()
+    if original_content is not None:
+        assert original_output.read_text(encoding="utf-8") == original_content
     assert any(
         c["name"] == "backup_exists" and c["status"] == "failure"
         for c in summary["verification_checks"]
@@ -134,6 +144,21 @@ def test_find_latest_backup_empty(tmp_path) -> None:
     assert latest is None
 
 
+def test_find_latest_restorable_backup_skips_backups_without_dump(tmp_path) -> None:
+    old_backup = tmp_path / "backup_20260513T000000Z"
+    old_backup.mkdir(parents=True)
+    restorable = tmp_path / "backup_20260513T010000Z" / "postgres"
+    restorable.mkdir(parents=True)
+    (restorable / "ragrig_test.dump").write_text("fake dump", encoding="utf-8")
+    newest_without_dump = tmp_path / "backup_20260513T020000Z"
+    newest_without_dump.mkdir(parents=True)
+
+    latest = find_latest_restorable_backup(tmp_path)
+
+    assert latest is not None
+    assert latest.name == "backup_20260513T010000Z"
+
+
 def test_find_dump_file(tmp_path) -> None:
     backup_path = tmp_path / "backup_test"
     pg_dir = backup_path / "postgres"
@@ -150,6 +175,19 @@ def test_find_dump_file_missing(tmp_path) -> None:
     backup_path.mkdir()
     found = _find_dump_file(backup_path)
     assert found is None
+
+
+def test_restore_config_accepts_redacted_settings_snapshot(tmp_path) -> None:
+    from scripts.ops_restore import restore_config
+
+    config_dir = tmp_path / "backup_test" / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "settings.redacted.json").write_text("{}", encoding="utf-8")
+
+    result = restore_config(tmp_path / "backup_test")
+
+    assert result["status"] == "pass"
+    assert "settings.redacted.json" in result["detail"]
 
 
 def test_deploy_summary_structure() -> None:

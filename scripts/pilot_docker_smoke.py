@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import time
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -137,6 +138,12 @@ def main() -> None:
     )
     parser.add_argument("--timeout-seconds", type=float, default=60.0)
     parser.add_argument("--interval-seconds", type=float, default=2.0)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional JSON artifact output path.",
+    )
     args = parser.parse_args()
 
     result = run_smoke(
@@ -144,6 +151,9 @@ def main() -> None:
         timeout_seconds=args.timeout_seconds,
         interval_seconds=args.interval_seconds,
     )
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps(result, indent=2, sort_keys=True))
 
 
