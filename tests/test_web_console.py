@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import gc
 import asyncio
+import gc
 import json
 import threading
 import time
@@ -20,7 +20,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from ragrig.config import Settings
-from ragrig.db.models import Base, Chunk, Document, DocumentVersion, Embedding, PipelineRun, TaskRecord
+from ragrig.db.models import (
+    Base,
+    Document,
+    DocumentVersion,
+    PipelineRun,
+    TaskRecord,
+)
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
@@ -405,12 +411,8 @@ async def test_ingestion_dag_console_api_exposes_failure_and_resume(tmp_path) ->
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         task_payload = await client.get(f"/tasks/{task_id}")
-        resumed = await client.post(
-            f"/pipeline-runs/{pipeline_run_id}/dag-resume"
-        )
-        duplicate = await client.post(
-            f"/pipeline-runs/{pipeline_run_id}/dag-resume"
-        )
+        resumed = await client.post(f"/pipeline-runs/{pipeline_run_id}/dag-resume")
+        duplicate = await client.post(f"/pipeline-runs/{pipeline_run_id}/dag-resume")
 
     assert task_payload.status_code == 200
     assert task_payload.json()["status"] == "completed"
@@ -550,10 +552,7 @@ async def test_health_stays_reachable_during_concurrent_background_uploads(tmp_p
                     files={"files": (path.name, handle, "text/markdown")},
                 )
 
-    tasks = [
-        asyncio.create_task(_upload(path))
-        for path in upload_files
-    ]
+    tasks = [asyncio.create_task(_upload(path)) for path in upload_files]
     await asyncio.sleep(0.1)
     blocking_executor.wait_until_started()
 
@@ -761,7 +760,9 @@ async def test_upload_tasks_serialize_indexing_per_knowledge_base(tmp_path, monk
 
 
 @pytest.mark.anyio
-async def test_upload_task_marks_pipeline_run_failed_when_indexing_fails(tmp_path, monkeypatch) -> None:
+async def test_upload_task_marks_pipeline_run_failed_when_indexing_fails(
+    tmp_path, monkeypatch
+) -> None:
     from ragrig.repositories import get_or_create_knowledge_base
 
     database_path = tmp_path / "web-console-upload-index-failure.db"

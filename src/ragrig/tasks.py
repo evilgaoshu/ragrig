@@ -31,7 +31,6 @@ from ragrig.repositories import (
 )
 from ragrig.workflows import IngestionDagRejected, execute_ingestion_dag_run
 
-
 TaskJob = Callable[[], None]
 _INDEX_LOCKS_GUARD = threading.Lock()
 _INDEX_LOCKS: dict[str, threading.Lock] = {}

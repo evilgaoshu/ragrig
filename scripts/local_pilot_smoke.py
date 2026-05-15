@@ -62,7 +62,9 @@ def _assert(condition: bool, message: str) -> None:
         raise LocalPilotSmokeError(message)
 
 
-def _wait_for_task_completion(client: TestClient, task_id: str, *, attempts: int = 40) -> dict[str, Any]:
+def _wait_for_task_completion(
+    client: TestClient, task_id: str, *, attempts: int = 40
+) -> dict[str, Any]:
     for _ in range(attempts):
         payload = _json_response(client.get(f"/tasks/{task_id}"))
         if payload["status"] in {"completed", "failed"}:

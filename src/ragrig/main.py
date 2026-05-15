@@ -1,4 +1,3 @@
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
@@ -27,10 +26,7 @@ from ragrig.evaluation import (
     load_run_from_store,
     run_evaluation,
 )
-from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.health import create_database_check
-from ragrig.indexing.pipeline import index_knowledge_base
-from ragrig.ingestion.pipeline import _select_parser
 from ragrig.ingestion.web_import import WebsiteImportError
 from ragrig.local_pilot import (
     ModelConfigError,
@@ -39,7 +35,6 @@ from ragrig.local_pilot import (
     model_health_check,
     run_answer_smoke,
 )
-from ragrig.parsers.base import ParserTimeoutError, parse_with_timeout
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.processing_profile import (
     ProfileStatus,
@@ -56,10 +51,7 @@ from ragrig.processing_profile import (
 from ragrig.providers.model_catalog import list_provider_models, measure_provider_latency
 from ragrig.repositories import (
     get_knowledge_base_by_name,
-    get_next_version_number,
-    get_or_create_document,
     get_or_create_knowledge_base,
-    get_or_create_source,
     list_audit_events,
 )
 from ragrig.retrieval import (
@@ -69,6 +61,17 @@ from ragrig.retrieval import (
     KnowledgeBaseNotFoundError,
     RetrievalError,
     search_knowledge_base,
+)
+from ragrig.tasks import (
+    cleanup_staging_dir,
+    create_upload_pipeline_run,
+    default_task_executor,
+    enqueue_task,
+    get_task_payload,
+    run_ingestion_dag_task,
+    run_upload_pipeline,
+    sanitize_filename,
+    validate_and_stage_uploads,
 )
 from ragrig.understanding import (
     DocumentVersionNotFoundError,
@@ -124,25 +127,13 @@ from ragrig.web_console import (
     validate_plugin_config_for_wizard,
     validate_source_config,
 )
-from ragrig.tasks import (
-    cleanup_staging_dir,
-    create_upload_pipeline_run,
-    default_task_executor,
-    enqueue_task,
-    get_task_payload,
-    run_ingestion_dag_task,
-    run_upload_pipeline,
-    sanitize_filename,
-    validate_and_stage_uploads,
-)
 from ragrig.workflows import (
-    create_ingestion_dag_run,
     IngestionDagRejected,
     WorkflowDefinition,
     WorkflowStep,
     WorkflowValidationError,
+    create_ingestion_dag_run,
     list_workflow_operations,
-    run_ingestion_dag,
     run_workflow,
 )
 
@@ -1073,7 +1064,6 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
         files: Annotated[list[UploadFile], File(...)],
     ) -> JSONResponse:
-        from ragrig.db.models import DocumentVersion
 
         kb = get_knowledge_base_by_name(session, kb_name)
         if kb is None:
@@ -1099,7 +1089,9 @@ def create_app(
 
         if not accepted.staged_files:
             cleanup_staging_dir(accepted.staging_dir)
-            status_code = 413 if any(r["reason"] == "file_too_large" for r in accepted.rejected) else 415
+            status_code = (
+                413 if any(r["reason"] == "file_too_large" for r in accepted.rejected) else 415
+            )
             return JSONResponse(
                 status_code=status_code,
                 content={
