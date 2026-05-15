@@ -49,12 +49,31 @@ def test_compose_app_is_ready_for_pilot_without_bundled_models() -> None:
 def test_makefile_exposes_pilot_docker_targets() -> None:
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
+    assert "local-pilot-preflight:" in makefile
+    assert "pilot-docker-preflight:" in makefile
     assert "pilot-docker-build:" in makefile
     assert "pilot-up:" in makefile
     assert "pilot-down:" in makefile
     assert "pilot-docker-smoke:" in makefile
     assert "scripts.pilot_docker_smoke" in makefile
     assert "--output $(ARTIFACTS_DIR)/pilot-docker-smoke.json" in makefile
+
+
+def test_readme_documents_ten_minute_local_pilot_demo() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    zh_readme = (REPO_ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+
+    assert "10-Minute Local Pilot Demo" in readme
+    assert "make pilot-docker-preflight" in readme
+    assert "examples/local-pilot/company-handbook.md" in readme
+    assert "examples/local-pilot/demo-questions.json" in readme
+    assert "Model configuration is optional for startup" in readme
+
+    assert "10 分钟本地试点演示" in zh_readme
+    assert "make pilot-docker-preflight" in zh_readme
+    assert "examples/local-pilot/company-handbook.md" in zh_readme
+    assert "examples/local-pilot/demo-questions.json" in zh_readme
+    assert "模型配置不影响启动" in zh_readme
 
 
 class _PilotSmokeHandler(BaseHTTPRequestHandler):

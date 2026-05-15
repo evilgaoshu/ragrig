@@ -112,6 +112,48 @@ Web Console 是 RAGRig 的主要操作界面。第一版形态：
 
 ## 快速部署
 
+### 10 分钟本地试点演示
+
+先运行最小 preflight。它只检查启动必须项：应用 import、临时数据库健康检查、
+artifact 目录可写，以及 Docker 模式下的 Docker 可用性。
+
+```bash
+make pilot-docker-preflight
+```
+
+模型配置不影响启动。Ollama、LM Studio、Gemini、OpenAI、OpenRouter、
+reranker 和外部存储都属于后续 readiness；缺少模型 endpoint 或 API key
+不应该阻塞应用启动。
+
+启动演示栈：
+
+```bash
+make pilot-up
+make pilot-docker-smoke
+```
+
+打开 Web Console：
+
+```text
+http://localhost:8000/console
+```
+
+创建知识库，然后上传演示文档：
+
+```text
+examples/local-pilot/company-handbook.md
+examples/local-pilot/support-faq.md
+```
+
+推荐问题在：
+
+```text
+examples/local-pilot/demo-questions.json
+```
+
+上传后检查 pipeline run，打开 chunk preview，在 Playground 提问，并确认答案
+带有 grounded 状态和 citations。
+
 ### Docker 本地试点
 
 构建并启动本地试点栈：
