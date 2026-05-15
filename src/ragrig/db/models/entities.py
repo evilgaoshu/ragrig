@@ -316,6 +316,16 @@ class AuditEvent(UUIDPrimaryKeyMixin, Base):
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
 
+class TaskRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "task_records"
+
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
 class UnderstandingRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "understanding_runs"
 

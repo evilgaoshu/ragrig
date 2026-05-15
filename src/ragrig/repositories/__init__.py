@@ -27,6 +27,7 @@ from ragrig.repositories.processing_profile import (
     update_override_in_db,
 )
 from ragrig.repositories.source import get_or_create_source
+from ragrig.repositories.task_record import create_task_record, get_task_record, update_task_status
 
 __all__ = [
     "acl_to_safe_schema",
@@ -46,10 +47,13 @@ __all__ = [
     "get_or_create_knowledge_base",
     "get_or_create_source",
     "get_override_by_id",
+    "get_task_record",
     "list_audit_log",
     "list_audit_events",
     "list_latest_document_versions",
     "set_chunk_acl",
     "set_document_acl",
+    "create_task_record",
     "update_override_in_db",
+    "update_task_status",
 ]
