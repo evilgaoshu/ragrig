@@ -2118,10 +2118,19 @@
         root.innerHTML = '<div class="sub">Generating grounded answer...</div>';
         try {
           await ensurePilotKnowledgeBase(kb);
+          const modelPayload = buildPilotModelPayload();
           const result = await getJson('/retrieval/answer', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ knowledge_base: kb, query, top_k: 3 }),
+            body: JSON.stringify({
+              knowledge_base: kb,
+              query,
+              top_k: 3,
+              provider: 'deterministic-local',
+              answer_provider: modelPayload.provider,
+              answer_model: modelPayload.model,
+              answer_config: modelPayload.config,
+            }),
           });
           const citations = result.citations || [];
           const statusBadge = result.grounding_status === 'grounded'

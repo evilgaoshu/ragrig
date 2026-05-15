@@ -40,6 +40,7 @@ from ragrig.local_pilot import (
     model_health_check,
     run_answer_smoke,
 )
+from ragrig.local_pilot.model_config import resolve_env_config
 from ragrig.parsers.base import ParserTimeoutError, parse_with_timeout
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.processing_profile import (
@@ -198,6 +199,10 @@ class AnswerRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
     provider: str = "deterministic-local"
     model: str | None = None
+    config: dict[str, Any] | None = None
+    answer_provider: str | None = None
+    answer_model: str | None = None
+    answer_config: dict[str, Any] | None = None
     dimensions: int | None = Field(default=None, gt=0)
     principal_ids: list[str] | None = None
     enforce_acl: bool = True
@@ -1482,6 +1487,38 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, Any] | JSONResponse:
         try:
+            provider_config = None
+            if request.config is not None:
+                provider_config, missing_env = resolve_env_config(request.config)
+                if missing_env:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "error": {
+                                "code": "missing_model_credentials",
+                                "message": (
+                                    "Missing environment variable(s): " + ", ".join(missing_env)
+                                ),
+                                "details": {"missing_credentials": missing_env},
+                            }
+                        },
+                    )
+            answer_provider_config = None
+            if request.answer_config is not None:
+                answer_provider_config, missing_env = resolve_env_config(request.answer_config)
+                if missing_env:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "error": {
+                                "code": "missing_model_credentials",
+                                "message": (
+                                    "Missing environment variable(s): " + ", ".join(missing_env)
+                                ),
+                                "details": {"missing_credentials": missing_env},
+                            }
+                        },
+                    )
             vector_backend = resolve_vector_backend()
             report = generate_answer(
                 session=session,
@@ -1490,10 +1527,25 @@ def create_app(
                 top_k=request.top_k,
                 provider=request.provider,
                 model=request.model,
+                provider_config=provider_config,
+                answer_provider=request.answer_provider,
+                answer_model=request.answer_model,
+                answer_provider_config=answer_provider_config,
                 dimensions=request.dimensions,
                 vector_backend=vector_backend,
                 principal_ids=request.principal_ids,
                 enforce_acl=request.enforce_acl,
+            )
+        except ModelConfigError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": {
+                        "code": exc.code,
+                        "message": str(exc),
+                        "details": {"field": exc.field},
+                    }
+                },
             )
         except NoEvidenceError as exc:
             return JSONResponse(

@@ -92,6 +92,10 @@ def generate_answer(
     top_k: int = 5,
     provider: str = "deterministic-local",
     model: str | None = None,
+    provider_config: dict[str, Any] | None = None,
+    answer_provider: str | None = None,
+    answer_model: str | None = None,
+    answer_provider_config: dict[str, Any] | None = None,
     dimensions: int | None = None,
     vector_backend: VectorBackend | None = None,
     principal_ids: list[str] | None = None,
@@ -144,15 +148,30 @@ def generate_answer(
         )
 
     # 4. Call answer provider
+    resolved_answer_provider = answer_provider or provider
+    resolved_answer_model = answer_model if answer_model is not None else model
+    resolved_answer_config = (
+        answer_provider_config if answer_provider_config is not None else provider_config
+    )
     try:
-        answer_provider_obj = get_answer_provider(provider, model=model)
+        if resolved_answer_config is None:
+            answer_provider_obj = get_answer_provider(
+                resolved_answer_provider,
+                model=resolved_answer_model,
+            )
+        else:
+            answer_provider_obj = get_answer_provider(
+                resolved_answer_provider,
+                model=resolved_answer_model,
+                provider_config=resolved_answer_config,
+            )
         answer_text, citation_ids_used = answer_provider_obj.generate(
             query=query, evidence=evidence
         )
     except Exception as exc:
         reason = _sanitize_error_message(exc)
         raise ProviderUnavailableError(
-            provider=provider,
+            provider=resolved_answer_provider,
             reason=reason,
         ) from exc
 
@@ -181,8 +200,8 @@ def generate_answer(
         answer=answer_text,
         citations=citations,
         evidence_chunks=evidence,
-        model=retrieval_report.model,
-        provider=retrieval_report.provider,
+        model=resolved_answer_model or retrieval_report.model,
+        provider=resolved_answer_provider,
         retrieval_trace=retrieval_trace,
         grounding_status=grounding_status,
         refusal_reason=refusal_reason,
