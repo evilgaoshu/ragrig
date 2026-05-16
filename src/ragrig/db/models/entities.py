@@ -52,6 +52,13 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     display_name: Mapped[str | None] = mapped_column(String(255))
     password_hash: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    # External identity provider (e.g. "ldap", "oidc:google") — null means local password auth
+    external_auth_provider: Mapped[str | None] = mapped_column(String(64))
+    external_auth_uid: Mapped[str | None] = mapped_column(String(512))
+    # TOTP MFA
+    mfa_enabled: Mapped[bool] = mapped_column(nullable=False, default=False)
+    totp_secret: Mapped[str | None] = mapped_column(String(128))
+    totp_backup_codes: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
 
     memberships: Mapped[list["WorkspaceMembership"]] = relationship(back_populates="user")
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="created_by_user")
@@ -487,6 +494,11 @@ class AuditEvent(UUIDPrimaryKeyMixin, Base):
 
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     actor: Mapped[str | None] = mapped_column(String(255))
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        index=True,
+    )
     knowledge_base_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("knowledge_bases.id", ondelete="SET NULL"),

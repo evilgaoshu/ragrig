@@ -11,6 +11,7 @@ from ragrig.chunkers import ChunkingConfig, chunk_text
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding
 from ragrig.embeddings import EmbeddingResult
 from ragrig.observability import aggregate_cost_latency, observe_model_call
+from ragrig.pii import redact as pii_redact
 from ragrig.plugins import get_plugin_registry
 from ragrig.processing_profile import ProcessingProfile, TaskType, resolve_profile
 from ragrig.providers import BaseProvider, get_provider_registry
@@ -94,6 +95,7 @@ def _replace_version_index(
     embed_profile_id: str,
     cost_latency_operations: list[dict[str, object]] | None = None,
     workspace_id: object = None,
+    pii_redaction: bool = False,
 ) -> tuple[int, int]:
     existing_chunk_ids = list(
         session.scalars(select(Chunk.id).where(Chunk.document_version_id == document_version.id))
@@ -103,7 +105,10 @@ def _replace_version_index(
     session.execute(delete(Chunk).where(Chunk.document_version_id == document_version.id))
     session.flush()
 
-    chunk_drafts = chunk_text(document_version.extracted_text, chunking_config)
+    source_text = document_version.extracted_text
+    if pii_redaction:
+        source_text = pii_redact(source_text).redacted_text
+    chunk_drafts = chunk_text(source_text, chunking_config)
     created_chunks: list[Chunk] = []
 
     acl_payload: dict[str, object] = {}
@@ -247,6 +252,7 @@ def index_knowledge_base(
     embedding_dimensions: int = 8,
     vector_backend: VectorBackend | None = None,
     force_reindex: bool = False,
+    pii_redaction: bool = False,
 ) -> IndexingReport:
     run_started = perf_counter()
     get_plugin_registry()
@@ -339,6 +345,7 @@ def index_knowledge_base(
                     embed_profile_id=embed_profile.profile_id,
                     cost_latency_operations=document_cost_latency_operations,
                     workspace_id=knowledge_base.workspace_id,
+                    pii_redaction=pii_redaction,
                 )
                 run_cost_latency_operations.extend(document_cost_latency_operations)
                 chunk_count += created_chunks

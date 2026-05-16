@@ -134,6 +134,14 @@ This section was not in the original roadmap. It emerged to give contributors an
 - `workspace_id` propagated to hot retrieval tables (`chunks`, `embeddings`); direct `Chunk.workspace_id` filter added to all retrieval query paths (`build_embedding_base_statement`, SQL and Python distance search, available-profiles probe).
 - Admin invitation flow: `POST/GET/DELETE /auth/workspace/invitations`; `invitation_token` on register; `RAGRIG_OPEN_REGISTRATION` flag for closed-registration mode.
 
+**Done (P0 enterprise security):**
+- **LDAP authentication**: `POST /auth/login/ldap`; configurable server URL, bind DN, user filter, TLS, group mapping, default role; auto-provisions local user on first login.
+- **OIDC/OAuth2**: `GET /auth/oidc/authorize` + `GET /auth/oidc/callback`; full authorization-code flow; discovery document; ID token validation via joserfc; auto-provisions user from claims.
+- **MFA / TOTP**: `POST /auth/mfa/setup` (provisioning URI + QR code + backup codes), `POST /auth/mfa/confirm`, `POST /auth/mfa/disable`, `POST /auth/mfa/challenge`; login returns `mfa_required: true` with a scoped pending token when MFA is enrolled.
+- **Audit log query API**: `GET /audit/events` (admin-scoped, workspace-filtered, supports event_type/actor/since/until/run_id/offset/limit); `workspace_id` column added to `audit_events` migration 0014.
+- **PII redaction**: `ragrig.pii` module; regex-based detection of email, phone, SSN, credit card, IP, NI; hooked into indexing pipeline via `pii_redaction=True`; enabled per-request via `RAGRIG_PII_REDACTION_ENABLED`.
+- **Right to erasure**: `DELETE /auth/users/me` (self), `DELETE /auth/workspace/members/{id}/erase` (owner-only); revokes all sessions and API keys, removes memberships, anonymises PII in user record.
+
 **Open:**
 - Email delivery for invitation links (requires SMTP / transactional email provider integration).
 
