@@ -200,7 +200,7 @@ export function useModels() {
   })
 }
 
-export function usePluginsList() {
+export function usePlugins() {
   return useQuery({
     queryKey: ['plugins-list'],
     queryFn: () => api.get<{ items: Record<string, unknown>[] }>('/plugins').then((r) => r.items),

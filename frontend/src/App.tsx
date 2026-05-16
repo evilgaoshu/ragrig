@@ -15,6 +15,10 @@ import BaselineIntegrity from './pages/BaselineIntegrity'
 import AnswerLiveSmoke from './pages/AnswerLiveSmoke'
 import ParserCorpus from './pages/ParserCorpus'
 import OpsDiagnostics from './pages/OpsDiagnostics'
+import Models from './pages/Models'
+import Plugins from './pages/Plugins'
+import Evaluation from './pages/Evaluation'
+import ProfileMatrix from './pages/ProfileMatrix'
 import Stub from './pages/Stub'
 
 export default function App() {
@@ -39,10 +43,10 @@ export default function App() {
         <Route path="/ops-diagnostics" element={<OpsDiagnostics />} />
         <Route path="/documents" element={<Documents />} />
         <Route path="/answer-gen" element={<Stub title="Answer Gen" description="Grounded answer generation playground" />} />
-        <Route path="/models" element={<Stub title="Models" description="Embedding models and rerankers" />} />
-        <Route path="/profile-matrix" element={<Stub title="Profile Matrix" description="Processing profile override matrix" />} />
-        <Route path="/plugins" element={<Stub title="Plugins" description="Source plugin registry and wizard" />} />
-        <Route path="/evaluation" element={<Stub title="Evaluation" description="RAG evaluation runs and baselines" />} />
+        <Route path="/models" element={<Models />} />
+        <Route path="/profile-matrix" element={<ProfileMatrix />} />
+        <Route path="/plugins" element={<Plugins />} />
+        <Route path="/evaluation" element={<Evaluation />} />
         <Route path="/settings" element={<Stub title="Settings" description="System settings and configuration" />} />
 
         <Route path="*" element={<Stub title="Not Found" description="This page does not exist." />} />
