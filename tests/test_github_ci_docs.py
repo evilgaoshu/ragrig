@@ -24,7 +24,7 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "test:" in workflow
     assert "coverage:" in workflow
     assert "db-smoke:" in workflow
-    assert "web-smoke:" in workflow
+    assert "smoke:" in workflow
     assert "docker-build:" in workflow
     assert "supply-chain:" in workflow
     assert "pull_request:" in workflow
