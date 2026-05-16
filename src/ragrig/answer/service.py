@@ -11,6 +11,7 @@ The core pipeline:
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -25,6 +26,7 @@ from ragrig.answer.schema import (
     NoEvidenceError,
     ProviderUnavailableError,
 )
+from ragrig.observability import aggregate_cost_latency, observe_model_call
 from ragrig.retrieval import (
     search_knowledge_base,
 )
@@ -114,7 +116,9 @@ def generate_answer(
         NoEvidenceError: No retrievable chunks for the query
         ProviderUnavailableError: Answer provider could not generate
     """
+    answer_started = perf_counter()
     # 1. Retrieval
+    retrieval_started = perf_counter()
     retrieval_report = search_knowledge_base(
         session=session,
         knowledge_base_name=knowledge_base_name,
@@ -127,6 +131,7 @@ def generate_answer(
         principal_ids=principal_ids,
         enforce_acl=enforce_acl,
     )
+    retrieval_latency_ms = (perf_counter() - retrieval_started) * 1000
 
     # 2. No evidence → refuse
     if retrieval_report.total_results == 0:
@@ -153,6 +158,7 @@ def generate_answer(
     resolved_answer_config = (
         answer_provider_config if answer_provider_config is not None else provider_config
     )
+    generation_started = perf_counter()
     try:
         if resolved_answer_config is None:
             answer_provider_obj = get_answer_provider(
@@ -174,6 +180,7 @@ def generate_answer(
             provider=resolved_answer_provider,
             reason=reason,
         ) from exc
+    generation_latency_ms = (perf_counter() - generation_started) * 1000
 
     # 5. Validate citation IDs — provider must only reference existing evidence
     valid_citation_ids = {chunk.citation_id for chunk in evidence}
@@ -195,6 +202,30 @@ def generate_answer(
     citations = _build_citations(cited_evidence)
 
     retrieval_trace = _build_retrieval_trace(retrieval_report)
+    answer_operation = observe_model_call(
+        operation="answer_generation",
+        provider=resolved_answer_provider,
+        model=resolved_answer_model or retrieval_report.model,
+        input_text=query + "\n" + "\n".join(chunk.text for chunk in evidence),
+        output_text=answer_text,
+        latency_ms=generation_latency_ms,
+    )
+    retrieval_operations = retrieval_report.cost_latency.get("operations", [])
+    cost_latency_operations = [
+        *[op for op in retrieval_operations if isinstance(op, dict)],
+        answer_operation,
+    ]
+    cost_latency = {
+        **aggregate_cost_latency(
+            cost_latency_operations,
+            total_latency_ms=(perf_counter() - answer_started) * 1000,
+        ),
+        "phase_latencies_ms": {
+            "retrieval_ms": round(retrieval_latency_ms, 3),
+            "answer_generation_ms": round(generation_latency_ms, 3),
+        },
+        "operations": cost_latency_operations,
+    }
 
     return AnswerReport(
         answer=answer_text,
@@ -205,6 +236,7 @@ def generate_answer(
         retrieval_trace=retrieval_trace,
         grounding_status=grounding_status,
         refusal_reason=refusal_reason,
+        cost_latency=cost_latency,
     )
 
 

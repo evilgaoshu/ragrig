@@ -27,6 +27,7 @@ from ragrig.db.models import (
 )
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.indexing.pipeline import index_knowledge_base
+from ragrig.observability import pipeline_run_duration_ms
 from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
 from ragrig.plugins.sources.database.connector import ingest_database_source
 from ragrig.plugins.sources.s3.connector import ingest_s3_source
@@ -310,6 +311,8 @@ def _serialize_pipeline_run(run: PipelineRun | None) -> dict[str, Any] | None:
         "failure_count": run.failure_count,
         "started_at": _isoformat(run.started_at),
         "finished_at": _isoformat(run.finished_at),
+        "duration_ms": pipeline_run_duration_ms(run),
+        "cost_latency_summary": (run.config_snapshot_json or {}).get("cost_latency_summary"),
     }
 
 
@@ -341,6 +344,10 @@ def list_pipeline_runs(session: Session) -> list[dict[str, Any]]:
                 "failure_count": run.failure_count,
                 "error_message": run.error_message,
                 "config_snapshot": run.config_snapshot_json,
+                "duration_ms": pipeline_run_duration_ms(run),
+                "cost_latency_summary": (run.config_snapshot_json or {}).get(
+                    "cost_latency_summary"
+                ),
                 "started_at": _isoformat(run.started_at),
                 "finished_at": _isoformat(run.finished_at),
                 "dag": dag_snapshot(run),
@@ -379,6 +386,8 @@ def get_pipeline_run_detail(session: Session, pipeline_run_id: str) -> dict[str,
         "failure_count": run.failure_count,
         "error_message": run.error_message,
         "config_snapshot": run.config_snapshot_json,
+        "duration_ms": pipeline_run_duration_ms(run),
+        "cost_latency_summary": (run.config_snapshot_json or {}).get("cost_latency_summary"),
         "started_at": _isoformat(run.started_at),
         "finished_at": _isoformat(run.finished_at),
         "dag": dag_snapshot(run),

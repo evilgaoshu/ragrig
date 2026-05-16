@@ -2819,10 +2819,15 @@
           const dagResumeBtn = dag && (run.failure_count > 0 || run.status === 'completed_with_failures')
             ? `<button class="btn small" onclick="resumePipelineDag('${escapeHtml(run.id)}')">Resume DAG</button>`
             : '';
+          const costLatency = run.cost_latency_summary || {};
+          const costLine = costLatency.schema_version
+            ? `<div class="sub">Latency: ${escapeHtml(formatValue(costLatency.total_latency_ms, '0'))} ms · tokens: ${escapeHtml(formatValue(costLatency.total_tokens_estimated, '0'))} · cost: $${escapeHtml(formatValue(costLatency.total_cost_usd_estimated, '0'))}</div>`
+            : run.duration_ms ? `<div class="sub">Duration: ${escapeHtml(formatValue(run.duration_ms))} ms</div>` : '';
           return `
             <div class="card">
               <div class="name">${escapeHtml(run.run_type)} <span class="${pillClass(run.status)}">${escapeHtml(run.status)}</span></div>
               <div class="sub">KB: ${escapeHtml(run.knowledge_base)} · total ${run.total_items} · success ${run.success_count} · skipped ${run.skipped_count} · failed ${run.failure_count}</div>
+              ${costLine}
               ${dagNodes}
               ${dagFailures}
               ${itemHtml}

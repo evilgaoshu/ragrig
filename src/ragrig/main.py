@@ -40,6 +40,7 @@ from ragrig.local_pilot import (
     run_answer_smoke,
 )
 from ragrig.local_pilot.model_config import resolve_env_config
+from ragrig.observability import summarize_pipeline_cost_latency
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.processing_profile import (
     ProfileStatus,
@@ -529,6 +530,19 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, list[dict[str, Any]]]:
         return {"items": list_pipeline_run_items(session, pipeline_run_id)}
+
+    @app.get("/observability/cost-latency", response_model=None)
+    def cost_latency_observability(
+        session: Annotated[Session, Depends(get_session)],
+        knowledge_base: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        bounded_limit = max(1, min(limit, 100))
+        return summarize_pipeline_cost_latency(
+            session,
+            knowledge_base_name=knowledge_base,
+            limit=bounded_limit,
+        )
 
     @app.get("/tasks/{task_id}", response_model=None)
     def task_status(task_id: str, include: str | None = None) -> dict[str, Any] | JSONResponse:
@@ -1250,6 +1264,7 @@ def create_app(
             "distance_metric": report.distance_metric,
             "backend": report.backend,
             "backend_metadata": report.backend_metadata,
+            "cost_latency": report.cost_latency,
             "total_results": report.total_results,
             "acl_explain": report.acl_explain,
             "results": [

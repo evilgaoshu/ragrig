@@ -86,10 +86,10 @@ This roadmap reflects the current state of the project as of May 2026. Completed
 - Understanding export diff summary and artifact retention.
 - Full evaluation comparison workflow: before/after reindex diff report.
 - Knowledge map / cross-document understanding API, Web Console panel, and deterministic smoke artifact.
+- Cost and latency tracking across pipeline and model changes.
 
 **Open:**
 - Authored golden question sets for domain-specific retrieval quality regression.
-- Cost and latency tracking across pipeline and model changes.
 
 ---
 

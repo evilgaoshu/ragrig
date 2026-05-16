@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from ragrig.acl import (
 )
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding, KnowledgeBase
 from ragrig.lexical import token_overlap_score
+from ragrig.observability import aggregate_cost_latency, observe_model_call
 from ragrig.providers import get_provider_registry
 from ragrig.repositories import get_knowledge_base_by_name
 from ragrig.repositories.audit import create_audit_event
@@ -104,6 +106,7 @@ class RetrievalReport:
     degraded: bool = False
     degraded_reason: str = ""
     acl_explain: dict[str, Any] = field(default_factory=dict)
+    cost_latency: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -672,6 +675,10 @@ def search_knowledge_base(
     - ``rerank``: dense candidates reranked by a reranker provider or fake
     - ``hybrid_rerank``: hybrid fusion candidates reranked
     """
+    search_started = perf_counter()
+    cost_latency_operations: list[dict[str, Any]] = []
+    phase_latencies: dict[str, float] = {}
+
     if top_k <= 0:
         raise InvalidTopKError(
             "top_k must be greater than zero",
@@ -702,7 +709,18 @@ def search_knowledge_base(
     embedding_provider = get_provider_registry().get(
         resolved_provider, dimensions=resolved_dimensions
     )
+    embed_started = perf_counter()
     query_embedding = embedding_provider.embed_text(normalized_query)
+    phase_latencies["query_embedding_ms"] = round((perf_counter() - embed_started) * 1000, 3)
+    cost_latency_operations.append(
+        observe_model_call(
+            operation="retrieval_query_embedding",
+            provider=query_embedding.provider,
+            model=query_embedding.model,
+            input_text=normalized_query,
+            latency_ms=phase_latencies["query_embedding_ms"],
+        )
+    )
     collection = build_vector_collection(
         knowledge_base_name=knowledge_base_name,
         provider=resolved_provider,
@@ -715,6 +733,7 @@ def search_knowledge_base(
     degraded_reason = ""
     acl_filter_report: _AclFilterReport | None = None
 
+    dense_started = perf_counter()
     if vector_backend is not None:
         vector_backend.ensure_collection(session, collection)
         fetch_k = candidate_k if mode != "dense" else top_k
@@ -794,9 +813,11 @@ def search_knowledge_base(
             principal_ids=principal_ids,
             enforce_acl=enforce_acl,
         )
+    phase_latencies["dense_retrieval_ms"] = round((perf_counter() - dense_started) * 1000, 3)
 
     # ── Phase 2: Lexical fusion (hybrid / hybrid_rerank) ──────
     if mode in ("hybrid", "hybrid_rerank"):
+        hybrid_started = perf_counter()
         if dense_results:
             corpus_texts = [r.text for r in dense_results]
             dense_results = _apply_hybrid_fusion(
@@ -807,17 +828,29 @@ def search_knowledge_base(
                 vector_weight=vector_weight,
             )
         # else: no results, skip fusion
+        phase_latencies["hybrid_fusion_ms"] = round((perf_counter() - hybrid_started) * 1000, 3)
 
     # ── Phase 3: Rerank (rerank / hybrid_rerank) ───────────────
     if mode in ("rerank", "hybrid_rerank"):
         if dense_results:
             # ACL filtering is already applied in Phase 1 — only authorized
             # candidates reach here, so reranker input is ACL-safe.
+            rerank_started = perf_counter()
             reranked, rerank_degraded, rerank_reason = _apply_rerank(
                 dense_results,
                 normalized_query,
                 reranker_provider=reranker_provider,
                 reranker_model=reranker_model,
+            )
+            phase_latencies["rerank_ms"] = round((perf_counter() - rerank_started) * 1000, 3)
+            cost_latency_operations.append(
+                observe_model_call(
+                    operation="rerank",
+                    provider=reranker_provider or "fake",
+                    model=reranker_model or "deterministic-reranker",
+                    input_text=normalized_query + "\n" + "\n".join(r.text for r in dense_results),
+                    latency_ms=phase_latencies["rerank_ms"],
+                )
             )
             dense_results = reranked
             degraded = rerank_degraded
@@ -863,6 +896,7 @@ def search_knowledge_base(
                 "top_k": top_k,
                 "mode": mode,
                 "acl_explain": acl_explain,
+                "cost_latency": aggregate_cost_latency(cost_latency_operations),
             },
         )
 
@@ -882,6 +916,16 @@ def search_knowledge_base(
         }
         distance_metric = "cosine_distance"
 
+    total_latency_ms = (perf_counter() - search_started) * 1000
+    cost_latency = {
+        **aggregate_cost_latency(
+            cost_latency_operations,
+            total_latency_ms=total_latency_ms,
+        ),
+        "phase_latencies_ms": phase_latencies,
+        "operations": cost_latency_operations,
+    }
+
     return RetrievalReport(
         knowledge_base=knowledge_base_name,
         query=normalized_query,
@@ -897,6 +941,7 @@ def search_knowledge_base(
         degraded=degraded,
         degraded_reason=degraded_reason,
         acl_explain=acl_explain,
+        cost_latency=cost_latency,
     )
 
 
