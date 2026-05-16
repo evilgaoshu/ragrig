@@ -291,9 +291,7 @@ def test_purge_old_audit_events():
 
     # Set occurred_at directly
     session.execute(
-        update(AuditEvent)
-        .where(AuditEvent.event_type == "test.old")
-        .values(occurred_at=old_date)
+        update(AuditEvent).where(AuditEvent.event_type == "test.old").values(occurred_at=old_date)
     )
     session.commit()
 

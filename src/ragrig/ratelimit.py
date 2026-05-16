@@ -63,9 +63,7 @@ class RateLimiter:
         self._ingest_windows: dict[str, _SlidingWindow] = {}
         self._lock = threading.Lock()
 
-    def _get_window(
-        self, store: dict[str, _SlidingWindow], key: str, rpm: int
-    ) -> _SlidingWindow:
+    def _get_window(self, store: dict[str, _SlidingWindow], key: str, rpm: int) -> _SlidingWindow:
         with self._lock:
             if key not in store:
                 store[key] = _SlidingWindow(rpm, self._burst)
