@@ -54,7 +54,7 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     manifests = registry.list()
     manifest_ids = {manifest.plugin_id for manifest in manifests}
 
-    assert len(manifests) == 38
+    assert len(manifests) == 39
     assert {
         "source.local",
         "parser.markdown",
@@ -75,6 +75,7 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
         "reranker.bge",
         "vector.pgvector",
         "sink.jsonl",
+        "sink.filesystem",
         "preview.markdown",
     } <= manifest_ids
     assert registry.get("source.local").tier is PluginTier.BUILTIN
