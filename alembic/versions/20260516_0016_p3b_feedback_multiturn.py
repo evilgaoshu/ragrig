@@ -129,9 +129,7 @@ def downgrade() -> None:
     op.drop_index("ix_answer_feedback_workspace_id", table_name="answer_feedback")
     op.drop_table("answer_feedback")
 
-    op.drop_index(
-        "ix_conversation_turns_conversation_id", table_name="conversation_turns"
-    )
+    op.drop_index("ix_conversation_turns_conversation_id", table_name="conversation_turns")
     op.drop_table("conversation_turns")
 
     op.drop_index("ix_conversations_user_id", table_name="conversations")
