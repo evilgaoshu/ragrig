@@ -76,6 +76,7 @@ from ragrig.retrieval import (
     RetrievalError,
     search_knowledge_base,
 )
+from ragrig.routers.audit import router as audit_router
 from ragrig.routers.auth import router as auth_router
 from ragrig.tasks import (
     TaskRetryError,
@@ -368,6 +369,7 @@ def create_app(
     app = FastAPI(title="RAGRig", version=__version__, lifespan=lifespan)
 
     app.include_router(auth_router)
+    app.include_router(audit_router)
 
     def shutdown_task_executor() -> None:
         shutdown = getattr(active_task_executor, "shutdown", None)

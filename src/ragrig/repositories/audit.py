@@ -48,6 +48,7 @@ def create_audit_event(
     *,
     event_type: AuditEventType,
     actor: str | None = None,
+    workspace_id=None,
     knowledge_base_id=None,
     document_id=None,
     chunk_id=None,
@@ -58,6 +59,7 @@ def create_audit_event(
     event = AuditEvent(
         event_type=event_type,
         actor=actor,
+        workspace_id=workspace_id,
         knowledge_base_id=knowledge_base_id,
         document_id=document_id,
         chunk_id=chunk_id,
@@ -73,18 +75,32 @@ def create_audit_event(
 def list_audit_events(
     session: Session,
     *,
+    workspace_id=None,
     event_type: AuditEventType | None = None,
+    actor: str | None = None,
+    since: Any | None = None,
+    until: Any | None = None,
     limit: int = 100,
+    offset: int = 0,
     run_id: str | None = None,
     item_id: str | None = None,
 ) -> list[AuditEvent]:
-    statement = select(AuditEvent).order_by(AuditEvent.occurred_at.desc()).limit(limit)
+    statement = select(AuditEvent).order_by(AuditEvent.occurred_at.desc())
+    if workspace_id is not None:
+        statement = statement.where(AuditEvent.workspace_id == workspace_id)
     if event_type is not None:
         statement = statement.where(AuditEvent.event_type == event_type)
+    if actor is not None:
+        statement = statement.where(AuditEvent.actor == actor)
+    if since is not None:
+        statement = statement.where(AuditEvent.occurred_at >= since)
+    if until is not None:
+        statement = statement.where(AuditEvent.occurred_at <= until)
     if run_id is not None:
         statement = statement.where(AuditEvent.run_id == run_id)
     if item_id is not None:
         statement = statement.where(AuditEvent.item_id == item_id)
+    statement = statement.offset(offset).limit(limit)
     return list(session.scalars(statement))
 
 
