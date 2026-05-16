@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, Header, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
@@ -79,6 +79,8 @@ from ragrig.retrieval import (
 )
 from ragrig.routers.audit import router as audit_router
 from ragrig.routers.auth import router as auth_router
+from ragrig.routers.mcp import router as mcp_router
+from ragrig.routers.openai_compat import router as openai_compat_router
 from ragrig.routers.retention import router as retention_router
 from ragrig.tasks import (
     TaskRetryError,
@@ -236,6 +238,7 @@ class AnswerRequest(BaseModel):
     dimensions: int | None = Field(default=None, gt=0)
     principal_ids: list[str] | None = None
     enforce_acl: bool = True
+    stream: bool = False
 
 
 class PermissionPreviewRequest(BaseModel):
@@ -311,6 +314,37 @@ def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
     }
 
 
+async def _answer_sse_stream(payload: dict[str, Any]):
+    """Yield text/event-stream chunks for /retrieval/answer streaming responses.
+
+    Emits one event per ~12-character slice of the answer text, then a final
+    ``done`` event carrying citations + grounding metadata, then ``[DONE]``.
+    """
+    import asyncio
+    import json
+
+    answer = payload.get("answer") or ""
+    size = 12
+    pieces = [answer[i : i + size] for i in range(0, len(answer), size)] or [""]
+    for piece in pieces:
+        yield "event: delta\n"
+        yield f"data: {json.dumps({'text': piece})}\n\n"
+        await asyncio.sleep(0)
+
+    final_meta = {
+        "citations": payload.get("citations", []),
+        "evidence_chunks": payload.get("evidence_chunks", []),
+        "model": payload.get("model"),
+        "provider": payload.get("provider"),
+        "grounding_status": payload.get("grounding_status"),
+        "refusal_reason": payload.get("refusal_reason"),
+        "retrieval_trace": payload.get("retrieval_trace", {}),
+    }
+    yield "event: done\n"
+    yield f"data: {json.dumps(final_meta)}\n\n"
+    yield "data: [DONE]\n\n"
+
+
 def _safe_chunk_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     safe = dict(metadata or {})
     if "acl" in safe:
@@ -383,6 +417,8 @@ def create_app(
     app.include_router(auth_router)
     app.include_router(audit_router)
     app.include_router(retention_router)
+    app.include_router(openai_compat_router)
+    app.include_router(mcp_router)
 
     def shutdown_task_executor() -> None:
         shutdown = getattr(active_task_executor, "shutdown", None)
@@ -1529,7 +1565,7 @@ def create_app(
                 },
             )
 
-        return {
+        payload = {
             "answer": report.answer,
             "citations": [
                 {
@@ -1561,6 +1597,12 @@ def create_app(
             "grounding_status": report.grounding_status,
             "refusal_reason": report.refusal_reason,
         }
+        if request.stream:
+            return StreamingResponse(
+                _answer_sse_stream(payload),
+                media_type="text/event-stream",
+            )
+        return payload
 
     @app.get("/processing-profiles", response_model=None)
     def processing_profiles(
