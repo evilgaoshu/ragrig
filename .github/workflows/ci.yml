@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.12"]
+        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v6
@@ -60,6 +60,9 @@ jobs:
 
       - name: Test fast
         run: make test-fast
+
+      - name: Web smoke
+        run: make web-check
 
   coverage:
     name: RAGRig CI / coverage
@@ -199,8 +202,8 @@ jobs:
         env:
           DATABASE_URL: postgresql://ragrig:ragrig_dev@localhost:5432/ragrig
 
-  web-smoke:
-    name: RAGRig CI / web-smoke
+  smoke:
+    name: RAGRig CI / smoke
     runs-on: ubuntu-latest
 
     steps:
@@ -214,8 +217,19 @@ jobs:
       - name: Sync dependencies
         run: uv sync --dev --frozen
 
-      - name: Web check
-        run: make web-check
+      - name: Cost & latency check
+        run: make cost-latency-check
+
+      - name: Knowledge map check
+        run: make knowledge-map-check
+
+      - name: Upload smoke artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-artifacts
+          path: |
+            docs/operations/artifacts/cost-latency-check.json
+            docs/operations/artifacts/knowledge-map-check.json
 
   docker-build:
     name: RAGRig CI / docker-build
