@@ -255,3 +255,11 @@ export function useCostLatency(knowledgeBase?: string, limit = 20) {
     },
   })
 }
+
+export function useKnowledgeMap(kbId: string | null) {
+  return useQuery({
+    queryKey: ['knowledge-map', kbId],
+    queryFn: () => api.get<Record<string, unknown>>(`/knowledge-bases/${kbId}/knowledge-map`),
+    enabled: !!kbId,
+  })
+}
