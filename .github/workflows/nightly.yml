@@ -94,7 +94,7 @@ Jobs: cost-latency-check, knowledge-map-check, answer-live-smoke, eval-reindex-d
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
