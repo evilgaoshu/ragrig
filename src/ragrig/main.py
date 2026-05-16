@@ -74,6 +74,7 @@ from ragrig.tasks import (
     get_task_payload,
     retry_task,
     run_ingestion_dag_task,
+    run_source_ingest_task,
     run_upload_pipeline,
     sanitize_filename,
     validate_and_stage_uploads,
@@ -127,7 +128,6 @@ from ragrig.web_console import (
     resume_pipeline_dag,
     retry_pipeline_run,
     retry_pipeline_run_item,
-    run_source_ingest,
     save_source_config,
     validate_plugin_config_for_wizard,
     validate_source_config,
@@ -1831,23 +1831,35 @@ def create_app(
     @app.post("/sources/run-ingest", response_model=None)
     def source_run_ingest(
         request: SourceRunIngestRequest,
-        session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, Any] | JSONResponse:
-        """Run source ingestion and index newly created document versions."""
+        """Enqueue source ingestion as a background task.
+
+        Returns immediately with a task_id. Poll GET /tasks/{task_id} for status.
+        """
         try:
-            result = run_source_ingest(
-                session,
-                plugin_id=request.plugin_id,
-                config=request.config,
-                knowledge_base_name=request.knowledge_base,
-                operator=request.operator,
+            task_id = enqueue_task(
+                session_factory=get_session_factory(),
+                task_executor=active_task_executor,
+                task_type="source_ingest",
+                payload_json={
+                    "plugin_id": request.plugin_id,
+                    "knowledge_base": request.knowledge_base,
+                    "operator": request.operator,
+                },
+                runner=lambda: run_source_ingest_task(
+                    session_factory=get_session_factory(),
+                    plugin_id=request.plugin_id,
+                    config=request.config,
+                    knowledge_base_name=request.knowledge_base,
+                    operator=request.operator,
+                ),
             )
         except Exception as exc:
             return JSONResponse(
                 status_code=400,
                 content={"error": str(exc)},
             )
-        return JSONResponse(status_code=202, content=result)
+        return JSONResponse(status_code=202, content={"task_id": task_id, "status": "queued"})
 
     # ── Pipeline Run Item Inspect & Retry ──────────────────────────────────
 

@@ -746,3 +746,23 @@ def run_ingestion_dag_task(
         except IngestionDagRejected as exc:
             raise ValueError(str(exc)) from exc
         return report.as_dict()
+
+
+def run_source_ingest_task(
+    *,
+    session_factory: Callable[[], Session],
+    plugin_id: str,
+    config: dict[str, Any],
+    knowledge_base_name: str,
+    operator: str | None = None,
+) -> dict[str, Any]:
+    from ragrig.web_console import run_source_ingest
+
+    with session_factory() as session:
+        return run_source_ingest(
+            session,
+            plugin_id=plugin_id,
+            config=config,
+            knowledge_base_name=knowledge_base_name,
+            operator=operator,
+        )
