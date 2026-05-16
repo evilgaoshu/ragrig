@@ -15,6 +15,7 @@ from sqlalchemy.pool import NullPool
 from ragrig.db.models import Base, Chunk, Document, DocumentVersion, Embedding, PipelineRun
 from ragrig.main import create_app
 from ragrig.plugins.sources.s3.client import FakeS3Client, FakeS3Object
+from ragrig.tasks import SynchronousTaskExecutor
 
 pytestmark = [pytest.mark.smoke, pytest.mark.slow]
 
@@ -101,7 +102,11 @@ async def test_s3_console_run_ingest_creates_documents_chunks_and_embeddings(
     )
 
     session_factory = _create_file_session_factory(tmp_path / "s3-console-ingest.db")
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=SynchronousTaskExecutor(),
+    )
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -117,12 +122,8 @@ async def test_s3_console_run_ingest_creates_documents_chunks_and_embeddings(
         assert response.status_code == 202
         assert "actual-secret-key" not in response.text
         payload = response.json()
-        assert payload["plugin_id"] == "source.s3"
-        assert payload["knowledge_base"] == "fixture-s3-console"
-        assert payload["ingestion"]["created_versions"] == 1
-        assert payload["ingestion"]["failed_count"] == 0
-        assert payload["indexing"]["chunk_count"] >= 1
-        assert payload["indexing"]["embedding_count"] >= 1
+        assert "task_id" in payload
+        assert payload["status"] == "queued"
 
     with session_factory() as session:
         document = session.scalars(select(Document)).one()

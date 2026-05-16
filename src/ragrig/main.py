@@ -1847,6 +1847,21 @@ def create_app(
 
         Returns immediately with a task_id. Poll GET /tasks/{task_id} for status.
         """
+        import os
+
+        missing_refs = [
+            f"{k}: env:{v.removeprefix('env:')} not set"
+            for k, v in (request.config or {}).items()
+            if isinstance(v, str)
+            and v.startswith("env:")
+            and not os.environ.get(v.removeprefix("env:"))
+        ]
+        if missing_refs:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"unresolved env refs: {'; '.join(missing_refs)}"},
+            )
+
         try:
             task_id = enqueue_task(
                 session_factory=get_session_factory(),

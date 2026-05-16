@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.orm import Session
 
+from ragrig.auth import DEFAULT_WORKSPACE_ID
 from ragrig.db.models import DocumentUnderstanding, DocumentVersion
 from ragrig.understanding.provider import (
     DeterministicUnderstandingProvider,
@@ -753,6 +754,7 @@ def _seed_kb_with_versions(session: Session, *, text_contents: list[str]) -> lis
     kb = KnowledgeBase(
         id=_uuid.uuid4(),
         name=f"test-coverage-{_uuid.uuid4().hex[:8]}",
+        workspace_id=DEFAULT_WORKSPACE_ID,
         metadata_json={},
     )
     session.add(kb)
@@ -1471,7 +1473,9 @@ class TestUnderstandAllAPIWithRun:
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
 
-            kb = KnowledgeBase(name="kb-run-test", metadata_json={})
+            kb = KnowledgeBase(
+                name="kb-run-test", workspace_id=DEFAULT_WORKSPACE_ID, metadata_json={}
+            )
             session.add(kb)
             session.flush()
             source = Source(
@@ -1547,7 +1551,9 @@ class TestUnderstandAllAPIWithRun:
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
 
-            kb = KnowledgeBase(name="kb-run-api", metadata_json={})
+            kb = KnowledgeBase(
+                name="kb-run-api", workspace_id=DEFAULT_WORKSPACE_ID, metadata_json={}
+            )
             session.add(kb)
             session.flush()
             source = Source(
@@ -1627,7 +1633,9 @@ class TestUnderstandAllAPIWithRun:
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
 
-            kb = KnowledgeBase(name="kb-run-detail", metadata_json={})
+            kb = KnowledgeBase(
+                name="kb-run-detail", workspace_id=DEFAULT_WORKSPACE_ID, metadata_json={}
+            )
             session.add(kb)
             session.flush()
             source = Source(
@@ -1736,7 +1744,9 @@ class TestUnderstandAllAPIWithRun:
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
 
-            kb = KnowledgeBase(name="kb-web-runs", metadata_json={})
+            kb = KnowledgeBase(
+                name="kb-web-runs", workspace_id=DEFAULT_WORKSPACE_ID, metadata_json={}
+            )
             session.add(kb)
             session.flush()
             source = Source(
@@ -2101,7 +2111,9 @@ class TestExportAndDiffAPI:
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
 
-            kb = KnowledgeBase(name="kb-export", metadata_json={})
+            kb = KnowledgeBase(
+                name="kb-export", workspace_id=DEFAULT_WORKSPACE_ID, metadata_json={}
+            )
             session.add(kb)
             session.flush()
             source = Source(
@@ -2176,7 +2188,9 @@ class TestExportAndDiffAPI:
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
 
-            kb = KnowledgeBase(name="kb-export-list", metadata_json={})
+            kb = KnowledgeBase(
+                name="kb-export-list", workspace_id=DEFAULT_WORKSPACE_ID, metadata_json={}
+            )
             session.add(kb)
             session.flush()
             source = Source(
@@ -2249,7 +2263,9 @@ class TestExportAndDiffAPI:
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
 
-            kb = KnowledgeBase(name="kb-diff", metadata_json={})
+            kb = KnowledgeBase(
+                name="kb-diff", workspace_id=DEFAULT_WORKSPACE_ID, metadata_json={}
+            )
             session.add(kb)
             session.flush()
             source = Source(
@@ -2386,7 +2402,9 @@ class TestExportAndDiffAPI:
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
 
-            kb = KnowledgeBase(name="kb-filtered", metadata_json={})
+            kb = KnowledgeBase(
+                name="kb-filtered", workspace_id=DEFAULT_WORKSPACE_ID, metadata_json={}
+            )
             session.add(kb)
             session.flush()
             source = Source(
@@ -2576,6 +2594,7 @@ class TestDeterministicSortOrder:
         kb = KnowledgeBase(
             id=_uuid.uuid4(),
             name="sort-test-kb",
+            workspace_id=DEFAULT_WORKSPACE_ID,
             metadata_json={},
         )
         sqlite_session.add(kb)
@@ -2643,6 +2662,7 @@ class TestDeterministicSortOrder:
         kb = KnowledgeBase(
             id=_uuid.uuid4(),
             name="sort-time-kb",
+            workspace_id=DEFAULT_WORKSPACE_ID,
             metadata_json={},
         )
         sqlite_session.add(kb)

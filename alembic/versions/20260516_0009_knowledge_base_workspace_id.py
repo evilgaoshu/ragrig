@@ -53,9 +53,7 @@ def upgrade() -> None:
 
     # Backfill existing rows.
     conn.execute(
-        sa.text(
-            "UPDATE knowledge_bases SET workspace_id = :wid WHERE workspace_id IS NULL"
-        ),
+        sa.text("UPDATE knowledge_bases SET workspace_id = :wid WHERE workspace_id IS NULL"),
         {"wid": DEFAULT_WORKSPACE_ID},
     )
 
@@ -90,13 +88,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_knowledge_bases_workspace_id", table_name="knowledge_bases")
-    op.drop_constraint(
-        "uq_knowledge_bases_workspace_name", "knowledge_bases", type_="unique"
-    )
-    op.create_unique_constraint(
-        "knowledge_bases_name_key", "knowledge_bases", ["name"]
-    )
-    op.drop_constraint(
-        "fk_knowledge_bases_workspace_id", "knowledge_bases", type_="foreignkey"
-    )
+    op.drop_constraint("uq_knowledge_bases_workspace_name", "knowledge_bases", type_="unique")
+    op.create_unique_constraint("knowledge_bases_name_key", "knowledge_bases", ["name"])
+    op.drop_constraint("fk_knowledge_bases_workspace_id", "knowledge_bases", type_="foreignkey")
     op.drop_column("knowledge_bases", "workspace_id")

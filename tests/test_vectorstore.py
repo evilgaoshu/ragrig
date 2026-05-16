@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
+from ragrig.auth import DEFAULT_WORKSPACE_ID
 from ragrig.config import Settings
 from ragrig.db.models import (
     Base,
@@ -218,7 +219,12 @@ def test_pgvector_backend_collection_and_health_cover_empty_session() -> None:
 def test_pgvector_backend_search_and_delete_cover_non_empty_collection(tmp_path) -> None:
     backend = PgVectorBackend()
     with _create_session() as session:
-        knowledge_base = KnowledgeBase(name="fixture-local", description=None, metadata_json={})
+        knowledge_base = KnowledgeBase(
+            name="fixture-local",
+            workspace_id=DEFAULT_WORKSPACE_ID,
+            description=None,
+            metadata_json={},
+        )
         source = Source(
             knowledge_base=knowledge_base,
             kind="local_directory",
@@ -673,7 +679,12 @@ def test_qdrant_backend_health_reports_missing_collection_and_dimension_mismatch
     )
 
     with _create_session() as session:
-        knowledge_base = KnowledgeBase(name="fixture-local", description=None, metadata_json={})
+        knowledge_base = KnowledgeBase(
+            name="fixture-local",
+            workspace_id=DEFAULT_WORKSPACE_ID,
+            description=None,
+            metadata_json={},
+        )
         source = Source(
             knowledge_base=knowledge_base,
             kind="local_directory",

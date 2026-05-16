@@ -66,6 +66,16 @@ class UploadAcceptance:
     staging_dir: str | None = None
 
 
+class SynchronousTaskExecutor(TaskExecutor):
+    """Runs submitted jobs inline in the caller's thread. For tests only."""
+
+    def submit(self, job: TaskJob) -> None:
+        job()
+
+    def shutdown(self, wait: bool = True) -> None:
+        pass
+
+
 def default_task_executor() -> TaskExecutor:
     return ThreadPoolTaskExecutor()
 
