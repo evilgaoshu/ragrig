@@ -1,6 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from './client'
-import type { KnowledgeBase, SystemStatus, PipelineRun, RetrievalReport } from './types'
+import type {
+  KnowledgeBase,
+  SystemStatus,
+  Source,
+  PipelineRun,
+  PipelineRunItem,
+  RetrievalReport,
+  TaskRecord,
+} from './types'
 
 export function useSystemStatus() {
   return useQuery({
@@ -25,21 +33,48 @@ export function useCreateKnowledgeBase() {
   })
 }
 
-export function usePipelineRuns(kbId?: string) {
+export function useSources() {
   return useQuery({
-    queryKey: ['pipeline-runs', kbId],
-    queryFn: () =>
-      api
-        .get<{ items: PipelineRun[] }>(`/pipeline-runs${kbId ? `?knowledge_base_id=${kbId}` : ''}`)
-        .then((r) => r.items),
+    queryKey: ['sources'],
+    queryFn: () => api.get<{ items: Source[] }>('/sources').then((r) => r.items),
+  })
+}
+
+export function usePipelineRuns() {
+  return useQuery({
+    queryKey: ['pipeline-runs'],
+    queryFn: () => api.get<{ items: PipelineRun[] }>('/pipeline-runs').then((r) => r.items),
     refetchInterval: 10_000,
   })
 }
 
-export function useSources() {
+export function usePipelineRunDetail(runId: string | null) {
   return useQuery({
-    queryKey: ['sources'],
-    queryFn: () => api.get<{ items: unknown[] }>('/sources').then((r) => r.items),
+    queryKey: ['pipeline-run', runId],
+    queryFn: () => api.get<PipelineRun>(`/pipeline-runs/${runId}`),
+    enabled: !!runId,
+  })
+}
+
+export function usePipelineRunItems(runId: string | null) {
+  return useQuery({
+    queryKey: ['pipeline-run-items', runId],
+    queryFn: () =>
+      api.get<{ items: PipelineRunItem[] }>(`/pipeline-runs/${runId}/items`).then((r) => r.items),
+    enabled: !!runId,
+    refetchInterval: 5_000,
+  })
+}
+
+export function useTask(taskId: string | null) {
+  return useQuery({
+    queryKey: ['task', taskId],
+    queryFn: () => api.get<TaskRecord>(`/tasks/${taskId}`),
+    enabled: !!taskId,
+    refetchInterval: (q) => {
+      const status = (q.state.data as TaskRecord | undefined)?.status
+      return status === 'queued' || status === 'running' ? 2_000 : false
+    },
   })
 }
 

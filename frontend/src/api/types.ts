@@ -20,23 +20,39 @@ export interface SystemStatus {
   embedding_profiles: number
 }
 
-export interface PipelineRun {
-  id: string
-  knowledge_base: string
-  status: string
-  item_count: number
-  created_at: string
-  updated_at: string
-  error: string | null
-}
-
 export interface Source {
   id: string
-  plugin_id: string
-  label: string
+  knowledge_base: string
+  kind: string
+  uri: string
   config: Record<string, unknown>
-  knowledge_base: string | null
   created_at: string
+  updated_at: string
+}
+
+export interface PipelineRun {
+  id: string
+  run_type: string
+  knowledge_base: string
+  source_uri: string | null
+  status: string
+  total_items: number
+  success_count: number
+  skipped_count: number
+  failure_count: number
+  error_message: string | null
+  started_at: string
+  finished_at: string | null
+  dag: unknown
+}
+
+export interface PipelineRunItem {
+  id: string
+  document_uri: string
+  status: string
+  error: string | null
+  started_at: string
+  finished_at: string | null
 }
 
 export interface RetrievalResult {
@@ -63,18 +79,10 @@ export interface RetrievalReport {
   results: RetrievalResult[]
 }
 
-export interface EmbeddingProfile {
-  provider: string
-  model: string
-  dimensions: number | null
-  chunk_count: number
-}
-
 export interface TaskRecord {
-  id: string
-  task_type: string
+  task_id: string
   status: string
+  result: unknown
   error: string | null
-  created_at: string
-  updated_at: string
+  progress: unknown
 }

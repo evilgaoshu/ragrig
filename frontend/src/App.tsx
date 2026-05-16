@@ -2,6 +2,8 @@ import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import Overview from './pages/Overview'
 import KnowledgeBases from './pages/KnowledgeBases'
+import Sources from './pages/Sources'
+import Pipelines from './pages/Pipelines'
 import RetrievalLab from './pages/RetrievalLab'
 import Stub from './pages/Stub'
 
@@ -11,11 +13,11 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Overview />} />
         <Route path="/knowledge-bases" element={<KnowledgeBases />} />
+        <Route path="/sources" element={<Sources />} />
+        <Route path="/pipelines" element={<Pipelines />} />
         <Route path="/retrieval-lab" element={<RetrievalLab />} />
 
-        <Route path="/sources" element={<Stub title="Sources" description="Configure and manage data source connectors" />} />
         <Route path="/wizard" element={<Stub title="Setup Wizard" description="Guided ingestion setup" />} />
-        <Route path="/pipelines" element={<Stub title="Pipelines" description="Ingestion pipeline runs and DAG status" />} />
         <Route path="/upload" element={<Stub title="Upload" description="Direct file upload to a knowledge base" />} />
         <Route path="/formats" element={<Stub title="Formats" description="Supported file format registry" />} />
         <Route path="/sanitizer-coverage" element={<Stub title="Sanitizer Coverage" description="Parser redaction coverage metrics" />} />
