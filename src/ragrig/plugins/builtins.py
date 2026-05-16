@@ -26,6 +26,13 @@ class JsonlSinkConfig(PluginConfigModel):
     output_path: str
 
 
+class FilesystemSinkConfig(PluginConfigModel):
+    base_path: str
+    format: str = "jsonl"
+    overwrite: bool = True
+    dry_run: bool = False
+
+
 def builtin_manifests() -> list[PluginManifest]:
     return [
         PluginManifest(
@@ -131,6 +138,29 @@ def builtin_manifests() -> list[PluginManifest]:
             docs_reference="README.md",
             config_model=JsonlSinkConfig,
             example_config={"output_path": "/tmp/ragrig-export.jsonl"},
+        ),
+        PluginManifest(
+            plugin_id="sink.filesystem",
+            display_name="Filesystem Sink",
+            description=(
+                "Exports knowledge-base chunks and documents to a local directory as "
+                "JSONL, Markdown, or both. Works with any mounted path including NFS shares."
+            ),
+            plugin_type=PluginType.SINK,
+            family="filesystem",
+            version="0.1.0",
+            owner="ragrig-core",
+            tier=PluginTier.BUILTIN,
+            status=PluginStatus.READY,
+            capabilities=(Capability.WRITE,),
+            docs_reference="README.md",
+            config_model=FilesystemSinkConfig,
+            example_config={
+                "base_path": "/mnt/exports",
+                "format": "both",
+                "overwrite": True,
+                "dry_run": False,
+            },
         ),
         PluginManifest(
             plugin_id="preview.markdown",

@@ -38,6 +38,9 @@ jobs:
       - name: Evaluation reindex diff
         run: make eval-reindex-diff
 
+      - name: Local pilot evidence smoke
+        run: make local-pilot-smoke
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v7
@@ -50,6 +53,7 @@ jobs:
             docs/operations/artifacts/answer-live-smoke.json
             docs/operations/artifacts/eval-reindex-diff.json
             docs/operations/artifacts/eval-reindex-diff.md
+            docs/operations/artifacts/local-pilot-smoke.json
 
       - name: Write job summary
         if: always()
@@ -60,7 +64,8 @@ jobs:
             docs/operations/artifacts/cost-latency-check.json \
             docs/operations/artifacts/knowledge-map-check.json \
             docs/operations/artifacts/answer-live-smoke.json \
-            docs/operations/artifacts/eval-reindex-diff.md; do
+            docs/operations/artifacts/eval-reindex-diff.md \
+            docs/operations/artifacts/local-pilot-smoke.json; do
             if [ -f "$f" ]; then
               echo "### $f" >> "$GITHUB_STEP_SUMMARY"
               echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -77,7 +82,7 @@ jobs:
         run: |
           gh issue create \
             --title "Nightly smoke failed — $(date -u +%Y-%m-%d)" \
-            --body "$(printf 'The nightly smoke workflow failed on %s.\n\nRun: %s\n\nJobs: cost-latency-check, knowledge-map-check, answer-live-smoke, eval-reindex-diff' \
+            --body "$(printf 'The nightly smoke workflow failed on %s.\n\nRun: %s\n\nJobs: cost-latency-check, knowledge-map-check, answer-live-smoke, eval-reindex-diff, local-pilot-smoke' \
               "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")" \
             --label "ci" || true

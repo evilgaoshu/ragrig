@@ -18,6 +18,7 @@ from ragrig.db.models.entities import (
     User,
     UserSession,
     Workspace,
+    WorkspaceInvitation,
     WorkspaceMembership,
 )
 
@@ -41,5 +42,6 @@ __all__ = [
     "User",
     "UserSession",
     "Workspace",
+    "WorkspaceInvitation",
     "WorkspaceMembership",
 ]

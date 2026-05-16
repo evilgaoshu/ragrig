@@ -70,9 +70,10 @@ def build_embedding_base_statement(
     provider: str,
     model: str,
     dimensions: int,
+    workspace_id=None,
 ) -> Select[Any]:
     latest_versions = latest_version_subquery(knowledge_base_id)
-    return (
+    stmt = (
         select(
             Embedding.id.label("embedding_id"),
             Document.id.label("document_id"),
@@ -97,6 +98,9 @@ def build_embedding_base_statement(
             Embedding.dimensions == dimensions,
         )
     )
+    if workspace_id is not None:
+        stmt = stmt.where(Chunk.workspace_id == workspace_id)
+    return stmt
 
 
 class PgVectorBackend:

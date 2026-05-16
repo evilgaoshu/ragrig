@@ -382,3 +382,166 @@ def test_non_owner_cannot_assign_owner_role(auth_client):
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 403
+
+
+# ── Invitation tests ──────────────────────────────────────────────────────────
+
+
+def _make_closed_client() -> TestClient:
+    """Auth enabled + open registration disabled."""
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    settings = Settings(
+        database_url="sqlite+pysqlite:///:memory:",
+        ragrig_auth_enabled=True,
+        ragrig_open_registration=False,
+    )
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=factory,
+        settings=settings,
+    )
+    return TestClient(app, raise_server_exceptions=True)
+
+
+def test_owner_can_create_invitation(auth_client):
+    """Owner can create an invitation and receive a token."""
+    owner_token = _register(auth_client, "owner_inv@example.com")
+    resp = auth_client.post(
+        "/auth/workspace/invitations",
+        json={"role": "editor", "days": 3},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["token"].startswith("rag_invite_")
+    assert data["role"] == "editor"
+    assert data["status"] == "pending"
+
+
+def test_viewer_cannot_create_invitation(auth_client):
+    """Viewer is forbidden from creating invitations."""
+    _register(auth_client, "owner_inv2@example.com")
+    viewer_token = _register(auth_client, "viewer_inv@example.com")
+    resp = auth_client.post(
+        "/auth/workspace/invitations",
+        json={"role": "editor"},
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_register_with_valid_invitation_token(auth_client):
+    """A user can register using a valid invitation token and gets the invited role."""
+    owner_token = _register(auth_client, "owner_inv3@example.com")
+    inv_resp = auth_client.post(
+        "/auth/workspace/invitations",
+        json={"role": "editor"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    token = inv_resp.json()["token"]
+
+    resp = auth_client.post(
+        "/auth/register",
+        json={
+            "email": "invited@example.com",
+            "password": "hunter2hunter2",
+            "invitation_token": token,
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["role"] == "editor"
+
+
+def test_invitation_token_cannot_be_reused(auth_client):
+    """An accepted invitation token is rejected on a second use."""
+    owner_token = _register(auth_client, "owner_inv4@example.com")
+    inv_resp = auth_client.post(
+        "/auth/workspace/invitations",
+        json={"role": "viewer"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    token = inv_resp.json()["token"]
+
+    auth_client.post(
+        "/auth/register",
+        json={
+            "email": "used_inv@example.com",
+            "password": "hunter2hunter2",
+            "invitation_token": token,
+        },
+    )
+    resp = auth_client.post(
+        "/auth/register",
+        json={
+            "email": "second_inv@example.com",
+            "password": "hunter2hunter2",
+            "invitation_token": token,
+        },
+    )
+    assert resp.status_code == 400
+
+
+def test_registration_blocked_without_token_when_closed(tmp_path):
+    """Registration fails with 403 when open_registration=False and no token."""
+    with _make_closed_client() as client:
+        # First user (owner) must be seeded via direct DB — but in closed mode,
+        # even the first POST /auth/register is blocked without a token.
+        resp = client.post(
+            "/auth/register",
+            json={"email": "blocked@example.com", "password": "hunter2hunter2"},
+        )
+        assert resp.status_code == 403
+
+
+def test_owner_can_revoke_invitation(auth_client):
+    """Owner can revoke a pending invitation."""
+    owner_token = _register(auth_client, "owner_rev@example.com")
+    inv_resp = auth_client.post(
+        "/auth/workspace/invitations",
+        json={"role": "editor"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    inv_id = inv_resp.json()["id"]
+
+    resp = auth_client.delete(
+        f"/auth/workspace/invitations/{inv_id}",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert resp.status_code == 204
+
+    # Revoked token should be rejected on register
+    token = inv_resp.json()["token"]
+    resp2 = auth_client.post(
+        "/auth/register",
+        json={
+            "email": "revoked_inv@example.com",
+            "password": "hunter2hunter2",
+            "invitation_token": token,
+        },
+    )
+    assert resp2.status_code == 400
+
+
+def test_list_invitations_shows_pending_only(auth_client):
+    """GET /auth/workspace/invitations returns only pending invitations."""
+    owner_token = _register(auth_client, "owner_list_inv@example.com")
+    # Create two invitations
+    for _i in range(2):
+        auth_client.post(
+            "/auth/workspace/invitations",
+            json={"role": "viewer"},
+            headers={"Authorization": f"Bearer {owner_token}"},
+        )
+    resp = auth_client.get(
+        "/auth/workspace/invitations",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2

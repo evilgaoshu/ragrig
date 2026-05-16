@@ -167,9 +167,11 @@ def _build_acl_explain(
     }
 
 
-def _available_profiles(session: Session, *, knowledge_base_id) -> list[dict[str, Any]]:
+def _available_profiles(
+    session: Session, *, knowledge_base_id, workspace_id=None
+) -> list[dict[str, Any]]:
     latest_versions = _build_latest_version_subquery(knowledge_base_id)
-    rows = session.execute(
+    stmt = (
         select(Embedding.provider, Embedding.model, Embedding.dimensions)
         .join(Chunk, Chunk.id == Embedding.chunk_id)
         .join(DocumentVersion, DocumentVersion.id == Chunk.document_version_id)
@@ -178,7 +180,10 @@ def _available_profiles(session: Session, *, knowledge_base_id) -> list[dict[str
         .where(Document.knowledge_base_id == knowledge_base_id)
         .distinct()
         .order_by(Embedding.provider, Embedding.model, Embedding.dimensions)
-    ).all()
+    )
+    if workspace_id is not None:
+        stmt = stmt.where(Chunk.workspace_id == workspace_id)
+    rows = session.execute(stmt).all()
     return [
         {"provider": row.provider, "model": row.model, "dimensions": row.dimensions} for row in rows
     ]
@@ -191,8 +196,11 @@ def _resolve_profile(
     provider: str | None,
     model: str | None,
     dimensions: int | None,
+    workspace_id=None,
 ) -> tuple[str, str, int]:
-    available_profiles = _available_profiles(session, knowledge_base_id=knowledge_base.id)
+    available_profiles = _available_profiles(
+        session, knowledge_base_id=knowledge_base.id, workspace_id=workspace_id
+    )
     if not available_profiles:
         resolved_dimensions = dimensions or 8
         return (
@@ -237,6 +245,7 @@ def _search_with_sql_distance(
     top_k: int,
     principal_ids: list[str] | None = None,
     enforce_acl: bool = True,
+    workspace_id=None,
 ) -> list[RetrievalResult]:
     distance_expr = Embedding.embedding.cosine_distance(query_vector)
     statement = _build_base_statement(
@@ -244,6 +253,7 @@ def _search_with_sql_distance(
         provider=provider,
         model=model,
         dimensions=dimensions,
+        workspace_id=workspace_id,
     ).add_columns(distance_expr.label("distance"))
     if enforce_acl:
         if principal_ids and len(principal_ids) > 0:
@@ -294,6 +304,7 @@ def _search_with_python_distance(
     top_k: int,
     principal_ids: list[str] | None = None,
     enforce_acl: bool = True,
+    workspace_id=None,
 ) -> tuple[list[RetrievalResult], _AclFilterReport | None]:
     rows = session.execute(
         _build_base_statement(
@@ -301,6 +312,7 @@ def _search_with_python_distance(
             provider=provider,
             model=model,
             dimensions=dimensions,
+            workspace_id=workspace_id,
         )
     ).all()
 
@@ -635,6 +647,7 @@ def _fetch_all_texts(
     provider: str,
     model: str,
     dimensions: int,
+    workspace_id=None,
 ) -> list[str]:
     """Fetch all chunk texts for lexical corpus building."""
     rows = session.execute(
@@ -643,6 +656,7 @@ def _fetch_all_texts(
             provider=provider,
             model=model,
             dimensions=dimensions,
+            workspace_id=workspace_id,
         )
     ).all()
     return [row.text for row in rows]
@@ -699,12 +713,14 @@ def search_knowledge_base(
             details={"knowledge_base": knowledge_base_name},
         )
 
+    kb_workspace_id = getattr(knowledge_base, "workspace_id", None)
     resolved_provider, resolved_model, resolved_dimensions = _resolve_profile(
         session,
         knowledge_base=knowledge_base,
         provider=provider,
         model=model,
         dimensions=dimensions,
+        workspace_id=kb_workspace_id,
     )
     embedding_provider = get_provider_registry().get(
         resolved_provider, dimensions=resolved_dimensions
@@ -793,6 +809,7 @@ def search_knowledge_base(
             top_k=candidate_k if mode != "dense" else top_k,
             principal_ids=principal_ids,
             enforce_acl=enforce_acl,
+            workspace_id=kb_workspace_id,
         )
         acl_filter_report = _AclFilterReport(
             results=dense_results,
@@ -812,6 +829,7 @@ def search_knowledge_base(
             top_k=candidate_k if mode != "dense" else top_k,
             principal_ids=principal_ids,
             enforce_acl=enforce_acl,
+            workspace_id=kb_workspace_id,
         )
     phase_latencies["dense_retrieval_ms"] = round((perf_counter() - dense_started) * 1000, 3)
 

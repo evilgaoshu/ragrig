@@ -3993,7 +3993,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.13.0,<2.0.0" },
-    { name = "bcrypt", specifier = ">=4.2.0,<5.0.0" },
+    { name = "bcrypt", specifier = ">=4.2.0,<6.0.0" },
     { name = "boto3", marker = "extra == 'cloud-aws'", specifier = ">=1.35.0,<2.0.0" },
     { name = "boto3", marker = "extra == 's3'", specifier = ">=1.35.0,<2.0.0" },
     { name = "cohere", marker = "extra == 'cloud-cohere'", specifier = ">=5.15.0,<7.0.0" },

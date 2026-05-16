@@ -14,13 +14,22 @@ import bcrypt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ragrig.db.models import ApiKey, User, UserSession, Workspace, WorkspaceMembership
+from ragrig.db.models import (
+    ApiKey,
+    User,
+    UserSession,
+    Workspace,
+    WorkspaceInvitation,
+    WorkspaceMembership,
+)
 
 DEFAULT_WORKSPACE_ID = uuid.UUID("00000000-0000-0000-0000-00000000defa")
 DEFAULT_WORKSPACE_SLUG = "default"
 DEFAULT_WORKSPACE_DISPLAY_NAME = "Default Workspace"
 API_KEY_TOKEN_PREFIX = "rag_live"
 SESSION_TOKEN_PREFIX = "rag_session"
+INVITATION_TOKEN_PREFIX = "rag_invite"
+INVITATION_DEFAULT_DAYS = 7
 _DEFAULT_LOCAL_PEPPER = "ragrig-local-dev-auth-pepper"
 
 
@@ -247,6 +256,73 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+@dataclass(frozen=True)
+class CreatedInvitation:
+    invitation: WorkspaceInvitation
+    token: str
+
+
+def create_invitation(
+    session: Session,
+    *,
+    workspace_id: uuid.UUID,
+    created_by_user_id: uuid.UUID | None = None,
+    email: str | None = None,
+    role: str = "editor",
+    days: int = INVITATION_DEFAULT_DAYS,
+    pepper: str | bytes | None = None,
+) -> CreatedInvitation:
+    token = f"{INVITATION_TOKEN_PREFIX}_{secrets.token_urlsafe(32)}"
+    invitation = WorkspaceInvitation(
+        workspace_id=workspace_id,
+        created_by_user_id=created_by_user_id,
+        email=email,
+        token_hash=_hash_secret(token, pepper=pepper),
+        role=role,
+        status="pending",
+        expires_at=expires_in(days=days),
+    )
+    session.add(invitation)
+    session.flush()
+    return CreatedInvitation(invitation=invitation, token=token)
+
+
+def verify_invitation(
+    session: Session,
+    token: str,
+    *,
+    workspace_id: uuid.UUID | None = None,
+    now: datetime | None = None,
+    pepper: str | bytes | None = None,
+) -> WorkspaceInvitation | None:
+    token_hash = _hash_secret(token, pepper=pepper)
+    inv = session.scalar(
+        select(WorkspaceInvitation).where(WorkspaceInvitation.token_hash == token_hash).limit(1)
+    )
+    if inv is None:
+        return None
+    if workspace_id is not None and inv.workspace_id != workspace_id:
+        return None
+    if inv.status != "pending":
+        return None
+    if _is_expired(inv.expires_at, now=now):
+        inv.status = "expired"
+        session.add(inv)
+        session.flush()
+        return None
+    return inv
+
+
+def accept_invitation(
+    session: Session,
+    invitation: WorkspaceInvitation,
+) -> None:
+    invitation.status = "accepted"
+    invitation.accepted_at = datetime.now(UTC)
+    session.add(invitation)
+    session.flush()
+
+
 def register_user(
     session: Session,
     *,
@@ -254,13 +330,27 @@ def register_user(
     password: str,
     display_name: str | None = None,
     session_days: int = 30,
+    invitation_token: str | None = None,
     pepper: str | bytes | None = None,
 ) -> CreatedUserSession:
-    """Create a user, add them as owner of the default workspace, and return a session."""
+    """Create a user, add them to the default workspace, and return a session.
+
+    If invitation_token is provided, the user's role and workspace are taken
+    from the invitation; otherwise the first user becomes owner and subsequent
+    users become viewers.
+    """
     normalized_email = email.strip().lower()
     existing = session.scalar(select(User).where(User.email == normalized_email).limit(1))
     if existing is not None:
         raise ValueError("email already registered")
+
+    invitation: WorkspaceInvitation | None = None
+    if invitation_token:
+        invitation = verify_invitation(session, invitation_token, pepper=pepper)
+        if invitation is None:
+            raise ValueError("invitation token is invalid or expired")
+        if invitation.email and invitation.email.lower() != normalized_email:
+            raise ValueError("invitation was issued for a different email address")
 
     user = User(
         email=normalized_email,
@@ -272,25 +362,29 @@ def register_user(
     session.flush()
 
     workspace = ensure_default_workspace(session)
+    target_workspace_id = invitation.workspace_id if invitation else workspace.id
 
     existing_membership = session.scalar(
         select(WorkspaceMembership)
-        .where(WorkspaceMembership.workspace_id == workspace.id)
+        .where(WorkspaceMembership.workspace_id == target_workspace_id)
         .where(WorkspaceMembership.user_id == user.id)
         .limit(1)
     )
     if existing_membership is None:
-        is_first_user = (
-            session.scalar(
-                select(WorkspaceMembership)
-                .where(WorkspaceMembership.workspace_id == workspace.id)
-                .limit(1)
+        if invitation:
+            role = invitation.role
+        else:
+            is_first_user = (
+                session.scalar(
+                    select(WorkspaceMembership)
+                    .where(WorkspaceMembership.workspace_id == target_workspace_id)
+                    .limit(1)
+                )
+                is None
             )
-            is None
-        )
-        role = "owner" if is_first_user else "viewer"
+            role = "owner" if is_first_user else "viewer"
         membership = WorkspaceMembership(
-            workspace_id=workspace.id,
+            workspace_id=target_workspace_id,
             user_id=user.id,
             role=role,
             status="active",
@@ -298,9 +392,12 @@ def register_user(
         session.add(membership)
         session.flush()
 
+    if invitation:
+        accept_invitation(session, invitation)
+
     return create_user_session(
         session,
-        workspace_id=workspace.id,
+        workspace_id=target_workspace_id,
         user_id=user.id,
         expires_at=expires_in(days=session_days),
         scopes=["*"],
