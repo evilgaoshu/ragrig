@@ -14,7 +14,7 @@ import uuid
 import pytest
 
 from ragrig.auth import DEFAULT_WORKSPACE_ID, ensure_default_workspace, resolve_workspace_id
-from ragrig.db.models import KnowledgeBase, Workspace
+from ragrig.db.models import Workspace
 from ragrig.repositories import get_knowledge_base_by_name, get_or_create_knowledge_base
 
 pytestmark = pytest.mark.unit
