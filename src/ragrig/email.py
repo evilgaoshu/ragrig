@@ -36,10 +36,7 @@ def send_invitation_email(
     if not settings.ragrig_smtp_enabled:
         return
 
-    accept_url = (
-        f"{settings.ragrig_app_base_url.rstrip('/')}/register"
-        f"?invitation_token={token}"
-    )
+    accept_url = f"{settings.ragrig_app_base_url.rstrip('/')}/register?invitation_token={token}"
     inviter_label = inviter_name or "A workspace administrator"
     subject = f"You're invited to join {workspace_name} on RAGRig"
     body_text = (

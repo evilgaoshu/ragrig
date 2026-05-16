@@ -363,9 +363,25 @@ def test_arq_executor_raises_on_missing_arq():
 
 @pytest.mark.unit
 def test_worker_settings_has_run_job_function():
-    from ragrig.worker import WorkerSettings, run_job
+    """WorkerSettings exposes run_job; mock arq so test runs without the optional dep."""
+    import types
 
-    assert run_job in WorkerSettings.functions
+    fake_arq = types.ModuleType("arq")
+    fake_connections = types.ModuleType("arq.connections")
+
+    class FakeRedisSettings:
+        @staticmethod
+        def from_dsn(url: str) -> "FakeRedisSettings":
+            return FakeRedisSettings()
+
+    fake_connections.RedisSettings = FakeRedisSettings
+    fake_arq.connections = fake_connections
+
+    with patch.dict("sys.modules", {"arq": fake_arq, "arq.connections": fake_connections}):
+        from ragrig.worker import _make_worker_settings_class, run_job
+
+        ws = _make_worker_settings_class("redis://localhost:6379", 10)
+        assert run_job in ws.functions
 
 
 # ── Integration: enqueue_task fires webhooks ──────────────────────────────────
