@@ -62,6 +62,29 @@ as <strong>{role}</strong>.</p>
     _send(settings, to_email, msg)
 
 
+def send_plain_email(
+    settings: Settings,
+    *,
+    to_email: str,
+    subject: str,
+    body: str,
+) -> None:
+    """Send a plain-text email. No-op when SMTP is disabled.
+
+    Used by P3+ alert flows (budget thresholds, etc.) where rich HTML is
+    overkill. Raises ``EmailDeliveryError`` on SMTP failure so callers can
+    log + degrade gracefully.
+    """
+    if not settings.ragrig_smtp_enabled:
+        return
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = settings.ragrig_smtp_from
+    msg["To"] = to_email
+    msg.attach(MIMEText(body, "plain"))
+    _send(settings, to_email, msg)
+
+
 def _send(settings: Settings, to_email: str, msg: MIMEMultipart) -> None:
     try:
         if settings.ragrig_smtp_use_tls:

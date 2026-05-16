@@ -130,6 +130,19 @@ def notify_task_complete(
     )
 
 
+def deliver_webhook(settings: Settings, *, payload: dict[str, Any]) -> None:
+    """Fire a generic event payload to the configured webhook URL.
+
+    Used by P3+ alert flows (budget thresholds, etc.). No-op when no URL is
+    configured. The payload's ``event`` field becomes the event type.
+    """
+    if not settings.ragrig_webhook_url:
+        return
+    event_type = str(payload.get("event") or "ragrig.event")
+    data = {k: v for k, v in payload.items() if k != "event"}
+    _fire_async(settings, event_type, data)
+
+
 def notify_pipeline_failure(
     settings: Settings,
     *,
