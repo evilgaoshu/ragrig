@@ -88,6 +88,7 @@ from ragrig.understanding import (
     UnderstandAllRequest,
     UnderstandingRequest,
     UnderstandingRunFilter,
+    build_knowledge_map,
     compare_understanding_runs,
     export_understanding_run,
     export_understanding_runs,
@@ -95,6 +96,7 @@ from ragrig.understanding import (
     get_understanding_by_version,
     get_understanding_coverage,
     get_understanding_runs,
+    knowledge_map_to_dict,
     understand_all_versions,
 )
 from ragrig.vectorstore import get_vector_backend, get_vector_backend_health
@@ -817,6 +819,17 @@ def create_app(
                 for e in coverage.recent_errors
             ],
         }
+
+    @app.get("/knowledge-bases/{kb_id}/knowledge-map", response_model=None)
+    def knowledge_map(
+        kb_id: str,
+        session: Annotated[Session, Depends(get_session)],
+        profile_id: str = "*.understand.default",
+    ) -> dict[str, Any] | JSONResponse:
+        result = build_knowledge_map(session, kb_id, profile_id=profile_id)
+        if result is None:
+            return JSONResponse(status_code=404, content={"error": "knowledge_base_not_found"})
+        return knowledge_map_to_dict(result)
 
     @app.get("/knowledge-bases/{kb_id}/understanding-runs", response_model=None)
     def understanding_runs(
