@@ -19,6 +19,7 @@ import CostLatency from './pages/CostLatency'
 import Models from './pages/Models'
 import Plugins from './pages/Plugins'
 import Evaluation from './pages/Evaluation'
+import KnowledgeMap from './pages/KnowledgeMap'
 import ProfileMatrix from './pages/ProfileMatrix'
 import AnswerGen from './pages/AnswerGen'
 import Settings from './pages/Settings'
@@ -52,6 +53,7 @@ export default function App() {
         <Route path="/profile-matrix" element={<ProfileMatrix />} />
         <Route path="/plugins" element={<Plugins />} />
         <Route path="/evaluation" element={<Evaluation />} />
+        <Route path="/knowledge-map" element={<KnowledgeMap />} />
         <Route path="/settings" element={<Settings />} />
 
         <Route path="*" element={<Stub title="Not Found" description="This page does not exist." />} />

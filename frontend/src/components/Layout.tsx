@@ -31,6 +31,7 @@ const INSPECT: NavItem[] = [
   { label: 'Profile Matrix', to: '/profile-matrix' },
   { label: 'Plugins', to: '/plugins' },
   { label: 'Evaluation', to: '/evaluation' },
+  { label: 'Knowledge Map', to: '/knowledge-map' },
   { label: 'Settings', to: '/settings' },
 ]
 
