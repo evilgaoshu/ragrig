@@ -19,6 +19,9 @@ import Models from './pages/Models'
 import Plugins from './pages/Plugins'
 import Evaluation from './pages/Evaluation'
 import ProfileMatrix from './pages/ProfileMatrix'
+import AnswerGen from './pages/AnswerGen'
+import Settings from './pages/Settings'
+import Wizard from './pages/Wizard'
 import Stub from './pages/Stub'
 
 export default function App() {
@@ -31,7 +34,7 @@ export default function App() {
         <Route path="/pipelines" element={<Pipelines />} />
         <Route path="/retrieval-lab" element={<RetrievalLab />} />
 
-        <Route path="/wizard" element={<Stub title="Setup Wizard" description="Guided ingestion setup" />} />
+        <Route path="/wizard" element={<Wizard />} />
         <Route path="/upload" element={<Upload />} />
         <Route path="/formats" element={<Formats />} />
         <Route path="/sanitizer-coverage" element={<SanitizerCoverage />} />
@@ -42,12 +45,12 @@ export default function App() {
         <Route path="/parser-corpus" element={<ParserCorpus />} />
         <Route path="/ops-diagnostics" element={<OpsDiagnostics />} />
         <Route path="/documents" element={<Documents />} />
-        <Route path="/answer-gen" element={<Stub title="Answer Gen" description="Grounded answer generation playground" />} />
+        <Route path="/answer-gen" element={<AnswerGen />} />
         <Route path="/models" element={<Models />} />
         <Route path="/profile-matrix" element={<ProfileMatrix />} />
         <Route path="/plugins" element={<Plugins />} />
         <Route path="/evaluation" element={<Evaluation />} />
-        <Route path="/settings" element={<Stub title="Settings" description="System settings and configuration" />} />
+        <Route path="/settings" element={<Settings />} />
 
         <Route path="*" element={<Stub title="Not Found" description="This page does not exist." />} />
       </Routes>
