@@ -390,6 +390,14 @@ jobs:
         run: npm ci
         working-directory: frontend
 
+      - name: Lint
+        run: npm run lint
+        working-directory: frontend
+
+      - name: Audit (high+critical only)
+        run: npm audit --audit-level=high
+        working-directory: frontend
+
       - name: Build (tsc + vite)
         run: npm run build
         working-directory: frontend
