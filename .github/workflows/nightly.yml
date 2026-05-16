@@ -13,6 +13,7 @@ jobs:
   smoke:
     name: Nightly / smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v6
@@ -86,6 +87,7 @@ Jobs: cost-latency-check, knowledge-map-check, answer-live-smoke, eval-reindex-d
   frontend:
     name: Nightly / frontend build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v6
