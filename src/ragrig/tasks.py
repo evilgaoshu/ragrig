@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ragrig.config import get_settings
 from ragrig.db.models import DocumentVersion, PipelineRun
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.indexing.pipeline import index_knowledge_base
@@ -31,6 +32,7 @@ from ragrig.repositories import (
     get_task_record,
     update_task_status,
 )
+from ragrig.webhooks import notify_task_complete, notify_task_failure
 from ragrig.workflows import IngestionDagRejected, execute_ingestion_dag_run
 
 TaskJob = Callable[[], None]
@@ -78,6 +80,11 @@ class SynchronousTaskExecutor(TaskExecutor):
 
 
 def default_task_executor() -> TaskExecutor:
+    settings = get_settings()
+    if settings.ragrig_task_backend == "arq":
+        from ragrig.worker import ArqTaskExecutor
+
+        return ArqTaskExecutor(settings.ragrig_redis_url)
     return ThreadPoolTaskExecutor()
 
 
@@ -104,6 +111,7 @@ def enqueue_task(
         task_id = str(task.id)
 
     def _wrapped() -> None:
+        _settings = get_settings()
         with session_factory() as session:
             update_task_status(
                 session,
@@ -125,6 +133,12 @@ def enqueue_task(
                     progress={"current": 1, "total": 1, "message": "Task failed."},
                 )
                 session.commit()
+            notify_task_failure(
+                _settings,
+                task_id=task_id,
+                task_type=task_type,
+                error=error_summary,
+            )
             return
         with session_factory() as session:
             update_task_status(
@@ -135,6 +149,12 @@ def enqueue_task(
                 progress={"current": 1, "total": 1, "message": "Task completed."},
             )
             session.commit()
+        notify_task_complete(
+            _settings,
+            task_id=task_id,
+            task_type=task_type,
+            summary=result if isinstance(result, dict) else None,
+        )
 
     task_executor.submit(_wrapped)
     return task_id
