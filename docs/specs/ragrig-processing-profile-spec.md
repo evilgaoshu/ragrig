@@ -880,6 +880,17 @@ GET /knowledge-bases/{kb_name}/knowledge-map
   }
 ```
 
+#### Initial Implementation Status
+
+The first knowledge-map increment is implemented as
+`GET /knowledge-bases/{kb_id}/knowledge-map`. It derives graph nodes and edges
+from fresh latest-version `document_understandings` records, excludes stale or
+failed understanding output, and reports deterministic document/entity
+relationships in the Web Console. Relationship labels currently use shared
+entity evidence (`mentions`, `shares_entities`, `co_mentioned`); embedding
+clustering, LLM relationship classification, and D3 export controls remain later
+P2 work.
+
 ### 6.6 Evaluation and Quality
 
 All understanding outputs should be evaluable:
@@ -1050,7 +1061,7 @@ curl http://localhost:8000/knowledge-bases/fixture-local/understanding | jq '.un
 | `POST /knowledge-bases/{kb_name}/upload` | Not implemented | Browser upload deferred to separate issue |
 | `GET /knowledge-bases/{kb_name}/understanding` | Not implemented | Understanding deferred to separate issue |
 | `GET /documents/{doc_id}/understanding` | Not implemented | Understanding deferred to separate issue |
-| `GET /knowledge-bases/{kb_name}/knowledge-map` | Not implemented | Knowledge map deferred to separate issue |
+| `GET /knowledge-bases/{kb_name}/knowledge-map` | `GET /knowledge-bases/{kb_id}/knowledge-map` | Initial deterministic graph read path implemented from fresh understanding records |
 
 ### 12.4 Degradation Semantics
 

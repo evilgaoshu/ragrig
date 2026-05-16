@@ -127,3 +127,67 @@ class UnderstandingRunFilter(BaseModel):
     started_after: str | None = None
     started_before: str | None = None
     limit: int = Field(default=50, ge=1, le=200)
+
+
+class KnowledgeMapNode(BaseModel):
+    id: str
+    kind: str
+    label: str
+    document_id: str | None = None
+    document_version_id: str | None = None
+    uri: str | None = None
+    entity_type: str | None = None
+    entity_count: int | None = None
+    mentions: int | None = None
+    document_count: int | None = None
+    topics: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeMapEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    relationship: str
+    strength: float = Field(default=1.0, ge=0.0, le=1.0)
+    evidence: str | None = None
+    shared_entities: list[str] = Field(default_factory=list)
+    document_count: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeMapTopicCoverage(BaseModel):
+    topic: str
+    document_count: int
+    coverage_pct: float
+    document_ids: list[str] = Field(default_factory=list)
+
+
+class KnowledgeMapStats(BaseModel):
+    total_versions: int
+    completed: int
+    missing: int
+    stale: int
+    failed: int
+    included_documents: int
+    document_nodes: int
+    entity_nodes: int
+    document_relationship_edges: int
+    mention_edges: int
+    co_mention_edges: int
+    cross_document_entity_count: int
+    isolated_document_count: int
+
+
+class KnowledgeMapResult(BaseModel):
+    schema_version: str = "1.0"
+    generated_at: str
+    knowledge_base_id: str
+    knowledge_base: str | None = None
+    profile_id: str
+    status: str
+    nodes: list[KnowledgeMapNode] = Field(default_factory=list)
+    edges: list[KnowledgeMapEdge] = Field(default_factory=list)
+    topic_coverage: list[KnowledgeMapTopicCoverage] = Field(default_factory=list)
+    stats: KnowledgeMapStats
+    limitations: list[str] = Field(default_factory=list)

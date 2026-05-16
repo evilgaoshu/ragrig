@@ -1373,6 +1373,10 @@
               <div class="panel-head"><div class="panel-title">Understanding Coverage</div><div class="panel-meta">KB-level understand status</div></div>
               <div class="panel-body stack" id="understanding-coverage-body"></div>
             </section>
+            <section class="panel" id="knowledge-map-panel">
+              <div class="panel-head"><div class="panel-title">Knowledge Map</div><div class="panel-meta">Cross-document relationships</div></div>
+              <div class="panel-body stack" id="knowledge-map-body"></div>
+            </section>
             <section class="panel" id="understanding-runs-panel">
               <div class="panel-head">
                 <div>
@@ -2885,6 +2889,61 @@
         }
       }
 
+      async function renderKnowledgeMap() {
+        const root = document.getElementById('knowledge-map-body');
+        if (!root) return;
+        const kbItem = state.knowledgeBases[0];
+        if (!kbItem) {
+          root.innerHTML = empty('No knowledge bases available.');
+          return;
+        }
+        try {
+          const data = await getJson(`/knowledge-bases/${kbItem.id}/knowledge-map`);
+          const stats = data.stats || {};
+          const statusClass = data.status === 'ready'
+            ? 'pill'
+            : data.status === 'limited'
+              ? 'pill warn'
+              : data.status === 'no_understanding'
+                ? 'pill warn'
+                : 'pill neutral';
+          const relationships = (data.edges || [])
+            .filter((edge) => edge.relationship === 'shares_entities')
+            .slice(0, 5)
+            .map((edge) => {
+              const labels = (edge.shared_entities || []).join(', ');
+              return '<div class="sub"><span class="pill neutral">' + escapeHtml(edge.strength) + '</span> ' + escapeHtml(labels || edge.evidence || edge.relationship) + '</div>';
+            })
+            .join('');
+          const topics = (data.topic_coverage || [])
+            .slice(0, 6)
+            .map((topic) => '<span class="pill neutral">' + escapeHtml(topic.topic) + ': ' + escapeHtml(topic.document_count) + '</span>')
+            .join(' ');
+          const limits = (data.limitations || [])
+            .slice(0, 3)
+            .map((lim) => '<div class="sub"><span class="pill warn">limit</span> ' + escapeHtml(lim) + '</div>')
+            .join('');
+          root.innerHTML = `
+            <div class="card">
+              <div class="name">${escapeHtml(kbItem.name)} <span class="${statusClass}">${escapeHtml(data.status)}</span></div>
+              <div class="sub">documents: ${escapeHtml(stats.included_documents || 0)} · entities: ${escapeHtml(stats.entity_nodes || 0)} · relationships: ${escapeHtml(stats.document_relationship_edges || 0)}</div>
+              <div class="sub">cross-document entities: ${escapeHtml(stats.cross_document_entity_count || 0)} · isolated documents: ${escapeHtml(stats.isolated_document_count || 0)}</div>
+            </div>
+            <div class="card">
+              <div class="name">Topic Coverage</div>
+              <div class="sub">${topics || 'No topics yet.'}</div>
+            </div>
+            <div class="card">
+              <div class="name">Document Relationships</div>
+              ${relationships || '<div class="sub">No shared-entity relationships yet.</div>'}
+            </div>
+            ${limits}
+          `;
+        } catch (error) {
+          root.innerHTML = '<div class="empty">' + escapeHtml(error.message) + '</div>';
+        }
+      }
+
       async function runUnderstandAll() {
         const kbItem = state.knowledgeBases[0];
         if (!kbItem) return;
@@ -2900,6 +2959,7 @@
             body: JSON.stringify({ provider: 'deterministic-local', profile_id: '*.understand.default' }),
           });
           await renderUnderstandingCoverage();
+          await renderKnowledgeMap();
           renderRunsFilterBar();
           await renderUnderstandingRuns();
           await renderDocumentPreview();
@@ -3185,6 +3245,7 @@
             body: JSON.stringify({ provider: provider, profile_id: profile_id }),
           });
           await renderUnderstandingCoverage();
+          await renderKnowledgeMap();
           renderRunsFilterBar();
           await renderUnderstandingRuns();
           await renderDocumentPreview();
@@ -5579,6 +5640,7 @@
           renderSources();
           await renderPipelineRuns();
           await renderUnderstandingCoverage();
+          await renderKnowledgeMap();
           renderRunsFilterBar();
           renderUnderstandingExportDiffBadge();
           await renderUnderstandingRuns();

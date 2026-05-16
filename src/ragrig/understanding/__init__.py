@@ -1,3 +1,8 @@
+from ragrig.understanding.knowledge_map import (
+    DEFAULT_KNOWLEDGE_MAP_PROFILE_ID,
+    build_knowledge_map,
+    knowledge_map_to_dict,
+)
 from ragrig.understanding.provider import (
     DeterministicUnderstandingProvider,
     LLMUnderstandingProvider,
@@ -10,6 +15,11 @@ from ragrig.understanding.schema import (
     CoverageErrorEntry,
     Entity,
     KeyClaim,
+    KnowledgeMapEdge,
+    KnowledgeMapNode,
+    KnowledgeMapResult,
+    KnowledgeMapStats,
+    KnowledgeMapTopicCoverage,
     SourceSpan,
     TocEntry,
     UnderstandAllRequest,
@@ -45,6 +55,11 @@ __all__ = [
     "DocumentVersionNotFoundError",
     "Entity",
     "KeyClaim",
+    "KnowledgeMapEdge",
+    "KnowledgeMapNode",
+    "KnowledgeMapResult",
+    "KnowledgeMapStats",
+    "KnowledgeMapTopicCoverage",
     "LLMUnderstandingProvider",
     "ProviderUnavailableError",
     "SourceSpan",
@@ -58,6 +73,7 @@ __all__ = [
     "UnderstandingRunRecord",
     "UnderstandingServiceError",
     "build_export_filename",
+    "build_knowledge_map",
     "compare_understanding_runs",
     "compute_input_hash",
     "delete_document_understanding",
@@ -69,5 +85,7 @@ __all__ = [
     "get_understanding_provider",
     "get_understanding_run",
     "get_understanding_runs",
+    "knowledge_map_to_dict",
     "understand_all_versions",
+    "DEFAULT_KNOWLEDGE_MAP_PROFILE_ID",
 ]
