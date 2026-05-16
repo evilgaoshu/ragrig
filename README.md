@@ -344,6 +344,37 @@ When `RAGRIG_AUTH_ENABLED=true`, navigate to the web console — you will be red
 the login page. Register the first account via **Create account**. The first account
 automatically receives the `owner` role for the default workspace.
 
+### Role-based access
+
+| Role | Description |
+| --- | --- |
+| `owner` | Full access, including member management and role assignment |
+| `admin` | Can manage members (except owner assignment) and all write operations |
+| `editor` | Can write to knowledge bases, run pipelines, upload documents |
+| `viewer` | Read-only access |
+
+Write routes (`POST /knowledge-bases`, `POST /knowledge-bases/{name}/upload`, pipeline
+and source operations) require `editor` or above. Processing-profile mutations and
+rollbacks require `admin` or above.
+
+### Member management
+
+```bash
+# List workspace members
+curl /auth/workspace/members \
+  -H "Authorization: Bearer rag_session_..."
+
+# Change a member's role (admin/owner only)
+curl -X PATCH /auth/workspace/members/{user_id} \
+  -H "Authorization: Bearer rag_session_..." \
+  -H "Content-Type: application/json" \
+  -d '{"role": "editor"}'
+
+# Remove a member (admin/owner only)
+curl -X DELETE /auth/workspace/members/{user_id} \
+  -H "Authorization: Bearer rag_session_..."
+```
+
 ### API keys
 
 Token-based API access is supported alongside browser sessions:

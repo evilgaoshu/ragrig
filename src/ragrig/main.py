@@ -24,7 +24,12 @@ from ragrig.auth import ensure_default_workspace
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
 from ragrig.db.session import get_session as _get_session_default
-from ragrig.deps import get_workspace_id_from_auth
+from ragrig.deps import (
+    AuthContext,
+    get_workspace_id_from_auth,
+    require_admin_auth,
+    require_write_auth,
+)
 from ragrig.evaluation import (
     build_evaluation_list_report,
     build_evaluation_run_report,
@@ -494,6 +499,7 @@ def create_app(
         request: KnowledgeBaseCreateRequest,
         session: Annotated[Session, Depends(get_session)],
         workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> JSONResponse:
         name = request.name.strip()
         if not name:
@@ -564,7 +570,10 @@ def create_app(
         return payload
 
     @app.post("/tasks/{task_id}/retry", response_model=None)
-    def retry_task_status(task_id: str) -> dict[str, Any] | JSONResponse:
+    def retry_task_status(
+        task_id: str,
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
+    ) -> dict[str, Any] | JSONResponse:
         try:
             result = retry_task(
                 session_factory=get_session_factory(),
@@ -585,6 +594,7 @@ def create_app(
     @app.post("/pipeline-dags/ingestion", response_model=None)
     def ingestion_dag_run(
         request: IngestionDagRequest,
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> dict[str, Any] | JSONResponse:
         try:
             with get_session_factory()() as session:
@@ -716,6 +726,7 @@ def create_app(
         document_version_id: str,
         request: UnderstandingRequest,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> dict[str, Any] | JSONResponse:
         try:
             record = generate_document_understanding(
@@ -780,6 +791,7 @@ def create_app(
         kb_id: str,
         request: UnderstandAllRequest,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
         x_operator: Annotated[str | None, Header()] = None,
     ) -> dict[str, Any] | JSONResponse:
         operator = x_operator
@@ -915,6 +927,7 @@ def create_app(
     def workflow_run(
         request: WorkflowRunRequest,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> dict[str, Any] | JSONResponse:
         try:
             definition = WorkflowDefinition(
@@ -1131,6 +1144,7 @@ def create_app(
         kb_name: str,
         request: WebsiteImportRequest,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> JSONResponse:
         kb = get_knowledge_base_by_name(session, kb_name)
         if kb is None:
@@ -1156,6 +1170,7 @@ def create_app(
         kb_name: str,
         session: Annotated[Session, Depends(get_session)],
         files: Annotated[list[UploadFile], File(...)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> JSONResponse:
 
         kb = get_knowledge_base_by_name(session, kb_name)
@@ -1555,6 +1570,7 @@ def create_app(
     def create_processing_profile(
         request: CreateProcessingProfileRequest,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
     ) -> dict[str, Any] | JSONResponse:
         from ragrig.processing_profile.models import ProcessingKind
 
@@ -1588,6 +1604,7 @@ def create_app(
         profile_id: str,
         request: PatchProcessingProfileRequest,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
     ) -> dict[str, Any] | JSONResponse:
         from ragrig.processing_profile.models import ProcessingKind
 
@@ -1624,6 +1641,7 @@ def create_app(
     def delete_processing_profile(
         profile_id: str,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
     ) -> Response | JSONResponse:
         deleted = delete_override(profile_id, session=session)
         if not deleted:
@@ -1711,6 +1729,7 @@ def create_app(
     def processing_profile_rollback(
         request: RollbackRequest,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
     ) -> dict[str, Any] | JSONResponse:
         from ragrig.processing_profile import resolve_provider_availability
         from ragrig.processing_profile.registry import _db_override_to_dataclass
@@ -1822,6 +1841,7 @@ def create_app(
     def source_save_config(
         request: SourceConfigSaveRequest,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> dict[str, Any] | JSONResponse:
         """Validate and save a source configuration."""
         try:
@@ -1855,6 +1875,7 @@ def create_app(
     def source_dry_run(
         request: SourceDryRunRequest,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> dict[str, Any] | JSONResponse:
         """Dry-run ingestion scan for a source.
 
@@ -1877,6 +1898,7 @@ def create_app(
     @app.post("/sources/run-ingest", response_model=None)
     def source_run_ingest(
         request: SourceRunIngestRequest,
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> dict[str, Any] | JSONResponse:
         """Enqueue source ingestion as a background task.
 
@@ -1944,6 +1966,7 @@ def create_app(
         item_id: str,
         request: RetryRequest,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> dict[str, Any] | JSONResponse:
         """Retry a single failed pipeline run item.
 
@@ -1964,6 +1987,7 @@ def create_app(
         run_id: str,
         request: RetryRequest,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> dict[str, Any] | JSONResponse:
         """Retry all failed items in a pipeline run.
 
@@ -1984,6 +2008,7 @@ def create_app(
     def pipeline_dag_resume(
         run_id: str,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> dict[str, Any] | JSONResponse:
         result = resume_pipeline_dag(session, run_id=run_id)
         if result is None:

@@ -1,0 +1,118 @@
+golden_question_set:
+  name: "multi-doc"
+  description: "Multi-document golden set: queries that span multiple documents, cross-doc understanding, and disambiguation between overlapping topics."
+  version: "1.0.0"
+  questions:
+    # ── Queries that should prefer guide.md over notes.txt ───────────────────
+
+    - query: "RAGRig parsing fixtures"
+      expected_doc_uri: "guide.md"
+      expected_answer_keywords:
+        - "RAGRig"
+        - "parsing"
+      tags:
+        - hit
+        - disambiguation
+        - prefer-guide
+
+    - query: "Markdown document processing"
+      expected_doc_uri: "guide.md"
+      expected_answer_keywords:
+        - "Markdown"
+      tags:
+        - hit
+        - disambiguation
+        - prefer-guide
+
+    # ── Queries that should prefer notes.txt ─────────────────────────────────
+
+    - query: "plain text pipeline notes"
+      expected_doc_uri: "notes.txt"
+      expected_answer_keywords:
+        - "plain"
+        - "text"
+      tags:
+        - hit
+        - disambiguation
+        - prefer-notes
+
+    - query: "console operations plain text"
+      expected_doc_uri: "notes.txt"
+      expected_answer_keywords:
+        - "console"
+        - "ops"
+      tags:
+        - hit
+        - disambiguation
+        - prefer-notes
+
+    # ── Queries that should surface nested/deep.md ───────────────────────────
+
+    - query: "deep nested document structure"
+      expected_doc_uri: "nested/deep.md"
+      expected_answer_keywords:
+        - "nested"
+        - "deep"
+      tags:
+        - hit
+        - prefer-nested
+
+    - query: "content inside nested directory"
+      expected_doc_uri: "nested/deep.md"
+      expected_answer_keywords:
+        - "nested"
+      tags:
+        - hit
+        - prefer-nested
+
+    # ── Cross-document coverage queries (any doc acceptable) ─────────────────
+
+    - query: "fixture content for ingestion testing"
+      expected_answer_keywords:
+        - "fixture"
+        - "ingestion"
+      tags:
+        - hit
+        - cross-doc
+
+    - query: "local ingestion pipeline test documents"
+      expected_answer_keywords:
+        - "ingestion"
+        - "fixture"
+      tags:
+        - hit
+        - cross-doc
+
+    # ── Specificity: narrow query should hit exact doc ────────────────────────
+
+    - query: "Local ingestion fixture for Markdown parsing"
+      expected_doc_uri: "guide.md"
+      expected_citation: "Local ingestion fixture for Markdown parsing"
+      expected_answer_keywords:
+        - "Markdown"
+        - "ingestion"
+        - "fixture"
+      tags:
+        - hit
+        - high-specificity
+
+    - query: "Local ingestion fixture for plain text parsing"
+      expected_doc_uri: "notes.txt"
+      expected_citation: "Local ingestion fixture for plain text parsing"
+      expected_answer_keywords:
+        - "plain"
+        - "text"
+        - "fixture"
+      tags:
+        - hit
+        - high-specificity
+
+    - query: "Nested Markdown content"
+      expected_doc_uri: "nested/deep.md"
+      expected_citation: "Nested Markdown content"
+      expected_answer_keywords:
+        - "Nested"
+        - "Markdown"
+      tags:
+        - hit
+        - high-specificity

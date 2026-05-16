@@ -123,9 +123,12 @@ This section was not in the original roadmap. It emerged to give contributors an
 - `knowledge_bases` scoped to `workspace_id` with per-workspace unique constraint.
 - Frontend login page with sign-in / create-account tabs; `AuthProvider`, `ProtectedRoute`, token stored in localStorage.
 
+**Done:**
+- Role-based write guards on mutating API routes (`require_write_auth` for editor+, `require_admin_auth` for admin+).
+- User management API (`GET /auth/workspace/members`, `PATCH /auth/workspace/members/{id}`, `DELETE /auth/workspace/members/{id}`).
+- `AuthContext.role` resolved from `WorkspaceMembership` on every request.
+
 **Open:**
-- Role-based write guards on mutating API routes (`require_role("editor")`).
-- User management API (list workspace members, change roles, revoke sessions).
 - `workspace_id` propagated to hot retrieval tables (`chunks`, `embeddings`) for direct filtering without joins.
 - Admin invitation flow / email verification.
 

@@ -1,0 +1,106 @@
+golden_question_set:
+  name: "retrieval-accuracy"
+  description: "Retrieval accuracy golden set: direct lexical hits, semantic paraphrase, partial match, and ranking quality against the local fixture KB."
+  version: "1.0.0"
+  questions:
+    # ── Direct lexical hits ───────────────────────────────────────────────────
+
+    - query: "What is the RAGRig Guide?"
+      expected_doc_uri: "guide.md"
+      expected_citation: "RAGRig Guide"
+      expected_answer_keywords:
+        - "RAGRig"
+        - "guide"
+      tags:
+        - hit
+        - lexical
+
+    - query: "RAGRig local ingestion fixture"
+      expected_doc_uri: "guide.md"
+      expected_citation: "Local ingestion fixture"
+      expected_answer_keywords:
+        - "ingestion"
+        - "fixture"
+      tags:
+        - hit
+        - lexical
+
+    - query: "Markdown parsing guide"
+      expected_doc_uri: "guide.md"
+      expected_citation: "Markdown parsing"
+      expected_answer_keywords:
+        - "Markdown"
+        - "parsing"
+      tags:
+        - hit
+        - lexical
+
+    # ── Semantic / paraphrase queries ─────────────────────────────────────────
+
+    - query: "document ingestion walkthrough"
+      expected_doc_uri: "guide.md"
+      expected_answer_keywords:
+        - "ingestion"
+        - "guide"
+      tags:
+        - hit
+        - semantic
+
+    - query: "ops notes console instructions"
+      expected_doc_uri: "notes.txt"
+      expected_answer_keywords:
+        - "ops"
+        - "console"
+      tags:
+        - hit
+        - semantic
+
+    - query: "operations configuration for the web interface"
+      expected_doc_uri: "notes.txt"
+      expected_answer_keywords:
+        - "ops"
+        - "console"
+      tags:
+        - hit
+        - semantic
+
+    # ── Nested content ────────────────────────────────────────────────────────
+
+    - query: "nested fixture content"
+      expected_doc_uri: "nested/deep.md"
+      expected_answer_keywords:
+        - "nested"
+      tags:
+        - hit
+        - nested
+
+    - query: "Nested Markdown content deep"
+      expected_doc_uri: "nested/deep.md"
+      expected_citation: "Nested Markdown content"
+      expected_answer_keywords:
+        - "nested"
+        - "Markdown"
+      tags:
+        - hit
+        - nested
+        - lexical
+
+    # ── Ranking quality: top result should match expected doc ─────────────────
+
+    - query: "plain text parsing"
+      expected_doc_uri: "notes.txt"
+      expected_answer_keywords:
+        - "plain"
+        - "text"
+      tags:
+        - hit
+        - ranking
+
+    - query: "retrieval ready guide fixture"
+      expected_doc_uri: "guide.md"
+      expected_answer_keywords:
+        - "retrieval"
+        - "guide"
+      tags:
+        - hit
+        - ranking

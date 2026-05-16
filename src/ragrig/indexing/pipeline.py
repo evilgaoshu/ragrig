@@ -93,6 +93,7 @@ def _replace_version_index(
     chunk_profile_id: str,
     embed_profile_id: str,
     cost_latency_operations: list[dict[str, object]] | None = None,
+    workspace_id: object = None,
 ) -> tuple[int, int]:
     existing_chunk_ids = list(
         session.scalars(select(Chunk.id).where(Chunk.document_version_id == document_version.id))
@@ -120,6 +121,7 @@ def _replace_version_index(
     for draft in chunk_drafts:
         chunk = Chunk(
             document_version_id=document_version.id,
+            workspace_id=workspace_id,
             chunk_index=draft.chunk_index,
             text=draft.text,
             char_start=draft.char_start,
@@ -158,6 +160,7 @@ def _replace_version_index(
         session.add(
             Embedding(
                 chunk_id=chunk.id,
+                workspace_id=workspace_id,
                 provider=embedding.provider,
                 model=embedding.model,
                 dimensions=embedding.dimensions,
@@ -335,6 +338,7 @@ def index_knowledge_base(
                     chunk_profile_id=chunk_profile.profile_id,
                     embed_profile_id=embed_profile.profile_id,
                     cost_latency_operations=document_cost_latency_operations,
+                    workspace_id=knowledge_base.workspace_id,
                 )
                 run_cost_latency_operations.extend(document_cost_latency_operations)
                 chunk_count += created_chunks
