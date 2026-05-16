@@ -77,11 +77,9 @@ jobs:
         run: |
           gh issue create \
             --title "Nightly smoke failed — $(date -u +%Y-%m-%d)" \
-            --body "The nightly smoke workflow failed on $(date -u +%Y-%m-%dT%H:%M:%SZ).
-
-Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-Jobs: cost-latency-check, knowledge-map-check, answer-live-smoke, eval-reindex-diff" \
+            --body "$(printf 'The nightly smoke workflow failed on %s.\n\nRun: %s\n\nJobs: cost-latency-check, knowledge-map-check, answer-live-smoke, eval-reindex-diff' \
+              "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")" \
             --label "ci" || true
 
   frontend:
@@ -121,7 +119,7 @@ Jobs: cost-latency-check, knowledge-map-check, answer-live-smoke, eval-reindex-d
         run: |
           gh issue create \
             --title "Nightly frontend build failed — $(date -u +%Y-%m-%d)" \
-            --body "The nightly frontend job failed on $(date -u +%Y-%m-%dT%H:%M:%SZ).
-
-Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --body "$(printf 'The nightly frontend job failed on %s.\n\nRun: %s' \
+              "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")" \
             --label "ci" || true
