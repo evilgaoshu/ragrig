@@ -62,6 +62,7 @@ from ragrig.processing_profile import (
     update_override,
 )
 from ragrig.providers.model_catalog import list_provider_models, measure_provider_latency
+from ragrig.ratelimit import RateLimiter
 from ragrig.repositories import (
     get_knowledge_base_by_name,
     get_or_create_knowledge_base,
@@ -78,6 +79,7 @@ from ragrig.retrieval import (
 )
 from ragrig.routers.audit import router as audit_router
 from ragrig.routers.auth import router as auth_router
+from ragrig.routers.retention import router as retention_router
 from ragrig.tasks import (
     TaskRetryError,
     cleanup_staging_dir,
@@ -358,6 +360,7 @@ def create_app(
         )
 
     active_task_executor = task_executor or default_task_executor()
+    rate_limiter = RateLimiter(active_settings)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -379,6 +382,7 @@ def create_app(
 
     app.include_router(auth_router)
     app.include_router(audit_router)
+    app.include_router(retention_router)
 
     def shutdown_task_executor() -> None:
         shutdown = getattr(active_task_executor, "shutdown", None)
@@ -1182,8 +1186,9 @@ def create_app(
         session: Annotated[Session, Depends(get_session)],
         files: Annotated[list[UploadFile], File(...)],
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> JSONResponse:
-
+        rate_limiter.check_ingest(str(workspace_id))
         kb = get_knowledge_base_by_name(session, kb_name)
         if kb is None:
             return JSONResponse(
@@ -1259,7 +1264,9 @@ def create_app(
     def retrieval_search(
         request: RetrievalSearchRequest,
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, Any] | JSONResponse:
+        rate_limiter.check_search(str(workspace_id))
         try:
             vector_backend = resolve_vector_backend()
             report = search_knowledge_base(
@@ -1426,7 +1433,9 @@ def create_app(
     def retrieval_answer(
         request: AnswerRequest,
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, Any] | JSONResponse:
+        rate_limiter.check_search(str(workspace_id))
         try:
             provider_config = None
             if request.config is not None:

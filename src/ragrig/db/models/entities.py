@@ -216,6 +216,7 @@ class KnowledgeBase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     workspace: Mapped["Workspace"] = relationship(back_populates="knowledge_bases")
     sources: Mapped[list["Source"]] = relationship(back_populates="knowledge_base")
