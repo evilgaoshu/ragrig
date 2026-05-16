@@ -2263,9 +2263,7 @@ class TestExportAndDiffAPI:
         try:
             from ragrig.db.models import Document, DocumentVersion, KnowledgeBase, Source
 
-            kb = KnowledgeBase(
-                name="kb-diff", workspace_id=DEFAULT_WORKSPACE_ID, metadata_json={}
-            )
+            kb = KnowledgeBase(name="kb-diff", workspace_id=DEFAULT_WORKSPACE_ID, metadata_json={})
             session.add(kb)
             session.flush()
             source = Source(
