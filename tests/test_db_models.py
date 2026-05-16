@@ -59,7 +59,7 @@ def test_chunks_and_embeddings_support_one_to_many_embeddings() -> None:
         for element in fk.elements
     }
 
-    assert fk_targets == {"chunks.id"}
+    assert "chunks.id" in fk_targets
 
 
 def test_sources_expose_composite_key_for_same_knowledge_base_references() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import os
 from collections.abc import Iterator
 
 import pytest
@@ -12,7 +13,15 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, close_all_sessions
 
+from ragrig.config import get_settings
 from ragrig.db.models import Base
+
+# Disable auth enforcement for the test suite so that pre-auth web-console and
+# integration tests can call write routes without bearer tokens.  Tests that
+# explicitly need auth enabled pass Settings(ragrig_auth_enabled=True) to
+# create_app and are unaffected by this default.
+os.environ.setdefault("RAGRIG_AUTH_ENABLED", "false")
+get_settings.cache_clear()
 
 _SQLITE_ENGINES: set[Engine] = set()
 _ORIGINAL_CREATE_ENGINE = sqlalchemy.create_engine

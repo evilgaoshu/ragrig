@@ -269,12 +269,18 @@ class Chunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "chunks"
     __table_args__ = (
         UniqueConstraint("document_version_id", "chunk_index", name="uq_chunks_doc_version_index"),
+        Index("ix_chunks_workspace_id", "workspace_id"),
     )
 
     document_version_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("document_versions.id", ondelete="CASCADE"),
         nullable=False,
+    )
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -290,11 +296,17 @@ class Chunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class Embedding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "embeddings"
+    __table_args__ = (Index("ix_embeddings_workspace_id", "workspace_id"),)
 
     chunk_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("chunks.id", ondelete="CASCADE"),
         nullable=False,
+    )
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
     )
     provider: Mapped[str] = mapped_column(String(128), nullable=False)
     model: Mapped[str] = mapped_column(String(255), nullable=False)

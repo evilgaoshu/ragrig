@@ -336,6 +336,36 @@ RAGRig 内置基于密码的认证系统和 Workspace 级租户隔离。
 启用认证后，访问 Web Console 会跳转至登录页。通过 **创建账号** 注册第一个账号，
 该账号自动获得默认 Workspace 的 `owner` 角色。
 
+### 角色权限
+
+| 角色 | 说明 |
+| --- | --- |
+| `owner` | 完整访问权限，包括成员管理和角色分配 |
+| `admin` | 可管理成员（owner 角色除外）及所有写操作 |
+| `editor` | 可写入知识库、运行 pipeline、上传文档 |
+| `viewer` | 只读访问 |
+
+写入路由（如 `POST /knowledge-bases`、上传文档、pipeline 和 source 操作）需要
+`editor` 及以上权限。Processing profile 的变更和回滚需要 `admin` 及以上权限。
+
+### 成员管理
+
+```bash
+# 查看 Workspace 成员列表
+curl /auth/workspace/members \
+  -H "Authorization: Bearer rag_session_..."
+
+# 修改成员角色（需要 admin 或 owner）
+curl -X PATCH /auth/workspace/members/{user_id} \
+  -H "Authorization: Bearer rag_session_..." \
+  -H "Content-Type: application/json" \
+  -d '{"role": "editor"}'
+
+# 移除成员（需要 admin 或 owner）
+curl -X DELETE /auth/workspace/members/{user_id} \
+  -H "Authorization: Bearer rag_session_..."
+```
+
 ### 关闭认证（本地开发）
 
 ```bash

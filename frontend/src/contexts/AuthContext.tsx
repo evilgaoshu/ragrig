@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useEffect, useState } from 'react'
 
 const TOKEN_KEY = 'ragrig_token'
 
@@ -19,15 +19,7 @@ interface AuthContextValue {
   logout: () => Promise<void>
 }
 
-const AuthContext = createContext<AuthContextValue | null>(null)
-
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error('useAuth must be used inside AuthProvider')
-  return ctx
-}
-
-// Re-exported via contexts/useAuth.ts to satisfy react-refresh lint rule.
+export const AuthContext = createContext<AuthContextValue | null>(null)
 
 async function apiPost<T>(path: string, body: unknown, token?: string | null): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -62,18 +54,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    if (!token) {
-      setIsLoading(false)
-      return
+    let cancelled = false
+    const checkSession = async () => {
+      if (!token) {
+        if (!cancelled) setIsLoading(false)
+        return
+      }
+      try {
+        const me = await apiGet<AuthUser>('/auth/me', token)
+        if (!cancelled) setUser(me)
+      } catch {
+        if (!cancelled) {
+          localStorage.removeItem(TOKEN_KEY)
+          setToken(null)
+          setUser(null)
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false)
+      }
     }
-    apiGet<AuthUser>('/auth/me', token)
-      .then(setUser)
-      .catch(() => {
-        localStorage.removeItem(TOKEN_KEY)
-        setToken(null)
-        setUser(null)
-      })
-      .finally(() => setIsLoading(false))
+    checkSession()
+    return () => {
+      cancelled = true
+    }
   }, [token])
 
   const _storeAuth = useCallback((resp: LoginResponse) => {

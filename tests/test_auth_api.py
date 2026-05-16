@@ -166,3 +166,219 @@ def test_second_registered_user_gets_viewer_role(auth_client):
     )
     assert resp.status_code == 201
     assert resp.json()["role"] == "viewer"
+
+
+# ── Role guard tests ──────────────────────────────────────────────────────────
+
+
+def _register(client: TestClient, email: str) -> str:
+    resp = client.post(
+        "/auth/register",
+        json={"email": email, "password": "hunter2hunter2"},
+    )
+    assert resp.status_code in (201, 409)
+    if resp.status_code == 201:
+        return resp.json()["token"]
+    # already registered — log in
+    resp = client.post(
+        "/auth/login",
+        json={"email": email, "password": "hunter2hunter2"},
+    )
+    return resp.json()["token"]
+
+
+def test_viewer_cannot_create_knowledge_base(auth_client):
+    """Viewer role must be blocked on POST /knowledge-bases (403)."""
+    # first user is owner
+    _register(auth_client, "owner@example.com")
+    viewer_token = _register(auth_client, "viewer@example.com")
+
+    resp = auth_client.post(
+        "/knowledge-bases",
+        json={"name": "test-kb"},
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_anonymous_cannot_create_knowledge_base(auth_client):
+    """Anonymous (no token) must receive 401 on write routes."""
+    resp = auth_client.post("/knowledge-bases", json={"name": "test-kb"})
+    assert resp.status_code == 401
+
+
+def test_owner_can_create_knowledge_base(auth_client):
+    """Owner role must be allowed on POST /knowledge-bases."""
+    owner_token = _register(auth_client, "owner2@example.com")
+    resp = auth_client.post(
+        "/knowledge-bases",
+        json={"name": "owner-kb"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert resp.status_code in (200, 201)
+
+
+def test_auth_disabled_allows_write_without_token(noauth_client):
+    """When auth is disabled, write routes are open to all."""
+    resp = noauth_client.post("/knowledge-bases", json={"name": "open-kb"})
+    assert resp.status_code in (200, 201)
+
+
+# ── User management tests ─────────────────────────────────────────────────────
+
+
+def test_list_members_requires_auth(auth_client):
+    """GET /auth/workspace/members requires authentication."""
+    resp = auth_client.get("/auth/workspace/members")
+    assert resp.status_code == 401
+
+
+def test_list_members_returns_all_active_members(auth_client):
+    owner_token = _register(auth_client, "owner_mgmt@example.com")
+    _register(auth_client, "member_mgmt@example.com")
+
+    resp = auth_client.get(
+        "/auth/workspace/members",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert resp.status_code == 200
+    members = resp.json()
+    assert len(members) == 2
+    roles = {m["role"] for m in members}
+    assert "owner" in roles
+    assert "viewer" in roles
+
+
+def test_patch_member_role_requires_admin(auth_client):
+    """PATCH /auth/workspace/members/{id} requires admin or owner."""
+    _register(auth_client, "owner_patch@example.com")
+    viewer_token = _register(auth_client, "viewer_patch@example.com")
+
+    # Get the owner's user_id to try patching it
+    owner_token = auth_client.post(
+        "/auth/login",
+        json={"email": "owner_patch@example.com", "password": "hunter2hunter2"},
+    ).json()["token"]
+    owner_id = auth_client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {owner_token}"}
+    ).json()["user_id"]
+
+    resp = auth_client.patch(
+        f"/auth/workspace/members/{owner_id}",
+        json={"role": "editor"},
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_owner_can_change_member_role(auth_client):
+    """Owner can promote a viewer to editor."""
+    owner_token = _register(auth_client, "owner_role@example.com")
+    _register(auth_client, "member_role@example.com")
+
+    members = auth_client.get(
+        "/auth/workspace/members",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    ).json()
+    viewer = next(m for m in members if m["role"] == "viewer")
+    viewer_id = viewer["user_id"]
+
+    resp = auth_client.patch(
+        f"/auth/workspace/members/{viewer_id}",
+        json={"role": "editor"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "editor"
+
+
+def test_remove_member_requires_admin(auth_client):
+    """DELETE /auth/workspace/members/{id} requires admin or owner."""
+    _register(auth_client, "owner_del@example.com")
+    viewer_token = _register(auth_client, "viewer_del@example.com")
+
+    # Viewer tries to remove someone — gets 403
+    owner_token = auth_client.post(
+        "/auth/login",
+        json={"email": "owner_del@example.com", "password": "hunter2hunter2"},
+    ).json()["token"]
+    owner_id = auth_client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {owner_token}"}
+    ).json()["user_id"]
+
+    resp = auth_client.delete(
+        f"/auth/workspace/members/{owner_id}",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_owner_can_remove_member(auth_client):
+    """Owner can remove a member; they disappear from the member list."""
+    owner_token = _register(auth_client, "owner_remove@example.com")
+    _register(auth_client, "removee@example.com")
+
+    members = auth_client.get(
+        "/auth/workspace/members",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    ).json()
+    removee = next(m for m in members if m["role"] == "viewer")
+    removee_id = removee["user_id"]
+
+    resp = auth_client.delete(
+        f"/auth/workspace/members/{removee_id}",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert resp.status_code == 204
+
+    members_after = auth_client.get(
+        "/auth/workspace/members",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    ).json()
+    ids_after = {m["user_id"] for m in members_after}
+    assert removee_id not in ids_after
+
+
+def test_cannot_remove_self(auth_client):
+    """A member cannot remove themselves from the workspace."""
+    owner_token = _register(auth_client, "owner_self@example.com")
+    owner_id = auth_client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {owner_token}"}
+    ).json()["user_id"]
+
+    resp = auth_client.delete(
+        f"/auth/workspace/members/{owner_id}",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert resp.status_code == 400
+
+
+def test_non_owner_cannot_assign_owner_role(auth_client):
+    """Admins cannot promote a member to owner."""
+    owner_token = _register(auth_client, "owner_noassign@example.com")
+    admin_token = _register(auth_client, "admin_noassign@example.com")
+
+    # Promote admin first
+    admin_id = auth_client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {admin_token}"}
+    ).json()["user_id"]
+    auth_client.patch(
+        f"/auth/workspace/members/{admin_id}",
+        json={"role": "admin"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+
+    # Admin registers a third user (viewer)
+    _register(auth_client, "target_noassign@example.com")
+    members = auth_client.get(
+        "/auth/workspace/members",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    ).json()
+    viewer = next(m for m in members if m["role"] == "viewer")
+
+    resp = auth_client.patch(
+        f"/auth/workspace/members/{viewer['user_id']}",
+        json={"role": "owner"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 403
