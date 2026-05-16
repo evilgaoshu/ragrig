@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom'
+import { useAuth } from '../contexts/AuthContext'
 
 interface NavItem {
   label: string
@@ -62,6 +63,8 @@ function NavGroup({ label, items }: { label: string; items: NavItem[] }) {
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {
+  const { user, logout } = useAuth()
+
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Sidebar */}
@@ -74,10 +77,31 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <NavGroup label="Operate" items={OPERATE} />
           <NavGroup label="Inspect" items={INSPECT} />
         </nav>
-        <div className="px-3 pb-3 text-[11px] text-gray-400">
-          <a href="/docs" className="hover:text-brand">Swagger</a>
-          {' · '}
-          <a href="/console" className="hover:text-brand">Legacy UI</a>
+        <div className="px-3 pb-3 border-t border-gray-100 pt-3">
+          {user && (
+            <div className="mb-2">
+              <div className="text-[11px] text-gray-700 font-medium truncate">
+                {user.display_name ?? user.email ?? 'User'}
+              </div>
+              <div className="text-[10px] text-gray-400 truncate">{user.role}</div>
+            </div>
+          )}
+          <div className="flex items-center gap-2 text-[11px] text-gray-400">
+            <a href="/docs" className="hover:text-brand">Swagger</a>
+            <span>·</span>
+            <a href="/console" className="hover:text-brand">Legacy UI</a>
+            {user && (
+              <>
+                <span>·</span>
+                <button
+                  onClick={() => logout()}
+                  className="hover:text-red-500 transition-colors"
+                >
+                  Sign out
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </aside>
 
