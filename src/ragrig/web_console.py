@@ -28,6 +28,7 @@ from ragrig.db.models import (
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
+from ragrig.plugins.sources.database.connector import ingest_database_source
 from ragrig.plugins.sources.s3.connector import ingest_s3_source
 from ragrig.providers import get_provider_registry
 from ragrig.providers.model_catalog import serialize_provider_catalog
@@ -727,6 +728,12 @@ def _plugin_next_steps(discovery: dict[str, Any]) -> list[str]:
             "For NFS, mount the share first and validate through the local path mode.",
             "For SMB, WebDAV, or SFTP, install the optional fileshare dependencies.",
             "Run make fileshare-check with explicit env vars before enabling live ingestion.",
+        ]
+    if plugin_id == "source.database":
+        return [
+            "Keep queries read-only and bounded by max_rows_per_query.",
+            "Export SOURCE_DATABASE_DSN as an env reference before live ingestion.",
+            "Run make database-source-check to verify PostgreSQL/MySQL row ingestion offline.",
         ]
     if plugin_id == "sink.object_storage":
         return [
@@ -1521,6 +1528,7 @@ _SOURCE_SECRET_FIELDS = {
     "source.local": [],
     "source.s3": ["access_key", "secret_key", "session_token"],
     "source.fileshare": ["username", "password", "private_key"],
+    "source.database": ["dsn"],
 }
 
 
@@ -1534,7 +1542,7 @@ def validate_source_config(
       {"valid": True, "status": "degraded", "reason": "...", ...}
       {"valid": False, "status": "disabled", "reason": "...", ...}
     """
-    if plugin_id not in ("source.local", "source.s3", "source.fileshare"):
+    if plugin_id not in ("source.local", "source.s3", "source.fileshare", "source.database"):
         return {
             "valid": False,
             "status": "disabled",
@@ -1801,6 +1809,95 @@ def _dry_run_fileshare_source(
     )
 
 
+def _dry_run_database_source(
+    session: Session,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+    client=None,
+) -> DryRunReport:
+    from ragrig.plugins.sources.database.client import build_sqlalchemy_database_client
+    from ragrig.plugins.sources.database.config import DatabaseQueryConfig
+    from ragrig.plugins.sources.database.connector import _resolve_dsn
+    from ragrig.plugins.sources.database.errors import sanitize_error_message
+
+    dsn = ""
+    try:
+        dsn = _resolve_dsn(config, env=env or {})
+        active_client = client or build_sqlalchemy_database_client(
+            dsn=dsn,
+            engine=str(config["engine"]),
+            connect_timeout_seconds=int(config["connect_timeout_seconds"]),
+            query_timeout_seconds=int(config["query_timeout_seconds"]),
+        )
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="database",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[
+                DryRunFile(
+                    path="database://scan",
+                    status="failed",
+                    reason=sanitize_error_message(str(exc), secrets=[dsn]),
+                )
+            ],
+        )
+
+    discovered: list[DryRunFile] = []
+    skipped: list[DryRunFile] = []
+    failed: list[DryRunFile] = []
+    try:
+        for query_payload in config["queries"]:
+            query = DatabaseQueryConfig.model_validate(query_payload)
+            try:
+                query_result = active_client.fetch_query(
+                    query,
+                    max_rows=int(config["max_rows_per_query"]),
+                )
+            except Exception as exc:
+                failed.append(
+                    DryRunFile(
+                        path=f"database://{config['engine']}/{config['source_name']}/{query.name}",
+                        status="failed",
+                        reason=sanitize_error_message(str(exc), secrets=[dsn]),
+                    )
+                )
+                continue
+            for row_index, _row in enumerate(query_result.rows, start=1):
+                discovered.append(
+                    DryRunFile(
+                        path=(
+                            f"database://{config['engine']}/{config['source_name']}"
+                            f"/{query.name}/row-{row_index}"
+                        ),
+                        status="discovered",
+                        parser="database_row",
+                    )
+                )
+            if query_result.truncated:
+                skipped.append(
+                    DryRunFile(
+                        path=f"database://{config['engine']}/{config['source_name']}/{query.name}",
+                        status="skipped",
+                        reason="max_rows_per_query_reached",
+                    )
+                )
+    finally:
+        if client is None:
+            active_client.close()
+
+    return DryRunReport(
+        source_id=None,
+        source_kind="database",
+        total=len(discovered) + len(skipped) + len(failed),
+        discovered=discovered,
+        skipped=skipped,
+        failed=failed,
+    )
+
+
 def _serialize_dry_run(report: DryRunReport) -> dict[str, Any]:
     return {
         "dry_run": True,
@@ -1845,6 +1942,8 @@ def dry_run_source(
         report = _dry_run_s3_source(session, validated, env=env, client=client)
     elif plugin_id == "source.fileshare":
         report = _dry_run_fileshare_source(session, validated, env=env)
+    elif plugin_id == "source.database":
+        report = _dry_run_database_source(session, validated, env=env, client=client)
     else:
         create_audit_event(
             session,
@@ -1916,16 +2015,25 @@ def run_source_ingest(
     )
     session.commit()
 
-    if plugin_id != "source.s3":
+    if plugin_id not in {"source.s3", "source.database"}:
         raise ValueError(f"unsupported source plugin for run-ingest: {plugin_id}")
 
-    ingestion_report = ingest_s3_source(
-        session=session,
-        knowledge_base_name=knowledge_base_name,
-        config=validated,
-        env=env,
-        client=client,
-    )
+    if plugin_id == "source.s3":
+        ingestion_report = ingest_s3_source(
+            session=session,
+            knowledge_base_name=knowledge_base_name,
+            config=validated,
+            env=env,
+            client=client,
+        )
+    else:
+        ingestion_report = ingest_database_source(
+            session=session,
+            knowledge_base_name=knowledge_base_name,
+            config=validated,
+            env=env,
+            client=client,
+        )
 
     indexing_payload: dict[str, Any] | None = None
     if ingestion_report.created_versions > 0:
@@ -2012,6 +2120,22 @@ def save_source_config(
         host = str(validated.get("host", ""))
         share = str(validated.get("share", ""))
         source_uri = f"{protocol}://{host}/{share}"
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    elif source_kind == "database":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _get_or_create_kb(session, knowledge_base_name)
+        engine = str(validated.get("engine", "postgresql"))
+        source_name = str(validated.get("source_name", "database-source"))
+        source_uri = f"database://{engine}/{source_name}"
 
         source = _get_or_create_src(
             session,
@@ -2186,6 +2310,7 @@ def _safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "private_key",
         "access_key",
         "session_token",
+        "dsn",
     }
     safe: dict[str, Any] = {}
     for key, value in payload.items():

@@ -3649,6 +3649,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pymysql"
+version = "1.1.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7f/ec/8d45c920e90445f0b75c590b32851853ed319763b0d8dff8d283052da8cf/pymysql-1.1.3.tar.gz", hash = "sha256:e70ebf2047a4edf6138cf79c68ad418ef620af65900aa585c5e8bfc95044d43a", size = 48207, upload-time = "2026-05-01T09:09:54.532Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8e/dc/9085f3d6f497e9b25fb40d6e8ecef3ddbb5cf977a949b933624a299f5c16/pymysql-1.1.3-py3-none-any.whl", hash = "sha256:8164ba62c552f6105f3b11753352d0f16b90d1703ba67d81923d5a8a5d1c5289", size = 45356, upload-time = "2026-05-01T09:09:53.316Z" },
+]
+
+[[package]]
 name = "pynacl"
 version = "1.6.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3930,6 +3939,9 @@ cloud-openai = [
 cloud-voyage = [
     { name = "voyageai" },
 ]
+database-sources = [
+    { name = "pymysql" },
+]
 doc-parsers = [
     { name = "openpyxl" },
     { name = "pypdf" },
@@ -3991,6 +4003,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0,<4.0.0" },
     { name = "pyarrow", marker = "extra == 'parquet'", specifier = ">=19.0.0,<25.0.0" },
     { name = "pydantic-settings", specifier = ">=2.3.0,<3.0.0" },
+    { name = "pymysql", marker = "extra == 'database-sources'", specifier = ">=1.1.0,<2.0.0" },
     { name = "pypdf", specifier = ">=6.10.2,<7.0.0" },
     { name = "pypdf", marker = "extra == 'doc-parsers'", specifier = ">=6.10.2,<7.0.0" },
     { name = "python-docx", specifier = ">=1.1.0,<2.0.0" },
@@ -4006,7 +4019,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0,<1.0.0" },
     { name = "voyageai", marker = "extra == 'cloud-voyage'", specifier = ">=0.3.2,<1.0.0" },
 ]
-provides-extras = ["cloud-aws", "cloud-cohere", "cloud-google", "cloud-jina", "cloud-openai", "cloud-voyage", "cloud-llm", "cloud-embeddings", "doc-parsers", "local-ml", "s3", "parquet", "fileshare", "vectorstores"]
+provides-extras = ["cloud-aws", "cloud-cohere", "cloud-google", "cloud-jina", "cloud-openai", "cloud-voyage", "cloud-llm", "cloud-embeddings", "doc-parsers", "local-ml", "s3", "parquet", "fileshare", "database-sources", "vectorstores"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -68,6 +68,11 @@ def test_enterprise_connector_catalog_covers_mainstream_sources_without_secret_v
     assert "microsoft-graph" in microsoft["protocols"]
     assert microsoft["required_credentials"] == ["MICROSOFT_365_CLIENT_SECRET"]
 
+    database = by_id["source.database"]
+    assert database["protocols"] == ["postgresql", "mysql"]
+    assert database["workflow_operation"] == "ingest.database"
+    assert database["supports_live_probe"] is True
+
     for item in connectors:
         assert item["official_docs_url"].startswith("https://")
         assert "secret" not in str(item.get("example_config", {})).lower()
@@ -99,6 +104,15 @@ def test_enterprise_connector_probe_degrades_without_credentials_and_checks_loca
     )
     assert local_ready["status"] == "ready"
     assert local_ready["network_called"] is False
+
+    database_ready = probe_enterprise_connector(
+        "source.database",
+        config={"engine": "postgresql"},
+        env={"SOURCE_DATABASE_DSN": "postgresql://user:secret@example/db"},
+    )
+    assert database_ready["status"] == "contract_ready"
+    assert database_ready["network_called"] is False
+    assert database_ready["engine"] == "postgresql"
 
 
 def test_workflow_engine_dry_run_validates_dag_without_mutating_database(tmp_path: Path) -> None:
@@ -248,6 +262,7 @@ async def test_enterprise_connector_and_workflow_api_endpoints(tmp_path: Path) -
     assert probe.json()["status"] == "ready"
     assert operations.status_code == 200
     assert "ingest.local" in {item["operation"] for item in operations.json()["items"]}
+    assert "ingest.database" in {item["operation"] for item in operations.json()["items"]}
     assert workflow.status_code == 200
     assert workflow.json()["status"] == "planned"
 

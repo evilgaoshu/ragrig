@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.plugins.enterprise import ENTERPRISE_CONNECTORS, probe_enterprise_connector
+from ragrig.plugins.sources.database.connector import ingest_database_source
 from ragrig.plugins.sources.fileshare.connector import ingest_fileshare_source
 from ragrig.plugins.sources.s3.connector import ingest_s3_source
 
@@ -102,6 +103,11 @@ def list_workflow_operations() -> list[dict[str, object]]:
         {
             "operation": "ingest.s3",
             "description": "Ingest S3-compatible object storage through source.s3.",
+            "dry_run_supported": False,
+        },
+        {
+            "operation": "ingest.database",
+            "description": "Ingest PostgreSQL/MySQL read-only query rows through source.database.",
             "dry_run_supported": False,
         },
         {
@@ -250,6 +256,19 @@ def _run_ingest_s3(session: Session, config: dict[str, Any]) -> tuple[str | None
     return str(report.pipeline_run_id), _report_output(report)
 
 
+def _run_ingest_database(
+    session: Session, config: dict[str, Any]
+) -> tuple[str | None, dict[str, Any]]:
+    knowledge_base = _knowledge_base(config)
+    connector_config = {key: value for key, value in config.items() if key != "knowledge_base"}
+    report = ingest_database_source(
+        session=session,
+        knowledge_base_name=knowledge_base,
+        config=connector_config,
+    )
+    return str(report.pipeline_run_id), _report_output(report)
+
+
 def _run_index(session: Session, config: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
     report = index_knowledge_base(
         session=session,
@@ -276,6 +295,10 @@ def _run_ingest_connector(
         )
     if connector_id == "source.s3":
         return _run_ingest_s3(
+            session, {**connector_config, "knowledge_base": _knowledge_base(config)}
+        )
+    if connector_id == "source.database":
+        return _run_ingest_database(
             session, {**connector_config, "knowledge_base": _knowledge_base(config)}
         )
     probe = probe_enterprise_connector(connector_id, config=connector_config)
@@ -375,6 +398,7 @@ _RUNNERS = {
     "ingest.local": _run_ingest_local,
     "ingest.fileshare": _run_ingest_fileshare,
     "ingest.s3": _run_ingest_s3,
+    "ingest.database": _run_ingest_database,
     "index.knowledge_base": _run_index,
     "noop": _run_noop,
 }

@@ -2417,6 +2417,7 @@
               <button class="btn small" onclick="showSourceForm('source.local')">Local Directory</button>
               <button class="btn small" onclick="showSourceForm('source.s3')">S3</button>
               <button class="btn small" onclick="showSourceForm('source.fileshare')">Fileshare</button>
+              <button class="btn small" onclick="showSourceForm('source.database')">Database</button>
             </div>
             <div id="source-form-area"></div>
             <div id="source-form-result"></div>
@@ -2496,16 +2497,49 @@
               <button class="btn" onclick="runSourceIngestForm()">Run ingest</button>
             </div>
           `;
+        } else if (pluginId === 'source.database') {
+          area.innerHTML = `
+            <div class="sub">Knowledge base name:</div>
+            <input id="src-db-kb" class="input" value="default" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Engine:</div>
+            <select id="src-db-engine" class="input" style="width:100%;margin-bottom:8px">
+              <option value="postgresql">PostgreSQL</option>
+              <option value="mysql">MySQL</option>
+            </select>
+            <div class="sub">Source name:</div>
+            <input id="src-db-source" class="input" value="database-source" style="width:100%;margin-bottom:8px" />
+            <div class="sub">DSN (env:VAR):</div>
+            <input id="src-db-dsn" class="input" value="env:SOURCE_DATABASE_DSN" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Query name:</div>
+            <input id="src-db-query-name" class="input" value="records" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Read-only SQL:</div>
+            <textarea id="src-db-sql" class="input" style="width:100%;min-height:110px;margin-bottom:8px">select id, title, body from documents</textarea>
+            <div class="sub">Document ID columns (comma-sep):</div>
+            <input id="src-db-id-cols" class="input" value="id" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Title column:</div>
+            <input id="src-db-title-col" class="input" value="title" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Text columns (comma-sep):</div>
+            <input id="src-db-text-cols" class="input" value="title,body" style="width:100%;margin-bottom:8px" />
+            <div class="sub">Max rows per query:</div>
+            <input id="src-db-max-rows" class="input" value="1000" style="width:100%;margin-bottom:8px" />
+            <div class="flex-row" style="gap:8px;margin-top:8px">
+              <button class="btn" onclick="validateSourceForm()">Validate</button>
+              <button class="btn" onclick="saveSourceForm()">Save</button>
+              <button class="btn" onclick="dryRunForm()">Dry-run</button>
+              <button class="btn" onclick="runSourceIngestForm()">Run ingest</button>
+            </div>
+          `;
         }
       }
 
       function getSourceFormConfig() {
         const pid = state.sourceFormPlugin;
+        const commaList = (value) => (value || '').split(',').map(s => s.trim()).filter(Boolean);
         if (pid === 'source.local') {
           return {
             root_path: document.getElementById('src-local-path').value,
-            include_patterns: (document.getElementById('src-local-include').value || '').split(',').map(s => s.trim()).filter(Boolean),
-            exclude_patterns: (document.getElementById('src-local-exclude').value || '').split(',').map(s => s.trim()).filter(Boolean),
+            include_patterns: commaList(document.getElementById('src-local-include').value),
+            exclude_patterns: commaList(document.getElementById('src-local-exclude').value),
             max_file_size_bytes: parseInt(document.getElementById('src-local-maxsize').value) || 10485760,
           };
         } else if (pid === 'source.s3') {
@@ -2525,6 +2559,20 @@
             username: document.getElementById('src-fs-user').value,
             password: document.getElementById('src-fs-pass').value,
           };
+        } else if (pid === 'source.database') {
+          return {
+            engine: document.getElementById('src-db-engine').value,
+            dsn: document.getElementById('src-db-dsn').value,
+            source_name: document.getElementById('src-db-source').value || 'database-source',
+            max_rows_per_query: parseInt(document.getElementById('src-db-max-rows').value) || 1000,
+            queries: [{
+              name: document.getElementById('src-db-query-name').value || 'records',
+              sql: document.getElementById('src-db-sql').value,
+              document_id_columns: commaList(document.getElementById('src-db-id-cols').value),
+              title_column: document.getElementById('src-db-title-col').value || undefined,
+              text_columns: commaList(document.getElementById('src-db-text-cols').value),
+            }],
+          };
         }
         return {};
       }
@@ -2534,6 +2582,7 @@
         if (pid === 'source.local') return document.getElementById('src-local-kb').value || 'default';
         if (pid === 'source.s3') return document.getElementById('src-s3-kb').value || 'default';
         if (pid === 'source.fileshare') return document.getElementById('src-fs-kb').value || 'default';
+        if (pid === 'source.database') return document.getElementById('src-db-kb').value || 'default';
         return 'default';
       }
 
@@ -3599,6 +3648,7 @@
         const importantPlugins = state.plugins.filter((item) => [
           'source.s3',
           'source.fileshare',
+          'source.database',
           'sink.object_storage',
           'vector.pgvector',
           'model.openai',
@@ -4064,6 +4114,8 @@
           steps.push('Run make s3-check after exporting AWS_* environment variables.');
         } else if (plugin.plugin_id === 'source.fileshare') {
           steps.push('Run make fileshare-check with the protocol-specific env vars.');
+        } else if (plugin.plugin_id === 'source.database') {
+          steps.push('Run make database-source-check after exporting SOURCE_DATABASE_DSN.');
         } else if (plugin.plugin_id === 'sink.object_storage') {
           steps.push('Run make export-object-storage-check before enabling writes.');
         } else {

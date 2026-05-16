@@ -64,6 +64,9 @@ fileshare = [
   "paramiko>=3.5.0,<6.0.0",
   "smbprotocol>=1.13.0,<2.0.0",
 ]
+database-sources = [
+  "pymysql>=1.1.0,<2.0.0",
+]
 vectorstores = [
   "qdrant-client>=1.9.0,<2.0.0",
 ]
