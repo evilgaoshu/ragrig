@@ -1,0 +1,64 @@
+golden_question_set:
+  name: "ragrig-core"
+  description: "Core RAGRig pipeline and feature retrieval quality questions"
+  version: "1.0.0"
+  questions:
+    - query: "What is RAGRig and what problem does it solve?"
+      expected_doc_uri: "README.md"
+      expected_citation: "open-source RAG workbench for small and medium-sized teams"
+      expected_answer_keywords: ["RAG", "ingestion", "pipeline", "traceable"]
+      tags: ["overview"]
+
+    - query: "What vector database backends does RAGRig support?"
+      expected_doc_uri: "README.md"
+      expected_citation: "pgvector"
+      expected_answer_keywords: ["pgvector", "Qdrant"]
+      tags: ["infrastructure", "vector-store"]
+
+    - query: "How does RAGRig handle chunking and embedding in the pipeline?"
+      expected_doc_uri: "README.md"
+      expected_citation: "chunking, embedding, indexing"
+      expected_answer_keywords: ["chunk", "embed", "index"]
+      tags: ["pipeline"]
+
+    - query: "What local model providers does RAGRig support?"
+      expected_doc_uri: "README.md"
+      expected_citation: "Ollama"
+      expected_answer_keywords: ["Ollama", "LM Studio", "local"]
+      tags: ["providers", "local"]
+
+    - query: "How does RAGRig connect answers back to source documents?"
+      expected_doc_uri: "README.md"
+      expected_citation: "source URI, document version, chunk, pipeline run"
+      expected_answer_keywords: ["traceable", "citation", "source", "chunk"]
+      tags: ["traceability"]
+
+    - query: "What cloud model providers are supported?"
+      expected_doc_uri: "README.md"
+      expected_citation: "OpenAI, OpenRouter, and Gemini"
+      expected_answer_keywords: ["OpenAI", "cloud", "provider"]
+      tags: ["providers", "cloud"]
+
+    - query: "What document formats can RAGRig parse?"
+      expected_doc_uri: "docs/roadmap.md"
+      expected_citation: "PDF, DOCX, PPTX, and XLSX"
+      expected_answer_keywords: ["PDF", "DOCX", "parser"]
+      tags: ["parsers", "formats"]
+
+    - query: "What governance and access control features are available?"
+      expected_doc_uri: "docs/roadmap.md"
+      expected_citation: "access control"
+      expected_answer_keywords: ["ACL", "access", "audit", "permission"]
+      tags: ["governance", "acl"]
+
+    - query: "What connectors does RAGRig support for data ingestion?"
+      expected_doc_uri: "docs/roadmap.md"
+      expected_citation: "S3"
+      expected_answer_keywords: ["S3", "connector", "ingestion", "source"]
+      tags: ["connectors", "ingestion"]
+
+    - query: "What is the Local Pilot and what does it provide?"
+      expected_doc_uri: "docs/roadmap.md"
+      expected_citation: "local pilot"
+      expected_answer_keywords: ["pilot", "diagnostic", "local", "wizard"]
+      tags: ["local-pilot"]

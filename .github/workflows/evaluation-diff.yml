@@ -1,0 +1,47 @@
+name: Evaluation Diff
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      knowledge_base:
+        description: "Knowledge base name to evaluate against"
+        default: "default"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evaluation-smoke:
+    name: Evaluation / fixture smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: pip install uv && uv sync
+
+      - name: Validate golden question fixtures
+        run: uv run pytest tests/test_evaluation.py -v -m "not live" -k "fixture or golden or load"
+
+      - name: Run evaluation unit tests
+        run: uv run pytest tests/test_evaluation.py tests/test_evaluation_baseline.py -v -m "not live"
+
+      - name: Upload evaluation artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evaluation-results-${{ github.run_id }}
+          path: evaluation_runs/
+          retention-days: 30
