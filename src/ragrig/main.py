@@ -368,6 +368,15 @@ def create_app(
 
     app = FastAPI(title="RAGRig", version=__version__, lifespan=lifespan)
 
+    if active_settings.ragrig_metrics_enabled:
+        from ragrig.metrics import setup_metrics
+
+        setup_metrics(app)
+
+    from ragrig.otel import setup_otel
+
+    setup_otel(app, active_settings)
+
     app.include_router(auth_router)
     app.include_router(audit_router)
 

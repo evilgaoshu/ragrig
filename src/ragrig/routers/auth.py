@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
@@ -35,11 +36,15 @@ from ragrig.db.models import (
     ApiKey,
     User,
     UserSession,
+    Workspace,
     WorkspaceInvitation,
     WorkspaceMembership,
 )
 from ragrig.db.session import get_session
 from ragrig.deps import AuthContext, require_admin_auth, require_auth
+from ragrig.email import EmailDeliveryError, send_invitation_email
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -403,6 +408,24 @@ def create_workspace_invitation(
         days=body.days,
     )
     session.commit()
+
+    if created.invitation.email and created.token:
+        _settings = get_settings()
+        ws = session.get(Workspace, auth.workspace_id)
+        inviter = session.get(User, auth.user_id) if auth.user_id else None
+        try:
+            send_invitation_email(
+                _settings,
+                to_email=created.invitation.email,
+                workspace_name=ws.display_name if ws else str(auth.workspace_id),
+                inviter_name=inviter.display_name if inviter else None,
+                role=created.invitation.role,
+                token=created.token,
+                expires_days=body.days,
+            )
+        except EmailDeliveryError as exc:
+            logger.warning("invitation email delivery failed: %s", exc)
+
     return InvitationResponse(
         id=str(created.invitation.id),
         email=created.invitation.email,
