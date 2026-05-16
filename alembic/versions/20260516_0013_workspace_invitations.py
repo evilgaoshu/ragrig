@@ -58,9 +58,7 @@ def upgrade() -> None:
     op.create_index(
         "ix_workspace_invitations_workspace_id", "workspace_invitations", ["workspace_id"]
     )
-    op.create_index(
-        "ix_workspace_invitations_token_hash", "workspace_invitations", ["token_hash"]
-    )
+    op.create_index("ix_workspace_invitations_token_hash", "workspace_invitations", ["token_hash"])
 
 
 def downgrade() -> None:

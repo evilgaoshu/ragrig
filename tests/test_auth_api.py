@@ -471,11 +471,19 @@ def test_invitation_token_cannot_be_reused(auth_client):
 
     auth_client.post(
         "/auth/register",
-        json={"email": "used_inv@example.com", "password": "hunter2hunter2", "invitation_token": token},
+        json={
+            "email": "used_inv@example.com",
+            "password": "hunter2hunter2",
+            "invitation_token": token,
+        },
     )
     resp = auth_client.post(
         "/auth/register",
-        json={"email": "second_inv@example.com", "password": "hunter2hunter2", "invitation_token": token},
+        json={
+            "email": "second_inv@example.com",
+            "password": "hunter2hunter2",
+            "invitation_token": token,
+        },
     )
     assert resp.status_code == 400
 
@@ -512,7 +520,11 @@ def test_owner_can_revoke_invitation(auth_client):
     token = inv_resp.json()["token"]
     resp2 = auth_client.post(
         "/auth/register",
-        json={"email": "revoked_inv@example.com", "password": "hunter2hunter2", "invitation_token": token},
+        json={
+            "email": "revoked_inv@example.com",
+            "password": "hunter2hunter2",
+            "invitation_token": token,
+        },
     )
     assert resp2.status_code == 400
 

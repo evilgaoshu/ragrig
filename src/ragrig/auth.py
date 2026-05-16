@@ -297,9 +297,7 @@ def verify_invitation(
 ) -> WorkspaceInvitation | None:
     token_hash = _hash_secret(token, pepper=pepper)
     inv = session.scalar(
-        select(WorkspaceInvitation)
-        .where(WorkspaceInvitation.token_hash == token_hash)
-        .limit(1)
+        select(WorkspaceInvitation).where(WorkspaceInvitation.token_hash == token_hash).limit(1)
     )
     if inv is None:
         return None
