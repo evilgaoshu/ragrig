@@ -10,7 +10,6 @@ from sqlalchemy.pool import StaticPool
 
 from ragrig.config import Settings
 from ragrig.db.models import Base
-from ragrig.db.session import get_session as _get_session_default
 from ragrig.main import create_app
 
 pytestmark = pytest.mark.unit

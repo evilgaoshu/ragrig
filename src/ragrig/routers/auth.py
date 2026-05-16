@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -11,13 +12,12 @@ from sqlalchemy.orm import Session
 from ragrig.auth import (
     DEFAULT_WORKSPACE_ID,
     SESSION_TOKEN_PREFIX,
-    ensure_default_workspace,
     login_user,
     register_user,
     verify_session_token,
 )
 from ragrig.config import Settings, get_settings
-from ragrig.db.models import User, UserSession, WorkspaceMembership
+from ragrig.db.models import User, WorkspaceMembership
 from ragrig.db.session import get_session
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -137,7 +137,7 @@ def login(
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-    session: Session = Depends(get_session),
+    session: Annotated[Session, Depends(get_session)] = None,  # type: ignore[assignment]
 ) -> None:
     token = _get_token(authorization)
     if not token:
@@ -145,8 +145,6 @@ def logout(
     user_session = verify_session_token(session, token)
     if user_session is None:
         return
-    from datetime import UTC, datetime
-
     user_session.revoked_at = datetime.now(UTC)
     session.add(user_session)
     session.commit()
@@ -155,8 +153,8 @@ def logout(
 @router.get("/me", response_model=MeResponse)
 def me(
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-    session: Session = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    session: Annotated[Session, Depends(get_session)] = None,  # type: ignore[assignment]
+    settings: Annotated[Settings, Depends(get_settings)] = None,  # type: ignore[assignment]
 ) -> MeResponse:
     token = _get_token(authorization)
     if not token:
@@ -172,7 +170,9 @@ def me(
 
     user_session = verify_session_token(session, token)
     if user_session is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid or expired token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid or expired token"
+        )
 
     session.commit()
     user = session.get(User, user_session.user_id)

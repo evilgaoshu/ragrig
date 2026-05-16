@@ -9,12 +9,11 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ragrig.auth import (
+    API_KEY_TOKEN_PREFIX,
     DEFAULT_WORKSPACE_ID,
     SESSION_TOKEN_PREFIX,
-    API_KEY_TOKEN_PREFIX,
-    resolve_workspace_id,
-    verify_session_token,
     verify_api_key,
+    verify_session_token,
 )
 from ragrig.config import Settings, get_settings
 from ragrig.db.session import get_session
@@ -81,14 +80,14 @@ def _resolve_auth(
 
 def get_auth_context(
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-    session: Session = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    session: Annotated[Session, Depends(get_session)] = None,  # type: ignore[assignment]
+    settings: Annotated[Settings, Depends(get_settings)] = None,  # type: ignore[assignment]
 ) -> AuthContext:
     return _resolve_auth(authorization, session, settings)
 
 
 def require_auth(
-    auth: AuthContext = Depends(get_auth_context),
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
 ) -> AuthContext:
     """Dependency that requires a valid authenticated identity (not anonymous)."""
     if auth.is_anonymous:
@@ -101,7 +100,7 @@ def require_auth(
 
 
 def get_workspace_id_from_auth(
-    auth: AuthContext = Depends(get_auth_context),
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
 ) -> uuid.UUID:
     """Return the workspace_id for the current request.
 

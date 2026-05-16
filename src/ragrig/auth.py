@@ -280,11 +280,14 @@ def register_user(
         .limit(1)
     )
     if existing_membership is None:
-        is_first_user = session.scalar(
-            select(WorkspaceMembership)
-            .where(WorkspaceMembership.workspace_id == workspace.id)
-            .limit(1)
-        ) is None
+        is_first_user = (
+            session.scalar(
+                select(WorkspaceMembership)
+                .where(WorkspaceMembership.workspace_id == workspace.id)
+                .limit(1)
+            )
+            is None
+        )
         role = "owner" if is_first_user else "viewer"
         membership = WorkspaceMembership(
             workspace_id=workspace.id,

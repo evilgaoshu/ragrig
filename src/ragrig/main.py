@@ -20,12 +20,11 @@ from ragrig.answer import (
 from ragrig.answer import (
     ProviderUnavailableError as AnswerProviderUnavailableError,
 )
-from ragrig.auth import ensure_default_workspace, resolve_workspace_id
+from ragrig.auth import ensure_default_workspace
 from ragrig.config import Settings, get_settings
-from ragrig.db.session import get_session as _get_session_default
-from ragrig.deps import get_auth_context, get_workspace_id_from_auth
-from ragrig.routers.auth import router as auth_router
 from ragrig.db.engine import create_db_engine
+from ragrig.db.session import get_session as _get_session_default
+from ragrig.deps import get_workspace_id_from_auth
 from ragrig.evaluation import (
     build_evaluation_list_report,
     build_evaluation_run_report,
@@ -72,6 +71,7 @@ from ragrig.retrieval import (
     RetrievalError,
     search_knowledge_base,
 )
+from ragrig.routers.auth import router as auth_router
 from ragrig.tasks import (
     TaskRetryError,
     cleanup_staging_dir,
