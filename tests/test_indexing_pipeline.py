@@ -507,7 +507,12 @@ def test_acl_propagation_falls_back_to_document_version_metadata(tmp_path) -> No
     Base.metadata.create_all(engine)
 
     with Session(engine, expire_on_commit=False) as session:
-        kb = KnowledgeBase(name="test-acl-fallback", metadata_json={})
+        from ragrig.auth import DEFAULT_WORKSPACE_ID, ensure_default_workspace
+
+        ensure_default_workspace(session)
+        kb = KnowledgeBase(
+            workspace_id=DEFAULT_WORKSPACE_ID, name="test-acl-fallback", metadata_json={}
+        )
         session.add(kb)
         session.flush()
 

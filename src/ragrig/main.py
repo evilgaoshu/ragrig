@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,6 +19,7 @@ from ragrig.answer import (
 from ragrig.answer import (
     ProviderUnavailableError as AnswerProviderUnavailableError,
 )
+from ragrig.auth import ensure_default_workspace, resolve_workspace_id
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
 from ragrig.evaluation import (
@@ -380,6 +382,12 @@ def create_app(
         assert default_session_factory is not None
         return default_session_factory
 
+    def get_workspace_id(
+        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+        session: Annotated[Session, Depends(get_session)] = None,
+    ) -> "uuid.UUID":
+        return resolve_workspace_id(session, authorization=authorization)
+
     @app.get("/health", response_model=None)
     def health() -> dict[str, Any] | JSONResponse:
         try:
@@ -474,14 +482,16 @@ def create_app(
     def create_knowledge_base(
         request: KnowledgeBaseCreateRequest,
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> JSONResponse:
         name = request.name.strip()
         if not name:
             return JSONResponse(
                 status_code=400, content={"error": "knowledge base name is required"}
             )
-        existed = get_knowledge_base_by_name(session, name) is not None
-        kb = get_or_create_knowledge_base(session, name)
+        ensure_default_workspace(session)
+        existed = get_knowledge_base_by_name(session, name, workspace_id=workspace_id) is not None
+        kb = get_or_create_knowledge_base(session, name, workspace_id=workspace_id)
         session.commit()
         return JSONResponse(
             status_code=200 if existed else 201,
