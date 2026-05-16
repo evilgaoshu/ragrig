@@ -9,6 +9,7 @@ import type {
   RetrievalReport,
   TaskRecord,
   UploadResult,
+  SupportedFormat,
 } from './types'
 
 export function useSystemStatus() {
@@ -116,7 +117,8 @@ export function useRetrieval() {
 export function useSupportedFormats() {
   return useQuery({
     queryKey: ['supported-formats'],
-    queryFn: () => api.get<{ items: unknown[] }>('/supported-formats').then((r) => r.items),
+    queryFn: () =>
+      api.get<{ formats: SupportedFormat[] }>('/supported-formats').then((r) => r.formats),
   })
 }
 
