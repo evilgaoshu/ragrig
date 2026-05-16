@@ -18,3 +18,16 @@ def get_db_session(
         yield session
     finally:
         session.close()
+
+
+def get_session() -> Generator[Session, None, None]:
+    """FastAPI dependency for a DB session.
+
+    create_app() overrides this with a session-factory-aware closure so tests
+    and custom factories work correctly. This default falls back to SessionLocal.
+    """
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()

@@ -22,6 +22,17 @@ class Settings(BaseSettings):
         description="Qdrant base URL for the optional vector backend.",
     )
     qdrant_api_key: str | None = Field(default=None, description="Optional Qdrant API key.")
+    ragrig_auth_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enable authentication enforcement. When False, all requests are treated as "
+            "anonymous and routed to the default workspace. Disable only for local dev."
+        ),
+    )
+    ragrig_auth_session_days: int = Field(
+        default=30,
+        description="Session token lifetime in days.",
+    )
     ragrig_allow_fake_reranker: bool = Field(
         default=False,
         description=(
