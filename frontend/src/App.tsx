@@ -7,6 +7,7 @@ import Pipelines from './pages/Pipelines'
 import RetrievalLab from './pages/RetrievalLab'
 import Upload from './pages/Upload'
 import Formats from './pages/Formats'
+import Documents from './pages/Documents'
 import Stub from './pages/Stub'
 
 export default function App() {
@@ -29,7 +30,7 @@ export default function App() {
         <Route path="/answer-live-smoke" element={<Stub title="Answer Live Smoke" description="LLM answer pipeline health" />} />
         <Route path="/parser-corpus" element={<Stub title="Parser Corpus" description="Advanced parser corpus status" />} />
         <Route path="/ops-diagnostics" element={<Stub title="Ops Diagnostics" description="Deploy, backup, and restore diagnostics" />} />
-        <Route path="/documents" element={<Stub title="Documents" description="Document version browser" />} />
+        <Route path="/documents" element={<Documents />} />
         <Route path="/answer-gen" element={<Stub title="Answer Gen" description="Grounded answer generation playground" />} />
         <Route path="/models" element={<Stub title="Models" description="Embedding models and rerankers" />} />
         <Route path="/profile-matrix" element={<Stub title="Profile Matrix" description="Processing profile override matrix" />} />

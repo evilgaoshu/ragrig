@@ -96,6 +96,40 @@ export interface UploadResult {
   warnings: string[]
 }
 
+export interface DocumentVersionSummary {
+  id: string
+  version_number: number
+  parser_name: string
+  parser_config: Record<string, unknown>
+  metadata: Record<string, unknown>
+  text_preview: string
+  chunk_count: number
+  created_at: string
+}
+
+export interface Document {
+  id: string
+  knowledge_base: string
+  uri: string
+  source_uri: string
+  mime_type: string
+  content_hash: string
+  metadata: Record<string, unknown>
+  acl_summary: Record<string, unknown>
+  latest_version: DocumentVersionSummary
+}
+
+export interface Chunk {
+  id: string
+  chunk_index: number
+  heading: string | null
+  char_start: number
+  char_end: number
+  page_number: number | null
+  text: string
+  metadata: Record<string, unknown>
+}
+
 export interface SupportedFormat {
   extension: string
   mime_type: string

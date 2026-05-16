@@ -10,6 +10,8 @@ import type {
   TaskRecord,
   UploadResult,
   SupportedFormat,
+  Document,
+  Chunk,
 } from './types'
 
 export function useSystemStatus() {
@@ -134,5 +136,23 @@ export function useUpload() {
       qc.invalidateQueries({ queryKey: ['pipeline-runs'] })
       qc.invalidateQueries({ queryKey: ['knowledge-bases'] })
     },
+  })
+}
+
+export function useDocuments() {
+  return useQuery({
+    queryKey: ['documents'],
+    queryFn: () => api.get<{ items: Document[] }>('/documents').then((r) => r.items),
+  })
+}
+
+export function useDocumentVersionChunks(versionId: string | null) {
+  return useQuery({
+    queryKey: ['document-version-chunks', versionId],
+    queryFn: () =>
+      api
+        .get<{ items: Chunk[] }>(`/document-versions/${versionId}/chunks`)
+        .then((r) => r.items),
+    enabled: !!versionId,
   })
 }
