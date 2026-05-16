@@ -116,6 +116,45 @@ Prototype:
 
 ## Quick Start
 
+### Vercel Preview + Supabase
+
+RAGRig can run as a Vercel Preview deployment backed by Supabase Postgres. This is
+for online product preview; Docker remains the recommended local pilot path.
+
+Required Vercel Preview environment variables:
+
+```text
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/postgres?sslmode=require
+VECTOR_BACKEND=pgvector
+APP_ENV=preview
+```
+
+For local migration and `make db-check` against Supabase, also set:
+
+```text
+DB_RUNTIME_HOST=HOST
+DB_HOST_PORT=PORT
+```
+
+Run migrations from a trusted local or CI environment before using the Preview DB:
+
+```bash
+DATABASE_URL='postgresql://USER:PASSWORD@HOST:PORT/postgres?sslmode=require' \
+DB_RUNTIME_HOST='HOST' \
+DB_HOST_PORT='PORT' \
+uv run alembic upgrade head
+```
+
+After Vercel creates a Preview deployment:
+
+```bash
+VERCEL_PREVIEW_URL='https://your-preview-url.vercel.app' make vercel-preview-smoke
+```
+
+Model credentials are optional for Preview startup; no model credentials are required
+for startup. See [EVI-130](./docs/specs/EVI-130-vercel-preview-supabase.md) for the
+full deployment contract.
+
 ### 10-Minute Local Pilot Demo
 
 Run the minimal preflight first. It checks only startup-critical items such as the

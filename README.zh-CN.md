@@ -112,6 +112,44 @@ Web Console 是 RAGRig 的主要操作界面。第一版形态：
 
 ## 快速部署
 
+### Vercel Preview + Supabase
+
+RAGRig 可以部署到 Vercel Preview，并使用 Supabase Postgres 作为远端元数据
+数据库。这条路径用于在线产品预览；本地试点仍推荐 Docker。
+
+Vercel Preview 必需环境变量：
+
+```text
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/postgres?sslmode=require
+VECTOR_BACKEND=pgvector
+APP_ENV=preview
+```
+
+本地对 Supabase 执行 migration 和 `make db-check` 时，还需要：
+
+```text
+DB_RUNTIME_HOST=HOST
+DB_HOST_PORT=PORT
+```
+
+使用 Preview 数据库前，先在可信本地或 CI 环境执行 migration：
+
+```bash
+DATABASE_URL='postgresql://USER:PASSWORD@HOST:PORT/postgres?sslmode=require' \
+DB_RUNTIME_HOST='HOST' \
+DB_HOST_PORT='PORT' \
+uv run alembic upgrade head
+```
+
+Vercel 创建 Preview deployment 后验证：
+
+```bash
+VERCEL_PREVIEW_URL='https://your-preview-url.vercel.app' make vercel-preview-smoke
+```
+
+模型配置不影响 Preview 启动；no model credentials are required for startup。
+完整部署约束见 [EVI-130](./docs/specs/EVI-130-vercel-preview-supabase.md)。
+
 ### 10 分钟本地试点演示
 
 先运行最小 preflight。它只检查启动必须项：应用 import、临时数据库健康检查、
