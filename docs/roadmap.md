@@ -66,10 +66,10 @@ This roadmap reflects the current state of the project as of May 2026. Completed
 - Enterprise connector workflow stubs.
 - Google Workspace source connector (pilot, contract-aligned).
 - S3 source connector fully wired into console ingest flow.
+- Database source connectors (PostgreSQL, MySQL read path).
 - Parquet export dependency in place (`pyarrow`).
 
 **Open:**
-- Database source connectors (PostgreSQL, MySQL read path).
 - Markdown, JSONL, and NFS export sinks.
 - Wiki, WPS, and OnlyOffice connectors.
 

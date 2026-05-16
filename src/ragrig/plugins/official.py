@@ -3,6 +3,7 @@ from __future__ import annotations
 from ragrig.plugins import guards
 from ragrig.plugins.manifest import PluginConfigModel, PluginManifest, SecretRequirement
 from ragrig.plugins.object_storage.config import ObjectStorageSinkConfig
+from ragrig.plugins.sources.database.config import DatabaseSourceConfig
 from ragrig.plugins.sources.fileshare.config import FileshareSourceConfig
 from ragrig.plugins.sources.google_workspace.config import GoogleWorkspaceSourceConfig
 from ragrig.plugins.sources.s3.config import S3SourceConfig
@@ -18,10 +19,6 @@ class Microsoft365SourceConfig(PluginConfigModel):
 class WikiSourceConfig(PluginConfigModel):
     base_url: str
     access_token: str
-
-
-class DatabaseSourceConfig(PluginConfigModel):
-    dsn: str
 
 
 class AnalyticsSinkConfig(PluginConfigModel):
@@ -107,10 +104,10 @@ def _official_manifest(
     optional_dependencies: tuple[str, ...] = (),
     degraded_missing_dependencies: tuple[str, ...] = (),
     config_model: type[PluginConfigModel] | None = None,
-    example_config: dict[str, str] | None = None,
+    example_config: dict[str, object] | None = None,
     secret_requirements: tuple[SecretRequirement, ...] = (),
     status: PluginStatus = PluginStatus.UNAVAILABLE,
-    unavailable_reason: str,
+    unavailable_reason: str | None,
 ) -> PluginManifest:
     return PluginManifest(
         plugin_id=plugin_id,
@@ -696,7 +693,7 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="source.database",
             display_name="Database Source",
-            description="Stub manifest for relational and document database ingestion.",
+            description="PostgreSQL/MySQL read-only query ingestion.",
             plugin_type=PluginType.SOURCE,
             family="database",
             capabilities=(
@@ -704,14 +701,32 @@ def official_stub_manifests() -> list[PluginManifest]:
                 Capability.INCREMENTAL_SYNC,
                 Capability.DELETE_DETECTION,
             ),
+            optional_dependencies=("pymysql",),
+            degraded_missing_dependencies=("pymysql",),
             config_model=DatabaseSourceConfig,
-            example_config={"dsn": "env:SOURCE_DATABASE_DSN"},
+            example_config={
+                "engine": "postgresql",
+                "dsn": "env:SOURCE_DATABASE_DSN",
+                "source_name": "crm",
+                "queries": [
+                    {
+                        "name": "accounts",
+                        "sql": "select id, name, notes from accounts where active = :active",
+                        "params": {"active": True},
+                        "document_id_columns": ["id"],
+                        "title_column": "name",
+                        "text_columns": ["name", "notes"],
+                        "metadata_columns": [],
+                    }
+                ],
+            },
             secret_requirements=(
                 SecretRequirement(
                     name="SOURCE_DATABASE_DSN", description="Database connection string"
                 ),
             ),
-            unavailable_reason="Database connector logic is intentionally out of scope.",
+            unavailable_reason=None,
+            status=PluginStatus.READY,
         ),
         _official_manifest(
             plugin_id="preview.office",

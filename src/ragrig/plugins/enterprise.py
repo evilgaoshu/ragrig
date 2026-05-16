@@ -81,9 +81,12 @@ ENTERPRISE_CONNECTORS: dict[str, EnterpriseConnectorSpec] = {
         plugin_id="source.database",
         display_name="Database Source",
         family="database",
-        protocols=("sql", "mongodb", "opensearch"),
+        protocols=("postgresql", "mysql"),
         official_docs_url="https://www.postgresql.org/docs/current/libpq-connect.html",
         required_credentials=("SOURCE_DATABASE_DSN",),
+        workflow_operation="ingest.database",
+        supports_live_probe=True,
+        notes="Read-only SQL query ingestion; MySQL requires the pymysql optional dependency.",
     ),
     "source.collaboration": EnterpriseConnectorSpec(
         plugin_id="source.collaboration",
@@ -212,6 +215,24 @@ def probe_enterprise_connector(
             "network_called": False,
             "official_docs_url": spec.official_docs_url,
         }
+    if connector_id == "source.database":
+        engine = str((config or {}).get("engine") or "postgresql")
+        if engine not in {"postgresql", "mysql"}:
+            return {
+                "connector_id": connector_id,
+                "status": "unavailable",
+                "reason": "unsupported_database_engine",
+                "network_called": False,
+                "official_docs_url": spec.official_docs_url,
+            }
+        return {
+            "connector_id": connector_id,
+            "status": "contract_ready",
+            "engine": engine,
+            "network_called": False,
+            "official_docs_url": spec.official_docs_url,
+            "reason": "live database probes require explicit connector execution",
+        }
     return {
         "connector_id": connector_id,
         "status": "contract_ready",
@@ -237,5 +258,9 @@ def _safe_example_config(plugin_id: str) -> dict[str, object]:
     if plugin_id == "source.wiki":
         return {"base_url": "https://wiki.example.com"}
     if plugin_id == "source.database":
-        return {"engine": "postgresql", "schema": "public"}
+        return {
+            "engine": "postgresql",
+            "source_name": "crm",
+            "queries": [{"name": "accounts", "sql": "select id, name from accounts"}],
+        }
     return {"workspace": "example"}
