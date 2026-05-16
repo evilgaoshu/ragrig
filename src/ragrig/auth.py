@@ -233,3 +233,30 @@ def _is_expired(expires_at: datetime | None, *, now: datetime | None = None) -> 
 
 def expires_in(**kwargs: int) -> datetime:
     return datetime.now(UTC) + timedelta(**kwargs)
+
+
+def resolve_workspace_id(
+    session: Session,
+    *,
+    authorization: str | None = None,
+    pepper: str | bytes | None = None,
+) -> uuid.UUID:
+    """Resolve workspace ID from an Authorization header or fall back to default.
+
+    Accepts:
+    - "Bearer rag_live_<prefix>_<secret>" → verifies API key, returns its workspace_id
+    - None or unrecognized format → returns DEFAULT_WORKSPACE_ID (local dev / no-auth)
+
+    Never raises. Falls back to default workspace on any verification failure.
+    """
+    if authorization:
+        token = authorization.removeprefix("Bearer ").strip()
+        if token.startswith(API_KEY_TOKEN_PREFIX):
+            api_key = verify_api_key(session, token, pepper=pepper)
+            if api_key is not None:
+                return api_key.workspace_id
+        elif token.startswith(SESSION_TOKEN_PREFIX):
+            user_session = verify_session_token(session, token, pepper=pepper)
+            if user_session is not None:
+                return user_session.workspace_id
+    return DEFAULT_WORKSPACE_ID

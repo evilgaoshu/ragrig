@@ -38,6 +38,7 @@ class Workspace(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     memberships: Mapped[list["WorkspaceMembership"]] = relationship(back_populates="workspace")
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="workspace")
     user_sessions: Mapped[list["UserSession"]] = relationship(back_populates="workspace")
+    knowledge_bases: Mapped[list["KnowledgeBase"]] = relationship(back_populates="workspace")
 
 
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -155,11 +156,21 @@ class UserSession(UUIDPrimaryKeyMixin, Base):
 
 class KnowledgeBase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "knowledge_bases"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "name", name="uq_knowledge_bases_workspace_name"),
+        Index("ix_knowledge_bases_workspace_id", "workspace_id"),
+    )
 
-    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
+    workspace: Mapped["Workspace"] = relationship(back_populates="knowledge_bases")
     sources: Mapped[list["Source"]] = relationship(back_populates="knowledge_base")
     documents: Mapped[list["Document"]] = relationship(back_populates="knowledge_base")
     pipeline_runs: Mapped[list["PipelineRun"]] = relationship(back_populates="knowledge_base")
