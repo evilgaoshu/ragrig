@@ -38,10 +38,16 @@ jobs:
       - name: Run evaluation unit tests
         run: uv run pytest tests/test_evaluation.py tests/test_evaluation_baseline.py -v -m "not live"
 
+      - name: Run before/after reindex diff
+        run: make eval-reindex-diff
+
       - name: Upload evaluation artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: evaluation-results-${{ github.run_id }}
-          path: evaluation_runs/
+          path: |
+            evaluation_runs/
+            docs/operations/artifacts/eval-reindex-diff.json
+            docs/operations/artifacts/eval-reindex-diff.md
           retention-days: 30
