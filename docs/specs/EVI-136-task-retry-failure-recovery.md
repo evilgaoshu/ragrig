@@ -79,20 +79,30 @@ Rejected cases:
 
 ## Idempotency and Concurrency
 
-The retry idempotency key is stored in the retry child payload as:
+The retry idempotency key is deterministic and derived from the logical retry edge:
 
 ```text
-{task_type}:{previous_task_id}:{new_pipeline_run_id}
+{task_type}:{previous_task_id}
 ```
 
-The public idempotency boundary is the `previous_task_id` to `next_task_id` link on the
-previous task. While the process is alive, retry creation is guarded by an in-process lock
-keyed by the previous task id. The database payload link prevents a second retry after the
-first retry has been created. This is sufficient for the current single-process executor.
+The public idempotency boundary remains the `previous_task_id` to `next_task_id` link.
+The database contract is now structured instead of JSON-only:
 
-A future external worker or multi-process API must preserve the same linear-chain contract
-with a database-enforced compare-and-set or unique retry edge so two API processes cannot
-create sibling retries for one task.
+- `task_records.previous_task_id` is nullable and unique, so one failed task can have at
+  most one retry child.
+- `task_records.next_task_id` is nullable and unique, so one retry child can be linked from
+  at most one previous task.
+- `task_records.retry_idempotency_key` is nullable and unique, and uses the deterministic
+  key above.
+- `attempt_count` is non-negative and monotonic within a retry chain. A retry child is
+  created with the previous task's current count and increments only when that child starts.
+- `previous_task_id` and `next_task_id` cannot point to the same row.
+
+The JSON payload still carries `previous_task_id`, `next_task_id`, and
+`retry_idempotency_key` for backward-compatible API serialization and older diagnostics, but
+the structured columns are the durable idempotency source. The in-process retry lock remains
+as a fast local guard; the database uniqueness constraints are the cross-process guard that
+prevents sibling retries when multiple API processes or future external workers race.
 
 ## TaskRecord and PipelineRun Synchronization
 
@@ -133,7 +143,7 @@ Future Redis, Celery, ARQ, or equivalent workers must preserve:
 
 - additive task response fields.
 - monotonic logical `attempt_count`.
-- one retry successor per task.
+- one retry successor per task, enforced through the structured retry edge.
 - immutable historical `TaskRecord` and `PipelineRun` failure evidence.
 - the same retry rejection semantics for unsupported, active, duplicate, and missing-input
   tasks.

@@ -4,7 +4,7 @@ APP_HOST_PORT ?= 8000
 RAGRIG_IMAGE ?= ragrig:local
 PILOT_BASE_URL ?= http://127.0.0.1:$(APP_HOST_PORT)
 
-.PHONY: sync frontend-build format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check web-check sqlite-warning-check local-pilot-preflight pilot-docker-preflight local-pilot-smoke local-pilot-console-e2e pilot-docker-build pilot-up pilot-down pilot-logs pilot-docker-smoke vercel-preview-smoke test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff seed-acl-fixtures pipeline-dag-smoke ops-deploy-smoke ops-backup-smoke ops-restore-smoke ops-upgrade-smoke pilot-evidence-pack
+.PHONY: sync frontend-build format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check required-ci-contexts-check web-check sqlite-warning-check local-pilot-preflight pilot-docker-preflight local-pilot-smoke local-pilot-console-e2e pilot-docker-build pilot-up pilot-down pilot-logs pilot-docker-smoke vercel-preview-smoke test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check s3-check fileshare-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke reranker-policy-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke understanding-export-diff seed-acl-fixtures pipeline-dag-smoke ops-deploy-smoke ops-backup-smoke ops-restore-smoke ops-upgrade-smoke pilot-evidence-pack
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -76,6 +76,9 @@ dependency-inventory:
 
 supply-chain-check:
 	$(MAKE) licenses && $(MAKE) sbom && $(MAKE) audit
+
+required-ci-contexts-check:
+	$(UV) run python -m scripts.check_required_ci_contexts
 
 web-check:
 	$(UV) run pytest tests/test_web_console.py tests/test_web_console_local_pilot.py tests/test_local_pilot_console_e2e.py
@@ -271,6 +274,12 @@ retrieval-benchmark-integrity-cleanup:
 # "skipped" — never a false success.
 bge-rerank-smoke:
 	$(UV) run python -m scripts.bge_rerank_smoke --pretty
+
+# ── Reranker policy guard smoke ───────────────────────────────
+# Offline production/local/test policy verification for fake
+# reranker fallback guardrails and real-provider observability.
+reranker-policy-smoke:
+	$(UV) run python -m scripts.reranker_policy_smoke --pretty --output $(ARTIFACTS_DIR)/reranker-policy-smoke.json
 
 # ── Advanced parser corpus check ──────────────────────────────
 # Runs the advanced parser corpus quality gate against fixture

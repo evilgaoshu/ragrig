@@ -32,7 +32,7 @@ from ragrig.db.models import (
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
-from ragrig.repositories import list_audit_events
+from ragrig.repositories import create_task_record, list_audit_events
 
 pytestmark = [pytest.mark.smoke, pytest.mark.slow]
 
@@ -508,14 +508,19 @@ async def test_task_retry_recovers_failed_ingestion_dag_without_overwriting_hist
         retry_run = session.get(PipelineRun, uuid.UUID(retry_run_id))
 
     assert original_task is not None
-    assert original_task.status == "completed"
-    assert original_task.result_json["status"] == "completed_with_failures"
+    assert original_task.status == original_payload["status"]
+    assert original_task.result_json == original_payload["result"]
+    assert original_task.error == original_payload["error"]
+    assert original_task.attempt_count == original_payload["attempt_count"]
+    assert original_task.next_task_id == uuid.UUID(retry_task_id)
     assert original_task.payload_json["next_task_id"] == retry_task_id
     assert retry_task is not None
     assert retry_task.status == "completed"
+    assert retry_task.previous_task_id == uuid.UUID(original_task_id)
+    assert retry_task.retry_idempotency_key == f"pipeline_dag_ingestion:{original_task_id}"
     assert retry_task.payload_json["previous_task_id"] == original_task_id
     assert original_run is not None
-    assert original_run.status == "completed_with_failures"
+    assert original_run.status == original_payload["pipeline_run"]["status"]
     assert retry_run is not None
     assert retry_run.status == "completed"
 
@@ -568,11 +573,70 @@ async def test_task_retry_rejects_duplicate_retry_before_retry_runs(tmp_path) ->
 
     assert original_task is not None
     assert original_task.result_json["status"] == "completed_with_failures"
+    assert original_task.next_task_id == uuid.UUID(first_retry.json()["task_id"])
     assert original_task.payload_json["next_task_id"] == first_retry.json()["task_id"]
     assert original_run is not None
     assert original_run.status == "completed_with_failures"
     assert retry_run is not None
     assert retry_run.status == "running"
+
+
+@pytest.mark.anyio
+async def test_task_retry_db_edge_rejects_stale_multiprocess_duplicate(tmp_path) -> None:
+    database_path = tmp_path / "web-console-task-retry-stale-edge.db"
+    session_factory = _create_file_session_factory(database_path)
+    task_executor = ControlledTaskExecutor()
+    docs = _seed_documents(tmp_path, {"notes.md": "# Notes\n"})
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=task_executor,
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        created = await client.post(
+            "/pipeline-dags/ingestion",
+            json={
+                "knowledge_base": "fixture-local",
+                "root_path": str(docs),
+                "failure_node": "index",
+            },
+        )
+
+    assert created.status_code == 202
+    original_task_id = created.json()["task_id"]
+    task_executor.run_next()
+
+    with session_factory() as session:
+        create_task_record(
+            session,
+            task_type="pipeline_dag_ingestion",
+            payload_json={
+                "previous_task_id": original_task_id,
+                "retry_idempotency_key": f"pipeline_dag_ingestion:{original_task_id}",
+            },
+            previous_task_id=original_task_id,
+            retry_idempotency_key=f"pipeline_dag_ingestion:{original_task_id}",
+            attempt_count=1,
+        )
+        session.commit()
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        duplicate_retry = await client.post(f"/tasks/{original_task_id}/retry")
+
+    assert duplicate_retry.status_code == 409
+    assert duplicate_retry.json() == {
+        "error": "task_not_retryable",
+        "message": "A retry task already exists for this task.",
+        "retryable": False,
+    }
+    assert len(task_executor.jobs) == 0
+    with session_factory() as session:
+        retry_children = session.scalars(
+            select(TaskRecord).where(TaskRecord.previous_task_id == uuid.UUID(original_task_id))
+        ).all()
+    assert len(retry_children) == 1
 
 
 @pytest.mark.anyio
