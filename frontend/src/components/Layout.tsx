@@ -20,6 +20,7 @@ const OPERATE: NavItem[] = [
   { label: 'Answer Live Smoke', to: '/answer-live-smoke' },
   { label: 'Parser Corpus', to: '/parser-corpus' },
   { label: 'Ops Diagnostics', to: '/ops-diagnostics' },
+  { label: 'Cost & Latency', to: '/cost-latency' },
   { label: 'Documents', to: '/documents' },
 ]
 

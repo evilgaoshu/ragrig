@@ -243,3 +243,15 @@ export function useAnswerGen() {
     }) => api.post<Record<string, unknown>>('/retrieval/answer', body),
   })
 }
+
+export function useCostLatency(knowledgeBase?: string, limit = 20) {
+  return useQuery({
+    queryKey: ['cost-latency', knowledgeBase, limit],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (knowledgeBase) params.set('knowledge_base', knowledgeBase)
+      params.set('limit', String(limit))
+      return api.get<Record<string, unknown>>(`/observability/cost-latency?${params}`)
+    },
+  })
+}

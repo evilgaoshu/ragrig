@@ -15,6 +15,7 @@ import BaselineIntegrity from './pages/BaselineIntegrity'
 import AnswerLiveSmoke from './pages/AnswerLiveSmoke'
 import ParserCorpus from './pages/ParserCorpus'
 import OpsDiagnostics from './pages/OpsDiagnostics'
+import CostLatency from './pages/CostLatency'
 import Models from './pages/Models'
 import Plugins from './pages/Plugins'
 import Evaluation from './pages/Evaluation'
@@ -44,6 +45,7 @@ export default function App() {
         <Route path="/answer-live-smoke" element={<AnswerLiveSmoke />} />
         <Route path="/parser-corpus" element={<ParserCorpus />} />
         <Route path="/ops-diagnostics" element={<OpsDiagnostics />} />
+        <Route path="/cost-latency" element={<CostLatency />} />
         <Route path="/documents" element={<Documents />} />
         <Route path="/answer-gen" element={<AnswerGen />} />
         <Route path="/models" element={<Models />} />
