@@ -249,6 +249,39 @@ jobs:
       - name: Build Docker image
         run: docker build -t ragrig:ci .
 
+      - name: Start container
+        run: |
+          docker run -d \
+            --name ragrig-ci \
+            -p 8099:8000 \
+            -e DATABASE_URL=postgresql://ci:ci@localhost:5432/ci \
+            ragrig:ci
+
+      - name: Wait for app to respond
+        run: |
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:8099/health > /dev/null 2>&1; then
+              echo "App responded after ${i} attempts"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Verify health endpoint returns app:ok
+        run: |
+          response=$(curl -s http://localhost:8099/health)
+          echo "$response"
+          echo "$response" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          assert d.get('app') == 'ok', f'expected app=ok, got: {d}'
+          print('health check passed: app=ok')
+          "
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f ragrig-ci || true
+
   drift-diff:
     name: RAGRig CI / drift-diff
     runs-on: ubuntu-latest
