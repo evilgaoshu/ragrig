@@ -8,6 +8,7 @@ import type {
   PipelineRunItem,
   RetrievalReport,
   TaskRecord,
+  UploadResult,
 } from './types'
 
 export function useSystemStatus() {
@@ -116,5 +117,20 @@ export function useSupportedFormats() {
   return useQuery({
     queryKey: ['supported-formats'],
     queryFn: () => api.get<{ items: unknown[] }>('/supported-formats').then((r) => r.items),
+  })
+}
+
+export function useUpload() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ kbName, files }: { kbName: string; files: File[] }) => {
+      const form = new FormData()
+      files.forEach((f) => form.append('files', f))
+      return api.postForm<UploadResult>(`/knowledge-bases/${encodeURIComponent(kbName)}/upload`, form)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pipeline-runs'] })
+      qc.invalidateQueries({ queryKey: ['knowledge-bases'] })
+    },
   })
 }
