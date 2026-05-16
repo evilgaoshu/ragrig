@@ -1,0 +1,90 @@
+name: Nightly Smoke
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Nightly / smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --dev --frozen
+
+      - name: Cost & latency check
+        run: make cost-latency-check
+
+      - name: Knowledge map check
+        run: make knowledge-map-check
+
+      - name: Answer live smoke
+        run: make answer-live-smoke
+
+      - name: Evaluation reindex diff
+        run: make eval-reindex-diff
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-smoke-${{ github.run_id }}
+          retention-days: 30
+          path: |
+            docs/operations/artifacts/cost-latency-check.json
+            docs/operations/artifacts/knowledge-map-check.json
+            docs/operations/artifacts/answer-live-smoke.json
+            docs/operations/artifacts/eval-reindex-diff.json
+            docs/operations/artifacts/eval-reindex-diff.md
+
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "## Nightly Smoke — $(date -u +%Y-%m-%d)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for f in \
+            docs/operations/artifacts/cost-latency-check.json \
+            docs/operations/artifacts/knowledge-map-check.json \
+            docs/operations/artifacts/answer-live-smoke.json \
+            docs/operations/artifacts/eval-reindex-diff.md; do
+            if [ -f "$f" ]; then
+              echo "### $f" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              head -40 "$f" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+  frontend:
+    name: Nightly / frontend build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build (tsc + vite)
+        run: npm run build
+        working-directory: frontend
