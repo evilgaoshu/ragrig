@@ -86,3 +86,12 @@ export interface TaskRecord {
   error: string | null
   progress: unknown
 }
+
+export interface UploadResult {
+  task_id: string
+  pipeline_run_id: string
+  accepted_files: number
+  rejected_files: number
+  rejections: { filename: string; reason: string; detail?: string }[]
+  warnings: string[]
+}
