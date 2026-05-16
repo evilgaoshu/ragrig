@@ -319,10 +319,17 @@ make audit
 
 `make audit` 需要网络访问漏洞服务。离线环境请改跑 `make audit-dry-run`，并把缺失的 live audit 记录为发布 blocker。
 
+## 生产防护
+
+RAGRig 默认在生产环境禁用 deterministic fake reranker fallback。只有明确用于
+demo 或可接受降级环境时，才设置 `RAGRIG_ALLOW_FAKE_RERANKER=true`。
+`/health` 会返回当前 reranker policy。
+
 ## 文档
 
 核心文档：
 
+- [Fake reranker 生产防护](./docs/specs/EVI-129-fake-reranker-production-guard.md)
 - [Local Pilot spec](./docs/specs/ragrig-local-pilot-spec.md)
 - [MVP spec](./docs/specs/ragrig-mvp-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)

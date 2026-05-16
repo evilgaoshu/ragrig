@@ -23,6 +23,8 @@ from ragrig.reranker import (
     RerankCandidate,
     RerankResult,
     fake_rerank,
+    fake_reranker_allowed,
+    fake_reranker_policy,
     provider_rerank,
 )
 from ragrig.vectorstore import build_vector_collection
@@ -63,6 +65,10 @@ class EmbeddingProfileMismatchError(RetrievalError):
 
 class InvalidTopKError(RetrievalError):
     code = "invalid_top_k"
+
+
+class RerankerUnavailableError(RetrievalError):
+    code = "fake_reranker_disabled"
 
 
 @dataclass(frozen=True)
@@ -538,6 +544,16 @@ def _apply_rerank(
             rerank_results = rr
     else:
         # No explicit reranker; use fake reranker for testing/demonstration
+        if not fake_reranker_allowed():
+            policy = fake_reranker_policy()
+            raise RerankerUnavailableError(
+                "Fake reranker fallback is disabled in production; configure "
+                "a real reranker or set RAGRIG_ALLOW_FAKE_RERANKER=true.",
+                details={
+                    **policy,
+                    "code": "fake_reranker_disabled",
+                },
+            )
         rerank_results = fake_rerank(query, rerank_candidates)
 
     if rerank_results is None:

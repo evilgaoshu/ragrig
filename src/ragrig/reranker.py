@@ -11,6 +11,11 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from ragrig.config import Settings, get_settings
+
+PRODUCTION_APP_ENVS = {"prod", "production"}
+DEFAULT_RERANKER_PROVIDER = "reranker.bge"
+
 
 @dataclass(frozen=True)
 class RerankCandidate:
@@ -78,6 +83,43 @@ def fake_rerank(query: str, candidates: list[RerankCandidate]) -> list[RerankRes
     return results
 
 
+def fake_reranker_allowed(settings: Settings | None = None) -> bool:
+    active_settings = settings or get_settings()
+    if active_settings.ragrig_allow_fake_reranker:
+        return True
+    return active_settings.app_env.lower() not in PRODUCTION_APP_ENVS
+
+
+def fake_reranker_policy(settings: Settings | None = None) -> dict[str, Any]:
+    active_settings = settings or get_settings()
+    allowed = fake_reranker_allowed(active_settings)
+    explicit_override = active_settings.ragrig_allow_fake_reranker
+    production_env = active_settings.app_env.lower() in PRODUCTION_APP_ENVS
+    if explicit_override:
+        status = "override_allowed"
+        policy = "explicit_override"
+        detail = "Fake reranker fallback is explicitly allowed by RAGRIG_ALLOW_FAKE_RERANKER."
+    elif production_env:
+        status = "blocked"
+        policy = "production_requires_real_reranker"
+        detail = (
+            "Fake reranker fallback is disabled in production; configure a real reranker "
+            "or set RAGRIG_ALLOW_FAKE_RERANKER=true."
+        )
+    else:
+        status = "development_fallback_allowed"
+        policy = "non_production_fallback"
+        detail = "Fake reranker fallback is allowed outside production."
+    return {
+        "status": status,
+        "provider": DEFAULT_RERANKER_PROVIDER,
+        "fake_reranker_allowed": allowed,
+        "policy": policy,
+        "detail": detail,
+        "app_env": active_settings.app_env,
+    }
+
+
 def provider_rerank(
     query: str,
     candidates: list[RerankCandidate],
@@ -138,8 +180,11 @@ def provider_rerank(
 
 
 __all__ = [
+    "DEFAULT_RERANKER_PROVIDER",
     "RerankCandidate",
     "RerankResult",
     "fake_rerank",
+    "fake_reranker_allowed",
+    "fake_reranker_policy",
     "provider_rerank",
 ]

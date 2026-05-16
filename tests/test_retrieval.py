@@ -1431,6 +1431,81 @@ def test_fake_reranker_changes_candidate_order(tmp_path) -> None:
     assert "apple" in top_text and "banana" in top_text
 
 
+def test_production_rejects_fake_reranker_without_explicit_override(tmp_path, monkeypatch) -> None:
+    """Production must not silently use the fake reranker when no provider is configured."""
+    from ragrig.config import get_settings
+    from ragrig.retrieval import RerankerUnavailableError
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("RAGRIG_ALLOW_FAKE_RERANKER", raising=False)
+    get_settings.cache_clear()
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "a.txt": "banana split dessert",
+            "b.txt": "apple banana smoothie",
+        },
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        with pytest.raises(RerankerUnavailableError) as exc_info:
+            search_knowledge_base(
+                session=session,
+                knowledge_base_name="fixture-local",
+                query="apple banana",
+                top_k=2,
+                mode="rerank",
+            )
+
+    assert exc_info.value.code == "fake_reranker_disabled"
+    assert exc_info.value.details["app_env"] == "production"
+    assert exc_info.value.details["fake_reranker_allowed"] is False
+    get_settings.cache_clear()
+
+
+def test_production_allows_fake_reranker_with_explicit_override(tmp_path, monkeypatch) -> None:
+    """Production demos can opt into fake reranking explicitly and audibly."""
+    from ragrig.config import get_settings
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("RAGRIG_ALLOW_FAKE_RERANKER", "true")
+    get_settings.cache_clear()
+    docs = _seed_documents(
+        tmp_path,
+        {
+            "a.txt": "banana split dessert",
+            "b.txt": "apple banana smoothie",
+        },
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="apple banana",
+            top_k=2,
+            mode="rerank",
+        )
+
+    assert report.total_results == 2
+    assert report.results[0].rank_stage_trace["stages"][-1]["reranker"] == "fake"
+    get_settings.cache_clear()
+
+
 def test_reranker_provider_unavailable_degrade(tmp_path) -> None:
     """When reranker provider is unavailable, mode degrades gracefully."""
     docs = _seed_documents(
@@ -1668,6 +1743,47 @@ async def test_retrieval_api_degraded_response(tmp_path) -> None:
     resp_json = response.json()
     assert resp_json.get("degraded") is True
     assert "degraded_reason" in resp_json
+
+
+@pytest.mark.anyio
+async def test_retrieval_api_returns_503_when_fake_reranker_blocked_in_production(
+    tmp_path, monkeypatch
+) -> None:
+    """POST /retrieval/search must not silently fake rerank in production."""
+    from ragrig.config import get_settings
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("RAGRIG_ALLOW_FAKE_RERANKER", raising=False)
+    get_settings.cache_clear()
+    database_path = tmp_path / "retrieval-fake-reranker-blocked-api.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    docs = _seed_documents(tmp_path, {"guide.txt": "production fake reranker blocked"})
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/retrieval/search",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "production fake reranker blocked",
+                "top_k": 1,
+                "mode": "rerank",
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "fake_reranker_disabled"
+    get_settings.cache_clear()
 
 
 @pytest.mark.anyio

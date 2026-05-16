@@ -30,6 +30,14 @@ async def test_health_reports_database_connection(
         "status": "healthy",
         "app": "ok",
         "db": "connected",
+        "reranker": {
+            "status": "development_fallback_allowed",
+            "provider": "reranker.bge",
+            "fake_reranker_allowed": True,
+            "policy": "non_production_fallback",
+            "detail": "Fake reranker fallback is allowed outside production.",
+            "app_env": "development",
+        },
         "version": "0.1.0",
     }
 
@@ -50,5 +58,13 @@ async def test_health_returns_503_when_database_check_fails(
         "app": "ok",
         "db": "error",
         "detail": "database unavailable",
+        "reranker": {
+            "status": "development_fallback_allowed",
+            "provider": "reranker.bge",
+            "fake_reranker_allowed": True,
+            "policy": "non_production_fallback",
+            "detail": "Fake reranker fallback is allowed outside production.",
+            "app_env": "development",
+        },
         "version": "0.1.0",
     }

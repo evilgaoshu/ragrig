@@ -326,10 +326,17 @@ make audit
 
 `make audit` needs network access to vulnerability services. Offline environments should run `make audit-dry-run` and record the missing live audit as a release blocker.
 
+## Production Guardrails
+
+RAGRig blocks the deterministic fake reranker fallback in production by default.
+Set `RAGRIG_ALLOW_FAKE_RERANKER=true` only for explicit demos or accepted degraded
+environments. The `/health` endpoint reports the current reranker policy.
+
 ## Documentation
 
 Key specs:
 
+- [Fake reranker production guard](./docs/specs/EVI-129-fake-reranker-production-guard.md)
 - [Local Pilot spec](./docs/specs/ragrig-local-pilot-spec.md)
 - [MVP spec](./docs/specs/ragrig-mvp-spec.md)
 - [Web Console spec](./docs/specs/ragrig-web-console-spec.md)

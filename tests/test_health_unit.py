@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from ragrig.config import Settings
-from ragrig.health import create_database_check
+from ragrig.health import build_reranker_health, create_database_check
 
 pytestmark = pytest.mark.unit
 
@@ -56,3 +56,19 @@ def test_create_database_check_runs_select_one(monkeypatch) -> None:
     assert calls == ["postgresql://example/test"]
     assert cursor.executed == ["SELECT 1"]
     assert cursor.fetchone_called is True
+
+
+def test_reranker_health_blocks_fake_fallback_in_production_by_default() -> None:
+    health = build_reranker_health(Settings(app_env="production"))
+
+    assert health == {
+        "status": "blocked",
+        "provider": "reranker.bge",
+        "fake_reranker_allowed": False,
+        "policy": "production_requires_real_reranker",
+        "detail": (
+            "Fake reranker fallback is disabled in production; configure a real reranker "
+            "or set RAGRIG_ALLOW_FAKE_RERANKER=true."
+        ),
+        "app_env": "production",
+    }
