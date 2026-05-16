@@ -326,6 +326,50 @@ make audit
 
 `make audit` needs network access to vulnerability services. Offline environments should run `make audit-dry-run` and record the missing live audit as a release blocker.
 
+## Authentication
+
+RAGRig ships with password-based authentication and per-workspace isolation.
+
+### Configuration
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `RAGRIG_AUTH_ENABLED` | `true` | Enable auth enforcement. Set `false` for local dev (no login required). |
+| `RAGRIG_AUTH_SESSION_DAYS` | `30` | Session token lifetime in days. |
+| `RAGRIG_AUTH_SECRET_PEPPER` | dev default | HMAC pepper for token hashing. **Always override in production.** |
+
+### First-run setup
+
+When `RAGRIG_AUTH_ENABLED=true`, navigate to the web console — you will be redirected to
+the login page. Register the first account via **Create account**. The first account
+automatically receives the `owner` role for the default workspace.
+
+### API keys
+
+Token-based API access is supported alongside browser sessions:
+
+```bash
+# Create an API key via a registered session (replace TOKEN and NAME)
+curl -X POST /auth/api-keys \
+  -H "Authorization: Bearer rag_session_..." \
+  -H "Content-Type: application/json" \
+  -d '{"name": "ci-key"}'
+
+# Use the returned key on API requests
+curl /knowledge-bases \
+  -H "Authorization: Bearer rag_live_..."
+```
+
+### Local development (auth disabled)
+
+For local iteration without login overhead:
+
+```bash
+RAGRIG_AUTH_ENABLED=false uv run uvicorn ragrig.main:app --reload
+```
+
+All requests are routed to the default workspace as an anonymous user.
+
 ## Production Guardrails
 
 RAGRig blocks the deterministic fake reranker fallback in production by default.

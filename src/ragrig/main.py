@@ -20,9 +20,11 @@ from ragrig.answer import (
 from ragrig.answer import (
     ProviderUnavailableError as AnswerProviderUnavailableError,
 )
-from ragrig.auth import ensure_default_workspace, resolve_workspace_id
+from ragrig.auth import ensure_default_workspace
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
+from ragrig.db.session import get_session as _get_session_default
+from ragrig.deps import get_workspace_id_from_auth
 from ragrig.evaluation import (
     build_evaluation_list_report,
     build_evaluation_run_report,
@@ -69,6 +71,7 @@ from ragrig.retrieval import (
     RetrievalError,
     search_knowledge_base,
 )
+from ragrig.routers.auth import router as auth_router
 from ragrig.tasks import (
     TaskRetryError,
     cleanup_staging_dir,
@@ -359,6 +362,8 @@ def create_app(
 
     app = FastAPI(title="RAGRig", version=__version__, lifespan=lifespan)
 
+    app.include_router(auth_router)
+
     def shutdown_task_executor() -> None:
         shutdown = getattr(active_task_executor, "shutdown", None)
         if shutdown is not None:
@@ -380,6 +385,9 @@ def create_app(
         finally:
             session.close()
 
+    app.dependency_overrides[_get_session_default] = get_session
+    app.dependency_overrides[get_settings] = lambda: active_settings
+
     def get_session_factory() -> Callable[[], Session]:
         if session_factory is not None:
             return session_factory
@@ -387,10 +395,9 @@ def create_app(
         return default_session_factory
 
     def get_workspace_id(
-        authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-        session: Annotated[Session, Depends(get_session)] = None,
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id_from_auth)],
     ) -> "uuid.UUID":
-        return resolve_workspace_id(session, authorization=authorization)
+        return workspace_id
 
     @app.get("/health", response_model=None)
     def health() -> dict[str, Any] | JSONResponse:

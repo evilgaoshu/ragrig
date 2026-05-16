@@ -111,6 +111,26 @@ This section was not in the original roadmap. It emerged to give contributors an
 
 ---
 
+## Authentication and Multi-Tenant Isolation — In Progress
+
+**Done:**
+- `workspaces`, `users`, `workspace_memberships`, `api_keys`, `user_sessions` DB schema and migrations.
+- HMAC-SHA256 API key hashing with prefix lookup and optional pepper.
+- Session token create / verify / revoke with expiry.
+- Password hashing (bcrypt) and `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` endpoints.
+- `RAGRIG_AUTH_ENABLED` config flag: when `false`, all requests fall through to the default workspace for local dev.
+- `AuthContext` FastAPI dependency; `workspace_id` derived from verified token (not silently defaulted).
+- `knowledge_bases` scoped to `workspace_id` with per-workspace unique constraint.
+- Frontend login page with sign-in / create-account tabs; `AuthProvider`, `ProtectedRoute`, token stored in localStorage.
+
+**Open:**
+- Role-based write guards on mutating API routes (`require_role("editor")`).
+- User management API (list workspace members, change roles, revoke sessions).
+- `workspace_id` propagated to hot retrieval tables (`chunks`, `embeddings`) for direct filtering without joins.
+- Admin invitation flow / email verification.
+
+---
+
 ## Non-goals for the First Release
 
 - Full office-suite editing.

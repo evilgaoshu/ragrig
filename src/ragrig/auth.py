@@ -10,10 +10,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Sequence
 
+import bcrypt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ragrig.db.models import ApiKey, UserSession, Workspace
+from ragrig.db.models import ApiKey, User, UserSession, Workspace, WorkspaceMembership
 
 DEFAULT_WORKSPACE_ID = uuid.UUID("00000000-0000-0000-0000-00000000defa")
 DEFAULT_WORKSPACE_SLUG = "default"
@@ -233,6 +234,116 @@ def _is_expired(expires_at: datetime | None, *, now: datetime | None = None) -> 
 
 def expires_in(**kwargs: int) -> datetime:
     return datetime.now(UTC) + timedelta(**kwargs)
+
+
+def hash_password(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def register_user(
+    session: Session,
+    *,
+    email: str,
+    password: str,
+    display_name: str | None = None,
+    session_days: int = 30,
+    pepper: str | bytes | None = None,
+) -> CreatedUserSession:
+    """Create a user, add them as owner of the default workspace, and return a session."""
+    normalized_email = email.strip().lower()
+    existing = session.scalar(select(User).where(User.email == normalized_email).limit(1))
+    if existing is not None:
+        raise ValueError("email already registered")
+
+    user = User(
+        email=normalized_email,
+        display_name=display_name or normalized_email.split("@")[0],
+        password_hash=hash_password(password),
+        status="active",
+    )
+    session.add(user)
+    session.flush()
+
+    workspace = ensure_default_workspace(session)
+
+    existing_membership = session.scalar(
+        select(WorkspaceMembership)
+        .where(WorkspaceMembership.workspace_id == workspace.id)
+        .where(WorkspaceMembership.user_id == user.id)
+        .limit(1)
+    )
+    if existing_membership is None:
+        is_first_user = (
+            session.scalar(
+                select(WorkspaceMembership)
+                .where(WorkspaceMembership.workspace_id == workspace.id)
+                .limit(1)
+            )
+            is None
+        )
+        role = "owner" if is_first_user else "viewer"
+        membership = WorkspaceMembership(
+            workspace_id=workspace.id,
+            user_id=user.id,
+            role=role,
+            status="active",
+        )
+        session.add(membership)
+        session.flush()
+
+    return create_user_session(
+        session,
+        workspace_id=workspace.id,
+        user_id=user.id,
+        expires_at=expires_in(days=session_days),
+        scopes=["*"],
+        pepper=pepper,
+    )
+
+
+def login_user(
+    session: Session,
+    *,
+    email: str,
+    password: str,
+    session_days: int = 30,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    pepper: str | bytes | None = None,
+) -> CreatedUserSession | None:
+    """Verify credentials and return a new session, or None on failure."""
+    normalized_email = email.strip().lower()
+    user = session.scalar(select(User).where(User.email == normalized_email).limit(1))
+    if user is None or user.status != "active":
+        return None
+    if not user.password_hash or not verify_password(password, user.password_hash):
+        return None
+
+    membership = session.scalar(
+        select(WorkspaceMembership)
+        .where(WorkspaceMembership.user_id == user.id)
+        .where(WorkspaceMembership.status == "active")
+        .limit(1)
+    )
+    workspace_id = membership.workspace_id if membership else DEFAULT_WORKSPACE_ID
+
+    return create_user_session(
+        session,
+        workspace_id=workspace_id,
+        user_id=user.id,
+        expires_at=expires_in(days=session_days),
+        scopes=["*"],
+        ip=ip,
+        user_agent=user_agent,
+        pepper=pepper,
+    )
 
 
 def resolve_workspace_id(
