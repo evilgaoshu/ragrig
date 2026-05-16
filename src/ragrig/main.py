@@ -27,7 +27,7 @@ from ragrig.evaluation import (
     load_run_from_store,
     run_evaluation,
 )
-from ragrig.health import create_database_check
+from ragrig.health import build_reranker_health, create_database_check
 from ragrig.ingestion.web_import import WebsiteImportError
 from ragrig.local_pilot import (
     ModelConfigError,
@@ -61,6 +61,7 @@ from ragrig.retrieval import (
     EmptyQueryError,
     InvalidTopKError,
     KnowledgeBaseNotFoundError,
+    RerankerUnavailableError,
     RetrievalError,
     search_knowledge_base,
 )
@@ -380,7 +381,7 @@ def create_app(
         return default_session_factory
 
     @app.get("/health", response_model=None)
-    def health() -> dict[str, str] | JSONResponse:
+    def health() -> dict[str, Any] | JSONResponse:
         try:
             database_check()
         except Exception as exc:  # pragma: no cover - covered via contract test
@@ -391,6 +392,7 @@ def create_app(
                     "app": "ok",
                     "db": "error",
                     "detail": str(exc),
+                    "reranker": build_reranker_health(active_settings),
                     "version": __version__,
                 },
             )
@@ -399,6 +401,7 @@ def create_app(
             "status": "healthy",
             "app": "ok",
             "db": "connected",
+            "reranker": build_reranker_health(active_settings),
             "version": __version__,
         }
 
@@ -1210,6 +1213,8 @@ def create_app(
             return JSONResponse(status_code=404, content=_serialize_error(exc))
         except (EmptyQueryError, EmbeddingProfileMismatchError, InvalidTopKError) as exc:
             return JSONResponse(status_code=400, content=_serialize_error(exc))
+        except RerankerUnavailableError as exc:
+            return JSONResponse(status_code=503, content=_serialize_error(exc))
 
         response: dict[str, Any] = {
             "knowledge_base": report.knowledge_base,
@@ -1429,6 +1434,8 @@ def create_app(
             return JSONResponse(status_code=404, content=_serialize_error(exc))
         except (EmptyQueryError, EmbeddingProfileMismatchError, InvalidTopKError) as exc:
             return JSONResponse(status_code=400, content=_serialize_error(exc))
+        except RerankerUnavailableError as exc:
+            return JSONResponse(status_code=503, content=_serialize_error(exc))
         except AnswerProviderUnavailableError as exc:
             return JSONResponse(
                 status_code=503,

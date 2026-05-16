@@ -22,6 +22,13 @@ class Settings(BaseSettings):
         description="Qdrant base URL for the optional vector backend.",
     )
     qdrant_api_key: str | None = Field(default=None, description="Optional Qdrant API key.")
+    ragrig_allow_fake_reranker: bool = Field(
+        default=False,
+        description=(
+            "Allow the deterministic fake reranker fallback in production. "
+            "Use only for demos or explicitly accepted degraded environments."
+        ),
+    )
 
     @property
     def runtime_database_url(self) -> str:

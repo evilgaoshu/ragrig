@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from ragrig.config import Settings, get_settings
@@ -62,3 +64,20 @@ def test_settings_include_vector_backend_defaults() -> None:
     assert settings.vector_backend == "pgvector"
     assert settings.qdrant_url == "http://localhost:6333"
     assert settings.qdrant_api_key is None
+
+
+def test_settings_parses_fake_reranker_guard_env(monkeypatch) -> None:
+    get_settings.cache_clear()
+    monkeypatch.setenv("RAGRIG_ALLOW_FAKE_RERANKER", "true")
+
+    settings = get_settings()
+
+    assert settings.ragrig_allow_fake_reranker is True
+    get_settings.cache_clear()
+
+
+def test_env_example_documents_fake_reranker_guard() -> None:
+    env_example = Path(".env.example").read_text(encoding="utf-8")
+
+    assert "RAGRIG_ALLOW_FAKE_RERANKER=false" in env_example
+    assert "Production disables fake reranker fallback by default" in env_example
