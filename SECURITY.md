@@ -4,9 +4,11 @@ RAGRig handles enterprise knowledge, source credentials, and retrieval permissio
 
 ## Reporting Vulnerabilities
 
-This project is not yet published with a dedicated security contact.
+Please use [GitHub private vulnerability reporting](https://github.com/evilgaoshu/ragrig/security/advisories/new) to report security issues confidentially. This keeps exploit details out of public issues while giving maintainers the context needed to triage and respond.
 
-Until then, please avoid posting exploitable details in public issues. Open a minimal issue saying you have a security report, and the maintainers will provide a private contact path.
+If you are unsure whether something qualifies, open a minimal public issue saying you have a security report — maintainers will follow up with a private channel.
+
+Do not post exploitable payloads, credentials, or proof-of-concept code in public issues.
 
 ## Security Priorities
 
@@ -20,4 +22,4 @@ Until then, please avoid posting exploitable details in public issues. Open a mi
 
 ## Supported Versions
 
-RAGRig is in early scaffolding and does not have released versions yet.
+RAGRig does not have a stable release yet. Security fixes target the `main` branch.
