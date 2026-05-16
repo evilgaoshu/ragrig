@@ -83,6 +83,7 @@ def test_workspace_auth_phase_1_tables_match_design_contract() -> None:
         "workspace_memberships",
         "api_keys",
         "user_sessions",
+        "workspace_invitations",
     }.issubset(metadata.tables.keys())
 
     workspaces = metadata.tables["workspaces"]
@@ -90,6 +91,7 @@ def test_workspace_auth_phase_1_tables_match_design_contract() -> None:
     memberships = metadata.tables["workspace_memberships"]
     api_keys = metadata.tables["api_keys"]
     user_sessions = metadata.tables["user_sessions"]
+    invitations = metadata.tables["workspace_invitations"]
 
     assert workspaces.c.slug.unique
     assert workspaces.c.display_name.nullable is False
@@ -104,3 +106,7 @@ def test_workspace_auth_phase_1_tables_match_design_contract() -> None:
     assert user_sessions.c.token_hash.unique
     assert "token" not in user_sessions.c
     assert user_sessions.c.expires_at.nullable is False
+    assert invitations.c.token_hash.unique
+    assert "token" not in invitations.c
+    assert invitations.c.expires_at.nullable is False
+    assert invitations.c.workspace_id.references(workspaces.c.id)

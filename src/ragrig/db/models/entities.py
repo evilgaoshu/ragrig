@@ -39,6 +39,7 @@ class Workspace(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="workspace")
     user_sessions: Mapped[list["UserSession"]] = relationship(back_populates="workspace")
     knowledge_bases: Mapped[list["KnowledgeBase"]] = relationship(back_populates="workspace")
+    invitations: Mapped[list["WorkspaceInvitation"]] = relationship(back_populates="workspace")
 
 
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -153,6 +154,44 @@ class UserSession(UUIDPrimaryKeyMixin, Base):
 
     workspace: Mapped[Workspace] = relationship(back_populates="user_sessions")
     user: Mapped[User] = relationship(back_populates="sessions")
+
+
+class WorkspaceInvitation(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "workspace_invitations"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('owner', 'admin', 'editor', 'viewer')",
+            name="ck_workspace_invitations_role",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'accepted', 'expired', 'revoked')",
+            name="ck_workspace_invitations_status",
+        ),
+        Index("ix_workspace_invitations_workspace_id", "workspace_id"),
+        Index("ix_workspace_invitations_token_hash", "token_hash"),
+    )
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+    )
+    email: Mapped[str | None] = mapped_column(String(320))
+    token_hash: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="editor")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    workspace: Mapped[Workspace] = relationship(back_populates="invitations")
+    created_by_user: Mapped[User | None] = relationship()
 
 
 class KnowledgeBase(UUIDPrimaryKeyMixin, TimestampMixin, Base):

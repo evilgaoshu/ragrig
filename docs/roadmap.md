@@ -69,8 +69,10 @@ This roadmap reflects the current state of the project as of May 2026. Completed
 - Database source connectors (PostgreSQL, MySQL read path).
 - Parquet export dependency in place (`pyarrow`).
 
+**Done:**
+- Markdown, JSONL, and NFS export sinks (unified `sink.filesystem` connector writing to any local path, including NFS mount points).
+
 **Open:**
-- Markdown, JSONL, and NFS export sinks.
 - Wiki, WPS, and OnlyOffice connectors.
 
 ---
@@ -88,8 +90,8 @@ This roadmap reflects the current state of the project as of May 2026. Completed
 - Knowledge map / cross-document understanding API, Web Console panel, and deterministic smoke artifact.
 - Cost and latency tracking across pipeline and model changes.
 
-**Open:**
-- Authored golden question sets for domain-specific retrieval quality regression.
+**Done:**
+- Authored golden question sets for domain-specific retrieval quality regression (retrieval, edge-cases, multi-doc fixture sets with 35 questions across hit/miss/lexical/semantic/adversarial tags).
 
 ---
 
@@ -106,8 +108,8 @@ This section was not in the original roadmap. It emerged to give contributors an
 - SQLite-backed local storage with ResourceWarning audit and cleanup.
 - Google Workspace pilot diagnostics parity with production contract.
 
-**Open:**
-- Automated nightly evidence smoke in CI.
+**Done:**
+- Automated nightly evidence smoke in CI (local-pilot-smoke added to nightly workflow).
 
 ---
 
@@ -128,9 +130,12 @@ This section was not in the original roadmap. It emerged to give contributors an
 - User management API (`GET /auth/workspace/members`, `PATCH /auth/workspace/members/{id}`, `DELETE /auth/workspace/members/{id}`).
 - `AuthContext.role` resolved from `WorkspaceMembership` on every request.
 
+**Done:**
+- `workspace_id` propagated to hot retrieval tables (`chunks`, `embeddings`); direct `Chunk.workspace_id` filter added to all retrieval query paths (`build_embedding_base_statement`, SQL and Python distance search, available-profiles probe).
+- Admin invitation flow: `POST/GET/DELETE /auth/workspace/invitations`; `invitation_token` on register; `RAGRIG_OPEN_REGISTRATION` flag for closed-registration mode.
+
 **Open:**
-- `workspace_id` propagated to hot retrieval tables (`chunks`, `embeddings`) for direct filtering without joins.
-- Admin invitation flow / email verification.
+- Email delivery for invitation links (requires SMTP / transactional email provider integration).
 
 ---
 

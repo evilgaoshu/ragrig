@@ -33,6 +33,14 @@ class Settings(BaseSettings):
         default=30,
         description="Session token lifetime in days.",
     )
+    ragrig_open_registration: bool = Field(
+        default=True,
+        description=(
+            "Allow anyone to register without an invitation. When False, registration "
+            "requires a valid invitation token issued by an admin. Ignored when "
+            "ragrig_auth_enabled is False."
+        ),
+    )
     ragrig_allow_fake_reranker: bool = Field(
         default=False,
         description=(
