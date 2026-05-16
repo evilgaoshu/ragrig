@@ -1,7 +1,7 @@
 # Google Workspace Source Connector SPEC
 
-**Version**: 1.1.0  
-**Last Updated**: 2026-05-13  
+**Version**: 1.2.0
+**Last Updated**: 2026-05-16
 **Status**: Pilot
 
 ---
@@ -10,7 +10,7 @@
 
 This SPEC defines the first enterprise collaboration source connector for ragrig: a Google Workspace (Drive + Docs) pilot. It validates configuration, discovery, incremental sync, desensitization (secret masking), and Console diagnostic loop.
 
-This version inherits the EVI-107 pilot shipped in PR #99 and narrows three QA follow-ups from EVI-112: diagnostic status semantics, console exception redaction, and capability contract alignment.
+This version inherits the EVI-107 pilot shipped in PR #99, narrows three QA follow-ups from EVI-112, and adds a production-parity diagnostics contract that operators can run without Google API network access.
 
 ---
 
@@ -123,8 +123,13 @@ Console output must display:
 - `status` (`healthy`, `degraded`, `skip`)
 - `config_valid`
 - `schema_version`
+- `diagnostics_version`
 - `skip_reason` (when applicable)
 - `degraded_reason` (when applicable)
+- `credential_contract`
+- `capability_contract`
+- `production_contract`
+- `diagnostic_checks`
 - `last_discovery_at`
 - `last_discovery` summary (total count, skipped count, next cursor, item list)
 - `next_step_command`
@@ -135,8 +140,14 @@ Status semantics:
 - `degraded`: config shape is invalid, service-account payload is invalid JSON, or any rendered connector error required sanitization
 
 Permission mapping contract for this pilot:
-- `PERMISSION_MAPPING` is not declared for `source.google_workspace` in v1.1 because the pilot does not emit ACL or sharing metadata yet.
+- `PERMISSION_MAPPING` is not declared for `source.google_workspace` because the pilot does not emit ACL or sharing metadata yet.
 - A later version may re-introduce the capability once runtime output includes a documented permission-mapping payload.
+
+Production-parity diagnostics:
+- `credential_contract` records whether the connector can resolve its declared env reference, while never exposing the raw service-account payload.
+- `capability_contract` must mark `read` and `incremental_sync` as declared/contract-ready and `permission_mapping` as `not_declared`.
+- `production_contract` must make the CI/live boundary explicit: CI uses dry-run fixtures, no Google API network calls are made, live retry remains reserved behind `max_retries`, and permission mapping remains intentionally absent.
+- `diagnostic_checks` must include config shape, credential resolution, discovery summary, secret redaction, permission mapping contract, and network boundary checks.
 
 ---
 
@@ -160,6 +171,7 @@ When credentials are present but malformed:
 Existing Makefile targets cover the new code:
 - `make lint` — includes `src/ragrig/plugins/sources/google_workspace` via ruff
 - `make test` — discovers `tests/test_google_workspace_source.py`
+- `make google-workspace-diagnostics` — writes `docs/operations/artifacts/google-workspace-diagnostics.json`
 - `make coverage` — includes all source modules
 - `make web-check` — runs `tests/test_web_console.py`
 

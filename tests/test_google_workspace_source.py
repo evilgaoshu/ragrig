@@ -169,8 +169,26 @@ class TestConsoleOutput:
         state = build_connector_state(_config(), env=env, scan_result=scan_result)
         assert state["status"] == "healthy"
         assert state["config_valid"] is True
+        assert state["schema_version"] == "1.1.0"
+        assert state["credential_contract"]["env_ref"] == "GOOGLE_SERVICE_ACCOUNT_JSON"
+        assert state["credential_contract"]["raw_secret_exposed"] is False
+        assert state["production_contract"]["network_calls_in_ci"] is False
+        assert state["production_contract"]["permission_mapping"] == "not_declared"
         assert state["last_discovery"] is not None
         assert state["last_discovery"]["total_count"] == 2
+        assert state["last_discovery"]["items"][0]["logical_type"] == "drive_file"
+        assert state["last_discovery"]["items"][0]["parent_path"]
+
+    def test_state_records_permission_mapping_as_undeclared(self) -> None:
+        state = build_connector_state(_config(), env={})
+        permission_contract = next(
+            item
+            for item in state["capability_contract"]
+            if item["capability"] == "permission_mapping"
+        )
+        assert permission_contract["declared"] is False
+        assert permission_contract["status"] == "not_declared"
+        assert "does not emit ACL" in permission_contract["evidence"]
 
     def test_state_degraded_for_invalid_json_service_account(self) -> None:
         env = {"GOOGLE_SERVICE_ACCOUNT_JSON": "not-valid-json"}
@@ -187,6 +205,11 @@ class TestConsoleOutput:
         assert state["status"] == "degraded"
         assert state["degraded_reason"]
         assert state["skip_reason"] is None
+        assert state["credential_contract"]["env_ref"] is None
+        config_shape = next(
+            item for item in state["diagnostic_checks"] if item["name"] == "config_shape"
+        )
+        assert config_shape["status"] == "fail"
 
     def test_format_console_output_contains_no_secrets(self) -> None:
         env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
@@ -236,6 +259,8 @@ class TestConsoleOutput:
         assert "source.google_workspace" in text
         assert "skip" in text
         assert "Skip Reason" in text
+        assert "Capability Contract" in text
+        assert "Production Contract" in text
         assert state["next_step_command"] in text
 
     def test_format_console_output_shows_discovery_summary(self) -> None:
