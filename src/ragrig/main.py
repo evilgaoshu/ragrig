@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, Header, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.responses import Response
@@ -1938,6 +1939,16 @@ def create_app(
         if result is None:
             return JSONResponse(status_code=404, content={"error": "ingestion_dag_not_found"})
         return result
+
+    # ── React SPA ──────────────────────────────────────────────────────────────
+    _dist = Path(__file__).parent / "static" / "dist"
+    if _dist.exists():
+        app.mount("/app/assets", StaticFiles(directory=_dist / "assets"), name="react-assets")
+
+        @app.get("/app", include_in_schema=False)
+        @app.get("/app/{path:path}", include_in_schema=False)
+        def react_app(_path: str = "") -> FileResponse:
+            return FileResponse(_dist / "index.html")
 
     return app
 

@@ -10,6 +10,7 @@ __pycache__/
 *.py[cod]
 
 dist/
+!src/ragrig/static/dist/
 build/
 .cache/
 .superpowers/
