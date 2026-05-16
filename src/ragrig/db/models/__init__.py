@@ -1,8 +1,11 @@
 from ragrig.db.models.base import Base
 from ragrig.db.models.entities import (
+    AnswerFeedback,
     ApiKey,
     AuditEvent,
     Chunk,
+    Conversation,
+    ConversationTurn,
     Document,
     DocumentUnderstanding,
     DocumentVersion,
@@ -24,9 +27,12 @@ from ragrig.db.models.entities import (
 
 __all__ = [
     "Base",
+    "AnswerFeedback",
     "ApiKey",
     "AuditEvent",
     "Chunk",
+    "Conversation",
+    "ConversationTurn",
     "Document",
     "DocumentUnderstanding",
     "DocumentVersion",

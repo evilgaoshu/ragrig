@@ -79,6 +79,7 @@ from ragrig.retrieval import (
 )
 from ragrig.routers.audit import router as audit_router
 from ragrig.routers.auth import router as auth_router
+from ragrig.routers.conversations import router as conversations_router
 from ragrig.routers.mcp import router as mcp_router
 from ragrig.routers.openai_compat import router as openai_compat_router
 from ragrig.routers.retention import router as retention_router
@@ -419,6 +420,7 @@ def create_app(
     app.include_router(retention_router)
     app.include_router(openai_compat_router)
     app.include_router(mcp_router)
+    app.include_router(conversations_router)
 
     def shutdown_task_executor() -> None:
         shutdown = getattr(active_task_executor, "shutdown", None)
@@ -1575,6 +1577,9 @@ def create_app(
                     "chunk_index": c.chunk_index,
                     "text_preview": c.text_preview,
                     "score": c.score,
+                    "char_start": c.char_start,
+                    "char_end": c.char_end,
+                    "page_number": c.page_number,
                     "metadata_summary": c.metadata_summary,
                 }
                 for c in report.citations
@@ -1588,6 +1593,9 @@ def create_app(
                     "text": ec.text,
                     "score": ec.score,
                     "distance": ec.distance,
+                    "char_start": ec.char_start,
+                    "char_end": ec.char_end,
+                    "page_number": ec.page_number,
                 }
                 for ec in report.evidence_chunks
             ],

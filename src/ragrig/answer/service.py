@@ -47,6 +47,9 @@ def _build_citations(evidence: list[EvidenceChunk]) -> list[Citation]:
                 chunk_index=chunk.chunk_index,
                 text_preview=chunk.text[:160],
                 score=chunk.score,
+                char_start=chunk.char_start,
+                char_end=chunk.char_end,
+                page_number=chunk.page_number,
                 metadata_summary=safe_metadata,
             )
         )
@@ -149,6 +152,9 @@ def generate_answer(
                 text=result.text,
                 score=result.score,
                 distance=result.distance,
+                char_start=getattr(result, "char_start", None),
+                char_end=getattr(result, "char_end", None),
+                page_number=getattr(result, "page_number", None),
             )
         )
 
