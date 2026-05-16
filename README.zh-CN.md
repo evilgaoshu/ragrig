@@ -319,6 +319,31 @@ make audit
 
 `make audit` 需要网络访问漏洞服务。离线环境请改跑 `make audit-dry-run`，并把缺失的 live audit 记录为发布 blocker。
 
+## 认证
+
+RAGRig 内置基于密码的认证系统和 Workspace 级租户隔离。
+
+### 配置
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `RAGRIG_AUTH_ENABLED` | `true` | 启用认证。本地开发可设为 `false`（无需登录）。 |
+| `RAGRIG_AUTH_SESSION_DAYS` | `30` | Session token 有效天数。 |
+| `RAGRIG_AUTH_SECRET_PEPPER` | 内置开发默认值 | 用于 token 哈希的 HMAC pepper。**生产环境必须替换。** |
+
+### 首次启动
+
+启用认证后，访问 Web Console 会跳转至登录页。通过 **创建账号** 注册第一个账号，
+该账号自动获得默认 Workspace 的 `owner` 角色。
+
+### 关闭认证（本地开发）
+
+```bash
+RAGRIG_AUTH_ENABLED=false uv run uvicorn ragrig.main:app --reload
+```
+
+所有请求以匿名用户身份路由到默认 Workspace，无需登录。
+
 ## 生产防护
 
 RAGRig 默认在生产环境禁用 deterministic fake reranker fallback。只有明确用于
