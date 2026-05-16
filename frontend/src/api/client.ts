@@ -1,11 +1,22 @@
 const BASE = import.meta.env.DEV ? '' : ''
+const TOKEN_KEY = 'ragrig_token'
+
+function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY)
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken()
+  const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers: { 'Content-Type': 'application/json', ...authHeaders, ...init?.headers },
     ...init,
   })
   if (!res.ok) {
+    if (res.status === 401 && !path.startsWith('/auth/')) {
+      localStorage.removeItem(TOKEN_KEY)
+      window.location.href = '/login'
+    }
     const body = await res.json().catch(() => ({}))
     throw new Error(body?.error ?? body?.detail ?? `HTTP ${res.status}`)
   }
@@ -13,8 +24,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function requestForm<T>(path: string, body: FormData): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: 'POST', body })
+  const token = getToken()
+  const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+  const res = await fetch(`${BASE}${path}`, { method: 'POST', headers: authHeaders, body })
   if (!res.ok) {
+    if (res.status === 401) {
+      localStorage.removeItem(TOKEN_KEY)
+      window.location.href = '/login'
+    }
     const b = await res.json().catch(() => ({}))
     throw new Error(b?.error ?? b?.detail ?? `HTTP ${res.status}`)
   }

@@ -1,5 +1,8 @@
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
+import ProtectedRoute from './components/ProtectedRoute'
+import { AuthProvider } from './contexts/AuthContext'
+import Login from './pages/Login'
 import Overview from './pages/Overview'
 import KnowledgeBases from './pages/KnowledgeBases'
 import Sources from './pages/Sources'
@@ -26,38 +29,57 @@ import Settings from './pages/Settings'
 import Wizard from './pages/Wizard'
 import Stub from './pages/Stub'
 
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+
+      <Route
+        path="*"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <Routes>
+                <Route path="/" element={<Overview />} />
+                <Route path="/knowledge-bases" element={<KnowledgeBases />} />
+                <Route path="/sources" element={<Sources />} />
+                <Route path="/pipelines" element={<Pipelines />} />
+                <Route path="/retrieval-lab" element={<RetrievalLab />} />
+
+                <Route path="/wizard" element={<Wizard />} />
+                <Route path="/upload" element={<Upload />} />
+                <Route path="/formats" element={<Formats />} />
+                <Route path="/sanitizer-coverage" element={<SanitizerCoverage />} />
+                <Route path="/sanitizer-drift" element={<SanitizerDrift />} />
+                <Route path="/retrieval-benchmark" element={<RetrievalBenchmark />} />
+                <Route path="/baseline-integrity" element={<BaselineIntegrity />} />
+                <Route path="/answer-live-smoke" element={<AnswerLiveSmoke />} />
+                <Route path="/parser-corpus" element={<ParserCorpus />} />
+                <Route path="/ops-diagnostics" element={<OpsDiagnostics />} />
+                <Route path="/cost-latency" element={<CostLatency />} />
+                <Route path="/documents" element={<Documents />} />
+                <Route path="/answer-gen" element={<AnswerGen />} />
+                <Route path="/models" element={<Models />} />
+                <Route path="/profile-matrix" element={<ProfileMatrix />} />
+                <Route path="/plugins" element={<Plugins />} />
+                <Route path="/evaluation" element={<Evaluation />} />
+                <Route path="/knowledge-map" element={<KnowledgeMap />} />
+                <Route path="/settings" element={<Settings />} />
+
+                <Route path="*" element={<Stub title="Not Found" description="This page does not exist." />} />
+              </Routes>
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+    </Routes>
+  )
+}
+
 export default function App() {
   return (
-    <Layout>
-      <Routes>
-        <Route path="/" element={<Overview />} />
-        <Route path="/knowledge-bases" element={<KnowledgeBases />} />
-        <Route path="/sources" element={<Sources />} />
-        <Route path="/pipelines" element={<Pipelines />} />
-        <Route path="/retrieval-lab" element={<RetrievalLab />} />
-
-        <Route path="/wizard" element={<Wizard />} />
-        <Route path="/upload" element={<Upload />} />
-        <Route path="/formats" element={<Formats />} />
-        <Route path="/sanitizer-coverage" element={<SanitizerCoverage />} />
-        <Route path="/sanitizer-drift" element={<SanitizerDrift />} />
-        <Route path="/retrieval-benchmark" element={<RetrievalBenchmark />} />
-        <Route path="/baseline-integrity" element={<BaselineIntegrity />} />
-        <Route path="/answer-live-smoke" element={<AnswerLiveSmoke />} />
-        <Route path="/parser-corpus" element={<ParserCorpus />} />
-        <Route path="/ops-diagnostics" element={<OpsDiagnostics />} />
-        <Route path="/cost-latency" element={<CostLatency />} />
-        <Route path="/documents" element={<Documents />} />
-        <Route path="/answer-gen" element={<AnswerGen />} />
-        <Route path="/models" element={<Models />} />
-        <Route path="/profile-matrix" element={<ProfileMatrix />} />
-        <Route path="/plugins" element={<Plugins />} />
-        <Route path="/evaluation" element={<Evaluation />} />
-        <Route path="/knowledge-map" element={<KnowledgeMap />} />
-        <Route path="/settings" element={<Settings />} />
-
-        <Route path="*" element={<Stub title="Not Found" description="This page does not exist." />} />
-      </Routes>
-    </Layout>
+    <AuthProvider>
+      <AppRoutes />
+    </AuthProvider>
   )
 }
