@@ -687,7 +687,9 @@ class MfaSetupResponse(BaseModel):
 
 
 class MfaVerifyRequest(BaseModel):
-    code: str = Field(min_length=6, max_length=16, description="6-digit TOTP or 10-char backup code")
+    code: str = Field(
+        min_length=6, max_length=16, description="6-digit TOTP or 10-char backup code"
+    )
 
 
 class MfaStatusResponse(BaseModel):
@@ -775,7 +777,9 @@ def mfa_disable(
 
 class MfaChallengeRequest(BaseModel):
     session_token: str = Field(description="Temporary session token returned by /auth/login")
-    code: str = Field(min_length=6, max_length=16, description="6-digit TOTP or 10-char backup code")
+    code: str = Field(
+        min_length=6, max_length=16, description="6-digit TOTP or 10-char backup code"
+    )
 
 
 @router.post("/mfa/challenge", response_model=AuthResponse)
