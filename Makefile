@@ -4,7 +4,7 @@ APP_HOST_PORT ?= 8000
 RAGRIG_IMAGE ?= ragrig:local
 PILOT_BASE_URL ?= http://127.0.0.1:$(APP_HOST_PORT)
 
-.PHONY: sync frontend-build format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check required-ci-contexts-check web-check sqlite-warning-check local-pilot-preflight pilot-docker-preflight local-pilot-smoke local-pilot-console-e2e pilot-docker-build pilot-up pilot-down pilot-logs pilot-docker-smoke vercel-preview-smoke test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check google-workspace-diagnostics s3-check fileshare-check database-source-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke reranker-policy-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke eval-reindex-diff knowledge-map-check understanding-export-diff seed-acl-fixtures pipeline-dag-smoke ops-deploy-smoke ops-backup-smoke ops-restore-smoke ops-upgrade-smoke pilot-evidence-pack
+.PHONY: sync frontend-build format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check required-ci-contexts-check web-check sqlite-warning-check local-pilot-preflight pilot-docker-preflight local-pilot-smoke local-pilot-console-e2e pilot-docker-build pilot-up pilot-down pilot-logs pilot-docker-smoke vercel-preview-smoke test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check google-workspace-diagnostics s3-check fileshare-check database-source-check cost-latency-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke reranker-policy-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke eval-reindex-diff knowledge-map-check understanding-export-diff seed-acl-fixtures pipeline-dag-smoke ops-deploy-smoke ops-backup-smoke ops-restore-smoke ops-upgrade-smoke pilot-evidence-pack
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -193,6 +193,9 @@ fileshare-check:
 
 database-source-check:
 	$(UV) run python -m scripts.database_source_check --pretty --output $(ARTIFACTS_DIR)/database-source-check.json
+
+cost-latency-check:
+	$(UV) run python -m scripts.cost_latency_check --pretty --output $(ARTIFACTS_DIR)/cost-latency-check.json
 
 preflight-fileshare-live:
 	$(UV) run python -m scripts.preflight_fileshare_live

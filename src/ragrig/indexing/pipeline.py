@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from time import perf_counter
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 from ragrig.chunkers import ChunkingConfig, chunk_text
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding
 from ragrig.embeddings import EmbeddingResult
+from ragrig.observability import aggregate_cost_latency, observe_model_call
 from ragrig.plugins import get_plugin_registry
 from ragrig.processing_profile import ProcessingProfile, TaskType, resolve_profile
 from ragrig.providers import BaseProvider, get_provider_registry
@@ -90,6 +92,7 @@ def _replace_version_index(
     embedding_provider: BaseProvider,
     chunk_profile_id: str,
     embed_profile_id: str,
+    cost_latency_operations: list[dict[str, object]] | None = None,
 ) -> tuple[int, int]:
     existing_chunk_ids = list(
         session.scalars(select(Chunk.id).where(Chunk.document_version_id == document_version.id))
@@ -136,7 +139,22 @@ def _replace_version_index(
         session.flush()
         created_chunks.append(chunk)
 
+        started = perf_counter()
         embedding: EmbeddingResult = embedding_provider.embed_text(draft.text)
+        embedding_latency_ms = (perf_counter() - started) * 1000
+        cost_latency = observe_model_call(
+            operation="embedding",
+            provider=embedding.provider,
+            model=embedding.model,
+            input_text=draft.text,
+            latency_ms=embedding_latency_ms,
+            metadata={
+                "chunk_index": draft.chunk_index,
+                "document_version_id": str(document_version.id),
+            },
+        )
+        if cost_latency_operations is not None:
+            cost_latency_operations.append(cost_latency)
         session.add(
             Embedding(
                 chunk_id=chunk.id,
@@ -149,6 +167,7 @@ def _replace_version_index(
                     "config_hash": chunking_config.config_hash,
                     "document_version_id": str(document_version.id),
                     "profile_id": embed_profile_id,
+                    "cost_latency": cost_latency,
                 },
             )
         )
@@ -226,6 +245,7 @@ def index_knowledge_base(
     vector_backend: VectorBackend | None = None,
     force_reindex: bool = False,
 ) -> IndexingReport:
+    run_started = perf_counter()
     get_plugin_registry()
     knowledge_base = get_knowledge_base_by_name(session, knowledge_base_name)
     if knowledge_base is None:
@@ -262,6 +282,7 @@ def index_knowledge_base(
     failed_count = 0
     chunk_count = 0
     embedding_count = 0
+    run_cost_latency_operations: list[dict[str, object]] = []
     versions = list_latest_document_versions(session, knowledge_base_id=knowledge_base.id)
 
     for version in versions:
@@ -304,6 +325,7 @@ def index_knowledge_base(
                     skipped_count += 1
                     continue
 
+                document_cost_latency_operations: list[dict[str, object]] = []
                 created_chunks, created_embeddings = _replace_version_index(
                     session,
                     document_version=version,
@@ -312,7 +334,9 @@ def index_knowledge_base(
                     embedding_provider=embedding_provider,
                     chunk_profile_id=chunk_profile.profile_id,
                     embed_profile_id=embed_profile.profile_id,
+                    cost_latency_operations=document_cost_latency_operations,
                 )
+                run_cost_latency_operations.extend(document_cost_latency_operations)
                 chunk_count += created_chunks
                 embedding_count += created_embeddings
                 if vector_backend is not None:
@@ -333,6 +357,9 @@ def index_knowledge_base(
                     status="success",
                     metadata_json={
                         "chunk_count": created_chunks,
+                        "cost_latency_summary": aggregate_cost_latency(
+                            document_cost_latency_operations
+                        ),
                         "document_version_id": str(version.id),
                         "embedding_dimensions": embedding_dimensions,
                         "version_number": version.version_number,
@@ -357,6 +384,16 @@ def index_knowledge_base(
     run.failure_count = failed_count
     run.status = "completed_with_failures" if failed_count else "completed"
     run.finished_at = datetime.now(timezone.utc)
+    run.config_snapshot_json = {
+        **(run.config_snapshot_json or {}),
+        "cost_latency_summary": {
+            **aggregate_cost_latency(
+                run_cost_latency_operations,
+                total_latency_ms=(perf_counter() - run_started) * 1000,
+            ),
+            "operations": run_cost_latency_operations,
+        },
+    }
     session.commit()
 
     return IndexingReport(

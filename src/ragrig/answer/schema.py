@@ -53,6 +53,7 @@ class AnswerReport:
     retrieval_trace: dict[str, Any]
     grounding_status: GroundingStatus
     refusal_reason: str | None = None
+    cost_latency: dict[str, Any] = field(default_factory=dict)
 
 
 class AnswerGenerationError(RuntimeError):
