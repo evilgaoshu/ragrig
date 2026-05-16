@@ -19,11 +19,13 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
+from ragrig.auth import DEFAULT_WORKSPACE_ID
 from ragrig.config import Settings
 from ragrig.db.models import (
     Base,
     Document,
     DocumentVersion,
+    KnowledgeBase,
     PipelineRun,
     TaskRecord,
 )
@@ -5602,13 +5604,15 @@ async def test_dry_run_creates_audit_events(tmp_path) -> None:
 @pytest.mark.anyio
 async def test_retry_item_creates_audit_events(tmp_path) -> None:
     """Retry of a failed item should produce retry_start and retry_complete events."""
-    from ragrig.db.models import Document, KnowledgeBase, Source
+    from ragrig.db.models import Document, Source
 
     database_path = tmp_path / "retry-audit.db"
     session_factory = _create_file_session_factory(database_path)
 
     session = session_factory()
-    kb = KnowledgeBase(name="retry-audit-kb", description="", metadata_json={})
+    kb = KnowledgeBase(
+        name="retry-audit-kb", workspace_id=DEFAULT_WORKSPACE_ID, description="", metadata_json={}
+    )
     session.add(kb)
     session.flush()
     source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
@@ -5646,13 +5650,18 @@ async def test_retry_item_creates_audit_events(tmp_path) -> None:
 @pytest.mark.anyio
 async def test_retry_run_creates_audit_events(tmp_path) -> None:
     """Retry of a run should produce retry_start and retry_complete events."""
-    from ragrig.db.models import Document, KnowledgeBase, Source
+    from ragrig.db.models import Document, Source
 
     database_path = tmp_path / "retry-run-audit.db"
     session_factory = _create_file_session_factory(database_path)
 
     session = session_factory()
-    kb = KnowledgeBase(name="retry-run-audit-kb", description="", metadata_json={})
+    kb = KnowledgeBase(
+        name="retry-run-audit-kb",
+        workspace_id=DEFAULT_WORKSPACE_ID,
+        description="",
+        metadata_json={},
+    )
     session.add(kb)
     session.flush()
     source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
@@ -5691,13 +5700,18 @@ async def test_guardrail_invalid_state_transition(tmp_path) -> None:
     """Retry of a non-failed item should be denied."""
     from datetime import datetime, timezone
 
-    from ragrig.db.models import Document, KnowledgeBase, PipelineRun, PipelineRunItem, Source
+    from ragrig.db.models import Document, PipelineRun, PipelineRunItem, Source
 
     database_path = tmp_path / "guardrail-state.db"
     session_factory = _create_file_session_factory(database_path)
 
     session = session_factory()
-    kb = KnowledgeBase(name="guardrail-state-kb", description="", metadata_json={})
+    kb = KnowledgeBase(
+        name="guardrail-state-kb",
+        workspace_id=DEFAULT_WORKSPACE_ID,
+        description="",
+        metadata_json={},
+    )
     session.add(kb)
     session.flush()
     source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
@@ -5756,13 +5770,18 @@ async def test_guardrail_duplicate_retry(tmp_path) -> None:
     """Item already successfully retried should be denied."""
     from datetime import datetime, timezone
 
-    from ragrig.db.models import Document, KnowledgeBase, PipelineRun, PipelineRunItem, Source
+    from ragrig.db.models import Document, PipelineRun, PipelineRunItem, Source
 
     database_path = tmp_path / "guardrail-duplicate.db"
     session_factory = _create_file_session_factory(database_path)
 
     session = session_factory()
-    kb = KnowledgeBase(name="guardrail-dedup-kb", description="", metadata_json={})
+    kb = KnowledgeBase(
+        name="guardrail-dedup-kb",
+        workspace_id=DEFAULT_WORKSPACE_ID,
+        description="",
+        metadata_json={},
+    )
     session.add(kb)
     session.flush()
     source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
@@ -5821,13 +5840,18 @@ async def test_guardrail_expired_snapshot(tmp_path) -> None:
     """Retry with expired config snapshot should be denied."""
     from datetime import datetime, timezone
 
-    from ragrig.db.models import Document, KnowledgeBase, PipelineRun, PipelineRunItem, Source
+    from ragrig.db.models import Document, PipelineRun, PipelineRunItem, Source
 
     database_path = tmp_path / "guardrail-expired.db"
     session_factory = _create_file_session_factory(database_path)
 
     session = session_factory()
-    kb = KnowledgeBase(name="guardrail-expired-kb", description="", metadata_json={})
+    kb = KnowledgeBase(
+        name="guardrail-expired-kb",
+        workspace_id=DEFAULT_WORKSPACE_ID,
+        description="",
+        metadata_json={},
+    )
     session.add(kb)
     session.flush()
     source = Source(knowledge_base_id=kb.id, kind="local", uri="file:///tmp", config_json={})
