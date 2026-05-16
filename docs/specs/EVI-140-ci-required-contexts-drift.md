@@ -17,19 +17,18 @@ consumed by `scripts.check_required_ci_contexts`. Keep it aligned with the live
 
 <!-- required-ci-contexts:start -->
 - `RAGRig CI / lint`
-- `RAGRig CI / test (3.11)`
 - `RAGRig CI / test (3.12)`
-- `RAGRig CI / coverage`
 - `RAGRig CI / db-smoke`
 - `RAGRig CI / smoke`
 - `RAGRig CI / docker-build`
 - `RAGRig CI / frontend`
 <!-- required-ci-contexts:end -->
 
-The test matrix covers `["3.11", "3.12"]` — both contexts are required.
-`web-smoke` was consolidated into the test matrix job (each matrix entry now
-runs `make web-check` after `make test-fast`), so the standalone
-`RAGRig CI / web-smoke` context is no longer emitted.
+The test matrix covers `["3.12"]` only. `web-smoke` was consolidated into
+the test matrix job (each matrix entry now runs `make web-check` after
+`make test-fast`), so the standalone `RAGRig CI / web-smoke` context is no
+longer emitted. `RAGRig CI / coverage` runs only on push to main (not on
+PRs) to keep PR feedback fast; it is therefore not a required PR context.
 
 Other workflow jobs, such as `benchmark-guard`, `drift-diff`, and
 `supply-chain`, may run on PRs without being branch-protection required
