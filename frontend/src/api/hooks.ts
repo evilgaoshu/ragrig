@@ -82,26 +82,6 @@ export function useTask(taskId: string | null) {
   })
 }
 
-export function useModels() {
-  return useQuery({
-    queryKey: ['models'],
-    queryFn: () => api.get<{ embedding_models: unknown[]; rerankers: unknown[] }>('/models'),
-  })
-}
-
-export function usePlugins() {
-  return useQuery({
-    queryKey: ['plugins'],
-    queryFn: () => api.get<{ items: unknown[] }>('/plugins').then((r) => r.items),
-  })
-}
-
-export function useEvaluationRuns() {
-  return useQuery({
-    queryKey: ['evaluation-runs'],
-    queryFn: () => api.get<{ runs: unknown[] }>('/evaluations/runs').then((r) => r.runs),
-  })
-}
 
 export function useRetrieval() {
   return useMutation({
@@ -154,5 +134,113 @@ export function useDocumentVersionChunks(versionId: string | null) {
         .get<{ items: Chunk[] }>(`/document-versions/${versionId}/chunks`)
         .then((r) => r.items),
     enabled: !!versionId,
+  })
+}
+
+export function useSanitizerCoverage() {
+  return useQuery({
+    queryKey: ['sanitizer-coverage'],
+    queryFn: () => api.get<Record<string, unknown> | null>('/sanitizer-coverage'),
+  })
+}
+
+export function useSanitizerDriftSummary() {
+  return useQuery({
+    queryKey: ['sanitizer-drift-summary'],
+    queryFn: () => api.get<Record<string, unknown>>('/sanitizer-drift-history-summary'),
+  })
+}
+
+export function useSanitizerDriftHistory() {
+  return useQuery({
+    queryKey: ['sanitizer-drift-history'],
+    queryFn: () => api.get<Record<string, unknown>>('/sanitizer-drift-history'),
+  })
+}
+
+export function useRetrievalBenchmarkRecent() {
+  return useQuery({
+    queryKey: ['retrieval-benchmark-recent'],
+    queryFn: () => api.get<Record<string, unknown>>('/retrieval/benchmark/recent'),
+  })
+}
+
+export function useRetrievalBenchmarkIntegrity() {
+  return useQuery({
+    queryKey: ['retrieval-benchmark-integrity'],
+    queryFn: () => api.get<Record<string, unknown>>('/retrieval/benchmark/integrity'),
+  })
+}
+
+export function useAnswerLiveSmoke() {
+  return useQuery({
+    queryKey: ['answer-live-smoke'],
+    queryFn: () => api.get<Record<string, unknown>>('/answer/live-smoke'),
+  })
+}
+
+export function useAdvancedParserCorpus() {
+  return useQuery({
+    queryKey: ['advanced-parser-corpus'],
+    queryFn: () => api.get<Record<string, unknown>>('/advanced-parser-corpus'),
+  })
+}
+
+export function useOpsDiagnostics() {
+  return useQuery({
+    queryKey: ['ops-diagnostics'],
+    queryFn: () => api.get<Record<string, unknown>>('/ops/diagnostics'),
+  })
+}
+
+export function useModels() {
+  return useQuery({
+    queryKey: ['models'],
+    queryFn: () => api.get<Record<string, unknown>>('/models'),
+  })
+}
+
+export function usePluginsList() {
+  return useQuery({
+    queryKey: ['plugins-list'],
+    queryFn: () => api.get<{ items: Record<string, unknown>[] }>('/plugins').then((r) => r.items),
+  })
+}
+
+export function useProcessingProfileMatrix() {
+  return useQuery({
+    queryKey: ['processing-profile-matrix'],
+    queryFn: () => api.get<Record<string, unknown>>('/processing-profiles/matrix'),
+  })
+}
+
+export function useEvaluationRuns() {
+  return useQuery({
+    queryKey: ['evaluation-runs'],
+    queryFn: () => api.get<Record<string, unknown>>('/evaluations'),
+  })
+}
+
+export function useEvaluationBaselines() {
+  return useQuery({
+    queryKey: ['evaluation-baselines'],
+    queryFn: () => api.get<Record<string, unknown>>('/evaluations/baselines'),
+  })
+}
+
+export function useAnswerGen() {
+  return useMutation({
+    mutationFn: (body: {
+      knowledge_base: string
+      query: string
+      top_k: number
+      provider: string
+      model: string | null
+      answer_provider: string
+      answer_model: string | null
+      dimensions: number | null
+      principal_ids: string[]
+      enforce_acl: boolean
+    }) => api.post<Record<string, unknown>>('/retrieval/answer', body),
   })
 }

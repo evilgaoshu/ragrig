@@ -8,6 +8,13 @@ import RetrievalLab from './pages/RetrievalLab'
 import Upload from './pages/Upload'
 import Formats from './pages/Formats'
 import Documents from './pages/Documents'
+import SanitizerCoverage from './pages/SanitizerCoverage'
+import SanitizerDrift from './pages/SanitizerDrift'
+import RetrievalBenchmark from './pages/RetrievalBenchmark'
+import BaselineIntegrity from './pages/BaselineIntegrity'
+import AnswerLiveSmoke from './pages/AnswerLiveSmoke'
+import ParserCorpus from './pages/ParserCorpus'
+import OpsDiagnostics from './pages/OpsDiagnostics'
 import Stub from './pages/Stub'
 
 export default function App() {
@@ -23,13 +30,13 @@ export default function App() {
         <Route path="/wizard" element={<Stub title="Setup Wizard" description="Guided ingestion setup" />} />
         <Route path="/upload" element={<Upload />} />
         <Route path="/formats" element={<Formats />} />
-        <Route path="/sanitizer-coverage" element={<Stub title="Sanitizer Coverage" description="Parser redaction coverage metrics" />} />
-        <Route path="/sanitizer-drift" element={<Stub title="Sanitizer Drift" description="Sanitizer drift history and trend" />} />
-        <Route path="/retrieval-benchmark" element={<Stub title="Retrieval Benchmark" description="Retrieval quality benchmark results" />} />
-        <Route path="/baseline-integrity" element={<Stub title="Baseline Integrity" description="Retrieval baseline health check" />} />
-        <Route path="/answer-live-smoke" element={<Stub title="Answer Live Smoke" description="LLM answer pipeline health" />} />
-        <Route path="/parser-corpus" element={<Stub title="Parser Corpus" description="Advanced parser corpus status" />} />
-        <Route path="/ops-diagnostics" element={<Stub title="Ops Diagnostics" description="Deploy, backup, and restore diagnostics" />} />
+        <Route path="/sanitizer-coverage" element={<SanitizerCoverage />} />
+        <Route path="/sanitizer-drift" element={<SanitizerDrift />} />
+        <Route path="/retrieval-benchmark" element={<RetrievalBenchmark />} />
+        <Route path="/baseline-integrity" element={<BaselineIntegrity />} />
+        <Route path="/answer-live-smoke" element={<AnswerLiveSmoke />} />
+        <Route path="/parser-corpus" element={<ParserCorpus />} />
+        <Route path="/ops-diagnostics" element={<OpsDiagnostics />} />
         <Route path="/documents" element={<Documents />} />
         <Route path="/answer-gen" element={<Stub title="Answer Gen" description="Grounded answer generation playground" />} />
         <Route path="/models" element={<Stub title="Models" description="Embedding models and rerankers" />} />
