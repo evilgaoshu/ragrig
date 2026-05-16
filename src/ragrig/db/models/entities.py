@@ -463,6 +463,22 @@ class AuditEvent(UUIDPrimaryKeyMixin, Base):
 
 class TaskRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "task_records"
+    __table_args__ = (
+        UniqueConstraint("previous_task_id", name="uq_task_records_previous_task_id"),
+        UniqueConstraint("next_task_id", name="uq_task_records_next_task_id"),
+        UniqueConstraint("retry_idempotency_key", name="uq_task_records_retry_idempotency_key"),
+        CheckConstraint("attempt_count >= 0", name="ck_task_records_attempt_count_nonnegative"),
+        CheckConstraint(
+            "previous_task_id IS NULL OR previous_task_id <> id",
+            name="ck_task_records_previous_task_not_self",
+        ),
+        CheckConstraint(
+            "next_task_id IS NULL OR next_task_id <> id",
+            name="ck_task_records_next_task_not_self",
+        ),
+        Index("ix_task_records_previous_task_id", "previous_task_id"),
+        Index("ix_task_records_next_task_id", "next_task_id"),
+    )
 
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     task_type: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -473,6 +489,15 @@ class TaskRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     progress: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    previous_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("task_records.id"),
+    )
+    next_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("task_records.id"),
+    )
+    retry_idempotency_key: Mapped[str | None] = mapped_column(String(192))
 
 
 class UnderstandingRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):

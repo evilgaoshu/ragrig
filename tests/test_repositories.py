@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from ragrig.acl import AclMetadata
-from ragrig.db.models import AuditEvent, Chunk, DocumentVersion, PipelineRun, PipelineRunItem
+from ragrig.db.models import (
+    AuditEvent,
+    Chunk,
+    DocumentVersion,
+    PipelineRun,
+    PipelineRunItem,
+    TaskRecord,
+)
 from ragrig.repositories import (
     create_pipeline_run,
     create_pipeline_run_item,
+    create_task_record,
     get_document_by_uri,
     get_knowledge_base_by_name,
     get_next_version_number,
@@ -162,6 +171,52 @@ def test_document_version_helpers_and_pipeline_run_helpers(sqlite_session) -> No
     )
     assert item.error_message is None
     assert item.finished_at is not None
+
+
+def test_task_retry_edge_constraints_prevent_external_worker_siblings(sqlite_session) -> None:
+    previous = create_task_record(
+        sqlite_session,
+        task_type="pipeline_dag_ingestion",
+        payload_json={},
+        status="completed",
+        attempt_count=1,
+    )
+    first_retry = create_task_record(
+        sqlite_session,
+        task_type="pipeline_dag_ingestion",
+        payload_json={
+            "previous_task_id": str(previous.id),
+            "retry_idempotency_key": f"pipeline_dag_ingestion:{previous.id}",
+        },
+        previous_task_id=previous.id,
+        retry_idempotency_key=f"pipeline_dag_ingestion:{previous.id}",
+        attempt_count=1,
+    )
+    previous.next_task_id = first_retry.id
+    sqlite_session.commit()
+
+    with pytest.raises(IntegrityError):
+        create_task_record(
+            sqlite_session,
+            task_type="pipeline_dag_ingestion",
+            payload_json={
+                "previous_task_id": str(previous.id),
+                "retry_idempotency_key": f"pipeline_dag_ingestion:{previous.id}",
+            },
+            previous_task_id=previous.id,
+            retry_idempotency_key=f"pipeline_dag_ingestion:{previous.id}",
+            attempt_count=1,
+        )
+    sqlite_session.rollback()
+
+    assert (
+        sqlite_session.scalar(
+            select(func.count())
+            .select_from(TaskRecord)
+            .where(TaskRecord.previous_task_id == previous.id)
+        )
+        == 1
+    )
 
 
 def test_acl_crud_writes_safe_audit_events(sqlite_session) -> None:

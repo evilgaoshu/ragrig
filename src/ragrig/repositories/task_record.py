@@ -16,7 +16,16 @@ def create_task_record(
     payload_json: dict[str, Any],
     status: str = "pending",
     attempt_count: int = 0,
+    previous_task_id: str | uuid.UUID | None = None,
+    next_task_id: str | uuid.UUID | None = None,
+    retry_idempotency_key: str | None = None,
 ) -> TaskRecord:
+    resolved_previous_task_id = _optional_uuid(
+        previous_task_id if previous_task_id is not None else payload_json.get("previous_task_id")
+    )
+    resolved_next_task_id = _optional_uuid(
+        next_task_id if next_task_id is not None else payload_json.get("next_task_id")
+    )
     task = TaskRecord(
         task_type=task_type,
         payload_json=payload_json,
@@ -27,6 +36,9 @@ def create_task_record(
         finished_at=None,
         progress=None,
         attempt_count=attempt_count,
+        previous_task_id=resolved_previous_task_id,
+        next_task_id=resolved_next_task_id,
+        retry_idempotency_key=retry_idempotency_key or payload_json.get("retry_idempotency_key"),
     )
     session.add(task)
     session.flush()
@@ -71,3 +83,11 @@ def update_task_status(
     session.add(task)
     session.flush()
     return task
+
+
+def _optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    return uuid.UUID(str(value))

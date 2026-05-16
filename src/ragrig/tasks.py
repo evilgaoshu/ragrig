@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ragrig.db.models import DocumentVersion, PipelineRun
@@ -156,8 +157,8 @@ def serialize_task_record(task) -> dict[str, Any]:
         "attempt_count": task.attempt_count,
         "retryable": is_task_retryable(task),
         "last_error": task_last_error(task),
-        "previous_task_id": payload.get("previous_task_id"),
-        "next_task_id": payload.get("next_task_id"),
+        "previous_task_id": _task_previous_task_id(task) or payload.get("previous_task_id"),
+        "next_task_id": _task_next_task_id(task) or payload.get("next_task_id"),
         "started_at": task.started_at.isoformat() if task.started_at else None,
         "finished_at": task.finished_at.isoformat() if task.finished_at else None,
         "progress": task.progress,
@@ -189,7 +190,7 @@ def task_last_error(task) -> str | None:
 
 
 def is_task_retryable(task) -> bool:
-    if (task.payload_json or {}).get("next_task_id"):
+    if _task_next_task_id(task):
         return False
     if task.task_type == "pipeline_dag_ingestion":
         result = task.result_json or {}
@@ -247,7 +248,6 @@ def retry_task(
             "retry_idempotency_key": _retry_idempotency_key(
                 task_type=task_type,
                 previous_task_id=task_id,
-                pipeline_run_id=prepared.get("pipeline_run_id"),
             ),
         }
 
@@ -255,26 +255,33 @@ def retry_task(
             previous = get_task_record(session, task_id)
             if previous is None:
                 raise TaskRetryError("task_not_found", "Task not found.", status_code=404)
-            if (previous.payload_json or {}).get("next_task_id"):
+            if _task_next_task_id(previous):
                 raise TaskRetryError(
                     "duplicate_retry",
                     "A retry task already exists for this task.",
                 )
+            previous.next_task_id = new_task.id
             previous.payload_json = {
                 **(previous.payload_json or {}),
                 "next_task_id": str(new_task.id),
                 "next_pipeline_run_id": prepared.get("pipeline_run_id"),
             }
 
-        new_task_id = enqueue_task(
-            session_factory=session_factory,
-            task_executor=task_executor,
-            task_type=task_type,
-            payload_json=payload_json,
-            runner=prepared["runner"],
-            initial_attempt_count=previous_attempt_count,
-            on_task_created=_link_previous,
-        )
+        try:
+            new_task_id = enqueue_task(
+                session_factory=session_factory,
+                task_executor=task_executor,
+                task_type=task_type,
+                payload_json=payload_json,
+                runner=prepared["runner"],
+                initial_attempt_count=previous_attempt_count,
+                on_task_created=_link_previous,
+            )
+        except IntegrityError as exc:
+            raise TaskRetryError(
+                "task_not_retryable",
+                "A retry task already exists for this task.",
+            ) from exc
         return {
             "task_id": new_task_id,
             "previous_task_id": task_id,
@@ -379,7 +386,7 @@ def _staged_files_available(payload_json: dict[str, Any]) -> bool:
 
 
 def _not_retryable_reason(task) -> str:
-    if (task.payload_json or {}).get("next_task_id"):
+    if _task_next_task_id(task):
         return "A retry task already exists for this task."
     if task.task_type == "knowledge_base_upload" and task.status == "failed":
         return "Upload retry requires retained staged files, but they are not available."
@@ -392,9 +399,22 @@ def _retry_idempotency_key(
     *,
     task_type: str,
     previous_task_id: str,
-    pipeline_run_id: str | None,
 ) -> str:
-    return f"{task_type}:{previous_task_id}:{pipeline_run_id}"
+    return f"{task_type}:{previous_task_id}"
+
+
+def _task_previous_task_id(task) -> str | None:
+    previous_task_id = getattr(task, "previous_task_id", None)
+    if previous_task_id is None:
+        return None
+    return str(previous_task_id)
+
+
+def _task_next_task_id(task) -> str | None:
+    next_task_id = getattr(task, "next_task_id", None)
+    if next_task_id is None:
+        return (task.payload_json or {}).get("next_task_id")
+    return str(next_task_id)
 
 
 def get_task_payload(
