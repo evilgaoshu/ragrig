@@ -101,7 +101,7 @@ def test_jsonl_export_writes_files(mem_session, tmp_path):
 
 def test_markdown_export_writes_summary(mem_session, tmp_path):
     _seed(mem_session)
-    report = export_to_filesystem(
+    export_to_filesystem(
         mem_session,
         knowledge_base_name="test-kb",
         base_path=str(tmp_path),
@@ -116,7 +116,7 @@ def test_markdown_export_writes_summary(mem_session, tmp_path):
 
 def test_both_format_writes_all_files(mem_session, tmp_path):
     _seed(mem_session)
-    report = export_to_filesystem(
+    export_to_filesystem(
         mem_session,
         knowledge_base_name="test-kb",
         base_path=str(tmp_path),

@@ -533,7 +533,7 @@ def test_list_invitations_shows_pending_only(auth_client):
     """GET /auth/workspace/invitations returns only pending invitations."""
     owner_token = _register(auth_client, "owner_list_inv@example.com")
     # Create two invitations
-    for i in range(2):
+    for _i in range(2):
         auth_client.post(
             "/auth/workspace/invitations",
             json={"role": "viewer"},
