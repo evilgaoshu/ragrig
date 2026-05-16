@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   smoke:
@@ -68,6 +69,20 @@ jobs:
             fi
           done
 
+      - name: Open issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "Nightly smoke failed — $(date -u +%Y-%m-%d)" \
+            --body "The nightly smoke workflow failed on $(date -u +%Y-%m-%dT%H:%M:%SZ).
+
+Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+Jobs: cost-latency-check, knowledge-map-check, answer-live-smoke, eval-reindex-diff" \
+            --label "ci" || true
+
   frontend:
     name: Nightly / frontend build
     runs-on: ubuntu-latest
@@ -85,6 +100,26 @@ jobs:
         run: npm ci
         working-directory: frontend
 
+      - name: Lint
+        run: npm run lint
+        working-directory: frontend
+
+      - name: Audit (high+critical only)
+        run: npm audit --audit-level=high
+        working-directory: frontend
+
       - name: Build (tsc + vite)
         run: npm run build
         working-directory: frontend
+
+      - name: Open issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "Nightly frontend build failed — $(date -u +%Y-%m-%d)" \
+            --body "The nightly frontend job failed on $(date -u +%Y-%m-%dT%H:%M:%SZ).
+
+Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --label "ci" || true
