@@ -86,3 +86,25 @@ export interface TaskRecord {
   error: string | null
   progress: unknown
 }
+
+export interface UploadResult {
+  task_id: string
+  pipeline_run_id: string
+  accepted_files: number
+  rejected_files: number
+  rejections: { filename: string; reason: string; detail?: string }[]
+  warnings: string[]
+}
+
+export interface SupportedFormat {
+  extension: string
+  mime_type: string
+  display_name: string
+  parser_id: string
+  status: 'supported' | 'preview' | 'planned'
+  fallback_policy: string | null
+  max_file_size_mb: number
+  capabilities: string[]
+  limitations: string | null
+  docs_reference: string | null
+}

@@ -5,6 +5,8 @@ import KnowledgeBases from './pages/KnowledgeBases'
 import Sources from './pages/Sources'
 import Pipelines from './pages/Pipelines'
 import RetrievalLab from './pages/RetrievalLab'
+import Upload from './pages/Upload'
+import Formats from './pages/Formats'
 import Stub from './pages/Stub'
 
 export default function App() {
@@ -18,8 +20,8 @@ export default function App() {
         <Route path="/retrieval-lab" element={<RetrievalLab />} />
 
         <Route path="/wizard" element={<Stub title="Setup Wizard" description="Guided ingestion setup" />} />
-        <Route path="/upload" element={<Stub title="Upload" description="Direct file upload to a knowledge base" />} />
-        <Route path="/formats" element={<Stub title="Formats" description="Supported file format registry" />} />
+        <Route path="/upload" element={<Upload />} />
+        <Route path="/formats" element={<Formats />} />
         <Route path="/sanitizer-coverage" element={<Stub title="Sanitizer Coverage" description="Parser redaction coverage metrics" />} />
         <Route path="/sanitizer-drift" element={<Stub title="Sanitizer Drift" description="Sanitizer drift history and trend" />} />
         <Route path="/retrieval-benchmark" element={<Stub title="Retrieval Benchmark" description="Retrieval quality benchmark results" />} />
