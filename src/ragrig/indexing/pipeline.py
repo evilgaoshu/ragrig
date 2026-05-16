@@ -224,6 +224,7 @@ def index_knowledge_base(
     chunk_overlap: int = 50,
     embedding_dimensions: int = 8,
     vector_backend: VectorBackend | None = None,
+    force_reindex: bool = False,
 ) -> IndexingReport:
     get_plugin_registry()
     knowledge_base = get_knowledge_base_by_name(session, knowledge_base_name)
@@ -252,6 +253,7 @@ def index_knowledge_base(
             "embedding_provider": provider_name,
             "chunk_profile_id": chunk_profile.profile_id,
             "embed_profile_id": embed_profile.profile_id,
+            "force_reindex": force_reindex,
         },
     )
 
@@ -281,7 +283,7 @@ def index_knowledge_base(
                     skipped_count += 1
                     continue
 
-                if _version_already_indexed(
+                if not force_reindex and _version_already_indexed(
                     session,
                     document_version=version,
                     config_hash=chunking_config.config_hash,

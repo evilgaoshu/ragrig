@@ -84,11 +84,11 @@ This roadmap reflects the current state of the project as of May 2026. Completed
 - Sanitizer drift history CI artifact and console badge.
 - Answer live smoke diagnostics with JSON report and CI badge.
 - Understanding export diff summary and artifact retention.
+- Full evaluation comparison workflow: before/after reindex diff report.
 
 **Open:**
 - Authored golden question sets for domain-specific retrieval quality regression.
 - Cost and latency tracking across pipeline and model changes.
-- Full evaluation comparison workflow: before/after reindex diff report.
 
 ---
 

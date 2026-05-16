@@ -210,6 +210,44 @@ def test_index_knowledge_base_is_idempotent_for_unchanged_document_versions(tmp_
     assert all(item.status == "skipped" for item in run_items)
 
 
+def test_index_knowledge_base_force_reindex_replaces_existing_chunks(tmp_path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text(
+        "# Guide\n\nAlpha beta gamma delta epsilon zeta eta theta\n",
+        encoding="utf-8",
+    )
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        first = index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+        chunk_ids_before = set(session.scalars(select(Chunk.id)).all())
+        second = index_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            force_reindex=True,
+        )
+        chunk_ids_after = set(session.scalars(select(Chunk.id)).all())
+        runs = session.scalars(
+            select(PipelineRun)
+            .where(PipelineRun.run_type == "chunk_embedding")
+            .order_by(PipelineRun.started_at)
+        ).all()
+
+    assert first.indexed_count == 1
+    assert second.indexed_count == 1
+    assert second.skipped_count == 0
+    assert chunk_ids_before
+    assert chunk_ids_after
+    assert chunk_ids_before.isdisjoint(chunk_ids_after)
+    assert runs[-1].config_snapshot_json["force_reindex"] is True
+
+
 def test_index_knowledge_base_reindexes_new_document_version_after_ingestion_change(
     tmp_path,
 ) -> None:
