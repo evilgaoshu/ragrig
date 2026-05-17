@@ -128,3 +128,75 @@ jobs:
               "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")" \
             --label "ci" || true
+
+  benchmark-guard:
+    name: Nightly / benchmark-guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --dev --frozen
+
+      - name: Compare retrieval benchmark against baseline
+        run: |
+          set -o pipefail
+          mkdir -p docs/operations/artifacts
+          make retrieval-benchmark-compare 2>&1 | tee docs/operations/artifacts/retrieval-benchmark-compare.log
+
+      - name: Generate retrieval benchmark integrity artifact
+        run: make retrieval-benchmark-integrity-artifact
+
+      - name: Generate retrieval benchmark integrity summary
+        run: make retrieval-benchmark-integrity-summary
+
+      - name: Upload retrieval benchmark guard artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: retrieval-benchmark-guard-${{ github.run_id }}
+          retention-days: 30
+          path: |
+            docs/operations/artifacts/retrieval-benchmark-compare.log
+            docs/operations/artifacts/retrieval-benchmark-integrity.json
+            docs/operations/artifacts/retrieval-benchmark-integrity_summary.json
+            docs/operations/artifacts/retrieval-benchmark-integrity_summary.md
+
+      - name: Write retrieval benchmark guard summary
+        if: always()
+        run: |
+          echo "## Retrieval Benchmark Guard" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Compare" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f docs/operations/artifacts/retrieval-benchmark-compare.log ]; then
+            cat docs/operations/artifacts/retrieval-benchmark-compare.log >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Compare log not generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Integrity" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f docs/operations/artifacts/retrieval-benchmark-integrity_summary.md ]; then
+            cat docs/operations/artifacts/retrieval-benchmark-integrity_summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Integrity summary not generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Open issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "Nightly benchmark-guard failed — $(date -u +%Y-%m-%d)" \
+            --body "$(printf 'The retrieval benchmark guard failed on %s.\n\nRun: %s' \
+              "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")" \
+            --label "ci" || true

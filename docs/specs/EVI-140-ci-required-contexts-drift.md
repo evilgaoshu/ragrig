@@ -30,9 +30,9 @@ the test matrix job (each matrix entry now runs `make web-check` after
 longer emitted. `RAGRig CI / coverage` runs only on push to main (not on
 PRs) to keep PR feedback fast; it is therefore not a required PR context.
 
-Other workflow jobs, such as `benchmark-guard`, `drift-diff`, and
+Other workflow jobs, such as `detect-changes`, `drift-diff`, and
 `supply-chain`, may run on PRs without being branch-protection required
-contexts. The local checker treats them as non-required workflow contexts while
+contexts. `benchmark-guard` now runs in the nightly workflow only. The local checker treats them as non-required workflow contexts while
 still failing if a required context disappears or the test matrix introduces an
 unexpected `RAGRig CI / test (...)` context.
 
