@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
-from ragrig.providers import ProviderCapability, get_provider_registry
+from ragrig.providers import get_provider_registry
 from ragrig.providers.cloud import (
     AnthropicProvider,
     AzureOpenAIProvider,
@@ -45,7 +45,9 @@ class FakeTransport(httpx.BaseTransport):
         )
 
 
-def _fake_client(status: int = 200, body: dict[str, Any] | None = None) -> tuple[httpx.Client, FakeTransport]:
+def _fake_client(
+    status: int = 200, body: dict[str, Any] | None = None
+) -> tuple[httpx.Client, FakeTransport]:
     transport = FakeTransport(status=status, body=body)
     return httpx.Client(transport=transport), transport
 
