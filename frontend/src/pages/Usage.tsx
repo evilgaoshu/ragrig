@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   useBudget,
   useDeleteBudget,
@@ -140,7 +140,7 @@ export default function Usage() {
   const [hardCap, setHardCap] = useState(false)
 
   // Sync form when budget loads
-  useMemo(() => {
+  useEffect(() => {
     if (budget) {
       setLimit(String(budget.limit_usd))
       setThreshold(String(budget.alert_threshold_pct))

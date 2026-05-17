@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   useConversations,
   useConversation,
@@ -187,22 +187,15 @@ export default function Conversations() {
   const del = useDeleteConversation()
   const ask = useConversationAnswer()
 
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [kbName, setKbName] = useState<string>('')
+  // Selections live as explicit overrides; render-time falls back to the
+  // first available row so we never need a setState-inside-useEffect sync.
+  const [selectedIdOverride, setSelectedIdOverride] = useState<string | null>(null)
+  const [kbNameOverride, setKbNameOverride] = useState<string>('')
   const [newTitle, setNewTitle] = useState<string>('')
   const [query, setQuery] = useState<string>('')
 
-  useEffect(() => {
-    if (!selectedId && conversations && conversations.length > 0) {
-      setSelectedId(conversations[0].id)
-    }
-  }, [conversations, selectedId])
-
-  useEffect(() => {
-    if (!kbName && kbs && kbs.length > 0) {
-      setKbName(kbs[0].name)
-    }
-  }, [kbs, kbName])
+  const selectedId = selectedIdOverride ?? conversations?.[0]?.id ?? null
+  const kbName = kbNameOverride || kbs?.[0]?.name || ''
 
   const { data: detail } = useConversation(selectedId)
   const currentKb = detail?.knowledge_base ?? kbName
@@ -218,7 +211,7 @@ export default function Conversations() {
       { knowledge_base: kbName, title: newTitle.trim() || null },
       {
         onSuccess: (data) => {
-          setSelectedId(data.id)
+          setSelectedIdOverride(data.id)
           setNewTitle('')
         },
       },
@@ -246,7 +239,7 @@ export default function Conversations() {
           </label>
           <select
             value={kbName}
-            onChange={(e) => setKbName(e.target.value)}
+            onChange={(e) => setKbNameOverride(e.target.value)}
             className="w-full text-[12px] border border-gray-300 rounded px-2 py-1"
           >
             {!kbs?.length && <option value="">no KBs available</option>}
@@ -284,7 +277,7 @@ export default function Conversations() {
             <li key={c.id}>
               <button
                 type="button"
-                onClick={() => setSelectedId(c.id)}
+                onClick={() => setSelectedIdOverride(c.id)}
                 className={`w-full text-left px-2 py-1.5 rounded text-[12px] transition-colors ${
                   selectedId === c.id
                     ? 'bg-brand/10 text-brand font-semibold'
@@ -325,7 +318,7 @@ export default function Conversations() {
                 type="button"
                 onClick={() => {
                   if (!confirm('Delete this conversation?')) return
-                  del.mutate(selectedId, { onSuccess: () => setSelectedId(null) })
+                  del.mutate(selectedId, { onSuccess: () => setSelectedIdOverride(null) })
                 }}
                 className="text-[11px] text-gray-500 hover:text-red-500"
               >
