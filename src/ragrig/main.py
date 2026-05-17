@@ -83,6 +83,7 @@ from ragrig.routers.conversations import router as conversations_router
 from ragrig.routers.mcp import router as mcp_router
 from ragrig.routers.openai_compat import router as openai_compat_router
 from ragrig.routers.retention import router as retention_router
+from ragrig.routers.source_webhooks import router as source_webhooks_router
 from ragrig.routers.usage import router as usage_router
 from ragrig.tasks import (
     TaskRetryError,
@@ -423,6 +424,7 @@ def create_app(
     app.include_router(mcp_router)
     app.include_router(conversations_router)
     app.include_router(usage_router)
+    app.include_router(source_webhooks_router)
 
     def shutdown_task_executor() -> None:
         shutdown = getattr(active_task_executor, "shutdown", None)

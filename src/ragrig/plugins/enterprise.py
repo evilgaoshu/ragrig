@@ -104,6 +104,24 @@ ENTERPRISE_CONNECTORS: dict[str, EnterpriseConnectorSpec] = {
         official_docs_url="https://developers.notion.com/reference/post-search",
         required_credentials=("NOTION_API_KEY",),
     ),
+    "source.confluence": EnterpriseConnectorSpec(
+        plugin_id="source.confluence",
+        display_name="Confluence Cloud",
+        family="wiki",
+        protocols=("confluence-rest",),
+        official_docs_url="https://developer.atlassian.com/cloud/confluence/rest/v1/api-group-content/",
+        required_credentials=("CONFLUENCE_EMAIL", "CONFLUENCE_API_TOKEN"),
+        notes="Uses Basic Auth (email + API token); space_key narrows the scan to one space.",
+    ),
+    "source.feishu": EnterpriseConnectorSpec(
+        plugin_id="source.feishu",
+        display_name="Feishu / Lark Wiki",
+        family="collaboration",
+        protocols=("lark-open",),
+        official_docs_url="https://open.feishu.cn/document/server-docs/docs/wiki-v2/space/list",
+        required_credentials=("FEISHU_APP_ID", "FEISHU_APP_SECRET"),
+        notes="Exchanges app credentials for tenant_access_token before listing wiki nodes.",
+    ),
     "source.slack": EnterpriseConnectorSpec(
         plugin_id="source.slack",
         display_name="Slack Files",
@@ -257,6 +275,24 @@ def _safe_example_config(plugin_id: str) -> dict[str, object]:
         return {"tenant_id": "tenant-id", "client_id": "client-id"}
     if plugin_id == "source.wiki":
         return {"base_url": "https://wiki.example.com"}
+    if plugin_id == "source.confluence":
+        return {
+            "base_url": "https://example.atlassian.net/wiki",
+            "space_key": "ENG",
+            "email": "env:CONFLUENCE_EMAIL",
+            "api_token": "env:CONFLUENCE_API_TOKEN",
+        }
+    if plugin_id == "source.notion":
+        return {
+            "api_token": "env:NOTION_API_KEY",
+            "filter_kind": "page",
+        }
+    if plugin_id == "source.feishu":
+        return {
+            "space_id": "wiki-space-id",
+            "app_id": "env:FEISHU_APP_ID",
+            "app_secret": "env:FEISHU_APP_SECRET",
+        }
     if plugin_id == "source.database":
         return {
             "engine": "postgresql",
