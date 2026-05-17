@@ -83,6 +83,9 @@ def build_embedding_base_statement(
             Document.uri.label("document_uri"),
             Source.uri.label("source_uri"),
             Chunk.text.label("text"),
+            Chunk.char_start.label("char_start"),
+            Chunk.char_end.label("char_end"),
+            Chunk.page_number.label("page_number"),
             Chunk.metadata_json.label("chunk_metadata"),
             Embedding.embedding.label("embedding"),
         )

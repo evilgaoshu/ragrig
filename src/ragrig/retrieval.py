@@ -88,6 +88,9 @@ class RetrievalResult:
     chunk_metadata: dict[str, Any]
     acl_explain: AclExplain | None = None
     rank_stage_trace: dict[str, Any] = field(default_factory=dict)
+    char_start: int | None = None
+    char_end: int | None = None
+    page_number: int | None = None
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,20 @@ class RetrievalReport:
     degraded_reason: str = ""
     acl_explain: dict[str, Any] = field(default_factory=dict)
     cost_latency: dict[str, Any] = field(default_factory=dict)
+
+
+def _span_kwargs(source: Any) -> dict[str, Any]:
+    """Return char_start / char_end / page_number kwargs from a row or
+    RetrievalResult.
+
+    Older backends (e.g. Qdrant payloads) may not surface these columns; missing
+    attributes default to None so callers stay forward-compatible.
+    """
+    return {
+        "char_start": getattr(source, "char_start", None),
+        "char_end": getattr(source, "char_end", None),
+        "page_number": getattr(source, "page_number", None),
+    }
 
 
 @dataclass(frozen=True)
@@ -275,6 +292,7 @@ def _search_with_sql_distance(
             distance=round(float(row.distance), 6),
             score=round(1.0 - float(row.distance), 6),
             chunk_metadata=row.chunk_metadata,
+            **_span_kwargs(row),
             rank_stage_trace={
                 "stages": [
                     {
@@ -348,6 +366,7 @@ def _search_with_python_distance(
                 distance=distance,
                 score=round(1.0 - distance, 6),
                 chunk_metadata=row.chunk_metadata,
+                **_span_kwargs(row),
                 rank_stage_trace={
                     "stages": [
                         {
@@ -418,6 +437,7 @@ def _enrich_with_acl_explain(
                 distance=r.distance,
                 score=r.score,
                 chunk_metadata=r.chunk_metadata,
+                **_span_kwargs(r),
                 acl_explain=explain,
                 rank_stage_trace=r.rank_stage_trace,
             )
@@ -492,6 +512,7 @@ def _apply_hybrid_fusion(
                     distance=r.distance,
                     score=round(combined, 6),
                     chunk_metadata=r.chunk_metadata,
+                    **_span_kwargs(r),
                     rank_stage_trace=trace,
                 ),
             )
@@ -596,6 +617,7 @@ def _apply_rerank(
                     distance=r.distance,
                     score=r.score,
                     chunk_metadata=r.chunk_metadata,
+                    **_span_kwargs(r),
                     rank_stage_trace=trace,
                 )
             )
@@ -633,6 +655,7 @@ def _apply_rerank(
                 distance=candidates[rr_item.candidate.original_index].distance,
                 score=rr_item.rerank_score,
                 chunk_metadata=cand.chunk_metadata,
+                **_span_kwargs(candidates[rr_item.candidate.original_index]),
                 rank_stage_trace=trace,
             )
         )
@@ -783,6 +806,9 @@ def search_knowledge_base(
                     distance=result.distance,
                     score=result.score,
                     chunk_metadata=result.metadata.get("chunk_metadata", {}),
+                    char_start=result.metadata.get("char_start"),
+                    char_end=result.metadata.get("char_end"),
+                    page_number=result.metadata.get("page_number"),
                     rank_stage_trace={
                         "stages": [
                             {

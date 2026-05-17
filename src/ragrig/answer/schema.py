@@ -17,6 +17,9 @@ class Citation:
     """A citation linking a generated answer to an evidence chunk.
 
     Only safe metadata is exposed — never raw secrets or full ACL lists.
+
+    ``char_start`` and ``char_end`` carry the chunk's offset inside the source
+    document (when known) so that UIs can highlight the exact source span.
     """
 
     citation_id: str
@@ -25,6 +28,9 @@ class Citation:
     chunk_index: int
     text_preview: str
     score: float
+    char_start: int | None = None
+    char_end: int | None = None
+    page_number: int | None = None
     metadata_summary: dict[str, Any] = field(default_factory=dict)
 
 
@@ -39,6 +45,9 @@ class EvidenceChunk:
     text: str
     score: float
     distance: float
+    char_start: int | None = None
+    char_end: int | None = None
+    page_number: int | None = None
 
 
 @dataclass(frozen=True)
