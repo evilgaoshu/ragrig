@@ -9,7 +9,11 @@ COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
 
 COPY frontend/ ./
-RUN npm run build
+# vite.config writes to ../src/ragrig/static/dist (relative to /frontend),
+# which resolves to /src/ragrig/static/dist inside this stage. Override
+# to a sibling `dist` directory so the second stage can copy from a
+# predictable path without depending on vite's outDir.
+RUN npm run build -- --outDir dist --emptyOutDir
 
 
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
