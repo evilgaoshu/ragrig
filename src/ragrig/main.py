@@ -83,6 +83,7 @@ from ragrig.routers.conversations import router as conversations_router
 from ragrig.routers.mcp import router as mcp_router
 from ragrig.routers.openai_compat import router as openai_compat_router
 from ragrig.routers.retention import router as retention_router
+from ragrig.routers.usage import router as usage_router
 from ragrig.tasks import (
     TaskRetryError,
     cleanup_staging_dir,
@@ -421,6 +422,7 @@ def create_app(
     app.include_router(openai_compat_router)
     app.include_router(mcp_router)
     app.include_router(conversations_router)
+    app.include_router(usage_router)
 
     def shutdown_task_executor() -> None:
         shutdown = getattr(active_task_executor, "shutdown", None)
@@ -456,6 +458,35 @@ def create_app(
         workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id_from_auth)],
     ) -> "uuid.UUID":
         return workspace_id
+
+    def _record_usage_for_request(
+        session: Session,
+        workspace_id: uuid.UUID,
+        user_id: uuid.UUID | None,
+        cost_latency: dict[str, Any] | None,
+    ) -> None:
+        """Persist the operations list from a cost_latency block as UsageEvents
+        and run a budget evaluation for this workspace.
+
+        Failures are swallowed — usage accounting must never break a request.
+        """
+        try:
+            from ragrig.usage import evaluate_budget, record_usage_events
+
+            operations = (cost_latency or {}).get("operations") or []
+            if not isinstance(operations, list):
+                return
+            record_usage_events(
+                session,
+                workspace_id=workspace_id,
+                user_id=user_id,
+                operations=operations,
+            )
+            evaluate_budget(session, workspace_id=workspace_id, settings=active_settings)
+        except Exception:  # pragma: no cover - usage is best-effort
+            import logging
+
+            logging.getLogger(__name__).exception("usage accounting failed")
 
     @app.get("/health", response_model=None)
     def health() -> dict[str, Any] | JSONResponse:
@@ -1383,6 +1414,7 @@ def create_app(
         if report.degraded:
             response["degraded"] = True
             response["degraded_reason"] = report.degraded_reason
+        _record_usage_for_request(session, workspace_id, None, report.cost_latency)
         return response
 
     @app.post("/permissions/preview", response_model=None)
@@ -1567,6 +1599,7 @@ def create_app(
                 },
             )
 
+        _record_usage_for_request(session, workspace_id, None, report.cost_latency)
         payload = {
             "answer": report.answer,
             "citations": [

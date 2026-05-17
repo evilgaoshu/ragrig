@@ -4,12 +4,15 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -691,4 +694,69 @@ class AnswerFeedback(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     reason: Mapped[str | None] = mapped_column(Text)
     query: Mapped[str | None] = mapped_column(Text)
     answer_excerpt: Mapped[str | None] = mapped_column(Text)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class UsageEvent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """One billable model invocation.
+
+    Captured by the answer/retrieval pipeline so that admins can roll up cost
+    per workspace / user / model / operation and trigger budget alerts.
+    """
+
+    __tablename__ = "usage_events"
+    __table_args__ = (
+        Index("ix_usage_events_workspace_id", "workspace_id"),
+        Index("ix_usage_events_user_id", "user_id"),
+        Index("ix_usage_events_operation", "operation"),
+        Index("ix_usage_events_created_at", "created_at"),
+    )
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    operation: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(128), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cost_usd: Mapped[float] = mapped_column(Numeric(14, 8), default=0, nullable=False)
+    latency_ms: Mapped[float] = mapped_column(Float(), default=0, nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class Budget(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Per-workspace monthly spend limit + alert thresholds.
+
+    ``period`` is currently always ``"monthly"`` — left as a string so future
+    periods (weekly, daily) can be added without a migration. When
+    ``alert_threshold_pct`` of ``limit_usd`` is reached, an email + webhook
+    alert is sent (at most once per period). When ``hard_cap`` is true, calls
+    beyond the limit are rejected with HTTP 402 Payment Required.
+    """
+
+    __tablename__ = "budgets"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "period", name="uq_budgets_workspace_period"),
+        Index("ix_budgets_workspace_id", "workspace_id"),
+        CheckConstraint("period IN ('monthly')", name="ck_budgets_period"),
+    )
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    period: Mapped[str] = mapped_column(String(16), default="monthly", nullable=False)
+    limit_usd: Mapped[float] = mapped_column(Numeric(14, 4), nullable=False)
+    alert_threshold_pct: Mapped[int] = mapped_column(Integer, default=80, nullable=False)
+    hard_cap: Mapped[bool] = mapped_column(Boolean(), nullable=False, default=False)
+    last_alert_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
