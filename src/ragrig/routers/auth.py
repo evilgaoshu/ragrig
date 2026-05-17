@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from ragrig.auth import (
     DEFAULT_WORKSPACE_ID,
     SESSION_TOKEN_PREFIX,
+    create_api_key,
     create_invitation,
     create_user_session,
     ensure_default_workspace,
@@ -914,6 +915,100 @@ def erase_workspace_member(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
     _erase_user(session, target_user_id)
+    session.commit()
+
+
+# ── API key management ────────────────────────────────────────────────────────
+
+
+class ApiKeyResponse(BaseModel):
+    id: str
+    name: str
+    prefix: str
+    scopes: list[str]
+    created_at: str
+    last_used_at: str | None
+    expires_at: str | None
+    revoked_at: str | None
+
+
+class CreatedApiKeyResponse(ApiKeyResponse):
+    token: str
+
+
+class CreateApiKeyRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    scopes: list[str] = Field(default_factory=list)
+    expires_days: int | None = Field(default=None, ge=1, le=3650)
+
+
+def _api_key_to_response(key: ApiKey) -> ApiKeyResponse:
+    return ApiKeyResponse(
+        id=str(key.id),
+        name=key.name,
+        prefix=key.prefix,
+        scopes=key.scopes,
+        created_at=key.created_at.isoformat(),
+        last_used_at=key.last_used_at.isoformat() if key.last_used_at else None,
+        expires_at=key.expires_at.isoformat() if key.expires_at else None,
+        revoked_at=key.revoked_at.isoformat() if key.revoked_at else None,
+    )
+
+
+@router.post("/api-keys", response_model=CreatedApiKeyResponse, status_code=status.HTTP_201_CREATED)
+def create_workspace_api_key(
+    body: CreateApiKeyRequest,
+    session: Annotated[Session, Depends(get_session)],
+    auth: Annotated[AuthContext, Depends(require_admin_auth)],
+) -> CreatedApiKeyResponse:
+    """Create a new API key for the workspace. Requires admin or owner."""
+    expires_at = None
+    if body.expires_days is not None:
+        expires_at = datetime.now(UTC) + timedelta(days=body.expires_days)
+    created = create_api_key(
+        session,
+        workspace_id=auth.workspace_id,
+        name=body.name,
+        created_by_user_id=auth.user_id,
+        scopes=body.scopes,
+        expires_at=expires_at,
+    )
+    session.commit()
+    resp = _api_key_to_response(created.api_key)
+    return CreatedApiKeyResponse(**resp.model_dump(), token=created.token)
+
+
+@router.get("/api-keys", response_model=list[ApiKeyResponse])
+def list_workspace_api_keys(
+    session: Annotated[Session, Depends(get_session)],
+    auth: Annotated[AuthContext, Depends(require_admin_auth)],
+    include_revoked: bool = False,
+) -> list[ApiKeyResponse]:
+    """List API keys for the workspace. Requires admin or owner."""
+    q = select(ApiKey).where(ApiKey.workspace_id == auth.workspace_id)
+    if not include_revoked:
+        q = q.where(ApiKey.revoked_at.is_(None))
+    q = q.order_by(ApiKey.created_at.desc())
+    keys = session.scalars(q).all()
+    return [_api_key_to_response(k) for k in keys]
+
+
+@router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_workspace_api_key(
+    key_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_session)],
+    auth: Annotated[AuthContext, Depends(require_admin_auth)],
+) -> None:
+    """Revoke an API key. Requires admin or owner."""
+    key = session.scalar(
+        select(ApiKey).where(ApiKey.id == key_id).where(ApiKey.workspace_id == auth.workspace_id)
+    )
+    if key is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="api key not found")
+    if key.revoked_at is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="api key already revoked")
+    key.revoked_at = datetime.now(UTC)
+    session.add(key)
     session.commit()
 
 
