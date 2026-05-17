@@ -213,6 +213,72 @@ export function useProcessingProfileMatrix() {
   })
 }
 
+export interface ProcessingProfileOverride {
+  profile_id: string
+  extension: string
+  task_type: string
+  display_name: string
+  description: string
+  provider: string
+  model_id: string | null
+  kind: string
+  status: string
+  source: string
+  is_default: boolean
+  provider_available: boolean
+  tags: string[] | null
+}
+
+export function useCreateProcessingProfile() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      profile_id: string
+      extension: string
+      task_type: string
+      display_name: string
+      description: string
+      provider: string
+      model_id?: string
+      kind?: string
+    }) => api.post<ProcessingProfileOverride>('/processing-profiles', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['processing-profile-matrix'] })
+      qc.invalidateQueries({ queryKey: ['processing-profile-overrides'] })
+    },
+  })
+}
+
+export function usePatchProcessingProfile() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ profileId, ...body }: {
+      profileId: string
+      display_name?: string
+      description?: string
+      provider?: string
+      model_id?: string | null
+      kind?: string
+      status?: string
+    }) => api.patch<ProcessingProfileOverride>(`/processing-profiles/overrides/${profileId}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['processing-profile-matrix'] })
+      qc.invalidateQueries({ queryKey: ['processing-profile-overrides'] })
+    },
+  })
+}
+
+export function useDeleteProcessingProfile() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (profileId: string) => api.delete<void>(`/processing-profiles/overrides/${profileId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['processing-profile-matrix'] })
+      qc.invalidateQueries({ queryKey: ['processing-profile-overrides'] })
+    },
+  })
+}
+
 export function useEvaluationRuns() {
   return useQuery({
     queryKey: ['evaluation-runs'],
