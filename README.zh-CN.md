@@ -92,6 +92,16 @@ flowchart LR
 - evaluation dashboard 与回归质量门
 - 企业权限、审计和连接器加固
 
+### Phase 3 — 中小团队集成（已完成）
+
+P3 阶段交付了中小团队最常需要的集成和管控能力：
+
+- **OpenAI 兼容 API + MCP 服务端 + SSE 流式响应** —— 任何 OpenAI SDK / MCP 客户端都可以指向 `POST /v1/chat/completions`（模型标识 `ragrig/<kb>[@provider:model]`）、`GET /v1/models` 或 `POST /mcp`；REST 回答与 chat completion 均支持 `stream=true`。
+- **多轮对话 + 反馈闭环 + 引用高亮** —— `POST /conversations` 自动把历史 turn 折入检索；`POST /conversations/{id}/turns/{turn}/feedback` 记录 👍/👎 及原因；引用现在带 `char_start/char_end/page_number`，前端可直接做段内高亮。
+- **用量 / 成本看板 + 预算告警** —— 每次 retrieval/answer 都会落 `usage_event`；`GET /usage` 与 `GET /usage/timeseries` 汇总 token / 费用 / 时延；`PUT /budgets` 设置每工作区月度预算，触发邮件 + webhook 告警（同期内只发一次，可选 hard cap 直接拒绝）。
+- **Confluence + Notion + 飞书 / Lark 连接器** —— 可插拔 `HttpTransport` 实现，配置支持 `env:NAME` 解析；`POST /sources/{source}/webhook` 接收上游变更通知，按源密钥做 HMAC-SHA256 验签。
+- **管理面板 + 工作区备份/恢复** —— `GET /admin/status` 给出概览统计；`GET /admin/backup/{workspace_id}` 返回独立 JSON dump；`POST /admin/restore` 按 id upsert，可重复执行不会重复写入。
+
 ## Web Console
 
 Web Console 是 RAGRig 的主要操作界面。第一版形态：

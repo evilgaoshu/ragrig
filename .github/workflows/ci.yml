@@ -3,16 +3,8 @@ name: RAGRig CI
 on:
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "*.md"
-      - "LICENSE"
   push:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "*.md"
-      - "LICENSE"
 
 permissions:
   contents: read

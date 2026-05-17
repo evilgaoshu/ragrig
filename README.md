@@ -96,6 +96,16 @@ See [Local Pilot spec](./docs/specs/ragrig-local-pilot-spec.md) for scope and ac
 - evaluation dashboards and regression gates
 - enterprise permission, audit, and connector hardening
 
+### Phase 3 — SMB integrations (Done)
+
+P3 shipped the integrations and admin controls SMB teams asked for:
+
+- **OpenAI-compatible API + MCP server + SSE streaming** — point any OpenAI-SDK or MCP client at `POST /v1/chat/completions` (model `ragrig/<kb>[@provider:model]`), `GET /v1/models`, or `POST /mcp` for tool/resource discovery. Both REST answers and chat completions support `stream=true`.
+- **Multi-turn conversations + feedback loop + citation highlighting** — `POST /conversations` threads prior turns into retrieval; `POST /conversations/{id}/turns/{turn}/feedback` records 👍/👎 with optional reason; citations now carry `char_start/char_end/page_number` so the UI can highlight in-page.
+- **Usage + cost dashboard with budget alerts** — every retrieval/answer call is recorded as a `usage_event`; `GET /usage` and `GET /usage/timeseries` roll up tokens/cost/latency; `PUT /budgets` sets per-workspace monthly limits with email + webhook alerts (one alert per period, optional hard cap).
+- **Confluence + Notion + Feishu/Lark connectors** — pluggable `HttpTransport` scanners with config-driven credentials (`env:NAME` resolution) and per-source webhook receivers at `POST /sources/{source}/webhook` with HMAC-SHA256 signature verification.
+- **Admin status + workspace backup/restore** — `GET /admin/status` for landing-page counts; `GET /admin/backup/{workspace_id}` returns a self-contained JSON dump; `POST /admin/restore` upserts by id, idempotent across re-runs.
+
 ## Web Console
 
 The Web Console is the main operator surface for RAGRig. The intended first-run shape is:
