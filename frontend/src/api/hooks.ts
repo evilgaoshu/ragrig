@@ -676,3 +676,44 @@ export function useRetryPipelineRunItem() {
     },
   })
 }
+
+// ── API Key management ──────────────────────────────────────────────────────
+
+export interface ApiKeyRecord {
+  id: string
+  name: string
+  prefix: string
+  scopes: string[]
+  created_at: string
+  last_used_at: string | null
+  expires_at: string | null
+  revoked_at: string | null
+}
+
+export interface CreatedApiKey extends ApiKeyRecord {
+  token: string
+}
+
+export function useApiKeys() {
+  return useQuery({
+    queryKey: ['api-keys'],
+    queryFn: () => api.get<ApiKeyRecord[]>('/auth/api-keys'),
+  })
+}
+
+export function useCreateApiKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { name: string; scopes: string[]; expires_days?: number }) =>
+      api.post<CreatedApiKey>('/auth/api-keys', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['api-keys'] }),
+  })
+}
+
+export function useRevokeApiKey() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (keyId: string) => api.delete<void>(`/auth/api-keys/${keyId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['api-keys'] }),
+  })
+}
