@@ -16,6 +16,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
+from ragrig.config import Settings
 from ragrig.db.models import Base
 from ragrig.main import create_app
 
@@ -76,7 +77,14 @@ def run_smoke(database_path: Path) -> dict[str, Any]:
     session_factory, engine = _create_file_session_factory(database_path)
     try:
         client = TestClient(
-            create_app(check_database=lambda: None, session_factory=session_factory)
+            create_app(
+                check_database=lambda: None,
+                session_factory=session_factory,
+                settings=Settings(
+                    database_url=f"sqlite+pysqlite:///{database_path}",
+                    ragrig_auth_enabled=False,
+                ),
+            )
         )
 
         health = _json_response(client.get("/health"))

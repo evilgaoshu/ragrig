@@ -107,9 +107,7 @@ This section was not in the original roadmap. It emerged to give contributors an
 - Go/no-go evidence pack generation for CI.
 - SQLite-backed local storage with ResourceWarning audit and cleanup.
 - Google Workspace pilot diagnostics parity with production contract.
-
-**Done:**
-- Automated nightly evidence smoke in CI (local-pilot-smoke added to nightly workflow).
+- Automated nightly evidence smoke in CI (full EVI-110 evidence workflow).
 
 ---
 

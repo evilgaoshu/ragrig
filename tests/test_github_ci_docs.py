@@ -49,6 +49,26 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "-W always::ResourceWarning" not in workflow
 
 
+def test_nightly_evidence_smoke_workflow_is_scheduled_and_uploads_artifacts() -> None:
+    workflow_path = REPO_ROOT / ".github" / "workflows" / "nightly-evidence-smoke.yml"
+
+    assert workflow_path.exists(), "expected nightly evidence smoke workflow"
+
+    workflow = workflow_path.read_text(encoding="utf-8")
+
+    assert "name: Nightly Evidence Smoke" in workflow
+    assert "schedule:" in workflow
+    assert 'cron: "17 9 * * *"' in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "pull_request:" in workflow
+    assert "uv sync --dev --extra fileshare --frozen" in workflow
+    assert "make nightly-evidence-smoke" in workflow
+    assert "actions/upload-artifact@v7" in workflow
+    assert "docs/operations/artifacts/nightly-evidence-smoke.json" in workflow
+    assert "docs/operations/artifacts/pilot-go-no-go-evidence.json" in workflow
+    assert "docs/operations/artifacts/fileshare-live-smoke-record.json" in workflow
+
+
 def test_github_ci_spec_exists_and_documents_required_scope() -> None:
     spec_path = REPO_ROOT / "docs" / "specs" / "evi-60-cicd-optimization.md"
 
