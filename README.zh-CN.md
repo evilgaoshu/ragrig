@@ -122,12 +122,32 @@ Web Console 是 RAGRig 的主要操作界面。第一版形态：
 
 ## 快速部署
 
+### Docker Compose（推荐）
+
+```bash
+git clone https://github.com/evilgaoshu/ragrig.git
+cd ragrig
+docker compose up
+```
+
+打开 `http://localhost:8000` 即可。
+
+容器启动时会自动：
+- 多阶段构建从源码组装 React 控制台
+- 运行 alembic 迁移（`RAGRIG_AUTO_MIGRATE=1`）
+- 从 `examples/local-pilot/*.md` 种入 `demo` 知识库，Playground 立刻能提问
+- 默认回答 provider 是 `deterministic-local`，无需任何 API key
+- demo 模式下 auth 默认关闭；正式对外暴露前在 `.env` 设置
+  `RAGRIG_AUTH_ENABLED=true`
+
+`docker compose down` 关闭。可选服务（MinIO/S3、Qdrant、fileshare 实时
+smoke）的环境变量见
+[docs/operations/optional-services.md](./docs/operations/optional-services.md)。
+
 ### Vercel Preview + Supabase
 
-RAGRig 可以部署到 Vercel Preview，并使用 Supabase Postgres 作为远端元数据
-数据库。这条路径用于在线产品预览；本地试点仍推荐 Docker。
-
-Vercel Preview 必需环境变量：
+在线产品预览可以用 Vercel Preview + Supabase Postgres。本地体验仍推荐
+Docker。必需环境变量：
 
 ```text
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/postgres?sslmode=require
@@ -135,97 +155,41 @@ VECTOR_BACKEND=pgvector
 APP_ENV=preview
 ```
 
-本地对 Supabase 执行 migration 和 `make db-check` 时，还需要：
-
-```text
-DB_RUNTIME_HOST=HOST
-DB_HOST_PORT=PORT
-```
-
-使用 Preview 数据库前，先在可信本地或 CI 环境执行 migration：
+先在可信本地/CI 环境执行 migration，再做部署 smoke：
 
 ```bash
 DATABASE_URL='postgresql://USER:PASSWORD@HOST:PORT/postgres?sslmode=require' \
-DB_RUNTIME_HOST='HOST' \
-DB_HOST_PORT='PORT' \
+DB_RUNTIME_HOST='HOST' DB_HOST_PORT='PORT' \
 uv run alembic upgrade head
-```
 
-Vercel 创建 Preview deployment 后验证：
-
-```bash
 VERCEL_PREVIEW_URL='https://your-preview-url.vercel.app' make vercel-preview-smoke
 ```
 
-模型配置不影响 Preview 启动；no model credentials are required for startup。
-完整部署约束见 [EVI-130](./docs/specs/EVI-130-vercel-preview-supabase.md)。
+模型凭据仍然可选 — no model credentials are required for startup。完整契约
+见 [EVI-130](./docs/specs/EVI-130-vercel-preview-supabase.md)。
 
 ### 10 分钟本地试点演示
 
-先运行最小 preflight。它只检查启动必须项：应用 import、临时数据库健康检查、
-artifact 目录可写，以及 Docker 模式下的 Docker 可用性。
+需要带 evidence 的端到端 smoke（preflight + 构建 + 控制台走查）时，原有
+target 依然可用：
 
 ```bash
-make pilot-docker-preflight
+make pilot-docker-preflight   # 检查 Docker 可用
+make pilot-up                 # docker compose up -d db app
+make pilot-docker-smoke       # 输出 JSON evidence
+make pilot-down               # 关闭
 ```
 
-模型配置不影响启动。Ollama、LM Studio、Gemini、OpenAI、OpenRouter、
-reranker 和外部存储都属于后续 readiness；缺少模型 endpoint 或 API key
-不应该阻塞应用启动。
+模型配置不影响启动。Demo seed 使用 `deterministic-local` provider，无需任何
+外部模型即可回答。示例文档：
 
-启动演示栈：
+- `examples/local-pilot/company-handbook.md`
+- `examples/local-pilot/support-faq.md`
+- `examples/local-pilot/demo-questions.json`
 
-```bash
-make pilot-up
-make pilot-docker-smoke
-```
-
-打开 Web Console：
-
-```text
-http://localhost:8000/console
-```
-
-创建知识库，然后上传演示文档：
-
-```text
-examples/local-pilot/company-handbook.md
-examples/local-pilot/support-faq.md
-```
-
-推荐问题在：
-
-```text
-examples/local-pilot/demo-questions.json
-```
-
-上传后检查 pipeline run，打开 chunk preview，在 Playground 提问，并确认答案
-带有 grounded 状态和 citations。
-
-### Docker 本地试点
-
-构建并启动本地试点栈：
-
-```bash
-make pilot-up
-make pilot-docker-smoke
-```
-
-打开：
-
-```text
-http://localhost:8000/console
-```
-
-停止：
-
-```bash
-make pilot-down
-```
-
-Docker 镜像不内置 LLM 权重或模型运行时。本地模型建议在宿主机运行
-Ollama 或 LM Studio，再用 `RAGRIG_ANSWER_BASE_URL` 配置 OpenAI-compatible
-endpoint。Gemini、OpenAI、OpenRouter 等云端模型通过环境变量传入 API key。
+要用真实模型，可在宿主机跑 Ollama / LM Studio 并把 `RAGRIG_ANSWER_BASE_URL`
+指向它，或在 `.env` 里设置 `OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
+`GEMINI_API_KEY`。
 
 只构建应用镜像：
 

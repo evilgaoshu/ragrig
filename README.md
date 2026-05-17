@@ -126,12 +126,34 @@ Prototype:
 
 ## Quick Start
 
+### Docker Compose (recommended)
+
+```bash
+git clone https://github.com/evilgaoshu/ragrig.git
+cd ragrig
+docker compose up
+```
+
+Open `http://localhost:8000` and you're done.
+
+What that does for you:
+- multi-stage build assembles the React console from source inside the image
+- alembic migrations run on startup (`RAGRIG_AUTO_MIGRATE=1`)
+- a sample `demo` knowledge base is auto-seeded from `examples/local-pilot/*.md`
+  so the Playground has something to ask immediately
+- the default answer provider is `deterministic-local` — no API keys required
+- auth is off in demo mode; flip `RAGRIG_AUTH_ENABLED=true` in `.env` before
+  exposing the install to other users
+
+Stop with `docker compose down`. Optional services (MinIO/S3, Qdrant, fileshare
+live smoke) and their env vars live in
+[docs/operations/optional-services.md](./docs/operations/optional-services.md).
+
 ### Vercel Preview + Supabase
 
-RAGRig can run as a Vercel Preview deployment backed by Supabase Postgres. This is
-for online product preview; Docker remains the recommended local pilot path.
-
-Required Vercel Preview environment variables:
+For an online product preview, RAGRig can run as a Vercel Preview backed by
+Supabase Postgres. Docker is still the recommended path for trying it
+locally. Required env:
 
 ```text
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/postgres?sslmode=require
@@ -139,100 +161,44 @@ VECTOR_BACKEND=pgvector
 APP_ENV=preview
 ```
 
-For local migration and `make db-check` against Supabase, also set:
-
-```text
-DB_RUNTIME_HOST=HOST
-DB_HOST_PORT=PORT
-```
-
-Run migrations from a trusted local or CI environment before using the Preview DB:
+Migrate from a trusted local/CI environment first, then smoke the deployment:
 
 ```bash
 DATABASE_URL='postgresql://USER:PASSWORD@HOST:PORT/postgres?sslmode=require' \
-DB_RUNTIME_HOST='HOST' \
-DB_HOST_PORT='PORT' \
+DB_RUNTIME_HOST='HOST' DB_HOST_PORT='PORT' \
 uv run alembic upgrade head
-```
 
-After Vercel creates a Preview deployment:
-
-```bash
 VERCEL_PREVIEW_URL='https://your-preview-url.vercel.app' make vercel-preview-smoke
 ```
 
-Model credentials are optional for Preview startup; no model credentials are required
-for startup. See [EVI-130](./docs/specs/EVI-130-vercel-preview-supabase.md) for the
-full deployment contract.
+Model credentials remain optional — no model credentials are required for
+startup. See
+[EVI-130](./docs/specs/EVI-130-vercel-preview-supabase.md) for the full
+contract.
 
 ### 10-Minute Local Pilot Demo
 
-Run the minimal preflight first. It checks only startup-critical items such as the
-app import path, an ephemeral database health check, writable artifacts, and Docker
-availability for Docker mode.
+For an evidence-backed end-to-end smoke (preflight + container build + console
+walk-through) the legacy targets still work:
 
 ```bash
-make pilot-docker-preflight
+make pilot-docker-preflight   # check Docker is healthy
+make pilot-up                 # docker compose up -d db app
+make pilot-docker-smoke       # JSON evidence pack
+make pilot-down               # tear down
 ```
 
-Model configuration is optional for startup. Ollama, LM Studio, Gemini, OpenAI,
-OpenRouter, rerankers, and external stores are reported as readiness items elsewhere;
-missing model credentials should not stop the app from booting.
+Model configuration is optional for startup. The demo seed uses the
+`deterministic-local` provider and answers without any external model. Sample
+content used by the seed lives at:
 
-Start the demo stack:
+- `examples/local-pilot/company-handbook.md`
+- `examples/local-pilot/support-faq.md`
+- `examples/local-pilot/demo-questions.json`
 
-```bash
-make pilot-up
-make pilot-docker-smoke
-```
-
-Open the Web Console:
-
-```text
-http://localhost:8000/console
-```
-
-Create a knowledge base, then upload the demo documents:
-
-```text
-examples/local-pilot/company-handbook.md
-examples/local-pilot/support-faq.md
-```
-
-Use the suggested questions in:
-
-```text
-examples/local-pilot/demo-questions.json
-```
-
-After upload, inspect the pipeline run, open chunk preview, ask a Playground
-question, and confirm the answer is grounded with citations.
-
-### Docker Local Pilot
-
-Build and start the local pilot stack:
-
-```bash
-make pilot-up
-make pilot-docker-smoke
-```
-
-Open:
-
-```text
-http://localhost:8000/console
-```
-
-Stop the stack:
-
-```bash
-make pilot-down
-```
-
-The Docker image does not bundle LLM weights or model runtimes. For local models,
-run Ollama or LM Studio on the host and configure an OpenAI-compatible endpoint
-with `RAGRIG_ANSWER_BASE_URL`. Cloud providers such as Gemini, OpenAI, and
-OpenRouter are enabled by passing their API keys as environment variables.
+To answer with a real model, run Ollama or LM Studio on the host and point
+`RAGRIG_ANSWER_BASE_URL` at it, or set `OPENAI_API_KEY` / `OPENROUTER_API_KEY`
+/ `GEMINI_API_KEY` in your `.env`.
 
 To build only the application image:
 
