@@ -291,7 +291,7 @@ def _safe_example_config(plugin_id: str) -> dict[str, object]:
         return {
             "space_id": "wiki-space-id",
             "app_id": "env:FEISHU_APP_ID",
-            "app_secret": "env:FEISHU_APP_SECRET",
+            "credential_profile": "env-managed",
         }
     if plugin_id == "source.database":
         return {
