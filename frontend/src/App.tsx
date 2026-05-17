@@ -30,6 +30,7 @@ import Wizard from './pages/Wizard'
 import Conversations from './pages/Conversations'
 import Usage from './pages/Usage'
 import Backup from './pages/Backup'
+import Team from './pages/Team'
 import Stub from './pages/Stub'
 
 function AppRoutes() {
@@ -70,6 +71,7 @@ function AppRoutes() {
                 <Route path="/conversations" element={<Conversations />} />
                 <Route path="/usage" element={<Usage />} />
                 <Route path="/backup" element={<Backup />} />
+                <Route path="/team" element={<Team />} />
                 <Route path="/settings" element={<Settings />} />
 
                 <Route path="*" element={<Stub title="Not Found" description="This page does not exist." />} />

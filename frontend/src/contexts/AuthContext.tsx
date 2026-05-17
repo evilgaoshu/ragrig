@@ -15,7 +15,7 @@ interface AuthContextValue {
   token: string | null
   isLoading: boolean
   login: (email: string, password: string) => Promise<void>
-  register: (email: string, password: string, displayName?: string) => Promise<void>
+  register: (email: string, password: string, displayName?: string, invitationToken?: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -96,11 +96,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     _storeAuth(resp)
   }, [_storeAuth])
 
-  const register = useCallback(async (email: string, password: string, displayName?: string) => {
+  const register = useCallback(async (email: string, password: string, displayName?: string, invitationToken?: string) => {
     const resp = await apiPost<LoginResponse>('/auth/register', {
       email,
       password,
       display_name: displayName || undefined,
+      invitation_token: invitationToken || undefined,
     })
     _storeAuth(resp)
   }, [_storeAuth])

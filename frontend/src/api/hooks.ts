@@ -557,6 +557,74 @@ export function useRestoreWorkspace() {
   })
 }
 
+// ── Team: members + invitations ───────────────────────────────────────────
+
+export interface WorkspaceMember {
+  user_id: string
+  email: string | null
+  display_name: string | null
+  role: string
+  status: string
+}
+
+export interface WorkspaceInvitation {
+  id: string
+  email: string | null
+  role: string
+  status: string
+  expires_at: string
+  token?: string | null
+}
+
+export function useWorkspaceMembers() {
+  return useQuery({
+    queryKey: ['workspace-members'],
+    queryFn: () => api.get<WorkspaceMember[]>('/auth/workspace/members'),
+  })
+}
+
+export function useUpdateMemberRole() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: string }) =>
+      api.patch<WorkspaceMember>(`/auth/workspace/members/${userId}`, { role }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workspace-members'] }),
+  })
+}
+
+export function useRemoveMember() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (userId: string) =>
+      api.delete<void>(`/auth/workspace/members/${userId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workspace-members'] }),
+  })
+}
+
+export function useWorkspaceInvitations() {
+  return useQuery({
+    queryKey: ['workspace-invitations'],
+    queryFn: () => api.get<WorkspaceInvitation[]>('/auth/workspace/invitations'),
+  })
+}
+
+export function useCreateInvitation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { email?: string; role: string; days: number }) =>
+      api.post<WorkspaceInvitation>('/auth/workspace/invitations', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workspace-invitations'] }),
+  })
+}
+
+export function useRevokeInvitation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.delete<void>(`/auth/workspace/invitations/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workspace-invitations'] }),
+  })
+}
+
 // ── Sources CRUD + ingest trigger ──────────────────────────────────────────
 
 export function useCreateSource() {
