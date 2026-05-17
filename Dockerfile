@@ -1,3 +1,22 @@
+# syntax=docker/dockerfile:1.7
+
+# ── Stage 1: build the React console ────────────────────────────────────────
+FROM node:22-alpine AS frontend
+
+WORKDIR /frontend
+
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+
+COPY frontend/ ./
+# vite.config writes to ../src/ragrig/static/dist (relative to /frontend),
+# which resolves to /src/ragrig/static/dist inside this stage. Override
+# to a sibling `dist` directory so the second stage can copy from a
+# predictable path without depending on vite's outDir.
+RUN npm run build -- --outDir dist --emptyOutDir
+
+
+# ── Stage 2: runtime ────────────────────────────────────────────────────────
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -18,6 +37,11 @@ COPY src ./src
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY scripts ./scripts
+COPY examples ./examples
+
+# Drop in the freshly-built React assets so /app always reflects the
+# frontend source in this commit — no committed dist drift.
+COPY --from=frontend /frontend/dist ./src/ragrig/static/dist
 
 RUN uv sync --no-dev --frozen
 
