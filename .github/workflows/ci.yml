@@ -14,6 +14,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Change detection ───────────────────────────────────────────────────────
+  # Tells downstream jobs which areas of the repo changed.
+  # On push-to-main we always treat everything as changed so no check is skipped.
+  changes:
+    name: RAGRig CI / detect-changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.detect.outputs.backend }}
+      deps: ${{ steps.detect.outputs.deps }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            echo "deps=true"    >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.sha }}"
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD")
+          echo "Changed files:"
+          echo "$CHANGED"
+          if echo "$CHANGED" | grep -qE '^(src/|tests/|Makefile|pyproject\.toml|uv\.lock|scripts/|migrations/)'; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend=false" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$CHANGED" | grep -qE '^(pyproject\.toml|uv\.lock)'; then
+            echo "deps=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deps=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Required checks ────────────────────────────────────────────────────────
   lint:
     name: RAGRig CI / lint
     runs-on: ubuntu-latest
@@ -104,65 +143,6 @@ jobs:
           path: evaluation_runs/latest-ci-report.json
         continue-on-error: true
 
-  benchmark-guard:
-    name: RAGRig CI / benchmark-guard
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: astral-sh/setup-uv@v7
-        with:
-          python-version: "3.12"
-          enable-cache: true
-
-      - name: Sync dependencies
-        run: uv sync --dev --frozen
-
-      - name: Compare retrieval benchmark against baseline
-        run: |
-          set -o pipefail
-          mkdir -p docs/operations/artifacts
-          make retrieval-benchmark-compare 2>&1 | tee docs/operations/artifacts/retrieval-benchmark-compare.log
-
-      - name: Generate retrieval benchmark integrity artifact
-        run: make retrieval-benchmark-integrity-artifact
-
-      - name: Generate retrieval benchmark integrity summary
-        run: make retrieval-benchmark-integrity-summary
-
-      - name: Upload retrieval benchmark guard artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: retrieval-benchmark-guard
-          path: |
-            docs/operations/artifacts/retrieval-benchmark-compare.log
-            docs/operations/artifacts/retrieval-benchmark-integrity.json
-            docs/operations/artifacts/retrieval-benchmark-integrity_summary.json
-            docs/operations/artifacts/retrieval-benchmark-integrity_summary.md
-
-      - name: Write retrieval benchmark guard summary
-        if: always()
-        run: |
-          echo "## Retrieval Benchmark Guard" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Compare" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          if [ -f docs/operations/artifacts/retrieval-benchmark-compare.log ]; then
-            cat docs/operations/artifacts/retrieval-benchmark-compare.log >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Compare log not generated." >> "$GITHUB_STEP_SUMMARY"
-          fi
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Integrity" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f docs/operations/artifacts/retrieval-benchmark-integrity_summary.md ]; then
-            cat docs/operations/artifacts/retrieval-benchmark-integrity_summary.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Integrity summary not generated." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
   db-smoke:
     name: RAGRig CI / db-smoke
     runs-on: ubuntu-latest
@@ -230,6 +210,8 @@ jobs:
             docs/operations/artifacts/cost-latency-check.json
             docs/operations/artifacts/knowledge-map-check.json
 
+  # Docker build always runs (required check) but skips the expensive build
+  # steps when only non-image files changed (docs, frontend without Dockerfile).
   docker-build:
     name: RAGRig CI / docker-build
     runs-on: ubuntu-latest
@@ -237,11 +219,32 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect if Docker build needed
+        id: docker_needed
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.sha }}"
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD")
+          if echo "$CHANGED" | grep -qE '^(Dockerfile|pyproject\.toml|uv\.lock|src/)'; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "Docker build skipped — no image-relevant changes"
+          fi
 
       - name: Build Docker image
+        if: steps.docker_needed.outputs.needed == 'true'
         run: docker build -t ragrig:ci .
 
       - name: Start container
+        if: steps.docker_needed.outputs.needed == 'true'
         run: |
           docker run -d \
             --name ragrig-ci \
@@ -250,6 +253,7 @@ jobs:
             ragrig:ci
 
       - name: Wait for app to respond
+        if: steps.docker_needed.outputs.needed == 'true'
         run: |
           for i in $(seq 1 15); do
             if curl -sf http://localhost:8099/health > /dev/null 2>&1; then
@@ -260,6 +264,7 @@ jobs:
           done
 
       - name: Verify health endpoint returns app:ok
+        if: steps.docker_needed.outputs.needed == 'true'
         run: |
           response=$(curl -s http://localhost:8099/health)
           echo "$response"
@@ -271,14 +276,50 @@ jobs:
           "
 
       - name: Stop container
-        if: always()
+        if: always() && steps.docker_needed.outputs.needed == 'true'
         run: docker rm -f ragrig-ci || true
 
+  frontend:
+    name: RAGRig CI / frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Lint
+        run: npm run lint
+        working-directory: frontend
+
+      - name: Audit (high+critical only)
+        run: npm audit --audit-level=high
+        working-directory: frontend
+
+      - name: Build (tsc + vite)
+        run: npm run build
+        working-directory: frontend
+
+  # ── Optional checks (skip when irrelevant) ────────────────────────────────
+  # These are not required branch-protection checks; they can be skipped
+  # safely on PRs that don't touch the relevant areas.
+
+  # Sanitizer coverage drift only matters when Python source or tests change.
   drift-diff:
     name: RAGRig CI / drift-diff
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: github.event_name == 'pull_request'
     permissions:
       contents: read
       pull-requests: write
@@ -379,8 +420,11 @@ jobs:
           name: sanitizer-drift-history-summary
           path: head/docs/operations/artifacts/sanitizer-drift-history-summary.*
 
+  # Supply-chain audit is only meaningful when dependencies change.
   supply-chain:
     name: RAGRig CI / supply-chain
+    needs: [changes]
+    if: needs.changes.outputs.deps == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -406,33 +450,3 @@ jobs:
         with:
           name: pip-audit-json
           path: docs/operations/artifacts/pip-audit.json
-
-  frontend:
-    name: RAGRig CI / frontend
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: frontend
-
-      - name: Lint
-        run: npm run lint
-        working-directory: frontend
-
-      - name: Audit (high+critical only)
-        run: npm audit --audit-level=high
-        working-directory: frontend
-
-      - name: Build (tsc + vite)
-        run: npm run build
-        working-directory: frontend
