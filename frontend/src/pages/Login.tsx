@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/useAuth'
 
@@ -16,10 +16,6 @@ export default function Login() {
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    if (invitationToken) setMode('register')
-  }, [invitationToken])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
