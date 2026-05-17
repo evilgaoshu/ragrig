@@ -77,6 +77,7 @@ from ragrig.retrieval import (
     RetrievalError,
     search_knowledge_base,
 )
+from ragrig.routers.admin import router as admin_router
 from ragrig.routers.audit import router as audit_router
 from ragrig.routers.auth import router as auth_router
 from ragrig.routers.conversations import router as conversations_router
@@ -425,6 +426,7 @@ def create_app(
     app.include_router(conversations_router)
     app.include_router(usage_router)
     app.include_router(source_webhooks_router)
+    app.include_router(admin_router)
 
     def shutdown_task_executor() -> None:
         shutdown = getattr(active_task_executor, "shutdown", None)
