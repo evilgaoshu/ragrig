@@ -28,12 +28,18 @@ const OPERATE: NavItem[] = [
 const INSPECT: NavItem[] = [
   { label: 'Retrieval Lab', to: '/retrieval-lab' },
   { label: 'Answer Gen', to: '/answer-gen' },
+  { label: 'Conversations', to: '/conversations' },
   { label: 'Models', to: '/models' },
   { label: 'Profile Matrix', to: '/profile-matrix' },
   { label: 'Plugins', to: '/plugins' },
   { label: 'Evaluation', to: '/evaluation' },
   { label: 'Knowledge Map', to: '/knowledge-map' },
   { label: 'Settings', to: '/settings' },
+]
+
+const ADMIN: NavItem[] = [
+  { label: 'Usage & Budget', to: '/usage' },
+  { label: 'Backup', to: '/backup' },
 ]
 
 function NavGroup({ label, items }: { label: string; items: NavItem[] }) {
@@ -76,6 +82,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 px-2 pb-4">
           <NavGroup label="Operate" items={OPERATE} />
           <NavGroup label="Inspect" items={INSPECT} />
+          <NavGroup label="Admin" items={ADMIN} />
         </nav>
         <div className="px-3 pb-3 border-t border-gray-100 pt-3">
           {user && (

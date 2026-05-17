@@ -27,6 +27,9 @@ import ProfileMatrix from './pages/ProfileMatrix'
 import AnswerGen from './pages/AnswerGen'
 import Settings from './pages/Settings'
 import Wizard from './pages/Wizard'
+import Conversations from './pages/Conversations'
+import Usage from './pages/Usage'
+import Backup from './pages/Backup'
 import Stub from './pages/Stub'
 
 function AppRoutes() {
@@ -64,6 +67,9 @@ function AppRoutes() {
                 <Route path="/plugins" element={<Plugins />} />
                 <Route path="/evaluation" element={<Evaluation />} />
                 <Route path="/knowledge-map" element={<KnowledgeMap />} />
+                <Route path="/conversations" element={<Conversations />} />
+                <Route path="/usage" element={<Usage />} />
+                <Route path="/backup" element={<Backup />} />
                 <Route path="/settings" element={<Settings />} />
 
                 <Route path="*" element={<Stub title="Not Found" description="This page does not exist." />} />
