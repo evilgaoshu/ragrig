@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   useBudget,
   useDeleteBudget,
   useUpsertBudget,
   useUsage,
   useUsageTimeseries,
+  type Budget,
   type UsageDaily,
 } from '../api/hooks'
 
@@ -124,6 +125,81 @@ function BudgetGauge({ used, limit }: { used: number; limit: number }) {
   )
 }
 
+// Budget form lives in its own component so React can `key` it on the loaded
+// budget's identity — that gives us a clean prop->state seed without any
+// effect-driven sync that the react-hooks rule rejects.
+function BudgetForm({
+  budget,
+  onSave,
+  isPending,
+  error,
+}: {
+  budget: Budget | null
+  onSave: (body: { limit_usd: number; alert_threshold_pct: number; hard_cap: boolean }) => void
+  isPending: boolean
+  error: string | null
+}) {
+  const [limit, setLimit] = useState<string>(budget ? String(budget.limit_usd) : '')
+  const [threshold, setThreshold] = useState<string>(
+    budget ? String(budget.alert_threshold_pct) : '80',
+  )
+  const [hardCap, setHardCap] = useState<boolean>(budget?.hard_cap ?? false)
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const n = Number(limit)
+    if (!n || n <= 0) return
+    onSave({
+      limit_usd: n,
+      alert_threshold_pct: Number(threshold) || 80,
+      hard_cap: hardCap,
+    })
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-3 grid grid-cols-3 gap-2 max-w-md">
+      <label className="flex flex-col text-[11px] text-gray-600">
+        Limit USD
+        <input
+          type="number"
+          step="0.01"
+          min="0.01"
+          value={limit}
+          onChange={(e) => setLimit(e.target.value)}
+          className="mt-0.5 border border-gray-300 rounded px-2 py-1 text-[12px]"
+        />
+      </label>
+      <label className="flex flex-col text-[11px] text-gray-600">
+        Alert %
+        <input
+          type="number"
+          min="1"
+          max="100"
+          value={threshold}
+          onChange={(e) => setThreshold(e.target.value)}
+          className="mt-0.5 border border-gray-300 rounded px-2 py-1 text-[12px]"
+        />
+      </label>
+      <label className="flex items-center gap-1 text-[11px] text-gray-600 self-end pb-1">
+        <input
+          type="checkbox"
+          checked={hardCap}
+          onChange={(e) => setHardCap(e.target.checked)}
+        />
+        Hard cap
+      </label>
+      <button
+        type="submit"
+        disabled={isPending}
+        className="col-span-3 mt-1 rounded bg-brand text-white text-[12px] py-1.5 disabled:opacity-50"
+      >
+        {budget ? 'Update budget' : 'Create budget'}
+      </button>
+      {error && <div className="col-span-3 text-[11px] text-red-600">{error}</div>}
+    </form>
+  )
+}
+
 export default function Usage() {
   const [groupBy, setGroupBy] = useState<string>('')
   const [days, setDays] = useState(30)
@@ -134,30 +210,6 @@ export default function Usage() {
   const { data: budget } = useBudget()
   const upsert = useUpsertBudget()
   const del = useDeleteBudget()
-
-  const [limit, setLimit] = useState<string>('')
-  const [threshold, setThreshold] = useState<string>('80')
-  const [hardCap, setHardCap] = useState(false)
-
-  // Sync form when budget loads
-  useEffect(() => {
-    if (budget) {
-      setLimit(String(budget.limit_usd))
-      setThreshold(String(budget.alert_threshold_pct))
-      setHardCap(budget.hard_cap)
-    }
-  }, [budget])
-
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault()
-    const n = Number(limit)
-    if (!n || n <= 0) return
-    upsert.mutate({
-      limit_usd: n,
-      alert_threshold_pct: Number(threshold) || 80,
-      hard_cap: hardCap,
-    })
-  }
 
   return (
     <div className="p-6 space-y-6">
@@ -231,50 +283,13 @@ export default function Usage() {
                 alert threshold is crossed (at most once per period).
               </div>
             )}
-            <form onSubmit={handleSave} className="mt-3 grid grid-cols-3 gap-2 max-w-md">
-              <label className="flex flex-col text-[11px] text-gray-600">
-                Limit USD
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  value={limit}
-                  onChange={(e) => setLimit(e.target.value)}
-                  className="mt-0.5 border border-gray-300 rounded px-2 py-1 text-[12px]"
-                />
-              </label>
-              <label className="flex flex-col text-[11px] text-gray-600">
-                Alert %
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={threshold}
-                  onChange={(e) => setThreshold(e.target.value)}
-                  className="mt-0.5 border border-gray-300 rounded px-2 py-1 text-[12px]"
-                />
-              </label>
-              <label className="flex items-center gap-1 text-[11px] text-gray-600 self-end pb-1">
-                <input
-                  type="checkbox"
-                  checked={hardCap}
-                  onChange={(e) => setHardCap(e.target.checked)}
-                />
-                Hard cap
-              </label>
-              <button
-                type="submit"
-                disabled={upsert.isPending}
-                className="col-span-3 mt-1 rounded bg-brand text-white text-[12px] py-1.5 disabled:opacity-50"
-              >
-                {budget ? 'Update budget' : 'Create budget'}
-              </button>
-              {upsert.isError && (
-                <div className="col-span-3 text-[11px] text-red-600">
-                  {(upsert.error as Error).message}
-                </div>
-              )}
-            </form>
+            <BudgetForm
+              key={budget?.workspace_id ?? 'new'}
+              budget={budget ?? null}
+              onSave={(body) => upsert.mutate(body)}
+              isPending={upsert.isPending}
+              error={upsert.isError ? (upsert.error as Error).message : null}
+            />
           </div>
         </div>
       </section>
