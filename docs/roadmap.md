@@ -77,6 +77,10 @@ This roadmap reflects the current state of the project as of May 2026. Completed
 - **P3d — Confluence Cloud + Notion + Feishu / Lark Wiki connectors**: pluggable `HttpTransport` scanners + per-source `/sources/{source}/webhook` receiver with HMAC-SHA256 signature verification.
 - **P3e — Admin console + workspace backup/restore**: `/admin/status` counts; `dump_workspace` / `restore_workspace` JSON round-trip (upsert by id, idempotent); `/admin/backup/{workspace_id}` and `/admin/restore` endpoints.
 
+**Done (frontend console — May 2026):**
+- **Profile Matrix editing UI**: processing profile override table with inline PATCH/POST/DELETE; violet highlight for overrides; empty cells open a pre-filled create panel; edit panel with provider/model/kind/status fields.
+- **Usage & Budget UI**: `/usage` page — top-line cost/token/latency tiles, donut budget gauge, daily cost sparkline (7/30/90d), group-by breakdown table (operation / model / user); budget create/update/delete form with hard-cap toggle.
+
 **Open:**
 - Wiki, WPS, and OnlyOffice connectors.
 
@@ -98,6 +102,12 @@ This roadmap reflects the current state of the project as of May 2026. Completed
 **Done:**
 - Authored golden question sets for domain-specific retrieval quality regression (retrieval, edge-cases, multi-doc fixture sets with 35 questions across hit/miss/lexical/semantic/adversarial tags).
 
+**Done (CI efficiency — May 2026):**
+- Path-based change detection job (`changes`): `git diff --name-only` between PR base/head SHAs; push events always treat all areas as changed.
+- `drift-diff` and `supply-chain` jobs skip on PRs that don't touch backend/deps respectively.
+- `docker-build` skips full build+run+health steps when only non-image files changed (docs, frontend without Dockerfile).
+- `benchmark-guard` moved from CI to nightly workflow; opens a GitHub issue on failure.
+
 ---
 
 ## Local Pilot — Active
@@ -116,7 +126,7 @@ This section was not in the original roadmap. It emerged to give contributors an
 
 ---
 
-## Authentication and Multi-Tenant Isolation — In Progress
+## Authentication and Multi-Tenant Isolation — Done
 
 **Done:**
 - `workspaces`, `users`, `workspace_memberships`, `api_keys`, `user_sessions` DB schema and migrations.
@@ -145,8 +155,11 @@ This section was not in the original roadmap. It emerged to give contributors an
 - **PII redaction**: `ragrig.pii` module; regex-based detection of email, phone, SSN, credit card, IP, NI; hooked into indexing pipeline via `pii_redaction=True`; enabled per-request via `RAGRIG_PII_REDACTION_ENABLED`.
 - **Right to erasure**: `DELETE /auth/users/me` (self), `DELETE /auth/workspace/members/{id}/erase` (owner-only); revokes all sessions and API keys, removes memberships, anonymises PII in user record.
 
-**Open:**
-- Email delivery for invitation links (requires SMTP / transactional email provider integration).
+**Done (frontend console — May 2026):**
+- **SMTP invitation email**: `send_invitation_email` wired into `POST /auth/workspace/invitations`; configurable via `RAGRIG_SMTP_*` env vars; graceful degradation when SMTP disabled.
+- **Team management UI**: `/team` page — member list with inline role editor (owner/admin/editor/viewer), remove with confirm, self-protection; invitation panel with shareable link copy and revoke.
+- **API key management UI**: Settings page — create key (name + optional expiry), one-time token reveal with amber warning and copy, revoke with confirm; keys listed with prefix, last-used date, and expiry badge.
+- **Login invitation flow**: `/app/login?token=` pre-selects register tab, shows amber invite banner, passes `invitation_token` through registration.
 
 ---
 
