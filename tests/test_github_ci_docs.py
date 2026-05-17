@@ -31,10 +31,12 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "push:" in workflow
     assert "branches: [main]" in workflow
     assert 'python-version: ["3.12"]' in workflow
-    assert "paths-ignore:" in workflow
-    assert '- "docs/**"' in workflow
-    assert '- "*.md"' in workflow
-    assert '- "LICENSE"' in workflow
+    # CI intentionally runs on every PR — including docs-only — so the
+    # required status checks (test/lint/db-smoke/...) can always satisfy
+    # the protected-branch policy. The small extra runtime is preferable
+    # to maintaining a parallel stub workflow that emits matching check
+    # names.
+    assert "paths-ignore:" not in workflow
     lint_job = workflow.split("  test:", maxsplit=1)[0]
     assert "uv sync --dev --frozen" not in lint_job
     assert "uvx ruff format --check ." in workflow
