@@ -301,6 +301,12 @@ make local-pilot-smoke
 make dependency-inventory
 ```
 
+nightly evidence 路径已接入 GitHub Actions；本地具备 Docker live smoke 条件时可直接运行：
+
+```bash
+make nightly-evidence-smoke
+```
+
 浏览器级 Local Pilot Console 检查：
 
 ```bash

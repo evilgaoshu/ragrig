@@ -1,0 +1,90 @@
+name: Nightly Evidence Smoke
+
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/nightly-evidence-smoke.yml"
+      - "Makefile"
+      - "scripts/nightly_evidence_smoke.py"
+      - "scripts/pilot_evidence_pack.py"
+      - "docs/specs/EVI-110.md"
+      - "tests/test_nightly_evidence_smoke.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ARTIFACTS_DIR: docs/operations/artifacts
+  APP_HOST_PORT: "18000"
+  DB_HOST_PORT: "15433"
+  PILOT_BASE_URL: http://127.0.0.1:18000
+  FILESHARE_AUTO_PICK_PORTS: "1"
+  COMPOSE_PROJECT_NAME: ragrig-nightly-evidence
+
+jobs:
+  evidence-smoke:
+    name: Nightly Evidence Smoke / evidence-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync dependencies with fileshare live SDKs
+        run: uv sync --dev --extra fileshare --frozen
+
+      - name: Run nightly evidence smoke
+        run: make nightly-evidence-smoke
+
+      - name: Write evidence smoke summary
+        if: always()
+        run: |
+          echo "## Nightly Evidence Smoke" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f docs/operations/artifacts/nightly-evidence-smoke.md ]; then
+            cat docs/operations/artifacts/nightly-evidence-smoke.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Nightly evidence smoke summary was not generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload evidence smoke artifacts
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: nightly-evidence-smoke-${{ github.run_id }}
+          path: |
+            docs/operations/artifacts/nightly-evidence-smoke.json
+            docs/operations/artifacts/nightly-evidence-smoke.md
+            docs/operations/artifacts/nightly-evidence-smoke-logs/
+            docs/operations/artifacts/pilot-go-no-go-evidence.json
+            docs/operations/records/EVI-110-pilot-go-no-go-evidence.md
+            docs/operations/artifacts/local-pilot-smoke.json
+            docs/operations/artifacts/pilot-docker-smoke.json
+            docs/operations/artifacts/fileshare-live-smoke-record.json
+            docs/operations/artifacts/pilot-eval-local.json
+            docs/operations/artifacts/pilot-retrieval-benchmark-compare.json
+            docs/operations/artifacts/answer-live-smoke.json
+            docs/operations/artifacts/pipeline-dag-smoke.json
+            docs/operations/artifacts/ops-backup-summary.json
+            docs/operations/artifacts/ops-restore-summary.json
+            docs/operations/artifacts/ops-upgrade-summary.json
+          retention-days: 30
+
+      - name: Cleanup compose services
+        if: always()
+        run: |
+          docker compose --profile fileshare-live down --remove-orphans samba webdav sftp || true
+          make pilot-down || true

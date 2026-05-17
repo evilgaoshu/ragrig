@@ -308,6 +308,13 @@ make local-pilot-smoke
 make dependency-inventory
 ```
 
+The nightly evidence route is automated in GitHub Actions and can be run locally
+when Docker-backed live smoke is available:
+
+```bash
+make nightly-evidence-smoke
+```
+
 Browser-level Local Pilot Console check:
 
 ```bash
