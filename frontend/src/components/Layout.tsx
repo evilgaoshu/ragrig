@@ -40,6 +40,7 @@ const INSPECT: NavItem[] = [
 const ADMIN: NavItem[] = [
   { label: 'Usage & Budget', to: '/usage' },
   { label: 'Backup', to: '/backup' },
+  { label: 'Team', to: '/team' },
 ]
 
 function NavGroup({ label, items }: { label: string; items: NavItem[] }) {

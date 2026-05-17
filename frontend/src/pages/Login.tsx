@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/useAuth'
 
 type Mode = 'login' | 'register'
@@ -7,12 +7,19 @@ type Mode = 'login' | 'register'
 export default function Login() {
   const { login, register } = useAuth()
   const navigate = useNavigate()
-  const [mode, setMode] = useState<Mode>('login')
+  const [searchParams] = useSearchParams()
+  const invitationToken = searchParams.get('token') ?? undefined
+
+  const [mode, setMode] = useState<Mode>(invitationToken ? 'register' : 'login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (invitationToken) setMode('register')
+  }, [invitationToken])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -22,7 +29,7 @@ export default function Login() {
       if (mode === 'login') {
         await login(email, password)
       } else {
-        await register(email, password, displayName || undefined)
+        await register(email, password, displayName || undefined, invitationToken)
       }
       navigate('/')
     } catch (err) {
@@ -41,6 +48,12 @@ export default function Login() {
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+          {invitationToken && (
+            <div className="mb-4 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700">
+              You have been invited — create an account to join.
+            </div>
+          )}
+
           <div className="flex gap-1 mb-6 bg-gray-100 rounded-lg p-1">
             <button
               type="button"
