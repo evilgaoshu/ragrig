@@ -25,6 +25,7 @@ pytestmark = pytest.mark.unit
 
 # ── Fake httpx transport ──────────────────────────────────────────────────────
 
+
 class FakeTransport(httpx.BaseTransport):
     """Returns a canned JSON response for every request."""
 
@@ -54,6 +55,7 @@ def _fake_client(
 
 # ── Registry wiring ───────────────────────────────────────────────────────────
 
+
 def test_registry_has_no_stub_status_for_openai_when_key_missing() -> None:
     registry = get_provider_registry()
     health = registry.get("model.openai").health_check()
@@ -71,11 +73,24 @@ def test_registry_has_no_stub_status_for_anthropic_when_key_missing() -> None:
 def test_registry_oai_compat_cloud_providers_are_real(monkeypatch: pytest.MonkeyPatch) -> None:
     """All OpenAI-compatible cloud providers must not return 'stub' health status."""
     oai_compat = [
-        "model.openai", "model.openrouter", "model.mistral", "model.groq",
-        "model.deepseek", "model.together", "model.fireworks", "model.moonshot",
-        "model.minimax", "model.dashscope", "model.siliconflow", "model.zhipu",
-        "model.baidu_qianfan", "model.volcengine_ark", "model.xai",
-        "model.perplexity", "model.nvidia_nim", "model.openai_compatible",
+        "model.openai",
+        "model.openrouter",
+        "model.mistral",
+        "model.groq",
+        "model.deepseek",
+        "model.together",
+        "model.fireworks",
+        "model.moonshot",
+        "model.minimax",
+        "model.dashscope",
+        "model.siliconflow",
+        "model.zhipu",
+        "model.baidu_qianfan",
+        "model.volcengine_ark",
+        "model.xai",
+        "model.perplexity",
+        "model.nvidia_nim",
+        "model.openai_compatible",
     ]
     registry = get_provider_registry()
     for name in oai_compat:
@@ -85,10 +100,11 @@ def test_registry_oai_compat_cloud_providers_are_real(monkeypatch: pytest.Monkey
 
 # ── OpenAICompatibleCloudProvider ─────────────────────────────────────────────
 
+
 def test_oai_compat_cloud_chat_returns_content() -> None:
-    client, transport = _fake_client(body={
-        "choices": [{"message": {"role": "assistant", "content": "Hello!"}}]
-    })
+    client, transport = _fake_client(
+        body={"choices": [{"message": {"role": "assistant", "content": "Hello!"}}]}
+    )
     provider = OpenAICompatibleCloudProvider(
         provider_name="model.openai",
         metadata=get_provider_registry().read("model.openai"),
@@ -104,9 +120,9 @@ def test_oai_compat_cloud_chat_returns_content() -> None:
 
 
 def test_oai_compat_cloud_generate_wraps_chat() -> None:
-    client, _ = _fake_client(body={
-        "choices": [{"message": {"role": "assistant", "content": "42"}}]
-    })
+    client, _ = _fake_client(
+        body={"choices": [{"message": {"role": "assistant", "content": "42"}}]}
+    )
     provider = OpenAICompatibleCloudProvider(
         provider_name="model.groq",
         metadata=get_provider_registry().read("model.groq"),
@@ -120,9 +136,7 @@ def test_oai_compat_cloud_generate_wraps_chat() -> None:
 
 
 def test_oai_compat_cloud_embed_text_returns_embedding() -> None:
-    client, transport = _fake_client(body={
-        "data": [{"embedding": [0.1, 0.2, 0.3]}]
-    })
+    client, transport = _fake_client(body={"data": [{"embedding": [0.1, 0.2, 0.3]}]})
     provider = OpenAICompatibleCloudProvider(
         provider_name="model.openai",
         metadata=get_provider_registry().read("model.openai"),
@@ -151,6 +165,7 @@ def test_oai_compat_cloud_embed_raises_when_no_embedding_model() -> None:
         client=client,
     )
     from ragrig.providers import ProviderError
+
     with pytest.raises(ProviderError, match="embedding"):
         provider.embed_text("test")
 
@@ -173,16 +188,21 @@ def test_oai_compat_cloud_health_unavailable_when_no_key(monkeypatch: pytest.Mon
 
 # ── AnthropicProvider ─────────────────────────────────────────────────────────
 
+
 def test_anthropic_chat_maps_messages_to_anthropic_format() -> None:
-    client, transport = _fake_client(body={
-        "content": [{"type": "text", "text": "Bonjour!"}],
-        "role": "assistant",
-    })
+    client, transport = _fake_client(
+        body={
+            "content": [{"type": "text", "text": "Bonjour!"}],
+            "role": "assistant",
+        }
+    )
     provider = AnthropicProvider(config={"api_key": "sk-ant-test"}, client=client)
-    result = provider.chat([
-        {"role": "system", "content": "Reply in French."},
-        {"role": "user", "content": "Hello"},
-    ])
+    result = provider.chat(
+        [
+            {"role": "system", "content": "Reply in French."},
+            {"role": "user", "content": "Hello"},
+        ]
+    )
     assert result["choices"][0]["message"]["content"] == "Bonjour!"
     call = transport.calls[0]
     assert "/messages" in call["url"]
@@ -209,10 +229,11 @@ def test_anthropic_health_ok_when_key_configured() -> None:
 
 # ── AzureOpenAIProvider ───────────────────────────────────────────────────────
 
+
 def test_azure_openai_chat_uses_deployment_url() -> None:
-    client, transport = _fake_client(body={
-        "choices": [{"message": {"role": "assistant", "content": "Azure!"}}]
-    })
+    client, transport = _fake_client(
+        body={"choices": [{"message": {"role": "assistant", "content": "Azure!"}}]}
+    )
     provider = AzureOpenAIProvider(
         api_base_url="https://myresource.openai.azure.com/openai/deployments",
         deployment_name="gpt-4.1",
@@ -251,6 +272,7 @@ def test_azure_openai_health_unavailable_when_no_key(monkeypatch: pytest.MonkeyP
 
 # ── JinaProvider ──────────────────────────────────────────────────────────────
 
+
 def test_jina_embed_text() -> None:
     client, transport = _fake_client(body={"data": [{"embedding": [0.1, 0.9]}]})
     provider = JinaProvider(config={"api_key": "jina-test"}, client=client)
@@ -260,9 +282,11 @@ def test_jina_embed_text() -> None:
 
 
 def test_jina_rerank() -> None:
-    client, transport = _fake_client(body={
-        "results": [{"index": 1, "relevance_score": 0.9}, {"index": 0, "relevance_score": 0.3}]
-    })
+    client, transport = _fake_client(
+        body={
+            "results": [{"index": 1, "relevance_score": 0.9}, {"index": 0, "relevance_score": 0.3}]
+        }
+    )
     provider = JinaProvider(config={"api_key": "jina-test"}, client=client)
     docs = ["doc a", "doc b"]
     results = provider.rerank("query", docs)
@@ -273,6 +297,7 @@ def test_jina_rerank() -> None:
 
 # ── VoyageProvider ────────────────────────────────────────────────────────────
 
+
 def test_voyage_embed_text() -> None:
     client, _ = _fake_client(body={"data": [{"embedding": [0.2, 0.8, 0.4]}]})
     provider = VoyageProvider(config={"api_key": "voyage-test"}, client=client)
@@ -282,9 +307,7 @@ def test_voyage_embed_text() -> None:
 
 
 def test_voyage_rerank() -> None:
-    client, _ = _fake_client(body={
-        "data": [{"index": 0, "relevance_score": 0.95}]
-    })
+    client, _ = _fake_client(body={"data": [{"index": 0, "relevance_score": 0.95}]})
     provider = VoyageProvider(config={"api_key": "voyage-test"}, client=client)
     results = provider.rerank("query", ["only doc"])
     assert results[0]["score"] == pytest.approx(0.95)
@@ -292,10 +315,9 @@ def test_voyage_rerank() -> None:
 
 # ── CohereProvider ────────────────────────────────────────────────────────────
 
+
 def test_cohere_chat_returns_content() -> None:
-    client, transport = _fake_client(body={
-        "message": {"content": [{"text": "Cohere response"}]}
-    })
+    client, transport = _fake_client(body={"message": {"content": [{"text": "Cohere response"}]}})
     provider = CohereProvider(config={"api_key": "cohere-test"}, client=client)
     result = provider.chat([{"role": "user", "content": "hi"}])
     assert result["choices"][0]["message"]["content"] == "Cohere response"
@@ -303,18 +325,18 @@ def test_cohere_chat_returns_content() -> None:
 
 
 def test_cohere_embed_text() -> None:
-    client, _ = _fake_client(body={
-        "embeddings": {"float": [[0.1, 0.2, 0.3]]}
-    })
+    client, _ = _fake_client(body={"embeddings": {"float": [[0.1, 0.2, 0.3]]}})
     provider = CohereProvider(config={"api_key": "cohere-test"}, client=client)
     result = provider.embed_text("hello")
     assert result.dimensions == 3
 
 
 def test_cohere_rerank() -> None:
-    client, _ = _fake_client(body={
-        "results": [{"index": 1, "relevance_score": 0.85}, {"index": 0, "relevance_score": 0.2}]
-    })
+    client, _ = _fake_client(
+        body={
+            "results": [{"index": 1, "relevance_score": 0.85}, {"index": 0, "relevance_score": 0.2}]
+        }
+    )
     provider = CohereProvider(config={"api_key": "cohere-test"}, client=client)
     docs = ["alpha", "beta"]
     results = provider.rerank("search query", docs)
