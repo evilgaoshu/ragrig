@@ -263,3 +263,230 @@ export function useKnowledgeMap(kbId: string | null) {
     enabled: !!kbId,
   })
 }
+
+// ── P3b: Conversations + feedback ──────────────────────────────────────────
+
+export interface ConversationSummary {
+  id: string
+  title: string | null
+  knowledge_base: string | null
+  turn_count: number
+  created_at: string
+}
+
+export interface ConversationTurn {
+  id: string
+  turn_index: number
+  query: string
+  answer: string
+  grounding_status: string | null
+  citations: Array<{
+    citation_id?: string
+    document_uri?: string
+    chunk_id?: string
+    chunk_index?: number
+    text_preview?: string
+    score?: number
+    char_start?: number | null
+    char_end?: number | null
+    page_number?: number | null
+  }>
+  created_at: string
+}
+
+export interface ConversationDetail {
+  id: string
+  title: string | null
+  knowledge_base: string | null
+  turns: ConversationTurn[]
+}
+
+export function useConversations() {
+  return useQuery({
+    queryKey: ['conversations'],
+    queryFn: () =>
+      api.get<{ items: ConversationSummary[] }>('/conversations').then((r) => r.items),
+  })
+}
+
+export function useConversation(id: string | null) {
+  return useQuery({
+    queryKey: ['conversation', id],
+    queryFn: () => api.get<ConversationDetail>(`/conversations/${id}`),
+    enabled: !!id,
+  })
+}
+
+export function useCreateConversation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      knowledge_base?: string | null
+      title?: string | null
+    }) => api.post<{ id: string; title: string | null; knowledge_base: string | null }>(
+      '/conversations',
+      body,
+    ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['conversations'] }),
+  })
+}
+
+export function useDeleteConversation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/conversations/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['conversations'] }),
+  })
+}
+
+export function useConversationAnswer() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: string
+      body: {
+        query: string
+        knowledge_base?: string | null
+        top_k?: number
+        provider?: string
+        model?: string | null
+        history_window?: number
+      }
+    }) =>
+      api.post<{
+        turn: ConversationTurn
+        grounding_status: string | null
+        answer: string
+        citations?: ConversationTurn['citations']
+      }>(`/conversations/${id}/answer`, body),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['conversation', variables.id] })
+      qc.invalidateQueries({ queryKey: ['conversations'] })
+    },
+  })
+}
+
+export function useSubmitFeedback() {
+  return useMutation({
+    mutationFn: (body: {
+      turn_id?: string | null
+      rating: -1 | 0 | 1
+      reason?: string | null
+      query?: string | null
+      answer_excerpt?: string | null
+    }) => api.post<{ id: string; rating: number }>('/answer-feedback', body),
+  })
+}
+
+// ── P3c: Usage + budgets ────────────────────────────────────────────────────
+
+export interface UsageRollup {
+  event_count: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  cost_usd: number
+  avg_latency_ms: number
+  groups?: Array<{
+    key: string | null
+    count: number
+    cost_usd: number
+    input_tokens: number
+    output_tokens: number
+  }>
+}
+
+export interface UsageDaily {
+  day: string
+  count: number
+  cost_usd: number
+  tokens: number
+}
+
+export interface Budget {
+  workspace_id: string
+  period: string
+  limit_usd: number
+  alert_threshold_pct: number
+  hard_cap: boolean
+  last_alert_at: string | null
+}
+
+export function useUsage(params?: { since?: string; until?: string; group_by?: string }) {
+  const qs = new URLSearchParams()
+  if (params?.since) qs.set('since', params.since)
+  if (params?.until) qs.set('until', params.until)
+  if (params?.group_by) qs.set('group_by', params.group_by)
+  const query = qs.toString()
+  return useQuery({
+    queryKey: ['usage', params],
+    queryFn: () => api.get<UsageRollup>(`/usage${query ? `?${query}` : ''}`),
+  })
+}
+
+export function useUsageTimeseries(days = 30) {
+  return useQuery({
+    queryKey: ['usage-timeseries', days],
+    queryFn: () =>
+      api.get<{ items: UsageDaily[] }>(`/usage/timeseries?days=${days}`).then((r) => r.items),
+  })
+}
+
+export function useBudget() {
+  return useQuery({
+    queryKey: ['budget'],
+    queryFn: () => api.get<{ budget: Budget | null }>('/budgets').then((r) => r.budget),
+  })
+}
+
+export function useUpsertBudget() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { limit_usd: number; alert_threshold_pct: number; hard_cap: boolean }) =>
+      api.put<{ budget: Budget }>('/budgets', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['budget'] }),
+  })
+}
+
+export function useDeleteBudget() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.delete<void>('/budgets'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['budget'] }),
+  })
+}
+
+// ── P3e: Admin + backup ────────────────────────────────────────────────────
+
+export interface AdminStatusCounts {
+  workspaces: number
+  knowledge_bases: number
+  sources: number
+  conversations: number
+  answer_feedback: number
+  audit_events: number
+}
+
+export function useAdminStatus() {
+  return useQuery({
+    queryKey: ['admin-status'],
+    queryFn: () =>
+      api.get<{ counts: AdminStatusCounts }>('/admin/status').then((r) => r.counts),
+    refetchInterval: 60_000,
+  })
+}
+
+export function useRestoreWorkspace() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      api.post<{ status: string; written: Record<string, number> }>('/admin/restore', { payload }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-status'] })
+      qc.invalidateQueries({ queryKey: ['knowledge-bases'] })
+    },
+  })
+}
