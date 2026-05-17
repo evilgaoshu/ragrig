@@ -5,7 +5,13 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, Header, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
@@ -2131,6 +2137,10 @@ def create_app(
         @app.get("/app/{path:path}", include_in_schema=False)
         def react_app(_path: str = "") -> FileResponse:
             return FileResponse(_dist / "index.html")
+
+        @app.get("/", include_in_schema=False)
+        def root_redirect() -> RedirectResponse:
+            return RedirectResponse(url="/app", status_code=302)
 
     return app
 
