@@ -717,3 +717,34 @@ export function useRevokeApiKey() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['api-keys'] }),
   })
 }
+
+export interface WebImportFailure {
+  source_url: string
+  reason: string
+  message: string
+}
+
+export interface WebImportResult {
+  pipeline_run_id: string
+  accepted_pages: number
+  failed_pages: number
+  failures: WebImportFailure[]
+}
+
+export function useWebsiteImport() {
+  return useMutation({
+    mutationFn: ({
+      kbName,
+      urls,
+      sitemapUrl,
+    }: {
+      kbName: string
+      urls: string[]
+      sitemapUrl?: string
+    }) =>
+      api.post<WebImportResult>(`/knowledge-bases/${kbName}/website-import`, {
+        urls,
+        sitemap_url: sitemapUrl || null,
+      }),
+  })
+}
