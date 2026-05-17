@@ -57,7 +57,7 @@ This roadmap reflects the current state of the project as of May 2026. Completed
 
 ---
 
-## Phase 3: Workflow and Connector Expansion — Substantially Done
+## Phase 3: Workflow and Connector Expansion — Done
 
 **Done:**
 - Lightweight DAG runner for ingestion workflows (`workflows/ingestion_dag.py`).
@@ -68,9 +68,14 @@ This roadmap reflects the current state of the project as of May 2026. Completed
 - S3 source connector fully wired into console ingest flow.
 - Database source connectors (PostgreSQL, MySQL read path).
 - Parquet export dependency in place (`pyarrow`).
-
-**Done:**
 - Markdown, JSONL, and NFS export sinks (unified `sink.filesystem` connector writing to any local path, including NFS mount points).
+
+**Done (P3 SMB focus, May 2026):**
+- **P3a — OpenAI-compatible REST + MCP server + SSE streaming**: `POST /v1/chat/completions`, `GET /v1/models`, `POST /mcp` (`initialize`/`tools/list`/`tools/call`/`resources/list`); model identifier syntax `ragrig/<kb>[@provider:model]`; `stream=true` on retrieval + chat-completion paths.
+- **P3b — Multi-turn conversations + feedback loop + citation highlighting**: `conversations`, `conversation_turns`, `answer_feedback` tables; `_build_contextual_query` folds prior turns into retrieval; `char_start/char_end/page_number` spans propagated end-to-end through `RetrievalResult`, `EvidenceChunk`, and `Citation`.
+- **P3c — Usage + cost dashboard with budget alerts**: `usage_events` and `budgets` tables; `record_usage_events`, `aggregate_usage`, `daily_timeseries`, `evaluate_budget` core APIs; `/usage`, `/usage/timeseries`, `/budgets`, `/admin/usage/evaluate` REST endpoints; per-workspace monthly limits with latched email + webhook alerts and optional `hard_cap`.
+- **P3d — Confluence Cloud + Notion + Feishu / Lark Wiki connectors**: pluggable `HttpTransport` scanners + per-source `/sources/{source}/webhook` receiver with HMAC-SHA256 signature verification.
+- **P3e — Admin console + workspace backup/restore**: `/admin/status` counts; `dump_workspace` / `restore_workspace` JSON round-trip (upsert by id, idempotent); `/admin/backup/{workspace_id}` and `/admin/restore` endpoints.
 
 **Open:**
 - Wiki, WPS, and OnlyOffice connectors.
