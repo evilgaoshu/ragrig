@@ -24,7 +24,7 @@ def test_expected_contexts_match_current_workflow_matrix() -> None:
     assert report["status"] == "pass"
     assert report["missing_from_workflow"] == []
     assert report["unexpected_required_matrix_contexts"] == []
-    assert "RAGRig CI / benchmark-guard" in report["non_required_workflow_contexts"]
+    assert "RAGRig CI / detect-changes" in report["non_required_workflow_contexts"]
     assert "RAGRig CI / test (3.12)" in expected
     assert "RAGRig CI / test (3.11)" not in expected
 
@@ -54,13 +54,13 @@ def test_local_drift_report_allows_non_required_workflow_contexts() -> None:
     actual = [
         "RAGRig CI / lint",
         "RAGRig CI / test (3.12)",
-        "RAGRig CI / benchmark-guard",
+        "RAGRig CI / detect-changes",
     ]
 
     report = check.local_drift_report(expected, actual)
 
     assert report["status"] == "pass"
-    assert report["non_required_workflow_contexts"] == ["RAGRig CI / benchmark-guard"]
+    assert report["non_required_workflow_contexts"] == ["RAGRig CI / detect-changes"]
 
 
 def test_remote_drift_report_requires_exact_branch_protection_match() -> None:
