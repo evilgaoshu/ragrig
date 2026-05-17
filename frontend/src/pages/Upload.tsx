@@ -1,6 +1,14 @@
 import { useCallback, useRef, useState } from 'react'
-import { useKnowledgeBases, useUpload, useTask } from '../api/hooks'
+import {
+  useKnowledgeBases,
+  useUpload,
+  useTask,
+  useWebsiteImport,
+  type WebImportResult,
+} from '../api/hooks'
 import type { UploadResult } from '../api/types'
+
+// ── Shared ───────────────────────────────────────────────────────────────────
 
 function TaskProgress({ taskId }: { taskId: string }) {
   const { data: task } = useTask(taskId)
@@ -31,7 +39,9 @@ function TaskProgress({ taskId }: { taskId: string }) {
   )
 }
 
-function ResultPanel({ result, onReset }: { result: UploadResult; onReset: () => void }) {
+// ── File upload result ────────────────────────────────────────────────────────
+
+function FileResultPanel({ result, onReset }: { result: UploadResult; onReset: () => void }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -49,10 +59,7 @@ function ResultPanel({ result, onReset }: { result: UploadResult; onReset: () =>
             </div>
           </div>
         </div>
-        <button
-          onClick={onReset}
-          className="ml-auto text-xs text-brand hover:underline"
-        >
+        <button onClick={onReset} className="ml-auto text-xs text-brand hover:underline">
           Upload more
         </button>
       </div>
@@ -90,11 +97,57 @@ function ResultPanel({ result, onReset }: { result: UploadResult; onReset: () =>
   )
 }
 
-export default function Upload() {
-  const { data: kbs, isLoading: kbsLoading } = useKnowledgeBases()
-  const upload = useUpload()
+// ── Web import result ─────────────────────────────────────────────────────────
 
-  const [kbName, setKbName] = useState('')
+function WebResultPanel({ result, onReset }: { result: WebImportResult; onReset: () => void }) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <div className="flex gap-3">
+          <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-center min-w-[80px]">
+            <div className="text-[10px] font-bold uppercase text-gray-400">Imported</div>
+            <div className={`text-base font-bold ${result.accepted_pages > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+              {result.accepted_pages}
+            </div>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-center min-w-[80px]">
+            <div className="text-[10px] font-bold uppercase text-gray-400">Failed</div>
+            <div className={`text-base font-bold ${result.failed_pages > 0 ? 'text-red-500' : 'text-gray-400'}`}>
+              {result.failed_pages}
+            </div>
+          </div>
+        </div>
+        <button onClick={onReset} className="ml-auto text-xs text-brand hover:underline">
+          Import more
+        </button>
+      </div>
+
+      {result.failures.length > 0 && (
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-2 bg-gray-50 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+            Failed pages
+          </div>
+          {result.failures.map((f, i) => (
+            <div key={i} className="flex items-start gap-3 px-4 py-2 border-t border-gray-100">
+              <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded text-red-600 bg-red-50">
+                {f.reason}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-mono text-gray-700 truncate">{f.source_url}</div>
+                {f.message && <div className="text-xs text-gray-400 mt-0.5">{f.message}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── File upload tab ───────────────────────────────────────────────────────────
+
+function FileTab({ kbName }: { kbName: string }) {
+  const upload = useUpload()
   const [files, setFiles] = useState<File[]>([])
   const [dragging, setDragging] = useState(false)
   const [result, setResult] = useState<UploadResult | null>(null)
@@ -144,105 +197,212 @@ export default function Upload() {
   const formatBytes = (n: number) =>
     n < 1024 ? `${n} B` : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 ** 2).toFixed(1)} MB`
 
+  if (result) return <FileResultPanel result={result} onReset={reset} />
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <div
+        className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+          dragging ? 'border-brand bg-brand/5' : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+        }`}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={onDrop}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onInputChange} />
+        <div className="text-2xl mb-2">📄</div>
+        <div className="text-sm font-medium text-gray-700">Drop files here or click to browse</div>
+        <div className="text-xs text-gray-400 mt-1">Markdown, PDF, plain text, and more</div>
+      </div>
+
+      {files.length > 0 && (
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-2 bg-gray-50 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+            {files.length} file{files.length !== 1 ? 's' : ''} selected
+          </div>
+          {files.map((f) => (
+            <div key={f.name} className="flex items-center gap-3 px-4 py-2 border-t border-gray-100">
+              <span className="flex-1 text-xs font-mono text-gray-700 truncate">{f.name}</span>
+              <span className="shrink-0 text-xs text-gray-400">{formatBytes(f.size)}</span>
+              <button
+                type="button"
+                onClick={() => removeFile(f.name)}
+                className="shrink-0 text-gray-400 hover:text-red-500 text-sm leading-none"
+                aria-label="Remove"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {upload.isError && (
+        <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          {upload.error instanceof Error ? upload.error.message : 'Upload failed'}
+        </div>
+      )}
+
+      <button
+        type="submit"
+        disabled={!kbName || !files.length || upload.isPending}
+        className="px-4 py-2 bg-brand text-white text-sm font-medium rounded-lg hover:bg-brand/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      >
+        {upload.isPending ? 'Uploading…' : `Upload ${files.length || ''} file${files.length !== 1 ? 's' : ''}`}
+      </button>
+    </form>
+  )
+}
+
+// ── Web import tab ────────────────────────────────────────────────────────────
+
+function WebTab({ kbName }: { kbName: string }) {
+  const webImport = useWebsiteImport()
+  const [urlsText, setUrlsText] = useState('')
+  const [sitemapUrl, setSitemapUrl] = useState('')
+  const [result, setResult] = useState<WebImportResult | null>(null)
+
+  const urls = urlsText
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!kbName || (!urls.length && !sitemapUrl.trim())) return
+    try {
+      const r = await webImport.mutateAsync({
+        kbName,
+        urls,
+        sitemapUrl: sitemapUrl.trim() || undefined,
+      })
+      setResult(r)
+    } catch {
+      // error shown via webImport.error
+    }
+  }
+
+  const reset = () => {
+    setResult(null)
+    setUrlsText('')
+    setSitemapUrl('')
+    webImport.reset()
+  }
+
+  if (result) return <WebResultPanel result={result} onReset={reset} />
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="space-y-1.5">
+        <label className="text-xs font-medium text-gray-600">
+          URLs <span className="text-gray-400">— one per line, max 25</span>
+        </label>
+        <textarea
+          rows={6}
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono resize-y focus:outline-none focus:ring-2 focus:ring-brand/40"
+          placeholder={'https://example.com/docs/intro\nhttps://example.com/docs/guide'}
+          value={urlsText}
+          onChange={(e) => setUrlsText(e.target.value)}
+        />
+        {urls.length > 0 && (
+          <div className="text-[11px] text-gray-400">{urls.length} URL{urls.length !== 1 ? 's' : ''}</div>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="text-xs font-medium text-gray-600">
+          Sitemap URL <span className="text-gray-400">— optional, auto-expands URLs from sitemap</span>
+        </label>
+        <input
+          type="url"
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand/40"
+          placeholder="https://example.com/sitemap.xml"
+          value={sitemapUrl}
+          onChange={(e) => setSitemapUrl(e.target.value)}
+        />
+      </div>
+
+      <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-[11px] text-gray-500 space-y-0.5">
+        <div>Pages are fetched and parsed as HTML, then indexed into the knowledge base.</div>
+        <div>Private/local addresses and cloud metadata endpoints are blocked.</div>
+      </div>
+
+      {webImport.isError && (
+        <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          {webImport.error instanceof Error ? webImport.error.message : 'Import failed'}
+        </div>
+      )}
+
+      <button
+        type="submit"
+        disabled={!kbName || (!urls.length && !sitemapUrl.trim()) || webImport.isPending}
+        className="px-4 py-2 bg-brand text-white text-sm font-medium rounded-lg hover:bg-brand/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      >
+        {webImport.isPending ? 'Importing…' : 'Import pages'}
+      </button>
+    </form>
+  )
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+
+type Tab = 'files' | 'web'
+
+export default function Upload() {
+  const { data: kbs, isLoading: kbsLoading } = useKnowledgeBases()
+  const [kbName, setKbName] = useState('')
+  const [tab, setTab] = useState<Tab>('files')
+
   return (
     <div className="p-6 space-y-6 max-w-2xl">
       <div>
         <h1 className="text-lg font-bold text-gray-900">Upload</h1>
-        <p className="text-gray-500 text-sm mt-0.5">Upload files directly to a knowledge base</p>
+        <p className="text-gray-500 text-sm mt-0.5">Add content to a knowledge base</p>
       </div>
 
-      {result ? (
-        <ResultPanel result={result} onReset={reset} />
-      ) : (
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {/* KB picker */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-gray-600">Knowledge base</label>
-            {kbsLoading ? (
-              <div className="text-sm text-gray-400">Loading…</div>
-            ) : (
-              <select
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
-                value={kbName}
-                onChange={(e) => setKbName(e.target.value)}
-                required
-              >
-                <option value="">— select a knowledge base —</option>
-                {(kbs ?? []).map((kb) => (
-                  <option key={kb.id} value={kb.name}>
-                    {kb.name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          {/* Drop zone */}
-          <div
-            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
-              dragging
-                ? 'border-brand bg-brand/5'
-                : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-            }`}
-            onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-            onClick={() => fileInputRef.current?.click()}
+      {/* KB picker */}
+      <div className="space-y-1.5">
+        <label className="text-xs font-medium text-gray-600">Knowledge base</label>
+        {kbsLoading ? (
+          <div className="text-sm text-gray-400">Loading…</div>
+        ) : (
+          <select
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
+            value={kbName}
+            onChange={(e) => setKbName(e.target.value)}
           >
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={onInputChange}
-            />
-            <div className="text-2xl mb-2">📄</div>
-            <div className="text-sm font-medium text-gray-700">Drop files here or click to browse</div>
-            <div className="text-xs text-gray-400 mt-1">Markdown, PDF, plain text, and more</div>
-          </div>
+            <option value="">— select a knowledge base —</option>
+            {(kbs ?? []).map((kb) => (
+              <option key={kb.id} value={kb.name}>
+                {kb.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
 
-          {/* File list */}
-          {files.length > 0 && (
-            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-              <div className="px-4 py-2 bg-gray-50 text-[11px] font-bold uppercase tracking-wider text-gray-400">
-                {files.length} file{files.length !== 1 ? 's' : ''} selected
-              </div>
-              {files.map((f) => (
-                <div
-                  key={f.name}
-                  className="flex items-center gap-3 px-4 py-2 border-t border-gray-100"
-                >
-                  <span className="flex-1 text-xs font-mono text-gray-700 truncate">{f.name}</span>
-                  <span className="shrink-0 text-xs text-gray-400">{formatBytes(f.size)}</span>
-                  <button
-                    type="button"
-                    onClick={() => removeFile(f.name)}
-                    className="shrink-0 text-gray-400 hover:text-red-500 text-sm leading-none"
-                    aria-label="Remove"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+      {/* Tabs */}
+      <div>
+        <div className="flex border-b border-gray-200 mb-5">
+          {([['files', 'Files'], ['web', 'Web import']] as [Tab, string][]).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                tab === id
+                  ? 'border-brand text-brand'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
-          {/* Error */}
-          {upload.isError && (
-            <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-              {upload.error instanceof Error ? upload.error.message : 'Upload failed'}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={!kbName || !files.length || upload.isPending}
-            className="px-4 py-2 bg-brand text-white text-sm font-medium rounded-lg hover:bg-brand/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            {upload.isPending ? 'Uploading…' : `Upload ${files.length || ''} file${files.length !== 1 ? 's' : ''}`}
-          </button>
-        </form>
-      )}
+        {tab === 'files' ? <FileTab kbName={kbName} /> : <WebTab kbName={kbName} />}
+      </div>
     </div>
   )
 }
