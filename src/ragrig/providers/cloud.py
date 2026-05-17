@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
+
 from ragrig.embeddings import EmbeddingResult
 from ragrig.providers import (
     BaseProvider,
@@ -771,6 +773,737 @@ class GeminiProvider(BaseProvider):
         return str(getattr(response, "text", "") or "")
 
 
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+
+def _resolve_api_key(*, config: dict[str, Any], env_var: str) -> str | None:
+    v = config.get("api_key") or os.getenv(env_var)
+    return str(v) if v else None
+
+
+def _require_api_key(*, config: dict[str, Any], env_var: str, provider: str) -> str:
+    key = _resolve_api_key(config=config, env_var=env_var)
+    if not key:
+        raise ProviderError(
+            f"Provider '{provider}' requires {env_var} (set via env var or api_key config field)",
+            code="missing_required_secret",
+            retryable=False,
+            details={"provider": provider, "secret": env_var},
+        )
+    return key
+
+
+def _wrap_http_error(provider: str, exc: Exception) -> ProviderError:
+    return ProviderError(
+        f"Provider '{provider}' HTTP request failed: {exc}",
+        code="request_failed",
+        retryable=True,
+        details={"provider": provider, "error": str(exc)},
+    )
+
+
+def _check_response(provider: str, response: httpx.Response) -> dict[str, Any]:
+    try:
+        body: dict[str, Any] = response.json()
+    except Exception:
+        body = {"raw": response.text}
+    if not response.is_success:
+        err = body.get("error", {})
+        msg = (
+            err.get("message", body.get("message", response.text))
+            if isinstance(err, dict)
+            else str(err)
+        )
+        raise ProviderError(
+            f"Provider '{provider}' returned HTTP {response.status_code}: {msg}",
+            code="api_error",
+            retryable=response.status_code >= 500,
+            details={"provider": provider, "status": response.status_code},
+        )
+    return body
+
+
+# ── OpenAI-compatible cloud provider (generic) ────────────────────────────────
+
+
+class OpenAICompatibleCloudProvider(BaseProvider):
+    """
+    Generic provider for any cloud endpoint that speaks the OpenAI REST API.
+
+    Covers: Mistral, Groq, DeepSeek, Together, Fireworks, Moonshot, MiniMax,
+    DashScope, SiliconFlow, ZhiPu, BaiduQianFan, VolcEngineArk, xAI,
+    Perplexity, NVIDIA NIM, OpenRouter, and OpenAI itself.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider_name: str,
+        metadata: ProviderMetadata,
+        api_base_url: str,
+        api_key_env: str,
+        model_name: str,
+        embedding_model_name: str | None = None,
+        reranker_model_name: str | None = None,
+        config: dict[str, Any] | None = None,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.metadata = metadata
+        self._provider_name = provider_name
+        self._api_base = api_base_url.rstrip("/")
+        self._api_key_env = api_key_env
+        self._model_name = model_name
+        self._embedding_model_name = embedding_model_name
+        self._reranker_model_name = reranker_model_name
+        self._config = config or {}
+        self._client = client
+
+    def _headers(self) -> dict[str, str]:
+        key = _require_api_key(
+            config=self._config, env_var=self._api_key_env, provider=self._provider_name
+        )
+        return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+    def _http(self) -> httpx.Client:
+        return self._client or httpx.Client(timeout=60.0)
+
+    def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            client = self._http()
+            owned = self._client is None
+            try:
+                r = client.post(f"{self._api_base}{path}", headers=self._headers(), json=body)
+            finally:
+                if owned:
+                    client.close()
+        except httpx.HTTPError as exc:
+            raise _wrap_http_error(self._provider_name, exc) from exc
+        return _check_response(self._provider_name, r)
+
+    def health_check(self) -> ProviderHealth:
+        key = _resolve_api_key(config=self._config, env_var=self._api_key_env)
+        if not key:
+            return ProviderHealth(
+                status="unavailable",
+                detail=f"{self._api_key_env} is not configured",
+                metrics={"provider": self._provider_name},
+            )
+        try:
+            client = self._http()
+            owned = self._client is None
+            try:
+                r = client.get(
+                    f"{self._api_base}/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=10.0,
+                )
+            finally:
+                if owned:
+                    client.close()
+            if r.status_code == 401:
+                return ProviderHealth(
+                    status="unavailable",
+                    detail="Invalid API key",
+                    metrics={"provider": self._provider_name},
+                )
+            return ProviderHealth(
+                status="healthy",
+                detail=f"{self._provider_name} endpoint reachable",
+                metrics={"provider": self._provider_name, "model": self._model_name},
+            )
+        except Exception as exc:
+            return ProviderHealth(
+                status="unavailable", detail=str(exc), metrics={"provider": self._provider_name}
+            )
+
+    def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        return self._post("/chat/completions", {"model": self._model_name, "messages": messages})
+
+    def generate(self, prompt: str) -> str:
+        result = self.chat([{"role": "user", "content": prompt}])
+        return str(result["choices"][0]["message"]["content"])
+
+    def embed_text(self, text: str) -> EmbeddingResult:
+        model = self._embedding_model_name
+        if not model:
+            self.raise_unsupported_capability(ProviderCapability.EMBEDDING)
+        body = self._post("/embeddings", {"model": model, "input": text})
+        vector = [float(v) for v in body["data"][0]["embedding"]]
+        return EmbeddingResult(
+            provider=self._provider_name,
+            model=model,
+            dimensions=len(vector),
+            vector=vector,
+            metadata={"api_base": self._api_base},
+        )
+
+    def rerank(self, query: str, documents: list[str]) -> list[dict[str, Any]]:
+        model = self._reranker_model_name
+        if not model:
+            self.raise_unsupported_capability(ProviderCapability.RERANK)
+        body = self._post("/rerank", {"model": model, "query": query, "documents": documents})
+        results = body.get("results", body.get("data", []))
+        return [
+            {
+                "document": documents[item["index"]],
+                "index": item["index"],
+                "score": float(item.get("relevance_score", item.get("score", 0.0))),
+            }
+            for item in results
+        ]
+
+
+def create_openai_compatible_cloud_provider(
+    provider_name: str,
+    metadata: ProviderMetadata,
+    api_key_env: str,
+    **config: Any,
+) -> OpenAICompatibleCloudProvider:
+    schema = metadata.config_schema
+    api_base = str(config.get("api_base_url", schema.get("api_base_url", {}).get("default", "")))
+    model = str(config.get("model_name", schema.get("model_name", {}).get("default", "default")))
+    embed_model = (
+        str(config["embedding_model_name"])
+        if config.get("embedding_model_name")
+        else (
+            schema.get("embedding_model_name", {}).get("default")
+            if "embedding_model_name" in schema
+            else None
+        )
+    )
+    rerank_model = (
+        str(config["reranker_model_name"])
+        if config.get("reranker_model_name")
+        else (
+            schema.get("reranker_model_name", {}).get("default")
+            if "reranker_model_name" in schema
+            else None
+        )
+    )
+    return OpenAICompatibleCloudProvider(
+        provider_name=provider_name,
+        metadata=metadata,
+        api_base_url=api_base,
+        api_key_env=api_key_env,
+        model_name=model,
+        embedding_model_name=embed_model,
+        reranker_model_name=rerank_model,
+        config=dict(config),
+        client=config.get("client"),
+    )
+
+
+# ── Anthropic provider ────────────────────────────────────────────────────────
+
+
+class AnthropicProvider(BaseProvider):
+    """Anthropic Claude via the Messages API (no SDK dependency)."""
+
+    _ANTHROPIC_VERSION = "2023-06-01"
+    _DEFAULT_MAX_TOKENS = 4096
+
+    def __init__(
+        self,
+        *,
+        api_base_url: str = "https://api.anthropic.com/v1",
+        model_name: str = "claude-sonnet-4-5",
+        max_tokens: int = _DEFAULT_MAX_TOKENS,
+        config: dict[str, Any] | None = None,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.metadata = ANTHROPIC_METADATA
+        self._api_base = api_base_url.rstrip("/")
+        self._model_name = model_name
+        self._max_tokens = max_tokens
+        self._config = config or {}
+        self._client = client
+
+    def _headers(self) -> dict[str, str]:
+        key = _require_api_key(
+            config=self._config, env_var="ANTHROPIC_API_KEY", provider="model.anthropic"
+        )
+        return {
+            "x-api-key": key,
+            "anthropic-version": self._ANTHROPIC_VERSION,
+            "content-type": "application/json",
+        }
+
+    def _http(self) -> httpx.Client:
+        return self._client or httpx.Client(timeout=60.0)
+
+    def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            client = self._http()
+            owned = self._client is None
+            try:
+                r = client.post(f"{self._api_base}{path}", headers=self._headers(), json=body)
+            finally:
+                if owned:
+                    client.close()
+        except httpx.HTTPError as exc:
+            raise _wrap_http_error("model.anthropic", exc) from exc
+        return _check_response("model.anthropic", r)
+
+    def health_check(self) -> ProviderHealth:
+        key = _resolve_api_key(config=self._config, env_var="ANTHROPIC_API_KEY")
+        if not key:
+            return ProviderHealth(
+                status="unavailable",
+                detail="ANTHROPIC_API_KEY is not configured",
+                metrics={"provider": "model.anthropic"},
+            )
+        return ProviderHealth(
+            status="healthy",
+            detail="Anthropic API key is configured",
+            metrics={"provider": "model.anthropic", "model": self._model_name},
+        )
+
+    def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        # Convert OpenAI-style messages to Anthropic format
+        system_parts = [m["content"] for m in messages if m.get("role") == "system"]
+        non_system = [m for m in messages if m.get("role") != "system"]
+        body: dict[str, Any] = {
+            "model": self._model_name,
+            "max_tokens": self._max_tokens,
+            "messages": [
+                {"role": m.get("role", "user"), "content": m.get("content", "")} for m in non_system
+            ],
+        }
+        if system_parts:
+            body["system"] = "\n\n".join(system_parts)
+        result = self._post("/messages", body)
+        content = result.get("content", [{}])
+        text = content[0].get("text", "") if content else ""
+        return {"choices": [{"message": {"role": "assistant", "content": text}}]}
+
+    def generate(self, prompt: str) -> str:
+        result = self.chat([{"role": "user", "content": prompt}])
+        return str(result["choices"][0]["message"]["content"])
+
+
+def create_anthropic_provider(**config: Any) -> AnthropicProvider:
+    return AnthropicProvider(
+        api_base_url=str(config.get("api_base_url", "https://api.anthropic.com/v1")),
+        model_name=str(config.get("model_name", "claude-sonnet-4-5")),
+        max_tokens=int(config.get("max_tokens", AnthropicProvider._DEFAULT_MAX_TOKENS)),
+        config=dict(config),
+        client=config.get("client"),
+    )
+
+
+# ── Azure OpenAI provider ─────────────────────────────────────────────────────
+
+
+class AzureOpenAIProvider(BaseProvider):
+    """Azure OpenAI using deployment-based routing and api-key auth."""
+
+    def __init__(
+        self,
+        *,
+        api_base_url: str,
+        deployment_name: str,
+        embedding_deployment_name: str | None = None,
+        api_version: str = "2025-01-01-preview",
+        config: dict[str, Any] | None = None,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.metadata = AZURE_OPENAI_METADATA
+        self._endpoint = api_base_url.rstrip("/")
+        self._deployment = deployment_name
+        self._embed_deployment = embedding_deployment_name
+        self._api_version = api_version
+        self._config = config or {}
+        self._client = client
+
+    def _headers(self) -> dict[str, str]:
+        key = _require_api_key(
+            config=self._config, env_var="AZURE_OPENAI_API_KEY", provider="model.azure_openai"
+        )
+        return {"api-key": key, "content-type": "application/json"}
+
+    def _http(self) -> httpx.Client:
+        return self._client or httpx.Client(timeout=60.0)
+
+    def _post(self, deployment: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        url = f"{self._endpoint}/{deployment}{path}?api-version={self._api_version}"
+        try:
+            client = self._http()
+            owned = self._client is None
+            try:
+                r = client.post(url, headers=self._headers(), json=body)
+            finally:
+                if owned:
+                    client.close()
+        except httpx.HTTPError as exc:
+            raise _wrap_http_error("model.azure_openai", exc) from exc
+        return _check_response("model.azure_openai", r)
+
+    def health_check(self) -> ProviderHealth:
+        key = _resolve_api_key(config=self._config, env_var="AZURE_OPENAI_API_KEY")
+        if not key:
+            return ProviderHealth(
+                status="unavailable",
+                detail="AZURE_OPENAI_API_KEY is not configured",
+                metrics={"provider": "model.azure_openai"},
+            )
+        return ProviderHealth(
+            status="healthy",
+            detail="Azure OpenAI key configured",
+            metrics={"provider": "model.azure_openai", "deployment": self._deployment},
+        )
+
+    def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        return self._post(self._deployment, "/chat/completions", {"messages": messages})
+
+    def generate(self, prompt: str) -> str:
+        result = self.chat([{"role": "user", "content": prompt}])
+        return str(result["choices"][0]["message"]["content"])
+
+    def embed_text(self, text: str) -> EmbeddingResult:
+        deployment = self._embed_deployment
+        if not deployment:
+            self.raise_unsupported_capability(ProviderCapability.EMBEDDING)
+        body = self._post(deployment, "/embeddings", {"input": text})
+        vector = [float(v) for v in body["data"][0]["embedding"]]
+        return EmbeddingResult(
+            provider="model.azure_openai",
+            model=deployment,
+            dimensions=len(vector),
+            vector=vector,
+            metadata={"endpoint": self._endpoint},
+        )
+
+
+def create_azure_openai_provider(**config: Any) -> AzureOpenAIProvider:
+    schema = AZURE_OPENAI_METADATA.config_schema
+    return AzureOpenAIProvider(
+        api_base_url=str(config.get("api_base_url", schema["api_base_url"]["default"])),
+        deployment_name=str(config.get("deployment_name", schema["deployment_name"]["default"])),
+        embedding_deployment_name=config.get("embedding_deployment_name")
+        or schema.get("embedding_deployment_name", {}).get("default"),
+        api_version=str(config.get("api_version", schema["api_version"]["default"])),
+        config=dict(config),
+        client=config.get("client"),
+    )
+
+
+# ── Jina provider ─────────────────────────────────────────────────────────────
+
+
+class JinaProvider(BaseProvider):
+    """Jina AI embedding and rerank via HTTP API."""
+
+    def __init__(
+        self,
+        *,
+        api_base_url: str = "https://api.jina.ai/v1",
+        embedding_model_name: str = "jina-embeddings-v4",
+        reranker_model_name: str = "jina-reranker-m0",
+        config: dict[str, Any] | None = None,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.metadata = JINA_METADATA
+        self._api_base = api_base_url.rstrip("/")
+        self._embed_model = embedding_model_name
+        self._rerank_model = reranker_model_name
+        self._config = config or {}
+        self._client = client
+
+    def _headers(self) -> dict[str, str]:
+        key = _require_api_key(config=self._config, env_var="JINA_API_KEY", provider="model.jina")
+        return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+    def _http(self) -> httpx.Client:
+        return self._client or httpx.Client(timeout=60.0)
+
+    def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            client = self._http()
+            owned = self._client is None
+            try:
+                r = client.post(f"{self._api_base}{path}", headers=self._headers(), json=body)
+            finally:
+                if owned:
+                    client.close()
+        except httpx.HTTPError as exc:
+            raise _wrap_http_error("model.jina", exc) from exc
+        return _check_response("model.jina", r)
+
+    def health_check(self) -> ProviderHealth:
+        key = _resolve_api_key(config=self._config, env_var="JINA_API_KEY")
+        if not key:
+            return ProviderHealth(
+                status="unavailable",
+                detail="JINA_API_KEY is not configured",
+                metrics={"provider": "model.jina"},
+            )
+        return ProviderHealth(
+            status="healthy",
+            detail="Jina API key configured",
+            metrics={"provider": "model.jina", "embed_model": self._embed_model},
+        )
+
+    def embed_text(self, text: str) -> EmbeddingResult:
+        body = self._post("/embeddings", {"model": self._embed_model, "input": [text]})
+        vector = [float(v) for v in body["data"][0]["embedding"]]
+        return EmbeddingResult(
+            provider="model.jina",
+            model=self._embed_model,
+            dimensions=len(vector),
+            vector=vector,
+            metadata={"api_base": self._api_base},
+        )
+
+    def rerank(self, query: str, documents: list[str]) -> list[dict[str, Any]]:
+        body = self._post(
+            "/rerank", {"model": self._rerank_model, "query": query, "documents": documents}
+        )
+        results = body.get("results", [])
+        return [
+            {
+                "document": documents[item["index"]],
+                "index": item["index"],
+                "score": float(item.get("relevance_score", 0.0)),
+            }
+            for item in results
+        ]
+
+
+def create_jina_provider(**config: Any) -> JinaProvider:
+    schema = JINA_METADATA.config_schema
+    return JinaProvider(
+        api_base_url=str(config.get("api_base_url", schema["api_base_url"]["default"])),
+        embedding_model_name=str(
+            config.get("embedding_model_name", schema["embedding_model_name"]["default"])
+        ),
+        reranker_model_name=str(
+            config.get("reranker_model_name", schema["reranker_model_name"]["default"])
+        ),
+        config=dict(config),
+        client=config.get("client"),
+    )
+
+
+# ── Voyage provider ───────────────────────────────────────────────────────────
+
+
+class VoyageProvider(BaseProvider):
+    """Voyage AI embedding and rerank via HTTP API."""
+
+    def __init__(
+        self,
+        *,
+        api_base_url: str = "https://api.voyageai.com/v1",
+        embedding_model_name: str = "voyage-3-large",
+        reranker_model_name: str = "rerank-2.5",
+        config: dict[str, Any] | None = None,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.metadata = VOYAGE_METADATA
+        self._api_base = api_base_url.rstrip("/")
+        self._embed_model = embedding_model_name
+        self._rerank_model = reranker_model_name
+        self._config = config or {}
+        self._client = client
+
+    def _headers(self) -> dict[str, str]:
+        key = _require_api_key(
+            config=self._config, env_var="VOYAGE_API_KEY", provider="model.voyage"
+        )
+        return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+    def _http(self) -> httpx.Client:
+        return self._client or httpx.Client(timeout=60.0)
+
+    def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            client = self._http()
+            owned = self._client is None
+            try:
+                r = client.post(f"{self._api_base}{path}", headers=self._headers(), json=body)
+            finally:
+                if owned:
+                    client.close()
+        except httpx.HTTPError as exc:
+            raise _wrap_http_error("model.voyage", exc) from exc
+        return _check_response("model.voyage", r)
+
+    def health_check(self) -> ProviderHealth:
+        key = _resolve_api_key(config=self._config, env_var="VOYAGE_API_KEY")
+        if not key:
+            return ProviderHealth(
+                status="unavailable",
+                detail="VOYAGE_API_KEY is not configured",
+                metrics={"provider": "model.voyage"},
+            )
+        return ProviderHealth(
+            status="healthy",
+            detail="Voyage API key configured",
+            metrics={"provider": "model.voyage", "embed_model": self._embed_model},
+        )
+
+    def embed_text(self, text: str) -> EmbeddingResult:
+        body = self._post("/embeddings", {"model": self._embed_model, "input": [text]})
+        vector = [float(v) for v in body["data"][0]["embedding"]]
+        return EmbeddingResult(
+            provider="model.voyage",
+            model=self._embed_model,
+            dimensions=len(vector),
+            vector=vector,
+            metadata={"api_base": self._api_base},
+        )
+
+    def rerank(self, query: str, documents: list[str]) -> list[dict[str, Any]]:
+        body = self._post(
+            "/rerank", {"model": self._rerank_model, "query": query, "documents": documents}
+        )
+        results = body.get("data", [])
+        return [
+            {
+                "document": documents[item["index"]],
+                "index": item["index"],
+                "score": float(item.get("relevance_score", 0.0)),
+            }
+            for item in results
+        ]
+
+
+def create_voyage_provider(**config: Any) -> VoyageProvider:
+    schema = VOYAGE_METADATA.config_schema
+    return VoyageProvider(
+        api_base_url=str(config.get("api_base_url", schema["api_base_url"]["default"])),
+        embedding_model_name=str(
+            config.get("embedding_model_name", schema["embedding_model_name"]["default"])
+        ),
+        reranker_model_name=str(
+            config.get("reranker_model_name", schema["reranker_model_name"]["default"])
+        ),
+        config=dict(config),
+        client=config.get("client"),
+    )
+
+
+# ── Cohere provider ───────────────────────────────────────────────────────────
+
+
+class CohereProvider(BaseProvider):
+    """Cohere chat, embed, and rerank via the v2 HTTP API."""
+
+    def __init__(
+        self,
+        *,
+        api_base_url: str = "https://api.cohere.com/v2",
+        model_name: str = "command-r-plus",
+        embedding_model_name: str = "embed-v4.0",
+        reranker_model_name: str = "rerank-v3.5",
+        config: dict[str, Any] | None = None,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.metadata = COHERE_METADATA
+        self._api_base = api_base_url.rstrip("/")
+        self._model_name = model_name
+        self._embed_model = embedding_model_name
+        self._rerank_model = reranker_model_name
+        self._config = config or {}
+        self._client = client
+
+    def _headers(self) -> dict[str, str]:
+        key = _require_api_key(
+            config=self._config, env_var="COHERE_API_KEY", provider="model.cohere"
+        )
+        return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+    def _http(self) -> httpx.Client:
+        return self._client or httpx.Client(timeout=60.0)
+
+    def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            client = self._http()
+            owned = self._client is None
+            try:
+                r = client.post(f"{self._api_base}{path}", headers=self._headers(), json=body)
+            finally:
+                if owned:
+                    client.close()
+        except httpx.HTTPError as exc:
+            raise _wrap_http_error("model.cohere", exc) from exc
+        return _check_response("model.cohere", r)
+
+    def health_check(self) -> ProviderHealth:
+        key = _resolve_api_key(config=self._config, env_var="COHERE_API_KEY")
+        if not key:
+            return ProviderHealth(
+                status="unavailable",
+                detail="COHERE_API_KEY is not configured",
+                metrics={"provider": "model.cohere"},
+            )
+        return ProviderHealth(
+            status="healthy",
+            detail="Cohere API key configured",
+            metrics={"provider": "model.cohere", "model": self._model_name},
+        )
+
+    def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        result = self._post("/chat", {"model": self._model_name, "messages": messages})
+        text = result.get("message", {}).get("content", [{}])
+        content = text[0].get("text", "") if isinstance(text, list) and text else str(text)
+        return {"choices": [{"message": {"role": "assistant", "content": content}}]}
+
+    def generate(self, prompt: str) -> str:
+        result = self.chat([{"role": "user", "content": prompt}])
+        return str(result["choices"][0]["message"]["content"])
+
+    def embed_text(self, text: str) -> EmbeddingResult:
+        body = self._post(
+            "/embed",
+            {
+                "model": self._embed_model,
+                "texts": [text],
+                "input_type": "search_document",
+                "embedding_types": ["float"],
+            },
+        )
+        embeddings = body.get("embeddings", {})
+        vector = [float(v) for v in (embeddings.get("float") or [[]])[0]]
+        return EmbeddingResult(
+            provider="model.cohere",
+            model=self._embed_model,
+            dimensions=len(vector),
+            vector=vector,
+            metadata={"api_base": self._api_base},
+        )
+
+    def rerank(self, query: str, documents: list[str]) -> list[dict[str, Any]]:
+        body = self._post(
+            "/rerank", {"model": self._rerank_model, "query": query, "documents": documents}
+        )
+        results = body.get("results", [])
+        return [
+            {
+                "document": documents[item["index"]],
+                "index": item["index"],
+                "score": float(item.get("relevance_score", 0.0)),
+            }
+            for item in results
+        ]
+
+
+def create_cohere_provider(**config: Any) -> CohereProvider:
+    schema = COHERE_METADATA.config_schema
+    return CohereProvider(
+        api_base_url=str(config.get("api_base_url", schema["api_base_url"]["default"])),
+        model_name=str(config.get("model_name", schema["model_name"]["default"])),
+        embedding_model_name=str(
+            config.get("embedding_model_name", schema["embedding_model_name"]["default"])
+        ),
+        reranker_model_name=str(
+            config.get("reranker_model_name", schema["reranker_model_name"]["default"])
+        ),
+        config=dict(config),
+        client=config.get("client"),
+    )
+
+
 CLOUD_MODEL_METADATA = {
     VERTEX_AI_METADATA.name: (VERTEX_AI_METADATA, ["google-cloud-aiplatform"]),
     BEDROCK_METADATA.name: (BEDROCK_METADATA, ["boto3"]),
@@ -865,10 +1598,8 @@ __all__ = [
     "CLOUD_MODEL_METADATA",
     "COHERE_METADATA",
     "DASHSCOPE_METADATA",
-    "CloudStubProvider",
     "DEEPSEEK_METADATA",
     "FIREWORKS_METADATA",
-    "GeminiProvider",
     "GOOGLE_GEMINI_METADATA",
     "GROQ_METADATA",
     "JINA_METADATA",
@@ -887,6 +1618,20 @@ __all__ = [
     "VOLCENGINE_ARK_METADATA",
     "XAI_METADATA",
     "ZHIPU_METADATA",
+    "AnthropicProvider",
+    "AzureOpenAIProvider",
+    "CloudStubProvider",
+    "CohereProvider",
+    "GeminiProvider",
+    "JinaProvider",
+    "OpenAICompatibleCloudProvider",
+    "VoyageProvider",
+    "create_anthropic_provider",
+    "create_azure_openai_provider",
     "create_cloud_stub_provider",
+    "create_cohere_provider",
+    "create_jina_provider",
+    "create_openai_compatible_cloud_provider",
+    "create_voyage_provider",
     "load_cloud_client",
 ]

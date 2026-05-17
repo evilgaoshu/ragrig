@@ -144,7 +144,7 @@ def test_default_provider_registry_exposes_pr2_local_provider_contracts() -> Non
     assert openai_cloud.config_schema["api_base_url"]["default"] == "https://api.openai.com/v1"
     assert openai_cloud.sdk_protocol == "optional-openai-sdk"
 
-    assert registry.get("model.openai").health_check().status == "stub"
+    assert registry.get("model.openai").health_check().status == "unavailable"
 
 
 def test_ollama_provider_uses_fake_client_for_generation_chat_embedding_and_health() -> None:
