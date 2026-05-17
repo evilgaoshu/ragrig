@@ -171,11 +171,12 @@ uv run alembic upgrade head
 VERCEL_PREVIEW_URL='https://your-preview-url.vercel.app' make vercel-preview-smoke
 ```
 
-Model credentials remain optional for startup — see
+Model credentials remain optional — no model credentials are required for
+startup. See
 [EVI-130](./docs/specs/EVI-130-vercel-preview-supabase.md) for the full
 contract.
 
-### Pilot scripts
+### 10-Minute Local Pilot Demo
 
 For an evidence-backed end-to-end smoke (preflight + container build + console
 walk-through) the legacy targets still work:
@@ -187,10 +188,17 @@ make pilot-docker-smoke       # JSON evidence pack
 make pilot-down               # tear down
 ```
 
-The image does not bundle LLM weights. To answer with a real model, run
-Ollama or LM Studio on the host and point `RAGRIG_ANSWER_BASE_URL` at it,
-or set `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `GEMINI_API_KEY` in your
-`.env`.
+Model configuration is optional for startup. The demo seed uses the
+`deterministic-local` provider and answers without any external model. Sample
+content used by the seed lives at:
+
+- `examples/local-pilot/company-handbook.md`
+- `examples/local-pilot/support-faq.md`
+- `examples/local-pilot/demo-questions.json`
+
+To answer with a real model, run Ollama or LM Studio on the host and point
+`RAGRIG_ANSWER_BASE_URL` at it, or set `OPENAI_API_KEY` / `OPENROUTER_API_KEY`
+/ `GEMINI_API_KEY` in your `.env`.
 
 To build only the application image:
 

@@ -165,10 +165,10 @@ uv run alembic upgrade head
 VERCEL_PREVIEW_URL='https://your-preview-url.vercel.app' make vercel-preview-smoke
 ```
 
-模型配置仍然不影响启动，完整契约见
-[EVI-130](./docs/specs/EVI-130-vercel-preview-supabase.md)。
+模型凭据仍然可选 — no model credentials are required for startup。完整契约
+见 [EVI-130](./docs/specs/EVI-130-vercel-preview-supabase.md)。
 
-### Pilot 脚本
+### 10 分钟本地试点演示
 
 需要带 evidence 的端到端 smoke（preflight + 构建 + 控制台走查）时，原有
 target 依然可用：
@@ -180,9 +180,16 @@ make pilot-docker-smoke       # 输出 JSON evidence
 make pilot-down               # 关闭
 ```
 
-镜像不内置 LLM 权重。要用真实模型，可在宿主机跑 Ollama / LM Studio 并把
-`RAGRIG_ANSWER_BASE_URL` 指向它，或在 `.env` 里设置 `OPENAI_API_KEY` /
-`OPENROUTER_API_KEY` / `GEMINI_API_KEY`。
+模型配置不影响启动。Demo seed 使用 `deterministic-local` provider，无需任何
+外部模型即可回答。示例文档：
+
+- `examples/local-pilot/company-handbook.md`
+- `examples/local-pilot/support-faq.md`
+- `examples/local-pilot/demo-questions.json`
+
+要用真实模型，可在宿主机跑 Ollama / LM Studio 并把 `RAGRIG_ANSWER_BASE_URL`
+指向它，或在 `.env` 里设置 `OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
+`GEMINI_API_KEY`。
 
 只构建应用镜像：
 
