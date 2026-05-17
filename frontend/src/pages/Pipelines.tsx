@@ -1,20 +1,22 @@
 import { useState } from 'react'
-import { usePipelineRuns, usePipelineRunItems } from '../api/hooks'
+import {
+  usePipelineRuns,
+  usePipelineRunItems,
+  useRetryPipelineRun,
+  useRetryPipelineRunItem,
+  useSources,
+  useRunSourceIngest,
+} from '../api/hooks'
 import type { PipelineRun, PipelineRunItem } from '../api/types'
 
 function statusColor(status: string): string {
   switch (status) {
-    case 'completed':
-      return 'text-emerald-600 bg-emerald-50'
+    case 'completed': return 'text-emerald-600 bg-emerald-50'
     case 'failed':
-    case 'error':
-      return 'text-red-600 bg-red-50'
-    case 'running':
-      return 'text-blue-600 bg-blue-50'
-    case 'skipped':
-      return 'text-gray-500 bg-gray-100'
-    default:
-      return 'text-amber-600 bg-amber-50'
+    case 'error': return 'text-red-600 bg-red-50'
+    case 'running': return 'text-blue-600 bg-blue-50'
+    case 'skipped': return 'text-gray-500 bg-gray-100'
+    default: return 'text-amber-600 bg-amber-50'
   }
 }
 
@@ -25,6 +27,25 @@ function formatDuration(start: string, end: string | null): string {
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
   return `${(ms / 60_000).toFixed(1)}m`
 }
+
+// ── Item-level retry ──────────────────────────────────────────────────────
+
+function RetryItemButton({ item }: { item: PipelineRunItem }) {
+  const retry = useRetryPipelineRunItem()
+  if (item.status !== 'failed') return null
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); retry.mutate(item.id) }}
+      disabled={retry.isPending}
+      className="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40 transition-colors"
+      title="Retry this item"
+    >
+      {retry.isPending ? '…' : 'retry'}
+    </button>
+  )
+}
+
+// ── Run items list ────────────────────────────────────────────────────────
 
 function RunItems({ runId }: { runId: string }) {
   const { data: items, isLoading } = usePipelineRunItems(runId)
@@ -47,9 +68,7 @@ function RunItems({ runId }: { runId: string }) {
             key={item.id}
             className="flex items-start gap-3 px-4 py-2 border-b border-gray-100 last:border-0"
           >
-            <span
-              className={`shrink-0 mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded ${statusColor(item.status)}`}
-            >
+            <span className={`shrink-0 mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded ${statusColor(item.status)}`}>
               {item.status}
             </span>
             <div className="flex-1 min-w-0">
@@ -61,6 +80,7 @@ function RunItems({ runId }: { runId: string }) {
             <span className="shrink-0 text-[11px] text-gray-400">
               {formatDuration(item.started_at, item.finished_at)}
             </span>
+            <RetryItemButton item={item} />
           </div>
         ))}
       </div>
@@ -68,62 +88,159 @@ function RunItems({ runId }: { runId: string }) {
   )
 }
 
+// ── Run row with retry ────────────────────────────────────────────────────
+
 function RunRow({ run }: { run: PipelineRun }) {
   const [expanded, setExpanded] = useState(false)
+  const retry = useRetryPipelineRun()
 
   const successPct =
     run.total_items > 0 ? Math.round((run.success_count / run.total_items) * 100) : null
 
+  const canRetry = run.status === 'failed' || run.failure_count > 0
+
   return (
     <div className="border-b border-gray-200 last:border-0">
-      <button
-        className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors flex items-start gap-3"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <span
-          className={`shrink-0 mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded ${statusColor(run.status)}`}
+      <div className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors flex items-start gap-3">
+        <button
+          className="flex-1 flex items-start gap-3 min-w-0"
+          onClick={() => setExpanded(!expanded)}
         >
-          {run.status}
-        </span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium text-gray-800">{run.knowledge_base}</span>
-            <span className="text-xs text-gray-400">{run.run_type}</span>
-            {run.source_uri && (
-              <span className="text-xs font-mono text-gray-400 truncate max-w-xs">
-                {run.source_uri}
-              </span>
+          <span className={`shrink-0 mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded ${statusColor(run.status)}`}>
+            {run.status}
+          </span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-medium text-gray-800">{run.knowledge_base}</span>
+              <span className="text-xs text-gray-400">{run.run_type}</span>
+              {run.source_uri && (
+                <span className="text-xs font-mono text-gray-400 truncate max-w-xs">{run.source_uri}</span>
+              )}
+            </div>
+            <div className="flex gap-4 mt-1 text-xs text-gray-500">
+              <span>{run.total_items} items</span>
+              {successPct !== null && <span>{successPct}% ok</span>}
+              {run.failure_count > 0 && <span className="text-red-500">{run.failure_count} failed</span>}
+              {run.skipped_count > 0 && <span>{run.skipped_count} skipped</span>}
+              <span>{formatDuration(run.started_at, run.finished_at)}</span>
+            </div>
+            {run.error_message && (
+              <div className="mt-1 text-xs text-red-500 line-clamp-1">{run.error_message}</div>
             )}
           </div>
-          <div className="flex gap-4 mt-1 text-xs text-gray-500">
-            <span>{run.total_items} items</span>
-            {successPct !== null && <span>{successPct}% ok</span>}
-            {run.failure_count > 0 && (
-              <span className="text-red-500">{run.failure_count} failed</span>
-            )}
-            {run.skipped_count > 0 && <span>{run.skipped_count} skipped</span>}
-            <span>{formatDuration(run.started_at, run.finished_at)}</span>
+          <div className="shrink-0 text-right text-xs text-gray-400 whitespace-nowrap">
+            <div>{new Date(run.started_at).toLocaleDateString()}</div>
+            <div>{new Date(run.started_at).toLocaleTimeString()}</div>
           </div>
-          {run.error_message && (
-            <div className="mt-1 text-xs text-red-500 line-clamp-1">{run.error_message}</div>
-          )}
-        </div>
-        <div className="shrink-0 text-right text-xs text-gray-400 whitespace-nowrap">
-          <div>{new Date(run.started_at).toLocaleDateString()}</div>
-          <div>{new Date(run.started_at).toLocaleTimeString()}</div>
-        </div>
-        <span className="shrink-0 text-gray-400 text-sm">{expanded ? '▲' : '▼'}</span>
-      </button>
+          <span className="shrink-0 text-gray-400 text-sm">{expanded ? '▲' : '▼'}</span>
+        </button>
+
+        {canRetry && (
+          <button
+            onClick={(e) => { e.stopPropagation(); retry.mutate(run.id) }}
+            disabled={retry.isPending && retry.variables === run.id}
+            className="shrink-0 mt-0.5 text-xs px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40 transition-colors"
+            title="Retry all failed items in this run"
+          >
+            {retry.isPending && retry.variables === run.id ? 'Retrying…' : 'Retry failed'}
+          </button>
+        )}
+      </div>
 
       {expanded && <RunItems runId={run.id} />}
     </div>
   )
 }
 
+// ── Trigger run from source ───────────────────────────────────────────────
+
+function TriggerPanel({ onClose }: { onClose: () => void }) {
+  const { data: sources, isLoading } = useSources()
+  const runIngest = useRunSourceIngest()
+  const [selectedId, setSelectedId] = useState('')
+  const [taskId, setTaskId] = useState<string | null>(null)
+
+  if (isLoading) return <div className="text-gray-400 text-sm p-4">Loading sources…</div>
+  if (!sources?.length) {
+    return (
+      <div className="text-gray-500 text-sm p-4">
+        No sources configured. Add a source on the{' '}
+        <a href="/app/sources" className="text-brand hover:underline">Sources</a> page first.
+      </div>
+    )
+  }
+
+  const selected = sources.find((s) => s.id === selectedId)
+
+  const handleRun = async () => {
+    if (!selected) return
+    const kindToPlugin: Record<string, string> = {
+      fileshare: 'source.fileshare',
+      s3: 'source.s3',
+      local_directory: 'source.local',
+    }
+    const plugin_id = kindToPlugin[selected.kind] ?? `source.${selected.kind}`
+    try {
+      const res = await runIngest.mutateAsync({
+        plugin_id,
+        config: selected.config as Record<string, unknown>,
+        knowledge_base: selected.knowledge_base ?? 'default',
+      })
+      setTaskId(res.task_id)
+    } catch {
+      // error shown inline
+    }
+  }
+
+  return (
+    <div className="border border-gray-200 bg-white rounded-lg p-4 space-y-3 max-w-lg">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-gray-800">Trigger ingestion from source</h3>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+      </div>
+      <select
+        value={selectedId}
+        onChange={(e) => setSelectedId(e.target.value)}
+        className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
+      >
+        <option value="">— select a source —</option>
+        {sources.map((s) => (
+          <option key={s.id} value={s.id}>
+            [{s.kind}] {s.knowledge_base} — {s.uri}
+          </option>
+        ))}
+      </select>
+      {runIngest.isError && (
+        <div className="text-xs text-red-600">{runIngest.error?.message}</div>
+      )}
+      {taskId && (
+        <div className="text-xs text-emerald-600">
+          Ingestion enqueued — task {taskId.slice(0, 8)}… (view status in Pipelines list)
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button
+          onClick={handleRun}
+          disabled={!selectedId || runIngest.isPending}
+          className="px-3 py-1.5 bg-brand text-white text-sm rounded-lg hover:bg-brand/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          {runIngest.isPending ? 'Starting…' : 'Run now'}
+        </button>
+        <button onClick={onClose} className="px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────
+
 export default function Pipelines() {
   const { data: runs, isLoading } = usePipelineRuns()
   const [filter, setFilter] = useState<string>('all')
   const [kbFilter, setKbFilter] = useState<string>('all')
+  const [showTrigger, setShowTrigger] = useState(false)
 
   const kbs = [...new Set((runs ?? []).map((r) => r.knowledge_base))].sort()
   const statuses = ['all', 'running', 'completed', 'failed']
@@ -142,10 +259,20 @@ export default function Pipelines() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-lg font-bold text-gray-900">Pipelines</h1>
-        <p className="text-gray-500 text-sm mt-0.5">Ingestion and indexing pipeline runs</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-bold text-gray-900">Pipelines</h1>
+          <p className="text-gray-500 text-sm mt-0.5">Ingestion and indexing pipeline runs</p>
+        </div>
+        <button
+          onClick={() => setShowTrigger((v) => !v)}
+          className="px-3 py-1.5 bg-brand text-white text-sm font-medium rounded-lg hover:bg-brand/90 transition-colors"
+        >
+          + Trigger run
+        </button>
       </div>
+
+      {showTrigger && <TriggerPanel onClose={() => setShowTrigger(false)} />}
 
       {/* Summary chips */}
       <div className="flex gap-3">
@@ -190,9 +317,7 @@ export default function Pipelines() {
           >
             <option value="all">All KBs</option>
             {kbs.map((kb) => (
-              <option key={kb} value={kb}>
-                {kb}
-              </option>
+              <option key={kb} value={kb}>{kb}</option>
             ))}
           </select>
         )}
@@ -204,7 +329,7 @@ export default function Pipelines() {
           <div className="p-6 text-gray-400 text-sm">Loading…</div>
         ) : !filtered.length ? (
           <div className="p-6 text-gray-400 text-sm text-center">
-            {runs?.length ? 'No runs match the current filter.' : 'No pipeline runs yet.'}
+            {runs?.length ? 'No runs match the current filter.' : 'No pipeline runs yet. Upload a document or trigger a source ingestion to get started.'}
           </div>
         ) : (
           filtered.map((run) => <RunRow key={run.id} run={run} />)
