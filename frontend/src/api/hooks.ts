@@ -490,3 +490,55 @@ export function useRestoreWorkspace() {
     },
   })
 }
+
+// ── Sources CRUD + ingest trigger ──────────────────────────────────────────
+
+export function useCreateSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      plugin_id: string
+      config: Record<string, unknown>
+      knowledge_base: string
+    }) => api.post<{ id: string; kind: string; uri: string }>('/sources', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sources'] }),
+  })
+}
+
+export function useRunSourceIngest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      plugin_id: string
+      config: Record<string, unknown>
+      knowledge_base: string
+    }) => api.post<{ task_id: string }>('/sources/run-ingest', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pipeline-runs'] })
+      qc.invalidateQueries({ queryKey: ['sources'] })
+    },
+  })
+}
+
+// ── Pipeline run operations ────────────────────────────────────────────────
+
+export function useRetryPipelineRun() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (runId: string) =>
+      api.post<{ retried: number }>(`/pipeline-runs/${runId}/retry`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pipeline-runs'] }),
+  })
+}
+
+export function useRetryPipelineRunItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (itemId: string) =>
+      api.post<Record<string, unknown>>(`/pipeline-run-items/${itemId}/retry`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pipeline-runs'] })
+      qc.invalidateQueries({ queryKey: ['pipeline-run-items'] })
+    },
+  })
+}
