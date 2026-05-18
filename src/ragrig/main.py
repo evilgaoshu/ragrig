@@ -70,9 +70,12 @@ from ragrig.processing_profile import (
 from ragrig.providers.model_catalog import list_provider_models, measure_provider_latency
 from ragrig.ratelimit import RateLimiter
 from ragrig.repositories import (
+    delete_kb_permission,
     get_knowledge_base_by_name,
     get_or_create_knowledge_base,
     list_audit_events,
+    list_kb_permissions,
+    set_kb_permission,
 )
 from ragrig.retrieval import (
     EmbeddingProfileMismatchError,
@@ -206,6 +209,10 @@ class RetrievalSearchRequest(BaseModel):
 
 class KnowledgeBaseCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+
+
+class KbPermissionRequest(BaseModel):
+    role: str = Field(pattern=r"^(admin|editor|viewer|none)$")
 
 
 class EnterpriseConnectorProbeRequest(BaseModel):
@@ -609,6 +616,101 @@ def create_app(
         return JSONResponse(
             status_code=200 if existed else 201,
             content={"id": str(kb.id), "name": kb.name, "created": not existed},
+        )
+
+    @app.get("/knowledge-bases/{kb_name}/permissions", response_model=None)
+    def list_kb_permissions_endpoint(
+        kb_name: str,
+        session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
+    ) -> JSONResponse:
+        """List all per-KB permission overrides for a knowledge base.
+
+        Requires admin-or-above role.
+        """
+        kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
+        if kb is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"knowledge base '{kb_name}' not found"},
+            )
+        return JSONResponse(
+            status_code=200,
+            content={"items": list_kb_permissions(session, knowledge_base_id=kb.id)},
+        )
+
+    @app.put("/knowledge-bases/{kb_name}/permissions/{user_id}", response_model=None)
+    def set_kb_permission_endpoint(
+        kb_name: str,
+        user_id: str,
+        request: KbPermissionRequest,
+        session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
+    ) -> JSONResponse:
+        """Upsert a per-KB role override for a user.
+
+        Requires admin-or-above role.  ``role='none'`` explicitly denies access.
+        """
+        try:
+            user_uuid = uuid.UUID(user_id)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": f"invalid user_id: {user_id!r}"})
+        kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
+        if kb is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"knowledge base '{kb_name}' not found"},
+            )
+        set_kb_permission(
+            session,
+            knowledge_base_id=kb.id,
+            user_id=user_uuid,
+            role=request.role,
+        )
+        session.commit()
+        return JSONResponse(
+            status_code=200,
+            content={"knowledge_base": kb_name, "user_id": user_id, "role": request.role},
+        )
+
+    @app.delete("/knowledge-bases/{kb_name}/permissions/{user_id}", response_model=None)
+    def delete_kb_permission_endpoint(
+        kb_name: str,
+        user_id: str,
+        session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
+    ) -> JSONResponse:
+        """Remove the per-KB permission override for a user.
+
+        Requires admin-or-above role.  Returns 404 if no override existed.
+        """
+        try:
+            user_uuid = uuid.UUID(user_id)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": f"invalid user_id: {user_id!r}"})
+        kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
+        if kb is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"knowledge base '{kb_name}' not found"},
+            )
+        existed = delete_kb_permission(
+            session,
+            knowledge_base_id=kb.id,
+            user_id=user_uuid,
+        )
+        if not existed:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "no permission override found for this user"},
+            )
+        session.commit()
+        return JSONResponse(
+            status_code=200,
+            content={"knowledge_base": kb_name, "user_id": user_id, "deleted": True},
         )
 
     @app.get("/sources", response_model=None)
