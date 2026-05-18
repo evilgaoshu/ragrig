@@ -139,11 +139,58 @@ def test_docx_parser_extracts_paragraphs_headings_lists_and_metadata(tmp_path) -
     assert result.metadata["status"] == "success"
     assert result.metadata["extension"] == ".docx"
     assert result.metadata["paragraph_count"] == 3
+    assert result.metadata["table_count"] == 0
     assert result.metadata["char_count"] == len(result.extracted_text)
     assert result.metadata["byte_count"] == len(raw_bytes)
     assert result.metadata["redaction_count"] == 0
     assert "Local Pilot Brief" in result.metadata["text_summary"]
-    assert "limitations" in result.metadata
+
+
+def test_docx_parser_extracts_tables_as_markdown(tmp_path) -> None:
+    path = tmp_path / "report.docx"
+    doc = Document()
+    doc.add_paragraph("Before table.")
+    table = doc.add_table(rows=3, cols=2)
+    table.cell(0, 0).text = "Name"
+    table.cell(0, 1).text = "Score"
+    table.cell(1, 0).text = "Alice"
+    table.cell(1, 1).text = "95"
+    table.cell(2, 0).text = "Bob"
+    table.cell(2, 1).text = "87"
+    doc.add_paragraph("After table.")
+    doc.save(path)
+
+    result = DocxParser().parse(path)
+
+    assert "Before table." in result.extracted_text
+    assert "After table." in result.extracted_text
+    assert "| Name | Score |" in result.extracted_text
+    assert "| Alice | 95 |" in result.extracted_text
+    assert "| Bob | 87 |" in result.extracted_text
+    assert result.metadata["table_count"] == 1
+    assert result.metadata["paragraph_count"] == 2
+
+
+def test_docx_parser_mixed_paragraphs_and_tables_preserve_order(tmp_path) -> None:
+    path = tmp_path / "mixed.docx"
+    doc = Document()
+    doc.add_paragraph("Section 1")
+    t1 = doc.add_table(rows=2, cols=2)
+    t1.cell(0, 0).text = "Col A"
+    t1.cell(0, 1).text = "Col B"
+    t1.cell(1, 0).text = "val1"
+    t1.cell(1, 1).text = "val2"
+    doc.add_paragraph("Section 2")
+    doc.save(path)
+
+    result = DocxParser().parse(path)
+
+    idx_section1 = result.extracted_text.index("Section 1")
+    idx_table = result.extracted_text.index("| Col A |")
+    idx_section2 = result.extracted_text.index("Section 2")
+    # Document order must be preserved
+    assert idx_section1 < idx_table < idx_section2
+    assert result.metadata["table_count"] == 1
 
 
 def test_docx_parser_raises_for_empty_body_text(tmp_path) -> None:
