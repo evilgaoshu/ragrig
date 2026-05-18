@@ -146,9 +146,7 @@ BEDROCK_METADATA = build_cloud_model_metadata(
 
 AZURE_OPENAI_METADATA = build_cloud_model_metadata(
     name="model.azure_openai",
-    description=(
-        "Contract-only Azure OpenAI cloud provider stub for chat, generate, and embeddings."
-    ),
+    description="Azure OpenAI provider for chat, generate, and embeddings.",
     capabilities={
         ProviderCapability.CHAT,
         ProviderCapability.GENERATE,
@@ -179,10 +177,7 @@ AZURE_OPENAI_METADATA = build_cloud_model_metadata(
 
 OPENROUTER_METADATA = build_cloud_model_metadata(
     name="model.openrouter",
-    description=(
-        "Contract-only OpenRouter cloud provider stub for chat and generate over an "
-        "OpenAI-compatible API."
-    ),
+    description="OpenRouter provider for chat and generate over an OpenAI-compatible API.",
     capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE, ProviderCapability.BATCH},
     required_secrets=["OPENROUTER_API_KEY"],
     config_schema={
@@ -201,7 +196,7 @@ OPENROUTER_METADATA = build_cloud_model_metadata(
 
 OPENAI_METADATA = build_cloud_model_metadata(
     name="model.openai",
-    description="Contract-only OpenAI cloud provider stub for chat, generate, and embeddings.",
+    description="OpenAI provider for chat, generate, and embeddings.",
     capabilities={
         ProviderCapability.CHAT,
         ProviderCapability.GENERATE,
@@ -226,65 +221,9 @@ OPENAI_METADATA = build_cloud_model_metadata(
 )
 
 
-COHERE_METADATA = build_cloud_model_metadata(
-    name="model.cohere",
-    description=(
-        "Contract-only Cohere cloud provider stub for chat, generate, embeddings, and rerank."
-    ),
-    capabilities={
-        ProviderCapability.CHAT,
-        ProviderCapability.GENERATE,
-        ProviderCapability.EMBEDDING,
-        ProviderCapability.RERANK,
-        ProviderCapability.BATCH,
-    },
-    required_secrets=["COHERE_API_KEY"],
-    config_schema={
-        "api_base_url": {"type": "string", "default": "https://api.cohere.com/v2"},
-        "model_name": {"type": "string", "default": "command-r-plus"},
-        "embedding_model_name": {"type": "string", "default": "embed-v4.0"},
-        "reranker_model_name": {"type": "string", "default": "rerank-v3.5"},
-    },
-    sdk_protocol="optional-cohere-sdk",
-    dependency_group="cloud-cohere",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
-    audit_fields=["provider", "api_base_url", "model", "embedding_model", "reranker_model"],
-    metric_fields=["requests_total", "tokens_in", "tokens_out"],
-    intended_uses=["cloud_second", "managed_api"],
-    default_dimensions=1024,
-    max_dimensions=4096,
-    default_context_window=128000,
-)
-
-
-VOYAGE_METADATA = build_cloud_model_metadata(
-    name="model.voyage",
-    description="Contract-only Voyage AI cloud provider stub for embeddings and rerank.",
-    capabilities={
-        ProviderCapability.EMBEDDING,
-        ProviderCapability.RERANK,
-        ProviderCapability.BATCH,
-    },
-    required_secrets=["VOYAGE_API_KEY"],
-    config_schema={
-        "api_base_url": {"type": "string", "default": "https://api.voyageai.com/v1"},
-        "embedding_model_name": {"type": "string", "default": "voyage-3-large"},
-        "reranker_model_name": {"type": "string", "default": "rerank-2.5"},
-    },
-    sdk_protocol="optional-voyageai-sdk",
-    dependency_group="cloud-voyage",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
-    audit_fields=["provider", "api_base_url", "embedding_model", "reranker_model"],
-    metric_fields=["requests_total", "document_count"],
-    intended_uses=["cloud_second", "managed_retrieval"],
-    default_dimensions=1024,
-    max_dimensions=4096,
-)
-
-
 JINA_METADATA = build_cloud_model_metadata(
     name="model.jina",
-    description="Contract-only Jina AI cloud provider stub for embeddings and rerank.",
+    description="Jina AI provider for embeddings and rerank via httpx.",
     capabilities={
         ProviderCapability.EMBEDDING,
         ProviderCapability.RERANK,
@@ -309,7 +248,7 @@ JINA_METADATA = build_cloud_model_metadata(
 
 ANTHROPIC_METADATA = build_cloud_model_metadata(
     name="model.anthropic",
-    description="Contract-only Anthropic Claude provider stub for messages and model listing.",
+    description="Anthropic Claude provider for chat and generation.",
     capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE, ProviderCapability.BATCH},
     required_secrets=["ANTHROPIC_API_KEY"],
     config_schema={
@@ -1284,226 +1223,6 @@ def create_jina_provider(**config: Any) -> JinaProvider:
     )
 
 
-# ── Voyage provider ───────────────────────────────────────────────────────────
-
-
-class VoyageProvider(BaseProvider):
-    """Voyage AI embedding and rerank via HTTP API."""
-
-    def __init__(
-        self,
-        *,
-        api_base_url: str = "https://api.voyageai.com/v1",
-        embedding_model_name: str = "voyage-3-large",
-        reranker_model_name: str = "rerank-2.5",
-        config: dict[str, Any] | None = None,
-        client: httpx.Client | None = None,
-    ) -> None:
-        self.metadata = VOYAGE_METADATA
-        self._api_base = api_base_url.rstrip("/")
-        self._embed_model = embedding_model_name
-        self._rerank_model = reranker_model_name
-        self._config = config or {}
-        self._client = client
-
-    def _headers(self) -> dict[str, str]:
-        key = _require_api_key(
-            config=self._config, env_var="VOYAGE_API_KEY", provider="model.voyage"
-        )
-        return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-
-    def _http(self) -> httpx.Client:
-        return self._client or httpx.Client(timeout=60.0)
-
-    def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        try:
-            client = self._http()
-            owned = self._client is None
-            try:
-                r = client.post(f"{self._api_base}{path}", headers=self._headers(), json=body)
-            finally:
-                if owned:
-                    client.close()
-        except httpx.HTTPError as exc:
-            raise _wrap_http_error("model.voyage", exc) from exc
-        return _check_response("model.voyage", r)
-
-    def health_check(self) -> ProviderHealth:
-        key = _resolve_api_key(config=self._config, env_var="VOYAGE_API_KEY")
-        if not key:
-            return ProviderHealth(
-                status="unavailable",
-                detail="VOYAGE_API_KEY is not configured",
-                metrics={"provider": "model.voyage"},
-            )
-        return ProviderHealth(
-            status="healthy",
-            detail="Voyage API key configured",
-            metrics={"provider": "model.voyage", "embed_model": self._embed_model},
-        )
-
-    def embed_text(self, text: str) -> EmbeddingResult:
-        body = self._post("/embeddings", {"model": self._embed_model, "input": [text]})
-        vector = [float(v) for v in body["data"][0]["embedding"]]
-        return EmbeddingResult(
-            provider="model.voyage",
-            model=self._embed_model,
-            dimensions=len(vector),
-            vector=vector,
-            metadata={"api_base": self._api_base},
-        )
-
-    def rerank(self, query: str, documents: list[str]) -> list[dict[str, Any]]:
-        body = self._post(
-            "/rerank", {"model": self._rerank_model, "query": query, "documents": documents}
-        )
-        results = body.get("data", [])
-        return [
-            {
-                "document": documents[item["index"]],
-                "index": item["index"],
-                "score": float(item.get("relevance_score", 0.0)),
-            }
-            for item in results
-        ]
-
-
-def create_voyage_provider(**config: Any) -> VoyageProvider:
-    schema = VOYAGE_METADATA.config_schema
-    return VoyageProvider(
-        api_base_url=str(config.get("api_base_url", schema["api_base_url"]["default"])),
-        embedding_model_name=str(
-            config.get("embedding_model_name", schema["embedding_model_name"]["default"])
-        ),
-        reranker_model_name=str(
-            config.get("reranker_model_name", schema["reranker_model_name"]["default"])
-        ),
-        config=dict(config),
-        client=config.get("client"),
-    )
-
-
-# ── Cohere provider ───────────────────────────────────────────────────────────
-
-
-class CohereProvider(BaseProvider):
-    """Cohere chat, embed, and rerank via the v2 HTTP API."""
-
-    def __init__(
-        self,
-        *,
-        api_base_url: str = "https://api.cohere.com/v2",
-        model_name: str = "command-r-plus",
-        embedding_model_name: str = "embed-v4.0",
-        reranker_model_name: str = "rerank-v3.5",
-        config: dict[str, Any] | None = None,
-        client: httpx.Client | None = None,
-    ) -> None:
-        self.metadata = COHERE_METADATA
-        self._api_base = api_base_url.rstrip("/")
-        self._model_name = model_name
-        self._embed_model = embedding_model_name
-        self._rerank_model = reranker_model_name
-        self._config = config or {}
-        self._client = client
-
-    def _headers(self) -> dict[str, str]:
-        key = _require_api_key(
-            config=self._config, env_var="COHERE_API_KEY", provider="model.cohere"
-        )
-        return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-
-    def _http(self) -> httpx.Client:
-        return self._client or httpx.Client(timeout=60.0)
-
-    def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        try:
-            client = self._http()
-            owned = self._client is None
-            try:
-                r = client.post(f"{self._api_base}{path}", headers=self._headers(), json=body)
-            finally:
-                if owned:
-                    client.close()
-        except httpx.HTTPError as exc:
-            raise _wrap_http_error("model.cohere", exc) from exc
-        return _check_response("model.cohere", r)
-
-    def health_check(self) -> ProviderHealth:
-        key = _resolve_api_key(config=self._config, env_var="COHERE_API_KEY")
-        if not key:
-            return ProviderHealth(
-                status="unavailable",
-                detail="COHERE_API_KEY is not configured",
-                metrics={"provider": "model.cohere"},
-            )
-        return ProviderHealth(
-            status="healthy",
-            detail="Cohere API key configured",
-            metrics={"provider": "model.cohere", "model": self._model_name},
-        )
-
-    def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        result = self._post("/chat", {"model": self._model_name, "messages": messages})
-        text = result.get("message", {}).get("content", [{}])
-        content = text[0].get("text", "") if isinstance(text, list) and text else str(text)
-        return {"choices": [{"message": {"role": "assistant", "content": content}}]}
-
-    def generate(self, prompt: str) -> str:
-        result = self.chat([{"role": "user", "content": prompt}])
-        return str(result["choices"][0]["message"]["content"])
-
-    def embed_text(self, text: str) -> EmbeddingResult:
-        body = self._post(
-            "/embed",
-            {
-                "model": self._embed_model,
-                "texts": [text],
-                "input_type": "search_document",
-                "embedding_types": ["float"],
-            },
-        )
-        embeddings = body.get("embeddings", {})
-        vector = [float(v) for v in (embeddings.get("float") or [[]])[0]]
-        return EmbeddingResult(
-            provider="model.cohere",
-            model=self._embed_model,
-            dimensions=len(vector),
-            vector=vector,
-            metadata={"api_base": self._api_base},
-        )
-
-    def rerank(self, query: str, documents: list[str]) -> list[dict[str, Any]]:
-        body = self._post(
-            "/rerank", {"model": self._rerank_model, "query": query, "documents": documents}
-        )
-        results = body.get("results", [])
-        return [
-            {
-                "document": documents[item["index"]],
-                "index": item["index"],
-                "score": float(item.get("relevance_score", 0.0)),
-            }
-            for item in results
-        ]
-
-
-def create_cohere_provider(**config: Any) -> CohereProvider:
-    schema = COHERE_METADATA.config_schema
-    return CohereProvider(
-        api_base_url=str(config.get("api_base_url", schema["api_base_url"]["default"])),
-        model_name=str(config.get("model_name", schema["model_name"]["default"])),
-        embedding_model_name=str(
-            config.get("embedding_model_name", schema["embedding_model_name"]["default"])
-        ),
-        reranker_model_name=str(
-            config.get("reranker_model_name", schema["reranker_model_name"]["default"])
-        ),
-        config=dict(config),
-        client=config.get("client"),
-    )
-
-
 CLOUD_MODEL_METADATA = {
     VERTEX_AI_METADATA.name: (VERTEX_AI_METADATA, ["google-cloud-aiplatform"]),
     BEDROCK_METADATA.name: (BEDROCK_METADATA, ["boto3"]),
@@ -1513,8 +1232,6 @@ CLOUD_MODEL_METADATA = {
     MISTRAL_METADATA.name: (MISTRAL_METADATA, []),
     OPENROUTER_METADATA.name: (OPENROUTER_METADATA, ["openai"]),
     OPENAI_METADATA.name: (OPENAI_METADATA, ["openai"]),
-    COHERE_METADATA.name: (COHERE_METADATA, ["cohere"]),
-    VOYAGE_METADATA.name: (VOYAGE_METADATA, ["voyageai"]),
     JINA_METADATA.name: (JINA_METADATA, []),
     TOGETHER_METADATA.name: (TOGETHER_METADATA, []),
     FIREWORKS_METADATA.name: (FIREWORKS_METADATA, []),
@@ -1596,7 +1313,6 @@ __all__ = [
     "BAIDU_QIANFAN_METADATA",
     "BEDROCK_METADATA",
     "CLOUD_MODEL_METADATA",
-    "COHERE_METADATA",
     "DASHSCOPE_METADATA",
     "DEEPSEEK_METADATA",
     "FIREWORKS_METADATA",
@@ -1614,24 +1330,19 @@ __all__ = [
     "SILICONFLOW_METADATA",
     "TOGETHER_METADATA",
     "VERTEX_AI_METADATA",
-    "VOYAGE_METADATA",
     "VOLCENGINE_ARK_METADATA",
     "XAI_METADATA",
     "ZHIPU_METADATA",
     "AnthropicProvider",
     "AzureOpenAIProvider",
     "CloudStubProvider",
-    "CohereProvider",
     "GeminiProvider",
     "JinaProvider",
     "OpenAICompatibleCloudProvider",
-    "VoyageProvider",
     "create_anthropic_provider",
     "create_azure_openai_provider",
     "create_cloud_stub_provider",
-    "create_cohere_provider",
     "create_jina_provider",
     "create_openai_compatible_cloud_provider",
-    "create_voyage_provider",
     "load_cloud_client",
 ]

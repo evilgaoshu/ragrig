@@ -54,7 +54,7 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     manifests = registry.list()
     manifest_ids = {manifest.plugin_id for manifest in manifests}
 
-    assert len(manifests) == 39
+    assert len(manifests) == 37
     assert {
         "source.local",
         "parser.markdown",
@@ -68,8 +68,6 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
         "model.azure_openai",
         "model.openrouter",
         "model.openai",
-        "model.cohere",
-        "model.voyage",
         "model.jina",
         "embedding.bge",
         "reranker.bge",
@@ -268,7 +266,6 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
         return import_name not in {
             "FlagEmbedding",
             "boto3",
-            "cohere",
             "google-cloud-aiplatform",
             "googleapiclient",
             "httpx",
@@ -276,7 +273,6 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
             "paramiko",
             "pyarrow",
             "smbprotocol",
-            "voyageai",
         }
 
     monkeypatch.setattr("ragrig.plugins.guards.is_dependency_available", _fake_dependency_check)
@@ -302,8 +298,6 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
     assert discovery["model.vertex_ai"]["missing_dependencies"] == ["google-cloud-aiplatform"]
     assert discovery["model.bedrock"]["missing_dependencies"] == ["boto3"]
     assert discovery["model.azure_openai"]["missing_dependencies"] == ["openai"]
-    assert discovery["model.cohere"]["missing_dependencies"] == ["cohere"]
-    assert discovery["model.voyage"]["missing_dependencies"] == ["voyageai"]
     assert discovery["embedding.bge"]["status"] == "unavailable"
     assert discovery["embedding.bge"]["missing_dependencies"] == ["FlagEmbedding"]
     assert discovery["source.s3"]["status"] == "unavailable"
@@ -376,8 +370,6 @@ def test_cloud_plugin_config_models_match_provider_metadata_contracts() -> None:
         "model.azure_openai",
         "model.openrouter",
         "model.openai",
-        "model.cohere",
-        "model.voyage",
         "model.jina",
     ]
 

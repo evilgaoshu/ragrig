@@ -52,7 +52,6 @@ CORE_PATHS = [
 OPTIONAL_IMPORT_ROOTS = {
     "azure",
     "boto3",
-    "cohere",
     "docling",
     "FlagEmbedding",
     "google",
@@ -74,7 +73,6 @@ OPTIONAL_IMPORT_ROOTS = {
     "torch",
     "transformers",
     "unstructured",
-    "voyageai",
     "weaviate",
 }
 

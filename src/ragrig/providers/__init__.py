@@ -211,7 +211,6 @@ def create_provider_registry() -> ProviderRegistry:
         AZURE_OPENAI_METADATA,
         BAIDU_QIANFAN_METADATA,
         BEDROCK_METADATA,
-        COHERE_METADATA,
         DASHSCOPE_METADATA,
         DEEPSEEK_METADATA,
         FIREWORKS_METADATA,
@@ -230,17 +229,14 @@ def create_provider_registry() -> ProviderRegistry:
         TOGETHER_METADATA,
         VERTEX_AI_METADATA,
         VOLCENGINE_ARK_METADATA,
-        VOYAGE_METADATA,
         XAI_METADATA,
         ZHIPU_METADATA,
         GeminiProvider,
         create_anthropic_provider,
         create_azure_openai_provider,
         create_cloud_stub_provider,
-        create_cohere_provider,
         create_jina_provider,
         create_openai_compatible_cloud_provider,
-        create_voyage_provider,
     )
     from ragrig.providers.local import (
         LLAMA_CPP_METADATA,
@@ -318,9 +314,7 @@ def create_provider_registry() -> ProviderRegistry:
     # Real cloud providers
     registry.register(ANTHROPIC_METADATA, create_anthropic_provider)
     registry.register(AZURE_OPENAI_METADATA, create_azure_openai_provider)
-    registry.register(COHERE_METADATA, create_cohere_provider)
     registry.register(JINA_METADATA, create_jina_provider)
-    registry.register(VOYAGE_METADATA, create_voyage_provider)
     registry.register(
         GOOGLE_GEMINI_METADATA,
         lambda **config: GeminiProvider(
