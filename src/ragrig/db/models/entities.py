@@ -421,6 +421,41 @@ class DocumentSummary(UUIDPrimaryKeyMixin, Base):
     document_version: Mapped["DocumentVersion"] = relationship()
 
 
+class SemanticCacheEntry(UUIDPrimaryKeyMixin, Base):
+    """Cached (query, answer) pair keyed by query embedding similarity.
+
+    Entries are scoped to a knowledge base and optionally to a workspace.
+    Expired entries (expires_at < now()) are ignored at lookup time.
+    """
+
+    __tablename__ = "semantic_cache"
+    __table_args__ = (
+        Index("ix_semantic_cache_kb_name", "knowledge_base_name"),
+        Index("ix_semantic_cache_workspace_id", "workspace_id"),
+        Index("ix_semantic_cache_expires_at", "expires_at"),
+    )
+
+    knowledge_base_name: Mapped[str] = mapped_column(Text, nullable=False)
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str] = mapped_column(String(128), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding: Mapped[Any] = mapped_column(Vector(), nullable=True)
+    answer_text: Mapped[str] = mapped_column(Text, nullable=False)
+    citations_json: Mapped[list[Any]] = mapped_column(JSONB, default=list, nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ConflictReview(Base):
     """Near-duplicate chunk conflict requiring human (or automated) resolution."""
 

@@ -65,6 +65,7 @@ class AnswerReport:
     cost_latency: dict[str, Any] = field(default_factory=dict)
     faithfulness_score: float | None = None  # 0-1; None when check was not run
     faithfulness_reason: str | None = None  # LLM explanation for the score
+    cache_hit: bool = False  # True when the answer was served from semantic cache
 
 
 class AnswerGenerationError(RuntimeError):
