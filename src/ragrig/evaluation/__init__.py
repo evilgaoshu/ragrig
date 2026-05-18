@@ -1,5 +1,11 @@
 """RAGRig Evaluation — Golden Question quality gate for RAG retrieval."""
 
+from ragrig.evaluation.answer_judge import (
+    score_answer_correctness,
+    score_answer_relevance,
+    score_context_precision,
+    score_context_recall,
+)
 from ragrig.evaluation.baseline import (
     BaselineCorruptError,
     BaselineError,
@@ -29,6 +35,10 @@ from ragrig.evaluation.report import (
 from ragrig.evaluation.retention import cleanup_evaluation_runs
 
 __all__ = [
+    "score_answer_correctness",
+    "score_answer_relevance",
+    "score_context_precision",
+    "score_context_recall",
     "run_evaluation",
     "load_run_from_store",
     "list_runs_from_store",

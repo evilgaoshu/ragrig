@@ -22,6 +22,8 @@ class GoldenQuestion(BaseModel):
     expected_chunk_text: str | None = None
     expected_citation: str | None = None
     expected_answer_keywords: list[str] = Field(default_factory=list)
+    expected_answer: str | None = None
+    expected_relevant_citations: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
 
 
@@ -39,14 +41,21 @@ class EvaluationRunItem(BaseModel):
 
     question_index: int
     query: str
+    tags: list[str] = Field(default_factory=list)
     hit: bool = False
     rank_of_expected: int | None = None
     mrr: float = 0.0
     total_results: int = 0
     citation_coverage: float = 0.0
+    context_precision: float | None = None
+    context_recall: float | None = None
     answer_status: str = "skipped"
     answer_groundedness: float | None = None
     answer_citation_coverage: float | None = None
+    answer_correctness: float | None = None
+    answer_correctness_reason: str | None = None
+    answer_relevance: float | None = None
+    answer_relevance_reason: str | None = None
     latency_ms: float = 0.0
     top_doc_uris: list[str] = Field(default_factory=list)
     top_distances: list[float] = Field(default_factory=list)
@@ -64,6 +73,8 @@ class EvaluationMetrics(BaseModel):
     mrr: float = 0.0
     mean_rank_of_expected: float | None = None
     citation_coverage_mean: float = 0.0
+    context_precision_mean: float | None = None
+    context_recall_mean: float | None = None
     zero_result_count: int = 0
     zero_result_rate: float = 0.0
     latency_ms_mean: float = 0.0
@@ -72,6 +83,9 @@ class EvaluationMetrics(BaseModel):
     latency_ms_p99: float = 0.0
     answer_skipped: bool = True
     answer_degraded_reason: str | None = None
+    answer_correctness_mean: float | None = None
+    answer_relevance_mean: float | None = None
+    per_tag_metrics: dict[str, dict[str, float | None]] = Field(default_factory=dict)
     regression_delta_vs_baseline: dict[str, float | None] = Field(
         default_factory=lambda: {
             "hit_at_1": None,
@@ -80,6 +94,10 @@ class EvaluationMetrics(BaseModel):
             "mrr": None,
             "mean_rank_of_expected": None,
             "citation_coverage_mean": None,
+            "context_precision_mean": None,
+            "context_recall_mean": None,
+            "answer_correctness_mean": None,
+            "answer_relevance_mean": None,
             "zero_result_rate": None,
         }
     )
