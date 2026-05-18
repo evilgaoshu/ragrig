@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import perf_counter
+from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 from ragrig.chunkers import ChunkingConfig, chunk_text
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding
 from ragrig.embeddings import EmbeddingResult
+from ragrig.indexing.conflict_detection import find_conflicting_chunk, record_conflict
+from ragrig.indexing.llm_steps import build_embedding_text, generate_chunk_description
 from ragrig.observability import aggregate_cost_latency, observe_model_call
 from ragrig.pii import redact as pii_redact
 from ragrig.plugins import get_plugin_registry
@@ -23,6 +26,9 @@ from ragrig.repositories import (
 )
 from ragrig.vectorstore import build_vector_collection
 from ragrig.vectorstore.base import VectorBackend, VectorEmbeddingRecord
+
+if TYPE_CHECKING:
+    pass
 
 
 @dataclass(frozen=True)
@@ -96,6 +102,9 @@ def _replace_version_index(
     cost_latency_operations: list[dict[str, object]] | None = None,
     workspace_id: object = None,
     pii_redaction: bool = False,
+    llm_description_provider: "BaseProvider | None" = None,
+    conflict_detection: bool = False,
+    conflict_threshold: float = 0.92,
 ) -> tuple[int, int]:
     existing_chunk_ids = list(
         session.scalars(select(Chunk.id).where(Chunk.document_version_id == document_version.id))
@@ -124,11 +133,16 @@ def _replace_version_index(
         }
 
     for draft in chunk_drafts:
+        # Optional: LLM generates a semantic description for this chunk
+        description = generate_chunk_description(draft.text, llm_description_provider)
+        embedding_input = build_embedding_text(draft.text, description)
+
         chunk = Chunk(
             document_version_id=document_version.id,
             workspace_id=workspace_id,
             chunk_index=draft.chunk_index,
             text=draft.text,
+            llm_description=description,
             char_start=draft.char_start,
             char_end=draft.char_end,
             metadata_json={
@@ -140,6 +154,7 @@ def _replace_version_index(
                 "version_number": document_version.version_number,
                 **acl_payload,
                 "profile_id": chunk_profile_id,
+                **({"llm_description": True} if description else {}),
             },
         )
         session.add(chunk)
@@ -147,7 +162,7 @@ def _replace_version_index(
         created_chunks.append(chunk)
 
         started = perf_counter()
-        embedding: EmbeddingResult = embedding_provider.embed_text(draft.text)
+        embedding: EmbeddingResult = embedding_provider.embed_text(embedding_input)
         embedding_latency_ms = (perf_counter() - started) * 1000
         cost_latency = observe_model_call(
             operation="embedding",
@@ -179,6 +194,30 @@ def _replace_version_index(
                 },
             )
         )
+        session.flush()
+
+        # Optional: near-duplicate conflict detection
+        if conflict_detection and document.knowledge_base_id is not None:
+            conflict = find_conflicting_chunk(
+                session,
+                new_vector=embedding.vector,
+                knowledge_base_id=document.knowledge_base_id,
+                new_chunk_id=chunk.id,
+                threshold=conflict_threshold,
+            )
+            if conflict is not None:
+                existing_chunk_id, similarity = conflict
+                record_conflict(
+                    session,
+                    knowledge_base_id=document.knowledge_base_id,
+                    new_chunk_id=chunk.id,
+                    existing_chunk_id=existing_chunk_id,
+                    similarity=similarity,
+                    extra_metadata={
+                        "document_uri": document.uri,
+                        "chunk_index": draft.chunk_index,
+                    },
+                )
 
     session.flush()
     return len(created_chunks), len(created_chunks)

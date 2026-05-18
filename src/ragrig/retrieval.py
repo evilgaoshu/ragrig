@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any
 
@@ -91,6 +93,7 @@ class RetrievalResult:
     char_start: int | None = None
     char_end: int | None = None
     page_number: int | None = None
+    chunk_created_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -292,6 +295,7 @@ def _search_with_sql_distance(
             distance=round(float(row.distance), 6),
             score=round(1.0 - float(row.distance), 6),
             chunk_metadata=row.chunk_metadata,
+            chunk_created_at=getattr(row, "chunk_created_at", None),
             **_span_kwargs(row),
             rank_stage_trace={
                 "stages": [
@@ -366,6 +370,7 @@ def _search_with_python_distance(
                 distance=distance,
                 score=round(1.0 - distance, 6),
                 chunk_metadata=row.chunk_metadata,
+                chunk_created_at=getattr(row, "chunk_created_at", None),
                 **_span_kwargs(row),
                 rank_stage_trace={
                     "stages": [
@@ -685,6 +690,83 @@ def _fetch_all_texts(
     return [row.text for row in rows]
 
 
+def _apply_time_decay(
+    results: list[RetrievalResult],
+    *,
+    sim_weight: float = 1.0,
+    time_decay_weight: float = 0.0,
+    doc_weight: float = 0.0,
+    kb_doc_weight: float = 0.5,
+    decay_rate: float = 0.1,
+) -> list[RetrievalResult]:
+    """Re-score and re-sort results using multi-factor ranking.
+
+    final_score = sim * sim_weight
+                + exp(-decay_rate * days_old) * time_decay_weight
+                + kb_doc_weight * doc_weight
+
+    When all weights are at their defaults (sim=1, others=0) this is a no-op.
+    """
+    if time_decay_weight == 0.0 and doc_weight == 0.0:
+        return results
+
+    now = datetime.now(timezone.utc)
+    reranked: list[RetrievalResult] = []
+    for r in results:
+        sim_score = r.score
+
+        if time_decay_weight > 0.0 and r.chunk_created_at is not None:
+            created = r.chunk_created_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            days_old = max((now - created).total_seconds() / 86400, 0.0)
+            td_score = math.exp(-decay_rate * days_old)
+        else:
+            td_score = 0.0
+
+        final = sim_score * sim_weight + td_score * time_decay_weight + kb_doc_weight * doc_weight
+
+        trace = dict(r.rank_stage_trace)
+        stages = list(trace.get("stages", []))
+        stages.append(
+            {
+                "stage": "time_decay",
+                "sim_score": round(sim_score, 6),
+                "time_decay_score": round(td_score, 6),
+                "final_score": round(final, 6),
+                "weights": {
+                    "sim_weight": sim_weight,
+                    "time_decay_weight": time_decay_weight,
+                    "doc_weight": doc_weight,
+                },
+            }
+        )
+        reranked.append(
+            RetrievalResult(
+                document_id=r.document_id,
+                document_version_id=r.document_version_id,
+                chunk_id=r.chunk_id,
+                chunk_index=r.chunk_index,
+                document_uri=r.document_uri,
+                source_uri=r.source_uri,
+                text=r.text,
+                text_preview=r.text_preview,
+                distance=r.distance,
+                score=round(final, 6),
+                chunk_metadata=r.chunk_metadata,
+                chunk_created_at=r.chunk_created_at,
+                acl_explain=r.acl_explain,
+                char_start=r.char_start,
+                char_end=r.char_end,
+                page_number=r.page_number,
+                rank_stage_trace={**trace, "stages": stages, "final_source": "time_decay"},
+            )
+        )
+
+    reranked.sort(key=lambda x: -x.score)
+    return reranked
+
+
 def search_knowledge_base(
     session: Session,
     *,
@@ -703,6 +785,11 @@ def search_knowledge_base(
     candidate_k: int = 20,
     reranker_provider: str | None = None,
     reranker_model: str | None = None,
+    sim_weight: float = 1.0,
+    time_decay_weight: float = 0.0,
+    doc_weight: float = 0.0,
+    decay_rate: float = 0.1,
+    rewrite_config: "Any | None" = None,
 ) -> RetrievalReport:
     """Search a knowledge base with optional hybrid/rerank modes.
 
@@ -729,6 +816,22 @@ def search_knowledge_base(
             details={"query": query},
         )
 
+    # ── Optional query rewriting / sub-question decomposition ──
+    sub_queries: list[str] = [normalized_query]
+    if rewrite_config is not None:
+        try:
+            from ragrig.retrieval_rewriter import rewrite_query
+
+            llm_provider_name = getattr(rewrite_config, "provider_name", None)
+            rewrite_provider = (
+                get_provider_registry().get(llm_provider_name) if llm_provider_name else None
+            )
+            sub_queries = rewrite_query(
+                normalized_query, config=rewrite_config, provider=rewrite_provider
+            )
+        except Exception:
+            pass  # Degraded: fall back to single query
+
     knowledge_base = get_knowledge_base_by_name(session, knowledge_base_name)
     if knowledge_base is None:
         raise KnowledgeBaseNotFoundError(
@@ -749,14 +852,16 @@ def search_knowledge_base(
         resolved_provider, dimensions=resolved_dimensions
     )
     embed_started = perf_counter()
-    query_embedding = embedding_provider.embed_text(normalized_query)
+    # Embed the primary (first) query; sub-query merging happens after retrieval
+    primary_query = sub_queries[0]
+    query_embedding = embedding_provider.embed_text(primary_query)
     phase_latencies["query_embedding_ms"] = round((perf_counter() - embed_started) * 1000, 3)
     cost_latency_operations.append(
         observe_model_call(
             operation="retrieval_query_embedding",
             provider=query_embedding.provider,
             model=query_embedding.model,
-            input_text=normalized_query,
+            input_text=primary_query,
             latency_ms=phase_latencies["query_embedding_ms"],
         )
     )
@@ -902,6 +1007,43 @@ def search_knowledge_base(
 
     # ── Enrich with acl_explain ──────────────────────────────
     dense_results = _enrich_with_acl_explain(dense_results, principal_ids, enforce_acl)
+
+    # ── Sub-query fan-out merge (when query was decomposed) ───
+    if len(sub_queries) > 1 and vector_backend is None:
+        from ragrig.retrieval_rewriter import merge_retrieval_results
+
+        all_result_lists = [dense_results]
+        for sq in sub_queries[1:]:
+            try:
+                sq_embedding = embedding_provider.embed_text(sq)
+                sq_results, _ = _search_with_python_distance(
+                    session,
+                    knowledge_base_id=knowledge_base.id,
+                    provider=resolved_provider,
+                    model=resolved_model,
+                    dimensions=resolved_dimensions,
+                    query_vector=sq_embedding.vector,
+                    top_k=candidate_k,
+                    principal_ids=principal_ids,
+                    enforce_acl=enforce_acl,
+                    workspace_id=kb_workspace_id,
+                )
+                sq_results = _enrich_with_acl_explain(sq_results, principal_ids, enforce_acl)
+                all_result_lists.append(sq_results)
+            except Exception:
+                pass
+        dense_results = merge_retrieval_results(all_result_lists, top_k=candidate_k)
+
+    # ── Multi-factor ranking (time decay + doc weight) ────────
+    kb_doc_weight = getattr(knowledge_base, "doc_weight", 0.5)
+    dense_results = _apply_time_decay(
+        dense_results,
+        sim_weight=sim_weight,
+        time_decay_weight=time_decay_weight,
+        doc_weight=doc_weight,
+        kb_doc_weight=kb_doc_weight,
+        decay_rate=decay_rate,
+    )
 
     # ── Final: Trim to top_k ──────────────────────────────────
     final_results = dense_results[:top_k]

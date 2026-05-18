@@ -87,6 +87,7 @@ def build_embedding_base_statement(
             Chunk.char_end.label("char_end"),
             Chunk.page_number.label("page_number"),
             Chunk.metadata_json.label("chunk_metadata"),
+            Chunk.created_at.label("chunk_created_at"),
             Embedding.embedding.label("embedding"),
         )
         .join(Chunk, Chunk.id == Embedding.chunk_id)

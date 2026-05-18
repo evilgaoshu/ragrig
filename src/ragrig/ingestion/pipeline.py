@@ -11,10 +11,12 @@ from ragrig.ingestion.scanner import scan_paths
 from ragrig.parsers import (
     CsvParser,
     DocxParser,
+    ExcelParser,
     HtmlParser,
     MarkdownParser,
     PdfParser,
     PlainTextParser,
+    PptxParser,
 )
 from ragrig.plugins import get_plugin_registry
 from ragrig.processing_profile import TaskType, resolve_profile
@@ -51,6 +53,10 @@ def _select_parser(path: Path):
         return PdfParser()
     if ext == ".docx":
         return DocxParser()
+    if ext in {".xlsx", ".xls"}:
+        return ExcelParser()
+    if ext == ".pptx":
+        return PptxParser()
     return PlainTextParser()
 
 
