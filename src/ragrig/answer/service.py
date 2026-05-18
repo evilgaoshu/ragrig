@@ -31,6 +31,12 @@ from ragrig.observability import aggregate_cost_latency, observe_model_call
 from ragrig.retrieval import (
     search_knowledge_base,
 )
+from ragrig.semantic_cache import (
+    SemanticCacheConfig,
+    increment_hit_count,
+    lookup_cache,
+    store_cache,
+)
 from ragrig.vectorstore.base import VectorBackend
 
 
@@ -107,6 +113,8 @@ def generate_answer(
     principal_ids: list[str] | None = None,
     enforce_acl: bool = True,
     faithfulness_config: FaithfulnessConfig | None = None,
+    cache_config: SemanticCacheConfig | None = None,
+    workspace_id: object = None,
 ) -> AnswerReport:
     """Generate a grounded answer from an evidence-grounded retrieval.
 
@@ -122,6 +130,48 @@ def generate_answer(
         ProviderUnavailableError: Answer provider could not generate
     """
     answer_started = perf_counter()
+
+    # 0. Semantic cache lookup
+    if cache_config is not None:
+        try:
+            from ragrig.embeddings import get_embedding_provider
+
+            embedding_provider = get_embedding_provider(
+                provider,
+                model=model,
+                **(provider_config or {}),
+            )
+            cache_embedding = embedding_provider.embed([query])[0]
+            cache_dims = len(cache_embedding.vector)
+            cache_hit_result = lookup_cache(
+                session,
+                query_vector=cache_embedding.vector,
+                knowledge_base_name=knowledge_base_name,
+                provider=provider,
+                model=model or "",
+                dimensions=cache_dims,
+                config=cache_config,
+                workspace_id=workspace_id,
+            )
+            if cache_hit_result is not None:
+                increment_hit_count(session, cache_hit_result.entry_id)
+                return AnswerReport(
+                    answer=cache_hit_result.answer_text,
+                    citations=[],
+                    evidence_chunks=[],
+                    model=model or "",
+                    provider=provider,
+                    retrieval_trace={"cache_hit": True, "similarity": cache_hit_result.similarity},
+                    grounding_status="grounded",
+                    cache_hit=True,
+                )
+        except Exception:
+            import logging as _logging
+
+            _logging.getLogger(__name__).debug(
+                "Semantic cache lookup failed (non-fatal)", exc_info=True
+            )
+
     # 1. Retrieval
     retrieval_started = perf_counter()
     retrieval_report = search_knowledge_base(
@@ -232,6 +282,44 @@ def generate_answer(
                     f"Faithfulness check failed (score {faith_result.score:.2f}): "
                     f"{faith_result.reason or 'answer not fully supported by evidence'}"
                 )
+
+    # 7. Store to semantic cache (best-effort, only on grounded answers)
+    if cache_config is not None and grounding_status == "grounded":
+        try:
+            from ragrig.embeddings import get_embedding_provider
+
+            embedding_provider = get_embedding_provider(
+                provider,
+                model=model,
+                **(provider_config or {}),
+            )
+            cache_embedding = embedding_provider.embed([query])[0]
+            store_cache(
+                session,
+                knowledge_base_name=knowledge_base_name,
+                query_text=query,
+                query_vector=cache_embedding.vector,
+                provider=provider,
+                model=model or "",
+                dimensions=len(cache_embedding.vector),
+                answer_text=answer_text,
+                citations_json=[
+                    {
+                        "citation_id": c.citation_id,
+                        "document_uri": c.document_uri,
+                        "chunk_id": c.chunk_id,
+                    }
+                    for c in citations
+                ],
+                config=cache_config,
+                workspace_id=workspace_id,
+            )
+        except Exception:
+            import logging as _logging
+
+            _logging.getLogger(__name__).debug(
+                "Semantic cache store failed (non-fatal)", exc_info=True
+            )
 
     retrieval_trace = _build_retrieval_trace(retrieval_report)
     answer_operation = observe_model_call(
