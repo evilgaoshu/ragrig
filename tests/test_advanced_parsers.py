@@ -141,6 +141,49 @@ def test_mineru_adapter_check_dependencies_returns_false() -> None:
     assert not adapter.check_dependencies()
 
 
+def test_mineru_adapter_parse_returns_skip_when_deps_missing(tmp_path) -> None:
+    adapter = MinerUAdapter()
+    # magic_pdf is not installed, so parse() should return SKIP
+    path = tmp_path / "sample.pdf"
+    path.write_bytes(b"%PDF-1.4 sample content")
+    result = adapter.parse(path)
+    assert result.status == ParserStatus.SKIP
+    assert result.degraded_reason == "missing_dependency"
+    assert result.fixture_id == "sample"
+    assert result.format == "pdf"
+    assert result.parser == "advanced.mineru"
+    assert result.metadata["library"] == "magic_pdf"
+    assert result.metadata["available"] is False
+
+
+def test_mineru_adapter_parse_returns_failure_when_import_fails(tmp_path, monkeypatch) -> None:
+    """When check_dependencies returns True but the actual magic_pdf import
+    inside parse() raises ImportError, parse() must catch it and return FAILURE."""
+    import sys
+
+    adapter = MinerUAdapter()
+    # Pretend dependencies are present so parse() proceeds past the SKIP guard
+    monkeypatch.setattr(adapter, "check_dependencies", lambda: True)
+
+    # Remove magic_pdf from sys.modules so the import inside parse() raises ImportError
+    for key in list(sys.modules.keys()):
+        if key.startswith("magic_pdf"):
+            monkeypatch.delitem(sys.modules, key)
+
+    path = tmp_path / "doc.pdf"
+    path.write_bytes(b"%PDF-1.4 content")
+    result = adapter.parse(path)
+
+    assert result.status == ParserStatus.FAILURE
+    assert result.degraded_reason == "parser_error"
+    assert result.fixture_id == "doc"
+    assert result.format == "pdf"
+    assert result.parser == "advanced.mineru"
+    assert result.metadata["library"] == "magic_pdf"
+    assert result.metadata["available"] is True
+    assert "error" in result.metadata
+
+
 def test_unstructured_adapter_check_dependencies_returns_false() -> None:
     adapter = UnstructuredAdapter()
     assert not adapter.check_dependencies()
