@@ -1,4 +1,5 @@
 """Unit tests for RAG quality features: chunking strategies, parsers, time decay, rewriting."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -131,6 +132,7 @@ def test_sentence_chunk_handles_chinese_punctuation() -> None:
 
 def test_excel_parser_raises_on_missing_openpyxl(monkeypatch: pytest.MonkeyPatch) -> None:
     import builtins
+
     real_import = builtins.__import__
 
     def mock_import(name, *args, **kwargs):
@@ -158,6 +160,7 @@ def test_excel_parser_name() -> None:
 
 def test_pptx_parser_raises_on_missing_pptx(monkeypatch: pytest.MonkeyPatch) -> None:
     import builtins
+
     real_import = builtins.__import__
 
     def mock_import(name, *args, **kwargs):
