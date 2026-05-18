@@ -184,6 +184,140 @@ def test_mineru_adapter_parse_returns_failure_when_import_fails(tmp_path, monkey
     assert "error" in result.metadata
 
 
+def test_mineru_adapter_check_dependencies_returns_true_when_magic_pdf_importable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+    import types
+
+    fake_magic_pdf = types.ModuleType("magic_pdf")
+    monkeypatch.setitem(sys.modules, "magic_pdf", fake_magic_pdf)
+    adapter = MinerUAdapter()
+    assert adapter.check_dependencies() is True
+
+
+def test_mineru_adapter_parse_returns_healthy_when_pipeline_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    import types
+
+    # Build minimal fake magic_pdf module tree
+    magic_pdf = types.ModuleType("magic_pdf")
+    magic_pdf_data = types.ModuleType("magic_pdf.data")
+    magic_pdf_data_drw = types.ModuleType("magic_pdf.data.data_reader_writer")
+    magic_pdf_data_ds = types.ModuleType("magic_pdf.data.dataset")
+    magic_pdf_model = types.ModuleType("magic_pdf.model")
+    magic_pdf_model_analyze = types.ModuleType("magic_pdf.model.doc_analyze_by_custom_model")
+
+    fake_markdown = "# Title\n\n| A | B |\n|---|---|\n| x | y |\n\n<!-- page 1 --> text"
+
+    class FakePipeResult:
+        def get_markdown(self, img_dir_str: str) -> str:
+            return fake_markdown
+
+    class FakeInferResult:
+        def pipe_txt_mode(self, image_writer: object) -> FakePipeResult:
+            return FakePipeResult()
+
+    class FakeDataset:
+        pass
+
+    class FakeWriter:
+        def __init__(self, path: str) -> None:
+            pass
+
+    magic_pdf_data_drw.FileBasedDataWriter = FakeWriter
+    magic_pdf_data_ds.PymuDocDataset = lambda data: FakeDataset()
+    magic_pdf_model_analyze.doc_analyze = lambda dataset, ocr: FakeInferResult()
+
+    magic_pdf.data = magic_pdf_data
+    magic_pdf_data.data_reader_writer = magic_pdf_data_drw
+    magic_pdf_data.dataset = magic_pdf_data_ds
+    magic_pdf.model = magic_pdf_model
+    magic_pdf_model.doc_analyze_by_custom_model = magic_pdf_model_analyze
+
+    for mod_name, mod in [
+        ("magic_pdf", magic_pdf),
+        ("magic_pdf.data", magic_pdf_data),
+        ("magic_pdf.data.data_reader_writer", magic_pdf_data_drw),
+        ("magic_pdf.data.dataset", magic_pdf_data_ds),
+        ("magic_pdf.model", magic_pdf_model),
+        ("magic_pdf.model.doc_analyze_by_custom_model", magic_pdf_model_analyze),
+    ]:
+        monkeypatch.setitem(sys.modules, mod_name, mod)
+
+    adapter = MinerUAdapter()
+    monkeypatch.setattr(adapter, "check_dependencies", lambda: True)
+
+    path = tmp_path / "doc.pdf"
+    path.write_bytes(b"%PDF-1.4 content")
+    result = adapter.parse(path)
+
+    assert result.status == ParserStatus.HEALTHY
+    assert result.degraded_reason is None
+    assert result.table_count == 1
+    assert result.page_or_slide_count == 1
+    assert result.text_length > 0
+    assert result.metadata["available"] is True
+
+
+def test_mineru_adapter_parse_returns_degraded_on_empty_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    import types
+
+    magic_pdf = types.ModuleType("magic_pdf")
+    magic_pdf_data = types.ModuleType("magic_pdf.data")
+    magic_pdf_data_drw = types.ModuleType("magic_pdf.data.data_reader_writer")
+    magic_pdf_data_ds = types.ModuleType("magic_pdf.data.dataset")
+    magic_pdf_model = types.ModuleType("magic_pdf.model")
+    magic_pdf_model_analyze = types.ModuleType("magic_pdf.model.doc_analyze_by_custom_model")
+
+    class FakePipeResult:
+        def get_markdown(self, img_dir_str: str) -> str:
+            return "   "  # whitespace only → empty_output
+
+    class FakeInferResult:
+        def pipe_txt_mode(self, image_writer: object) -> FakePipeResult:
+            return FakePipeResult()
+
+    class FakeWriter:
+        def __init__(self, path: str) -> None:
+            pass
+
+    magic_pdf_data_drw.FileBasedDataWriter = FakeWriter
+    magic_pdf_data_ds.PymuDocDataset = lambda data: object()
+    magic_pdf_model_analyze.doc_analyze = lambda dataset, ocr: FakeInferResult()
+
+    magic_pdf.data = magic_pdf_data
+    magic_pdf_data.data_reader_writer = magic_pdf_data_drw
+    magic_pdf_data.dataset = magic_pdf_data_ds
+    magic_pdf.model = magic_pdf_model
+    magic_pdf_model.doc_analyze_by_custom_model = magic_pdf_model_analyze
+
+    for mod_name, mod in [
+        ("magic_pdf", magic_pdf),
+        ("magic_pdf.data", magic_pdf_data),
+        ("magic_pdf.data.data_reader_writer", magic_pdf_data_drw),
+        ("magic_pdf.data.dataset", magic_pdf_data_ds),
+        ("magic_pdf.model", magic_pdf_model),
+        ("magic_pdf.model.doc_analyze_by_custom_model", magic_pdf_model_analyze),
+    ]:
+        monkeypatch.setitem(sys.modules, mod_name, mod)
+
+    adapter = MinerUAdapter()
+    monkeypatch.setattr(adapter, "check_dependencies", lambda: True)
+
+    path = tmp_path / "empty.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    result = adapter.parse(path)
+
+    assert result.status == ParserStatus.DEGRADED
+    assert result.degraded_reason == "empty_output"
+
+
 def test_unstructured_adapter_check_dependencies_returns_false() -> None:
     adapter = UnstructuredAdapter()
     assert not adapter.check_dependencies()
