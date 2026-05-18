@@ -14,6 +14,7 @@ from ragrig.embeddings import EmbeddingResult
 from ragrig.indexing.conflict_detection import find_conflicting_chunk, record_conflict
 from ragrig.indexing.llm_steps import (
     build_embedding_text,
+    generate_chunk_context,
     generate_chunk_description,
     generate_document_summary,
 )
@@ -114,6 +115,7 @@ def _replace_version_index(
     conflict_detection: bool = False,
     conflict_threshold: float = 0.92,
     summary_provider: "BaseProvider | None" = None,
+    contextual_provider: "BaseProvider | None" = None,
 ) -> tuple[int, int]:
     existing_chunk_ids = list(
         session.scalars(select(Chunk.id).where(Chunk.document_version_id == document_version.id))
@@ -183,7 +185,13 @@ def _replace_version_index(
         )
 
         description = generate_chunk_description(draft.text, llm_description_provider)
-        embedding_input = build_embedding_text(draft.text, description)
+        context_prefix = generate_chunk_context(source_text, draft.text, contextual_provider)
+
+        # Build the text to embed: context prefix > llm description > plain text
+        if context_prefix:
+            embedding_input = f"{context_prefix}\n\n{draft.text}"
+        else:
+            embedding_input = build_embedding_text(draft.text, description)
 
         chunk = Chunk(
             document_version_id=document_version.id,
@@ -191,6 +199,7 @@ def _replace_version_index(
             chunk_index=draft.chunk_index,
             text=draft.text,
             llm_description=description,
+            context_prefix=context_prefix,
             char_start=draft.char_start,
             char_end=draft.char_end,
             parent_chunk_id=parent_db_id,
@@ -198,6 +207,7 @@ def _replace_version_index(
                 **draft.metadata,
                 **base_meta,
                 **({"llm_description": True} if description else {}),
+                **({"contextual_retrieval": True} if context_prefix else {}),
                 **({"has_parent": True} if parent_db_id is not None else {}),
             },
         )

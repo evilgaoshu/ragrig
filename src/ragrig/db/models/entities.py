@@ -336,6 +336,7 @@ class Chunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     llm_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_prefix: Mapped[str | None] = mapped_column(Text, nullable=True)
     char_start: Mapped[int | None] = mapped_column(Integer)
     char_end: Mapped[int | None] = mapped_column(Integer)
     page_number: Mapped[int | None] = mapped_column(Integer)
