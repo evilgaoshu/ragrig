@@ -74,16 +74,17 @@ def test_csv_parser_extracts_text_and_metadata(tmp_path) -> None:
 
     result = CsvParser().parse(path)
 
-    assert result.extracted_text == raw_text
+    # Structured extraction: "header: value" pairs, not raw CSV
+    assert "col1: a" in result.extracted_text
+    assert "col2: b" in result.extracted_text
     assert result.mime_type == "text/csv"
     assert result.parser_name == "csv"
     assert result.metadata["extension"] == ".csv"
-    assert result.metadata["line_count"] == 3
-    assert result.metadata["row_count"] == 3
+    assert result.metadata["line_count"] == 3  # raw source lines
+    assert result.metadata["row_count"] == 2  # data rows (header excluded)
     assert result.metadata["col_count"] == 2
-    assert "degraded_reason" in result.metadata
     assert result.metadata["parser_id"] == "parser.csv"
-    assert result.metadata["status"] == "degraded"
+    assert result.metadata["status"] == "success"
     assert result.metadata["byte_count"] > 0
     assert "text_summary" in result.metadata
 
@@ -95,9 +96,9 @@ def test_csv_parser_gracefully_handles_malformed_csv(tmp_path) -> None:
 
     result = CsvParser().parse(path)
 
-    assert result.extracted_text == raw_text
+    # Should not raise; parser recovers best-effort result
     assert result.parser_name == "csv"
-    # Should not raise; row_count may be 0 or best-effort
+    assert result.extracted_text != ""
     assert "row_count" in result.metadata
 
 
@@ -121,7 +122,7 @@ def test_html_parser_handles_empty_file(tmp_path) -> None:
 
     assert result.extracted_text == ""
     assert result.metadata["line_count"] == 0
-    assert result.metadata["stripped_char_count"] == 0
+    assert result.metadata["char_count"] == 0
 
 
 def test_csv_parser_gracefully_handles_reader_exception(tmp_path, monkeypatch) -> None:
@@ -147,14 +148,16 @@ def test_html_parser_strips_tags_and_returns_metadata(tmp_path) -> None:
 
     result = HtmlParser().parse(path)
 
-    assert result.extracted_text == "Title Hello world"
+    # lxml extracts text content preserving block boundaries
+    assert "Title" in result.extracted_text
+    assert "Hello world" in result.extracted_text
+    assert "<h1>" not in result.extracted_text
     assert result.mime_type == "text/html"
     assert result.parser_name == "html"
     assert result.metadata["extension"] == ".html"
-    assert result.metadata["stripped_char_count"] == 17
-    assert "degraded_reason" in result.metadata
+    assert result.metadata["char_count"] > 0
     assert result.metadata["parser_id"] == "parser.html"
-    assert result.metadata["status"] == "degraded"
+    assert result.metadata["status"] == "success"
     assert result.metadata["byte_count"] > 0
     assert "text_summary" in result.metadata
 
@@ -197,8 +200,7 @@ def test_csv_parser_empty_file_metadata_is_stable(tmp_path) -> None:
 
     assert result.extracted_text == ""
     assert result.metadata["parser_id"] == "parser.csv"
-    assert result.metadata["status"] == "degraded"
-    assert "degraded_reason" in result.metadata
+    assert result.metadata["status"] == "success"
     assert result.metadata["line_count"] == 0
     assert result.metadata["char_count"] == 0
     assert result.metadata["byte_count"] == 0
@@ -226,14 +228,15 @@ def test_csv_parser_oversized_line_is_handled(tmp_path) -> None:
     result = CsvParser().parse(path)
 
     assert result.parser_name == "csv"
-    assert result.metadata["char_count"] == len(raw_text)
+    assert result.metadata["char_count"] > 0
     assert result.metadata["line_count"] == 2
-    assert result.metadata["row_count"] == 2
+    assert result.metadata["row_count"] == 1  # 1 data row (header excluded)
     assert result.metadata["col_count"] == 2
     # text_summary should be truncated, not the full 500K line
     assert len(result.metadata["text_summary"]) <= 81
-    # extracted_text IS full (it's the parse output, not metadata)
-    assert result.extracted_text == raw_text
+    # extracted_text contains the structured key: value form
+    assert "id: 1" in result.extracted_text
+    assert "data:" in result.extracted_text
 
 
 def test_csv_parser_sensitive_fields_not_leaked_in_metadata(tmp_path) -> None:
@@ -268,10 +271,10 @@ def test_csv_parser_handles_single_column(tmp_path) -> None:
 
     result = CsvParser().parse(path)
 
-    assert result.metadata["row_count"] == 3
+    assert result.metadata["row_count"] == 2  # 2 data rows (header excluded)
     assert result.metadata["col_count"] == 1
     assert result.metadata["parser_id"] == "parser.csv"
-    assert result.metadata["status"] == "degraded"
+    assert result.metadata["status"] == "success"
 
 
 def test_csv_parser_malformed_csv_tracks_parse_error(tmp_path, monkeypatch) -> None:
@@ -306,11 +309,9 @@ def test_html_parser_empty_file_metadata_is_stable(tmp_path) -> None:
 
     assert result.extracted_text == ""
     assert result.metadata["parser_id"] == "parser.html"
-    assert result.metadata["status"] == "degraded"
-    assert "degraded_reason" in result.metadata
+    assert result.metadata["status"] == "success"
     assert result.metadata["line_count"] == 0
     assert result.metadata["char_count"] == 0
-    assert result.metadata["stripped_char_count"] == 0
     assert result.metadata["text_summary"] == ""
 
 
@@ -335,16 +336,14 @@ def test_html_parser_malformed_html_is_handled_gracefully(tmp_path) -> None:
 
     result = HtmlParser().parse(path)
 
-    # Should not raise; should strip what it can
+    # lxml handles malformed HTML gracefully — should not raise
     assert result.parser_name == "html"
     assert result.metadata["parser_id"] == "parser.html"
-    assert result.metadata["status"] == "degraded"
-    # Stripped text should not contain tags
+    # Script tags (and their content) are excluded by the lxml parser
     assert "<script>" not in result.extracted_text
     assert "</script>" not in result.extracted_text
-    # But the js code text may remain (tag-stripping doesn't parse JS)
+    assert "alert(" not in result.extracted_text
     assert "text_summary" in result.metadata
-    assert "degraded_reason" in result.metadata
 
 
 def test_html_parser_xss_script_tags_are_stripped(tmp_path) -> None:
@@ -358,8 +357,9 @@ def test_html_parser_xss_script_tags_are_stripped(tmp_path) -> None:
 
     assert "<script>" not in result.extracted_text
     assert "</script>" not in result.extracted_text
+    assert 'alert("XSS")' not in result.extracted_text
     assert result.metadata["parser_id"] == "parser.html"
-    assert result.metadata["status"] == "degraded"
+    assert result.metadata["status"] == "success"
 
 
 def test_html_parser_sensitive_fields_not_leaked_in_metadata(tmp_path) -> None:
@@ -382,7 +382,8 @@ def test_html_parser_sensitive_fields_not_leaked_in_metadata(tmp_path) -> None:
     assert "sk-abc-123" not in summary
     assert "admin123" not in summary
     assert result.metadata["parser_id"] == "parser.html"
-    assert result.metadata["status"] == "degraded"
+    assert result.metadata["status"] == "success"
+    # script content is excluded by lxml; only <pre> text is extracted
     assert result.metadata["redaction_count"] >= 1
 
 
@@ -396,12 +397,13 @@ def test_html_parser_large_document_is_handled(tmp_path) -> None:
     result = HtmlParser().parse(path)
 
     assert result.parser_name == "html"
-    assert result.metadata["char_count"] == len(raw_text)
-    assert result.metadata["stripped_char_count"] < len(raw_text)
+    # char_count is the length of extracted (tag-stripped) text, not raw HTML
+    assert result.metadata["char_count"] < len(raw_text)
+    assert result.metadata["char_count"] > 0
     # text_summary must be truncated
     assert len(result.metadata["text_summary"]) <= 81
     assert result.metadata["parser_id"] == "parser.html"
-    assert result.metadata["status"] == "degraded"
+    assert result.metadata["status"] == "success"
 
 
 # ── Parser Metadata Schema Tests ──
@@ -449,8 +451,8 @@ def _assert_stable_metadata(metadata: dict, expected_parser_id: str, expected_st
     [
         (MarkdownParser, "parser.markdown", "success"),
         (PlainTextParser, "parser.text", "success"),
-        (CsvParser, "parser.csv", "degraded"),
-        (HtmlParser, "parser.html", "degraded"),
+        (CsvParser, "parser.csv", "success"),
+        (HtmlParser, "parser.html", "success"),
     ],
 )
 def test_parser_returns_stable_metadata_schema(
@@ -747,15 +749,14 @@ def test_sensitive_fixture_pipeline_run_items_queryable(tmp_path) -> None:
 
 def test_empty_and_edge_case_files_preserve_diagnostics(tmp_path) -> None:
     """Empty files, garbled text, and oversized lines must still produce
-    valid status/degraded_reason and bounded summary length."""
-    # Empty file
+    valid status and bounded summary length."""
+    # Empty file — returns success with zero counts
     empty_path = tmp_path / "empty.csv"
     empty_path.write_text("", encoding="utf-8")
     empty_result = CsvParser().parse(empty_path)
     assert empty_result.metadata["text_summary"] == ""
     assert empty_result.metadata["redaction_count"] == 0
-    assert empty_result.metadata["status"] == "degraded"
-    assert "degraded_reason" in empty_result.metadata
+    assert empty_result.metadata["status"] == "success"
 
     # Oversized line
     big_path = tmp_path / "big.csv"
@@ -764,10 +765,10 @@ def test_empty_and_edge_case_files_preserve_diagnostics(tmp_path) -> None:
     assert len(big_result.metadata["text_summary"]) <= 81
     assert big_result.metadata["redaction_count"] == 0
 
-    # Malformed HTML
+    # Malformed HTML — lxml handles gracefully, no raise
     html_path = tmp_path / "bad.html"
     html_path.write_text("<html><body><h1>Title<p>unclosed<script>alert(1)", encoding="utf-8")
     html_result = HtmlParser().parse(html_path)
-    assert html_result.metadata["status"] == "degraded"
-    assert "degraded_reason" in html_result.metadata
+    assert html_result.metadata["status"] == "success"
     assert len(html_result.metadata["text_summary"]) <= 81
+    assert "alert(1)" not in html_result.extracted_text
