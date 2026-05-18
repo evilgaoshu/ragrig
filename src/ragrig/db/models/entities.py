@@ -218,6 +218,7 @@ class KnowledgeBase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    doc_weight: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -334,6 +335,7 @@ class Chunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    llm_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     char_start: Mapped[int | None] = mapped_column(Integer)
     char_end: Mapped[int | None] = mapped_column(Integer)
     page_number: Mapped[int | None] = mapped_column(Integer)
@@ -365,6 +367,45 @@ class Embedding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
     chunk: Mapped[Chunk] = relationship(back_populates="embeddings")
+
+
+class ConflictReview(Base):
+    """Near-duplicate chunk conflict requiring human (or automated) resolution."""
+
+    __tablename__ = "conflict_reviews"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'resolved_keep_new', 'resolved_keep_old', "
+            "'resolved_keep_both', 'resolved_auto_recency')",
+            name="ck_conflict_reviews_status",
+        ),
+        Index("ix_conflict_reviews_kb_status", "knowledge_base_id", "status"),
+        Index("ix_conflict_reviews_new_chunk", "new_chunk_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False
+    )
+    new_chunk_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("chunks.id", ondelete="CASCADE"), nullable=False
+    )
+    existing_chunk_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("chunks.id", ondelete="CASCADE"), nullable=False
+    )
+    similarity: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    resolution: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    knowledge_base: Mapped["KnowledgeBase"] = relationship()
+    new_chunk: Mapped["Chunk"] = relationship(foreign_keys=[new_chunk_id])
+    existing_chunk: Mapped["Chunk"] = relationship(foreign_keys=[existing_chunk_id])
 
 
 class PipelineRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):

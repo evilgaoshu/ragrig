@@ -86,6 +86,7 @@ from ragrig.retrieval import (
 from ragrig.routers.admin import router as admin_router
 from ragrig.routers.audit import router as audit_router
 from ragrig.routers.auth import router as auth_router
+from ragrig.routers.conflicts import router as conflicts_router
 from ragrig.routers.conversations import router as conversations_router
 from ragrig.routers.mcp import router as mcp_router
 from ragrig.routers.openai_compat import router as openai_compat_router
@@ -426,6 +427,7 @@ def create_app(
 
     app.include_router(auth_router)
     app.include_router(audit_router)
+    app.include_router(conflicts_router)
     app.include_router(retention_router)
     app.include_router(openai_compat_router)
     app.include_router(mcp_router)
