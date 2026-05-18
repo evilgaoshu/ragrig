@@ -850,6 +850,7 @@ def search_knowledge_base(
     doc_weight: float = 0.0,
     decay_rate: float = 0.1,
     rewrite_config: "Any | None" = None,
+    hyde_config: "Any | None" = None,
 ) -> RetrievalReport:
     """Search a knowledge base with optional hybrid/rerank modes.
 
@@ -925,6 +926,35 @@ def search_knowledge_base(
             latency_ms=phase_latencies["query_embedding_ms"],
         )
     )
+
+    # ── Optional HyDE: replace/blend query vector with hypothetical doc ──
+    query_vector = query_embedding.vector
+    if hyde_config is not None:
+        try:
+            from ragrig.hyde import blend_vectors, generate_hypothetical_document
+
+            hyde_provider_name = getattr(hyde_config, "provider_name", None)
+            hyde_llm = (
+                get_provider_registry().get(hyde_provider_name) if hyde_provider_name else None
+            )
+            hyde_started = perf_counter()
+            hypo_doc = generate_hypothetical_document(primary_query, hyde_llm)
+            if hypo_doc:
+                hyde_embedding = embedding_provider.embed_text(hypo_doc)
+                blend = getattr(hyde_config, "blend", 1.0)
+                query_vector = blend_vectors(query_vector, hyde_embedding.vector, blend)
+                phase_latencies["hyde_ms"] = round((perf_counter() - hyde_started) * 1000, 3)
+                cost_latency_operations.append(
+                    observe_model_call(
+                        operation="hyde_embedding",
+                        provider=hyde_embedding.provider,
+                        model=hyde_embedding.model,
+                        input_text=hypo_doc,
+                        latency_ms=phase_latencies["hyde_ms"],
+                    )
+                )
+        except Exception:
+            pass  # Degraded: use original query vector
     collection = build_vector_collection(
         knowledge_base_name=knowledge_base_name,
         provider=resolved_provider,
@@ -946,7 +976,7 @@ def search_knowledge_base(
         vector_results = vector_backend.search(
             session,
             collection,
-            query_vector=query_embedding.vector,
+            query_vector=query_vector,
             top_k=fetch_k,
         )
         if enforce_acl:
@@ -996,7 +1026,7 @@ def search_knowledge_base(
             provider=resolved_provider,
             model=resolved_model,
             dimensions=resolved_dimensions,
-            query_vector=query_embedding.vector,
+            query_vector=query_vector,
             top_k=candidate_k if mode != "dense" else top_k,
             principal_ids=principal_ids,
             enforce_acl=enforce_acl,
@@ -1016,7 +1046,7 @@ def search_knowledge_base(
             provider=resolved_provider,
             model=resolved_model,
             dimensions=resolved_dimensions,
-            query_vector=query_embedding.vector,
+            query_vector=query_vector,
             top_k=candidate_k if mode != "dense" else top_k,
             principal_ids=principal_ids,
             enforce_acl=enforce_acl,
