@@ -352,6 +352,7 @@ def _compute_metrics(items: list[EvaluationRunItem]) -> EvaluationMetrics:
         latency_ms_p95=round(_percentile(latencies, 95), 2),
         latency_ms_p99=round(_percentile(latencies, 99), 2),
         answer_skipped=not answer_ran,
+        answer_degraded_reason=("answer provider not configured" if not answer_ran else None),
         answer_correctness_mean=_mean_or_none(corr_vals),  # type: ignore[arg-type]
         answer_relevance_mean=_mean_or_none(relv_vals),  # type: ignore[arg-type]
         per_tag_metrics=per_tag,
