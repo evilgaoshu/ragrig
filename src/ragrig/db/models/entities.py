@@ -385,6 +385,42 @@ class Embedding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     chunk: Mapped[Chunk] = relationship(back_populates="embeddings")
 
 
+class DocumentSummary(UUIDPrimaryKeyMixin, Base):
+    """LLM-generated document-level summary with its embedding.
+
+    One row per document version.  Used for document-level retrieval: broad or
+    high-level queries that match a document as a whole but not any single chunk.
+    """
+
+    __tablename__ = "document_summaries"
+    __table_args__ = (
+        UniqueConstraint("document_version_id", name="uq_document_summaries_doc_version"),
+        Index("ix_document_summaries_workspace_id", "workspace_id"),
+    )
+
+    document_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("document_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    summary_text: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str] = mapped_column(String(128), nullable=False)
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding: Mapped[Any] = mapped_column(Vector(), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    document_version: Mapped["DocumentVersion"] = relationship()
+
+
 class ConflictReview(Base):
     """Near-duplicate chunk conflict requiring human (or automated) resolution."""
 

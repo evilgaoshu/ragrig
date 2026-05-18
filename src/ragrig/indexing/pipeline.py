@@ -9,10 +9,14 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ragrig.chunkers import ChunkingConfig, chunk_text, chunk_text_hierarchical
-from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding
+from ragrig.db.models import Chunk, Document, DocumentSummary, DocumentVersion, Embedding
 from ragrig.embeddings import EmbeddingResult
 from ragrig.indexing.conflict_detection import find_conflicting_chunk, record_conflict
-from ragrig.indexing.llm_steps import build_embedding_text, generate_chunk_description
+from ragrig.indexing.llm_steps import (
+    build_embedding_text,
+    generate_chunk_description,
+    generate_document_summary,
+)
 from ragrig.observability import aggregate_cost_latency, observe_model_call
 from ragrig.pii import redact as pii_redact
 from ragrig.plugins import get_plugin_registry
@@ -109,6 +113,7 @@ def _replace_version_index(
     llm_description_provider: "BaseProvider | None" = None,
     conflict_detection: bool = False,
     conflict_threshold: float = 0.92,
+    summary_provider: "BaseProvider | None" = None,
 ) -> tuple[int, int]:
     existing_chunk_ids = list(
         session.scalars(select(Chunk.id).where(Chunk.document_version_id == document_version.id))
@@ -257,6 +262,37 @@ def _replace_version_index(
                         "chunk_index": draft.chunk_index,
                     },
                 )
+
+    # ── Optional: document-level summary + embedding ──────────────────────────
+    if summary_provider is not None and source_text.strip():
+        summary_text = generate_document_summary(source_text, summary_provider)
+        if summary_text:
+            # Delete stale summary for this version before inserting a new one
+            from sqlalchemy import delete as _delete
+
+            session.execute(
+                _delete(DocumentSummary).where(
+                    DocumentSummary.document_version_id == document_version.id
+                )
+            )
+            summary_embedding: EmbeddingResult = embedding_provider.embed_text(summary_text)
+            session.add(
+                DocumentSummary(
+                    document_version_id=document_version.id,
+                    workspace_id=workspace_id,
+                    summary_text=summary_text,
+                    provider=summary_embedding.provider,
+                    model=summary_embedding.model,
+                    dimensions=summary_embedding.dimensions,
+                    embedding=summary_embedding.vector,
+                    metadata_json={
+                        "document_uri": document.uri,
+                        "document_id": str(document.id),
+                        "profile_id": embed_profile_id,
+                    },
+                )
+            )
+            session.flush()
 
     session.flush()
     return len(created_chunks), len(created_chunks)

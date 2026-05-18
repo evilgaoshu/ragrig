@@ -17,7 +17,14 @@ from ragrig.acl import (
     build_acl_explain,
     normalize_principal_ids,
 )
-from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding, KnowledgeBase
+from ragrig.db.models import (
+    Chunk,
+    Document,
+    DocumentSummary,
+    DocumentVersion,
+    Embedding,
+    KnowledgeBase,
+)
 from ragrig.lexical import token_overlap_score
 from ragrig.observability import aggregate_cost_latency, observe_model_call
 from ragrig.providers import get_provider_registry
@@ -95,6 +102,7 @@ class RetrievalResult:
     page_number: int | None = None
     chunk_created_at: datetime | None = None
     parent_text: str | None = None  # full parent segment text when parent-child chunking is used
+    result_source: str = "chunk"  # "chunk" or "document_summary"
 
 
 @dataclass(frozen=True)
@@ -768,6 +776,86 @@ def _apply_time_decay(
     return reranked
 
 
+def _search_document_summaries(
+    session: Session,
+    *,
+    knowledge_base_id: uuid.UUID,
+    provider: str,
+    model: str,
+    dimensions: int,
+    query_vector: list[float],
+    top_k: int,
+    workspace_id: object = None,
+) -> list[RetrievalResult]:
+    """Search document_summaries by cosine distance (Python fallback — no pgvector required).
+
+    Returns RetrievalResult objects with result_source='document_summary'.
+    """
+    stmt = (
+        select(
+            DocumentSummary,
+            DocumentVersion,
+            Document,
+        )
+        .join(DocumentVersion, DocumentVersion.id == DocumentSummary.document_version_id)
+        .join(Document, Document.id == DocumentVersion.document_id)
+        .where(
+            Document.knowledge_base_id == knowledge_base_id,
+            DocumentSummary.provider == provider,
+            DocumentSummary.model == model,
+            DocumentSummary.dimensions == dimensions,
+        )
+    )
+    if workspace_id is not None:
+        stmt = stmt.where(DocumentSummary.workspace_id == workspace_id)
+
+    rows = session.execute(stmt).all()
+    if not rows:
+        return []
+
+    scored: list[tuple[float, RetrievalResult]] = []
+    for ds, dv, doc in rows:
+        if ds.embedding is None:
+            continue
+        emb = list(ds.embedding) if not isinstance(ds.embedding, list) else ds.embedding
+        distance = _cosine_distance(_normalize_vector(emb), query_vector)
+        scored.append(
+            (
+                distance,
+                RetrievalResult(
+                    document_id=doc.id,
+                    document_version_id=dv.id,
+                    chunk_id=ds.id,  # use summary id as surrogate chunk_id
+                    chunk_index=-1,
+                    document_uri=doc.uri,
+                    source_uri=None,
+                    text=ds.summary_text,
+                    text_preview=ds.summary_text[:160],
+                    distance=distance,
+                    score=round(1.0 - distance, 6),
+                    chunk_metadata=ds.metadata_json,
+                    result_source="document_summary",
+                    rank_stage_trace={
+                        "stages": [
+                            {
+                                "stage": "vector",
+                                "distance": distance,
+                                "score": round(1.0 - distance, 6),
+                                "provider": provider,
+                                "model": model,
+                                "dimensions": dimensions,
+                            }
+                        ],
+                        "final_source": "document_summary",
+                    },
+                ),
+            )
+        )
+
+    scored.sort(key=lambda x: x[0])
+    return [r for _, r in scored[:top_k]]
+
+
 def _hydrate_parent_text(
     results: list[RetrievalResult],
     session: Session,
@@ -851,6 +939,7 @@ def search_knowledge_base(
     decay_rate: float = 0.1,
     rewrite_config: "Any | None" = None,
     hyde_config: "Any | None" = None,
+    include_summary_search: bool = False,
 ) -> RetrievalReport:
     """Search a knowledge base with optional hybrid/rerank modes.
 
@@ -1134,6 +1223,26 @@ def search_knowledge_base(
         kb_doc_weight=kb_doc_weight,
         decay_rate=decay_rate,
     )
+
+    # ── Optional: document-level summary search ───────────────
+    if include_summary_search:
+        summary_results = _search_document_summaries(
+            session,
+            knowledge_base_id=knowledge_base.id,
+            provider=resolved_provider,
+            model=resolved_model,
+            dimensions=resolved_dimensions,
+            query_vector=query_vector,
+            top_k=top_k,
+            workspace_id=kb_workspace_id,
+        )
+        # Merge: keep chunk result when document_version_id already present
+        seen_dvids = {r.document_version_id for r in dense_results}
+        for sr in summary_results:
+            if sr.document_version_id not in seen_dvids:
+                dense_results = list(dense_results) + [sr]
+                seen_dvids.add(sr.document_version_id)
+        dense_results.sort(key=lambda r: -r.score)
 
     # ── Hydrate parent text (parent-child chunking) ──────────
     dense_results = _hydrate_parent_text(dense_results, session)
