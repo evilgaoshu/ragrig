@@ -14,10 +14,8 @@ from ragrig.providers import get_provider_registry
 from ragrig.providers.cloud import (
     AnthropicProvider,
     AzureOpenAIProvider,
-    CohereProvider,
     JinaProvider,
     OpenAICompatibleCloudProvider,
-    VoyageProvider,
 )
 
 pytestmark = pytest.mark.unit
@@ -293,58 +291,3 @@ def test_jina_rerank() -> None:
     assert results[0]["index"] == 1
     assert results[0]["score"] == pytest.approx(0.9)
     assert "/rerank" in transport.calls[0]["url"]
-
-
-# ── VoyageProvider ────────────────────────────────────────────────────────────
-
-
-def test_voyage_embed_text() -> None:
-    client, _ = _fake_client(body={"data": [{"embedding": [0.2, 0.8, 0.4]}]})
-    provider = VoyageProvider(config={"api_key": "voyage-test"}, client=client)
-    result = provider.embed_text("test document")
-    assert result.dimensions == 3
-    assert result.provider == "model.voyage"
-
-
-def test_voyage_rerank() -> None:
-    client, _ = _fake_client(body={"data": [{"index": 0, "relevance_score": 0.95}]})
-    provider = VoyageProvider(config={"api_key": "voyage-test"}, client=client)
-    results = provider.rerank("query", ["only doc"])
-    assert results[0]["score"] == pytest.approx(0.95)
-
-
-# ── CohereProvider ────────────────────────────────────────────────────────────
-
-
-def test_cohere_chat_returns_content() -> None:
-    client, transport = _fake_client(body={"message": {"content": [{"text": "Cohere response"}]}})
-    provider = CohereProvider(config={"api_key": "cohere-test"}, client=client)
-    result = provider.chat([{"role": "user", "content": "hi"}])
-    assert result["choices"][0]["message"]["content"] == "Cohere response"
-    assert "/chat" in transport.calls[0]["url"]
-
-
-def test_cohere_embed_text() -> None:
-    client, _ = _fake_client(body={"embeddings": {"float": [[0.1, 0.2, 0.3]]}})
-    provider = CohereProvider(config={"api_key": "cohere-test"}, client=client)
-    result = provider.embed_text("hello")
-    assert result.dimensions == 3
-
-
-def test_cohere_rerank() -> None:
-    client, _ = _fake_client(
-        body={
-            "results": [{"index": 1, "relevance_score": 0.85}, {"index": 0, "relevance_score": 0.2}]
-        }
-    )
-    provider = CohereProvider(config={"api_key": "cohere-test"}, client=client)
-    docs = ["alpha", "beta"]
-    results = provider.rerank("search query", docs)
-    assert results[0]["index"] == 1
-    assert results[0]["document"] == "beta"
-
-
-def test_cohere_health_unavailable_when_no_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("COHERE_API_KEY", raising=False)
-    provider = CohereProvider(config={})
-    assert provider.health_check().status == "unavailable"

@@ -113,8 +113,6 @@ def test_default_provider_registry_exposes_pr2_local_provider_contracts() -> Non
         "model.azure_openai",
         "model.openrouter",
         "model.openai",
-        "model.cohere",
-        "model.voyage",
         "model.jina",
     } <= names
 
@@ -334,7 +332,7 @@ def test_cloud_stub_provider_reports_stub_health_without_optional_sdk() -> None:
         ("model.openai", "generate", ("hello",)),
         ("model.openai", "chat", ([{"role": "user", "content": "hi"}],)),
         ("model.openai", "embed_text", ("fixture",)),
-        ("model.cohere", "rerank", ("query", ["a", "b"])),
+        ("model.bedrock", "rerank", ("query", ["a", "b"])),
     ],
 )
 def test_cloud_stub_provider_behavior_methods_raise_stub_only_error(

@@ -132,6 +132,7 @@ def _official_manifest(
 
 def official_stub_manifests() -> list[PluginManifest]:
     s3_ready = guards.is_dependency_available("boto3")
+    qdrant_ready = guards.is_dependency_available("qdrant_client")
     fileshare_protocol_dependencies = {
         "nfs_mounted": (),
         "sftp": ("paramiko",),
@@ -170,7 +171,7 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="vector.qdrant",
             display_name="Qdrant Vector Backend",
-            description="Stub manifest for future Qdrant vector backend support.",
+            description="Qdrant vector backend for similarity search and retrieval.",
             plugin_type=PluginType.VECTOR,
             family="qdrant",
             capabilities=(
@@ -190,7 +191,12 @@ def official_stub_manifests() -> list[PluginManifest]:
                     name="QDRANT_API_KEY", description="Qdrant API key", required=False
                 ),
             ),
-            unavailable_reason="Runtime connector is not implemented in this contract-first phase.",
+            status=PluginStatus.READY if qdrant_ready else PluginStatus.UNAVAILABLE,
+            unavailable_reason=(
+                None
+                if qdrant_ready
+                else "Install qdrant-client to enable the Qdrant vector backend connector."
+            ),
         ),
         _official_manifest(
             plugin_id="model.ollama",
@@ -322,9 +328,7 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="model.azure_openai",
             display_name="Azure OpenAI Cloud Provider",
-            description=(
-                "Contract-only cloud stub for Azure OpenAI generation and embedding workflows."
-            ),
+            description="Azure OpenAI provider for chat, generate, and embeddings.",
             plugin_type=PluginType.MODEL,
             family="azure_openai",
             capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT),
@@ -343,15 +347,13 @@ def official_stub_manifests() -> list[PluginManifest]:
                     name="AZURE_OPENAI_ENDPOINT", description="Azure OpenAI endpoint base URL"
                 ),
             ),
-            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
+            status=PluginStatus.READY,
+            unavailable_reason=None,
         ),
         _official_manifest(
             plugin_id="model.openrouter",
             display_name="OpenRouter Cloud Provider",
-            description=(
-                "Contract-only cloud stub for OpenRouter text generation over an "
-                "OpenAI-compatible API."
-            ),
+            description="OpenRouter provider for chat and generate over an OpenAI-compatible API.",
             plugin_type=PluginType.MODEL,
             family="openrouter",
             capabilities=(Capability.GENERATE_TEXT,),
@@ -365,12 +367,13 @@ def official_stub_manifests() -> list[PluginManifest]:
             secret_requirements=(
                 SecretRequirement(name="OPENROUTER_API_KEY", description="OpenRouter API key"),
             ),
-            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
+            status=PluginStatus.READY,
+            unavailable_reason=None,
         ),
         _official_manifest(
             plugin_id="model.openai",
             display_name="OpenAI Cloud Provider",
-            description="Contract-only cloud stub for OpenAI generation and embedding workflows.",
+            description="OpenAI provider for chat, generate, and embeddings.",
             plugin_type=PluginType.MODEL,
             family="openai",
             capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT),
@@ -385,55 +388,13 @@ def official_stub_manifests() -> list[PluginManifest]:
             secret_requirements=(
                 SecretRequirement(name="OPENAI_API_KEY", description="OpenAI API key"),
             ),
-            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
-        ),
-        _official_manifest(
-            plugin_id="model.cohere",
-            display_name="Cohere Cloud Provider",
-            description=(
-                "Contract-only cloud stub for Cohere generation, embedding, and rerank workflows."
-            ),
-            plugin_type=PluginType.MODEL,
-            family="cohere",
-            capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT, Capability.RERANK),
-            docs_reference="docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md",
-            optional_dependencies=("cohere",),
-            config_model=CloudGenerateEmbeddingRerankModelConfig,
-            example_config={
-                "api_base_url": "https://api.cohere.com/v2",
-                "model_name": "command-r-plus",
-                "embedding_model_name": "embed-v4.0",
-                "reranker_model_name": "rerank-v3.5",
-            },
-            secret_requirements=(
-                SecretRequirement(name="COHERE_API_KEY", description="Cohere API key"),
-            ),
-            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
-        ),
-        _official_manifest(
-            plugin_id="model.voyage",
-            display_name="Voyage AI Cloud Provider",
-            description="Contract-only cloud stub for Voyage embedding and rerank workflows.",
-            plugin_type=PluginType.MODEL,
-            family="voyage",
-            capabilities=(Capability.EMBED_TEXT, Capability.RERANK),
-            docs_reference="docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md",
-            optional_dependencies=("voyageai",),
-            config_model=CloudRerankModelConfig,
-            example_config={
-                "api_base_url": "https://api.voyageai.com/v1",
-                "embedding_model_name": "voyage-3-large",
-                "reranker_model_name": "rerank-2.5",
-            },
-            secret_requirements=(
-                SecretRequirement(name="VOYAGE_API_KEY", description="Voyage AI API key"),
-            ),
-            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
+            status=PluginStatus.READY,
+            unavailable_reason=None,
         ),
         _official_manifest(
             plugin_id="model.jina",
             display_name="Jina AI Cloud Provider",
-            description="Contract-only cloud stub for Jina embedding and rerank workflows.",
+            description="Jina AI provider for embeddings and rerank via httpx.",
             plugin_type=PluginType.MODEL,
             family="jina",
             capabilities=(Capability.EMBED_TEXT, Capability.RERANK),
@@ -447,7 +408,8 @@ def official_stub_manifests() -> list[PluginManifest]:
             secret_requirements=(
                 SecretRequirement(name="JINA_API_KEY", description="Jina AI API key"),
             ),
-            unavailable_reason="Cloud provider remains a contract-only stub in PR-3.",
+            status=PluginStatus.READY,
+            unavailable_reason=None,
         ),
         _official_manifest(
             plugin_id="embedding.bge",

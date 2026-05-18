@@ -47,7 +47,6 @@ def test_mainstream_model_provider_catalog_covers_required_vendors_and_protocols
         "model.google_gemini",
         "model.bedrock",
         "model.mistral",
-        "model.cohere",
         "model.openrouter",
         "model.together",
         "model.fireworks",
@@ -121,7 +120,6 @@ def test_list_provider_models_missing_credentials_is_degraded_without_network() 
             {"modelSummaries": [{"modelId": "anthropic.claude-sonnet-4-5"}]},
             ["anthropic.claude-sonnet-4-5"],
         ),
-        ("model.cohere", {"models": [{"name": "command-r-plus"}]}, ["command-r-plus"]),
     ],
 )
 def test_list_provider_models_parses_official_response_shapes(
@@ -140,7 +138,6 @@ def test_list_provider_models_parses_official_response_shapes(
             "AWS_ACCESS_KEY_ID": "aws",
             "AWS_SECRET_ACCESS_KEY": "aws-secret",
             "AWS_REGION": "us-east-1",
-            "COHERE_API_KEY": "co-test",
         },
         transport=transport,
     )
