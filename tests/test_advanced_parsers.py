@@ -69,12 +69,18 @@ def test_docling_adapter_rejects_unknown_format() -> None:
     assert not adapter.can_parse(Path("foo.txt"))
 
 
-def test_docling_adapter_check_dependencies_returns_true() -> None:
+def test_docling_adapter_check_dependencies_matches_import() -> None:
     adapter = DoclingAdapter()
-    assert adapter.check_dependencies()
+    try:
+        import docling.document_converter  # noqa: F401
+
+        assert adapter.check_dependencies()
+    except ImportError:
+        assert not adapter.check_dependencies()
 
 
 def test_docling_adapter_parses_docx_fixture(tmp_path) -> None:
+    pytest.importorskip("docling.document_converter", reason="docling not installed")
     from docx import Document
 
     path = tmp_path / "test.docx"
@@ -100,6 +106,7 @@ def test_docling_adapter_parses_docx_fixture(tmp_path) -> None:
 
 
 def test_docling_adapter_reports_tables_in_docx(tmp_path) -> None:
+    pytest.importorskip("docling.document_converter", reason="docling not installed")
     from docx import Document
 
     path = tmp_path / "tables.docx"
