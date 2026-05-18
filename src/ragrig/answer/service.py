@@ -16,6 +16,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ragrig.answer.faithfulness import FaithfulnessConfig, check_faithfulness
 from ragrig.answer.provider import get_answer_provider
 from ragrig.answer.schema import (
     AnswerGenerationError,
@@ -105,6 +106,7 @@ def generate_answer(
     vector_backend: VectorBackend | None = None,
     principal_ids: list[str] | None = None,
     enforce_acl: bool = True,
+    faithfulness_config: FaithfulnessConfig | None = None,
 ) -> AnswerReport:
     """Generate a grounded answer from an evidence-grounded retrieval.
 
@@ -207,6 +209,30 @@ def generate_answer(
     cited_evidence = [chunk for chunk in evidence if chunk.citation_id in citation_ids_used]
     citations = _build_citations(cited_evidence)
 
+    # 6. Optional faithfulness / hallucination check
+    faithfulness_score: float | None = None
+    faithfulness_reason: str | None = None
+    if faithfulness_config is not None and grounding_status == "grounded":
+        from ragrig.providers import get_provider_registry
+
+        faith_provider = get_provider_registry().get(faithfulness_config.provider_name)
+        faith_result = check_faithfulness(
+            query=query,
+            answer=answer_text,
+            context_passages=[chunk.text for chunk in evidence],
+            config=faithfulness_config,
+            provider=faith_provider,
+        )
+        if faith_result is not None:
+            faithfulness_score = faith_result.score
+            faithfulness_reason = faith_result.reason
+            if not faith_result.is_faithful:
+                grounding_status = "degraded"
+                refusal_reason = (
+                    f"Faithfulness check failed (score {faith_result.score:.2f}): "
+                    f"{faith_result.reason or 'answer not fully supported by evidence'}"
+                )
+
     retrieval_trace = _build_retrieval_trace(retrieval_report)
     answer_operation = observe_model_call(
         operation="answer_generation",
@@ -243,6 +269,8 @@ def generate_answer(
         grounding_status=grounding_status,
         refusal_reason=refusal_reason,
         cost_latency=cost_latency,
+        faithfulness_score=faithfulness_score,
+        faithfulness_reason=faithfulness_reason,
     )
 
 

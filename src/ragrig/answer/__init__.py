@@ -1,3 +1,4 @@
+from ragrig.answer.faithfulness import FaithfulnessConfig, FaithfulnessResult, check_faithfulness
 from ragrig.answer.provider import (
     AnswerProvider,
     DeterministicAnswerProvider,
@@ -17,6 +18,9 @@ from ragrig.answer.service import generate_answer
 
 __all__ = [
     "AnswerGenerationError",
+    "FaithfulnessConfig",
+    "FaithfulnessResult",
+    "check_faithfulness",
     "AnswerProvider",
     "AnswerReport",
     "Citation",

@@ -63,6 +63,8 @@ class AnswerReport:
     grounding_status: GroundingStatus
     refusal_reason: str | None = None
     cost_latency: dict[str, Any] = field(default_factory=dict)
+    faithfulness_score: float | None = None  # 0-1; None when check was not run
+    faithfulness_reason: str | None = None  # LLM explanation for the score
 
 
 class AnswerGenerationError(RuntimeError):
