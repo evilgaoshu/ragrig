@@ -87,6 +87,10 @@ def _evaluate_question(
     provider_override: str | None = None,
     model_override: str | None = None,
     dimensions_override: int | None = None,
+    judge_provider: Any = None,
+    answer_provider_name: str | None = None,
+    answer_model: str | None = None,
+    answer_provider_config: dict[str, Any] | None = None,
 ) -> EvaluationRunItem:
     """Run a single golden question through retrieval and compute per-item metrics."""
     start = time.perf_counter()
@@ -125,15 +129,92 @@ def _evaluate_question(
 
         mrr = 1.0 / rank if rank is not None and rank > 0 else 0.0
 
+        # Context precision / recall (string-match, no LLM)
+        from ragrig.evaluation.answer_judge import score_context_precision, score_context_recall
+
+        expected_citations = list(golden.expected_relevant_citations or [])
+        if not expected_citations and golden.expected_citation:
+            expected_citations = [golden.expected_citation]
+
+        ctx_precision: float | None = None
+        ctx_recall: float | None = None
+        if expected_citations:
+            ctx_precision = score_context_precision(
+                retrieved_texts=text_previews,
+                expected_citations=expected_citations,
+            )
+            ctx_recall = score_context_recall(
+                retrieved_texts=text_previews,
+                expected_citations=expected_citations,
+            )
+
+        # Answer generation + quality scoring (optional)
+        answer_status = "skipped"
+        answer_correctness: float | None = None
+        answer_correctness_reason: str | None = None
+        answer_relevance: float | None = None
+        answer_relevance_reason: str | None = None
+
+        if answer_provider_name is not None:
+            try:
+                from ragrig.answer.service import generate_answer
+                from ragrig.evaluation.answer_judge import (
+                    score_answer_correctness,
+                    score_answer_relevance,
+                )
+
+                answer_report = generate_answer(
+                    session=session,
+                    knowledge_base_name=knowledge_base,
+                    query=golden.query,
+                    top_k=top_k,
+                    provider=provider_override or "deterministic-local",
+                    model=model_override,
+                    answer_provider=answer_provider_name,
+                    answer_model=answer_model,
+                    answer_provider_config=answer_provider_config,
+                    dimensions=dimensions_override,
+                )
+                answer_status = answer_report.grounding_status
+
+                if judge_provider is not None:
+                    if golden.expected_answer:
+                        result = score_answer_correctness(
+                            query=golden.query,
+                            generated_answer=answer_report.answer,
+                            expected_answer=golden.expected_answer,
+                            provider=judge_provider,
+                        )
+                        if result is not None:
+                            answer_correctness, answer_correctness_reason = result
+
+                    rel_result = score_answer_relevance(
+                        query=golden.query,
+                        generated_answer=answer_report.answer,
+                        provider=judge_provider,
+                    )
+                    if rel_result is not None:
+                        answer_relevance, answer_relevance_reason = rel_result
+
+            except Exception:
+                answer_status = "error"
+
         return EvaluationRunItem(
             question_index=question_index,
             query=golden.query,
+            tags=list(golden.tags or []),
             hit=hit,
             rank_of_expected=rank,
             mrr=mrr,
             total_results=report.total_results,
             citation_coverage=citation_cov,
-            answer_status="skipped",
+            context_precision=ctx_precision,
+            context_recall=ctx_recall,
+            answer_status=answer_status,
+            answer_correctness=answer_correctness,
+            answer_correctness_reason=answer_correctness_reason,
+            answer_relevance=answer_relevance,
+            answer_relevance_reason=answer_relevance_reason,
             latency_ms=elapsed_ms,
             top_doc_uris=doc_uris,
             top_distances=distances,
@@ -144,6 +225,7 @@ def _evaluate_question(
         return EvaluationRunItem(
             question_index=question_index,
             query=golden.query,
+            tags=list(getattr(golden, "tags", None) or []),
             error=str(exc),
             latency_ms=elapsed_ms,
             answer_status="skipped",
@@ -162,6 +244,48 @@ def _percentile(sorted_values: list[float], pct: float) -> float:
     if f + 1 < len(sorted_values):
         return sorted_values[f] + c * (sorted_values[f + 1] - sorted_values[f])
     return sorted_values[-1]
+
+
+def _mean_or_none(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 4) if values else None
+
+
+def _compute_tag_metrics(items: list[EvaluationRunItem]) -> dict[str, dict[str, float | None]]:
+    """Build per-tag metric breakdown from item tags."""
+    tag_items: dict[str, list[EvaluationRunItem]] = {}
+    for item in items:
+        for tag in item.tags:
+            tag_items.setdefault(tag, []).append(item)
+
+    result: dict[str, dict[str, float | None]] = {}
+    for tag, tag_item_list in tag_items.items():
+        n = len(tag_item_list)
+        valid = [i for i in tag_item_list if i.error is None]
+        ranks = [i.rank_of_expected for i in valid if i.rank_of_expected is not None]
+        prec = [i.context_precision for i in valid if i.context_precision is not None]
+        rec = [i.context_recall for i in valid if i.context_recall is not None]
+        corr = [i.answer_correctness for i in valid if i.answer_correctness is not None]
+        relv = [i.answer_relevance for i in valid if i.answer_relevance is not None]
+        result[tag] = {
+            "count": float(n),
+            "hit_at_1": round(sum(1 for i in valid if i.hit and i.rank_of_expected == 1) / n, 4),
+            "hit_at_3": round(
+                sum(
+                    1
+                    for i in valid
+                    if i.hit and i.rank_of_expected is not None and i.rank_of_expected <= 3
+                )
+                / n,
+                4,
+            ),
+            "mrr": round(sum(i.mrr for i in valid) / n, 4) if n else None,
+            "mean_rank_of_expected": _mean_or_none(ranks),  # type: ignore[arg-type]
+            "context_precision_mean": _mean_or_none(prec),  # type: ignore[arg-type]
+            "context_recall_mean": _mean_or_none(rec),  # type: ignore[arg-type]
+            "answer_correctness_mean": _mean_or_none(corr),  # type: ignore[arg-type]
+            "answer_relevance_mean": _mean_or_none(relv),  # type: ignore[arg-type]
+        }
+    return result
 
 
 def _compute_metrics(items: list[EvaluationRunItem]) -> EvaluationMetrics:
@@ -197,10 +321,19 @@ def _compute_metrics(items: list[EvaluationRunItem]) -> EvaluationMetrics:
 
     citation_mean = sum(item.citation_coverage for item in hit_items) / total if total else 0.0
 
+    prec_vals = [i.context_precision for i in hit_items if i.context_precision is not None]
+    rec_vals = [i.context_recall for i in hit_items if i.context_recall is not None]
+    corr_vals = [i.answer_correctness for i in hit_items if i.answer_correctness is not None]
+    relv_vals = [i.answer_relevance for i in hit_items if i.answer_relevance is not None]
+
+    answer_ran = any(i.answer_status not in ("skipped", "error") for i in hit_items)
+
     zero_results = sum(1 for item in items if item.total_results == 0)
 
     latencies = sorted(item.latency_ms for item in items)
     latency_mean = sum(latencies) / total if total else 0.0
+
+    per_tag = _compute_tag_metrics(hit_items)
 
     return EvaluationMetrics(
         total_questions=total,
@@ -210,14 +343,19 @@ def _compute_metrics(items: list[EvaluationRunItem]) -> EvaluationMetrics:
         mrr=round(mrr, 4),
         mean_rank_of_expected=round(mean_rank, 2) if mean_rank is not None else None,
         citation_coverage_mean=round(citation_mean, 4),
+        context_precision_mean=_mean_or_none(prec_vals),  # type: ignore[arg-type]
+        context_recall_mean=_mean_or_none(rec_vals),  # type: ignore[arg-type]
         zero_result_count=zero_results,
         zero_result_rate=round(zero_results / total, 4) if total else 0.0,
         latency_ms_mean=round(latency_mean, 2),
         latency_ms_p50=round(_percentile(latencies, 50), 2),
         latency_ms_p95=round(_percentile(latencies, 95), 2),
         latency_ms_p99=round(_percentile(latencies, 99), 2),
-        answer_skipped=True,
-        answer_degraded_reason="answer API not available in default local evaluation",
+        answer_skipped=not answer_ran,
+        answer_degraded_reason=("answer provider not configured" if not answer_ran else None),
+        answer_correctness_mean=_mean_or_none(corr_vals),  # type: ignore[arg-type]
+        answer_relevance_mean=_mean_or_none(relv_vals),  # type: ignore[arg-type]
+        per_tag_metrics=per_tag,
     )
 
 
@@ -232,6 +370,10 @@ def run_evaluation(
     baseline_path: Path | None = None,
     run_id: str | None = None,
     store_dir: Path | None = None,
+    judge_provider_name: str | None = None,
+    answer_provider_name: str | None = None,
+    answer_model: str | None = None,
+    answer_provider_config: dict[str, Any] | None = None,
 ) -> EvaluationRun:
     """Run a full evaluation against a golden question set.
 
@@ -247,6 +389,12 @@ def run_evaluation(
             regression delta computation.
         run_id: Optional explicit run ID (generated if not provided).
         store_dir: Optional directory to persist the evaluation run JSON.
+        judge_provider_name: Provider name for the LLM answer judge.  When set,
+            answer correctness and relevance scores are computed.
+        answer_provider_name: When set, ``generate_answer()`` is called for
+            each question so answer quality can be measured.
+        answer_model: Optional model override for the answer provider.
+        answer_provider_config: Optional config dict for the answer provider.
 
     Returns:
         An EvaluationRun with all items and aggregated metrics.
@@ -263,6 +411,10 @@ def run_evaluation(
         baseline_path=baseline_path,
         run_id=run_id,
         store_dir=store_dir,
+        judge_provider_name=judge_provider_name,
+        answer_provider_name=answer_provider_name,
+        answer_model=answer_model,
+        answer_provider_config=answer_provider_config,
     )
 
 
@@ -277,9 +429,22 @@ def _run_evaluation_with_set(
     baseline_path: Path | None = None,
     run_id: str | None = None,
     store_dir: Path | None = None,
+    judge_provider_name: str | None = None,
+    answer_provider_name: str | None = None,
+    answer_model: str | None = None,
+    answer_provider_config: dict[str, Any] | None = None,
 ) -> EvaluationRun:
     """Internal: run evaluation with an already-loaded GoldenQuestionSet."""
     run_id = run_id or str(uuid.uuid4())
+
+    judge_provider = None
+    if judge_provider_name is not None:
+        try:
+            from ragrig.providers import get_provider_registry
+
+            judge_provider = get_provider_registry().get(judge_provider_name)
+        except Exception:
+            pass
 
     items: list[EvaluationRunItem] = []
     for i, question in enumerate(golden_set.questions):
@@ -292,6 +457,10 @@ def _run_evaluation_with_set(
             provider_override=provider,
             model_override=model,
             dimensions_override=dimensions,
+            judge_provider=judge_provider,
+            answer_provider_name=answer_provider_name,
+            answer_model=answer_model,
+            answer_provider_config=answer_provider_config,
         )
         items.append(item)
 
@@ -332,6 +501,9 @@ def _run_evaluation_with_set(
             "provider": resolved_provider,
             "model": resolved_model,
             "dimensions": resolved_dimensions,
+            "judge_provider": judge_provider_name,
+            "answer_provider": answer_provider_name,
+            "answer_model": answer_model,
         },
     )
 
@@ -379,6 +551,16 @@ def _compute_regression_delta(
         ),
         "citation_coverage_mean": _delta(
             current.citation_coverage_mean, baseline.citation_coverage_mean
+        ),
+        "context_precision_mean": _delta(
+            current.context_precision_mean, baseline.context_precision_mean
+        ),
+        "context_recall_mean": _delta(current.context_recall_mean, baseline.context_recall_mean),
+        "answer_correctness_mean": _delta(
+            current.answer_correctness_mean, baseline.answer_correctness_mean
+        ),
+        "answer_relevance_mean": _delta(
+            current.answer_relevance_mean, baseline.answer_relevance_mean
         ),
         "zero_result_rate": _delta(current.zero_result_rate, baseline.zero_result_rate),
     }
