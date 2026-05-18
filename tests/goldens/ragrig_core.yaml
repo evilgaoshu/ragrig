@@ -1,64 +1,144 @@
 golden_question_set:
   name: "ragrig-core"
   description: "Core RAGRig pipeline and feature retrieval quality questions"
-  version: "1.0.0"
+  version: "2.0.0"
   questions:
     - query: "What is RAGRig and what problem does it solve?"
       expected_doc_uri: "README.md"
       expected_citation: "open-source RAG workbench for small and medium-sized teams"
       expected_answer_keywords: ["RAG", "ingestion", "pipeline", "traceable"]
+      expected_answer: >
+        RAGRig is an open-source RAG workbench for small and medium-sized teams
+        who want to self-host a retrieval-augmented knowledge layer instead of
+        paying for a hosted chatbot. Every chunk, retrieval hit, and model call
+        is inspectable and traceable. It can be self-hosted in two minutes using
+        Docker Compose.
+      expected_relevant_citations:
+        - "open-source RAG workbench for small and medium-sized teams"
+        - "Every chunk, every retrieval hit, every model call is inspectable"
       tags: ["overview"]
 
     - query: "What vector database backends does RAGRig support?"
       expected_doc_uri: "README.md"
       expected_citation: "pgvector"
       expected_answer_keywords: ["pgvector", "Qdrant"]
+      expected_answer: >
+        RAGRig supports pgvector (PostgreSQL) as the default vector database
+        backend, with Qdrant as an optional alternative. Both share the same
+        retrieval contract.
+      expected_relevant_citations:
+        - "pgvector"
+        - "Qdrant"
       tags: ["infrastructure", "vector-store"]
 
     - query: "How does RAGRig handle chunking and embedding in the pipeline?"
       expected_doc_uri: "README.md"
       expected_citation: "chunking, embedding, indexing"
       expected_answer_keywords: ["chunk", "embed", "index"]
+      expected_answer: >
+        RAGRig processes documents through a multi-stage pipeline: parse, clean,
+        chunk, embed, index, retrieve, and rerank. Each step is inspectable in
+        the Web Console. Multiple chunking strategies and embedding providers
+        are supported.
+      expected_relevant_citations:
+        - "chunk"
+        - "embed"
+        - "index"
       tags: ["pipeline"]
 
     - query: "What local model providers does RAGRig support?"
       expected_doc_uri: "README.md"
       expected_citation: "Ollama"
       expected_answer_keywords: ["Ollama", "LM Studio", "local"]
+      expected_answer: >
+        RAGRig supports Ollama, LM Studio, and any OpenAI-compatible local
+        server for both embedding and answer generation, requiring no cloud
+        API keys.
+      expected_relevant_citations:
+        - "Ollama"
+        - "LM Studio"
       tags: ["providers", "local"]
 
     - query: "How does RAGRig connect answers back to source documents?"
       expected_doc_uri: "README.md"
       expected_citation: "source URI, document version, chunk, pipeline run"
       expected_answer_keywords: ["traceable", "citation", "source", "chunk"]
+      expected_answer: >
+        RAGRig links every answer to the source chunks, document versions, and
+        pipeline runs that produced it. Citations carry character offsets and
+        page numbers so UIs can highlight the exact source span. This
+        traceability is built-in.
+      expected_relevant_citations:
+        - "traceable"
+        - "citation"
+        - "source"
       tags: ["traceability"]
 
     - query: "What cloud model providers are supported?"
       expected_doc_uri: "README.md"
       expected_citation: "OpenAI, OpenRouter, and Gemini"
       expected_answer_keywords: ["OpenAI", "cloud", "provider"]
+      expected_answer: >
+        RAGRig supports OpenAI, OpenRouter, and Gemini as cloud model providers
+        for embedding and answer generation.
+      expected_relevant_citations:
+        - "OpenAI"
+        - "OpenRouter"
+        - "Gemini"
       tags: ["providers", "cloud"]
 
     - query: "What document formats can RAGRig parse?"
       expected_doc_uri: "docs/roadmap.md"
       expected_citation: "PDF, DOCX, PPTX, and XLSX"
       expected_answer_keywords: ["PDF", "DOCX", "parser"]
+      expected_answer: >
+        RAGRig parses PDF, DOCX, PPTX, and XLSX files (with an OCR degradation
+        gate), as well as Markdown, plain text, and other text-based formats.
+      expected_relevant_citations:
+        - "PDF"
+        - "DOCX"
+        - "PPTX"
+        - "XLSX"
       tags: ["parsers", "formats"]
 
     - query: "What governance and access control features are available?"
       expected_doc_uri: "docs/roadmap.md"
       expected_citation: "access control"
       expected_answer_keywords: ["ACL", "access", "audit", "permission"]
+      expected_answer: >
+        RAGRig provides document-level and chunk-level access control with
+        pre-retrieval permission filtering, RBAC (owner/admin/editor/viewer),
+        per-workspace isolation, an audit trail, and optional LDAP, OIDC, and
+        MFA authentication.
+      expected_relevant_citations:
+        - "access control"
+        - "RBAC"
+        - "audit"
       tags: ["governance", "acl"]
 
     - query: "What connectors does RAGRig support for data ingestion?"
       expected_doc_uri: "docs/roadmap.md"
       expected_citation: "S3"
       expected_answer_keywords: ["S3", "connector", "ingestion", "source"]
+      expected_answer: >
+        RAGRig supports local files, S3-compatible object storage, fileshare
+        (SMB/NFS), Confluence Cloud, Notion, Feishu/Lark Wiki, and database
+        source connectors (PostgreSQL, MySQL).
+      expected_relevant_citations:
+        - "S3"
+        - "Confluence"
+        - "Notion"
       tags: ["connectors", "ingestion"]
 
     - query: "What is the Local Pilot and what does it provide?"
       expected_doc_uri: "docs/roadmap.md"
       expected_citation: "local pilot"
       expected_answer_keywords: ["pilot", "diagnostic", "local", "wizard"]
+      expected_answer: >
+        The Local Pilot is a standalone diagnostic and setup wizard that helps
+        users configure and validate their local RAGRig installation, including
+        preflight checks and evidence smoke tests for local model providers.
+      expected_relevant_citations:
+        - "local pilot"
+        - "pilot"
       tags: ["local-pilot"]

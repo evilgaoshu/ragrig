@@ -33,6 +33,10 @@ HIGHER_IS_BETTER = {
     "hit_at_5",
     "mrr",
     "citation_coverage_mean",
+    "context_precision_mean",
+    "context_recall_mean",
+    "answer_correctness_mean",
+    "answer_relevance_mean",
 }
 LOWER_IS_BETTER = {
     "mean_rank_of_expected",
@@ -221,6 +225,35 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
                 status=metric["status"],
             )
         )
+
+    before_tags = (report.get("before", {}).get("metrics", {}) or {}).get("per_tag_metrics", {})
+    after_tags = (report.get("after", {}).get("metrics", {}) or {}).get("per_tag_metrics", {})
+    all_tags = sorted(set(before_tags) | set(after_tags))
+    if all_tags:
+        lines += [
+            "",
+            "## Per-Tag Metrics (after)",
+            "",
+            "| Tag | hit@1 | hit@5 | MRR | ctx_precision | ctx_recall | ans_correctness |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ]
+        for tag in all_tags:
+            bm = before_tags.get(tag, {})
+            am = after_tags.get(tag, {})
+            lines.append(
+                "| {tag} | {h1} | {h5} | {mrr} | {cp} | {cr} | {ac} |".format(
+                    tag=tag,
+                    h1=_fmt_tag(am.get("hit_at_1"), bm.get("hit_at_1")),
+                    h5=_fmt_tag(am.get("hit_at_5"), bm.get("hit_at_5")),
+                    mrr=_fmt_tag(am.get("mrr"), bm.get("mrr")),
+                    cp=_fmt_tag(am.get("context_precision_mean"), bm.get("context_precision_mean")),
+                    cr=_fmt_tag(am.get("context_recall_mean"), bm.get("context_recall_mean")),
+                    ac=_fmt_tag(
+                        am.get("answer_correctness_mean"), bm.get("answer_correctness_mean")
+                    ),
+                )
+            )
+
     return "\n".join(lines) + "\n"
 
 
@@ -413,6 +446,17 @@ def _fmt(value: Any) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+def _fmt_tag(after: Any, before: Any) -> str:
+    if after is None:
+        return ""
+    s = f"{after:.3f}" if isinstance(after, float) else str(after)
+    delta = _delta(after, before)
+    if delta is None or delta == 0:
+        return s
+    arrow = "▲" if delta > 0 else "▼"
+    return f"{s} {arrow}{abs(delta):.3f}"
 
 
 def build_parser() -> argparse.ArgumentParser:
