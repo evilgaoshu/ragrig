@@ -7,7 +7,7 @@ integration-level test_retrieval.py (which requires full ingest+index setup).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
