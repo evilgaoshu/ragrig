@@ -102,6 +102,42 @@ class WorkspaceMembership(Base):
     user: Mapped[User] = relationship(back_populates="memberships")
 
 
+class KnowledgeBasePermission(Base):
+    """Per-KB role override that takes precedence over workspace-level role.
+
+    When present, the ``role`` column determines a user's effective access to
+    the knowledge base, overriding any workspace membership role.  A role of
+    ``'none'`` explicitly denies access even if the user has a workspace role
+    that would normally grant it.
+    """
+
+    __tablename__ = "knowledge_base_permissions"
+    __table_args__ = (
+        UniqueConstraint("knowledge_base_id", "user_id", name="uq_kb_permissions_kb_user"),
+        CheckConstraint(
+            "role IN ('admin', 'editor', 'viewer', 'none')",
+            name="ck_kb_permissions_role",
+        ),
+        Index("ix_kb_permissions_kb_id", "knowledge_base_id"),
+        Index("ix_kb_permissions_user_id", "user_id"),
+    )
+
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    knowledge_base: Mapped["KnowledgeBase"] = relationship(back_populates="permissions")
+    user: Mapped["User"] = relationship()
+
+
 class ApiKey(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "api_keys"
     __table_args__ = (
@@ -228,6 +264,9 @@ class KnowledgeBase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     pipeline_runs: Mapped[list["PipelineRun"]] = relationship(back_populates="knowledge_base")
     understanding_runs: Mapped[list["UnderstandingRun"]] = relationship(
         back_populates="knowledge_base"
+    )
+    permissions: Mapped[list["KnowledgeBasePermission"]] = relationship(
+        back_populates="knowledge_base", cascade="all, delete-orphan"
     )
 
 
