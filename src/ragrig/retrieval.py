@@ -94,6 +94,7 @@ class RetrievalResult:
     char_end: int | None = None
     page_number: int | None = None
     chunk_created_at: datetime | None = None
+    parent_text: str | None = None  # full parent segment text when parent-child chunking is used
 
 
 @dataclass(frozen=True)
@@ -767,6 +768,65 @@ def _apply_time_decay(
     return reranked
 
 
+def _hydrate_parent_text(
+    results: list[RetrievalResult],
+    session: Session,
+) -> list[RetrievalResult]:
+    """Replace child chunk text with parent chunk text when parent-child indexing is used.
+
+    Fetches parent Chunk rows in one query and returns new RetrievalResult objects
+    with ``parent_text`` populated.  Results without a parent are returned unchanged.
+    """
+    chunk_ids = [r.chunk_id for r in results]
+    if not chunk_ids:
+        return results
+
+    child_rows = session.execute(
+        select(Chunk.id, Chunk.parent_chunk_id).where(Chunk.id.in_(chunk_ids))
+    ).all()
+    parent_id_by_child: dict[uuid.UUID, uuid.UUID] = {
+        row.id: row.parent_chunk_id for row in child_rows if row.parent_chunk_id is not None
+    }
+    if not parent_id_by_child:
+        return results
+
+    parent_ids = list(set(parent_id_by_child.values()))
+    parent_text_by_id: dict[uuid.UUID, str] = {
+        row.id: row.text
+        for row in session.execute(
+            select(Chunk.id, Chunk.text).where(Chunk.id.in_(parent_ids))
+        ).all()
+    }
+
+    hydrated: list[RetrievalResult] = []
+    for r in results:
+        parent_id = parent_id_by_child.get(r.chunk_id)
+        parent_text = parent_text_by_id.get(parent_id) if parent_id else None
+        hydrated.append(
+            RetrievalResult(
+                document_id=r.document_id,
+                document_version_id=r.document_version_id,
+                chunk_id=r.chunk_id,
+                chunk_index=r.chunk_index,
+                document_uri=r.document_uri,
+                source_uri=r.source_uri,
+                text=r.text,
+                text_preview=r.text_preview,
+                distance=r.distance,
+                score=r.score,
+                chunk_metadata=r.chunk_metadata,
+                acl_explain=r.acl_explain,
+                rank_stage_trace=r.rank_stage_trace,
+                char_start=r.char_start,
+                char_end=r.char_end,
+                page_number=r.page_number,
+                chunk_created_at=r.chunk_created_at,
+                parent_text=parent_text,
+            )
+        )
+    return hydrated
+
+
 def search_knowledge_base(
     session: Session,
     *,
@@ -1044,6 +1104,9 @@ def search_knowledge_base(
         kb_doc_weight=kb_doc_weight,
         decay_rate=decay_rate,
     )
+
+    # ── Hydrate parent text (parent-child chunking) ──────────
+    dense_results = _hydrate_parent_text(dense_results, session)
 
     # ── Final: Trim to top_k ──────────────────────────────────
     final_results = dense_results[:top_k]

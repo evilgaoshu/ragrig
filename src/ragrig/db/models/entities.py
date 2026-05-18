@@ -342,8 +342,24 @@ class Chunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     heading: Mapped[str | None] = mapped_column(String(255))
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
+    parent_chunk_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("chunks.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     document_version: Mapped[DocumentVersion] = relationship(back_populates="chunks")
     embeddings: Mapped[list["Embedding"]] = relationship(back_populates="chunk")
+    children: Mapped[list["Chunk"]] = relationship(
+        "Chunk", foreign_keys="Chunk.parent_chunk_id", back_populates="parent"
+    )
+    parent: Mapped["Chunk | None"] = relationship(
+        "Chunk",
+        foreign_keys="Chunk.parent_chunk_id",
+        back_populates="children",
+        remote_side="Chunk.id",
+    )
 
 
 class Embedding(UUIDPrimaryKeyMixin, TimestampMixin, Base):

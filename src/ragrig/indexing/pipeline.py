@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from ragrig.chunkers import ChunkingConfig, chunk_text
+from ragrig.chunkers import ChunkingConfig, chunk_text, chunk_text_hierarchical
 from ragrig.db.models import Chunk, Document, DocumentVersion, Embedding
 from ragrig.embeddings import EmbeddingResult
 from ragrig.indexing.conflict_detection import find_conflicting_chunk, record_conflict
@@ -77,7 +77,11 @@ def _version_already_indexed(
     if any(chunk.metadata_json.get("config_hash") != config_hash for chunk in chunks):
         return False
 
-    chunk_ids = [chunk.id for chunk in chunks]
+    # In parent-child mode, parent chunks (negative chunk_index) have no embeddings.
+    leaf_chunks = [c for c in chunks if c.chunk_index >= 0]
+    if not leaf_chunks:
+        return False
+    chunk_ids = [c.id for c in leaf_chunks]
     embeddings = list(
         session.scalars(
             select(Embedding).where(
@@ -87,7 +91,7 @@ def _version_already_indexed(
             )
         )
     )
-    return len(embeddings) == len(chunks)
+    return len(embeddings) == len(leaf_chunks)
 
 
 def _replace_version_index(
@@ -117,8 +121,6 @@ def _replace_version_index(
     source_text = document_version.extracted_text
     if pii_redaction:
         source_text = pii_redact(source_text).redacted_text
-    chunk_drafts = chunk_text(source_text, chunking_config)
-    created_chunks: list[Chunk] = []
 
     acl_payload: dict[str, object] = {}
     document_acl = (document.metadata_json or {}).get("acl") or (
@@ -132,8 +134,49 @@ def _replace_version_index(
             }
         }
 
-    for draft in chunk_drafts:
-        # Optional: LLM generates a semantic description for this chunk
+    base_meta: dict[str, object] = {
+        "content_hash": document_version.content_hash,
+        "document_uri": document.uri,
+        "document_id": str(document.id),
+        "parser_name": document_version.parser_name,
+        "version_number": document_version.version_number,
+        **acl_payload,
+        "profile_id": chunk_profile_id,
+    }
+
+    # ── Determine parent-child vs flat chunking ───────────────────────────────
+    if chunking_config.parent_chunk_size is not None:
+        parent_drafts, child_drafts = chunk_text_hierarchical(source_text, chunking_config)
+    else:
+        parent_drafts, child_drafts = [], chunk_text(source_text, chunking_config)
+
+    # ── Persist parent chunks (no embedding) ─────────────────────────────────
+    # Parent chunks use negative chunk_index (-(i+1)) to avoid collisions with
+    # the (document_version_id, chunk_index) unique constraint on child chunks.
+    parent_id_by_index: dict[int, object] = {}
+    for pdraft in parent_drafts:
+        parent_chunk = Chunk(
+            document_version_id=document_version.id,
+            workspace_id=workspace_id,
+            chunk_index=-(pdraft.chunk_index + 1),
+            text=pdraft.text,
+            char_start=pdraft.char_start,
+            char_end=pdraft.char_end,
+            metadata_json={**pdraft.metadata, **base_meta, "is_parent": True},
+        )
+        session.add(parent_chunk)
+        session.flush()
+        parent_id_by_index[pdraft.chunk_index] = parent_chunk.id
+
+    # ── Persist child / leaf chunks (embedded) ────────────────────────────────
+    created_chunks: list[Chunk] = []
+    for draft in child_drafts:
+        parent_db_id = (
+            parent_id_by_index.get(draft.parent_chunk_index)
+            if draft.parent_chunk_index is not None
+            else None
+        )
+
         description = generate_chunk_description(draft.text, llm_description_provider)
         embedding_input = build_embedding_text(draft.text, description)
 
@@ -145,16 +188,12 @@ def _replace_version_index(
             llm_description=description,
             char_start=draft.char_start,
             char_end=draft.char_end,
+            parent_chunk_id=parent_db_id,
             metadata_json={
                 **draft.metadata,
-                "content_hash": document_version.content_hash,
-                "document_uri": document.uri,
-                "document_id": str(document.id),
-                "parser_name": document_version.parser_name,
-                "version_number": document_version.version_number,
-                **acl_payload,
-                "profile_id": chunk_profile_id,
+                **base_meta,
                 **({"llm_description": True} if description else {}),
+                **({"has_parent": True} if parent_db_id is not None else {}),
             },
         )
         session.add(chunk)

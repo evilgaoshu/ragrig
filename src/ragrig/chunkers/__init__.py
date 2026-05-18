@@ -14,6 +14,7 @@ class ChunkingConfig:
     chunk_size: int = 500
     chunk_overlap: int = 50
     strategy: str = "char_window"
+    parent_chunk_size: int | None = None  # when set, enables parent-child chunking
 
     def __post_init__(self) -> None:
         if self.chunk_size <= 0:
@@ -27,6 +28,9 @@ class ChunkingConfig:
                 f"Unknown chunking strategy '{self.strategy}'. "
                 f"Valid options: {sorted(_VALID_STRATEGIES)}"
             )
+        if self.parent_chunk_size is not None:
+            if self.parent_chunk_size <= self.chunk_size:
+                raise ValueError("parent_chunk_size must be greater than chunk_size")
 
     @property
     def _chunker_id(self) -> str:
@@ -35,23 +39,25 @@ class ChunkingConfig:
 
     @property
     def config_hash(self) -> str:
-        payload = json.dumps(
-            {
-                "chunker": self._chunker_id,
-                "chunk_overlap": self.chunk_overlap,
-                "chunk_size": self.chunk_size,
-            },
-            sort_keys=True,
-        )
-        return sha256(payload.encode("utf-8")).hexdigest()
+        payload: dict[str, Any] = {
+            "chunker": self._chunker_id,
+            "chunk_overlap": self.chunk_overlap,
+            "chunk_size": self.chunk_size,
+        }
+        if self.parent_chunk_size is not None:
+            payload["parent_chunk_size"] = self.parent_chunk_size
+        return sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
     def as_metadata(self) -> dict[str, Any]:
-        return {
+        meta: dict[str, Any] = {
             "chunker": self._chunker_id,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
             "config_hash": self.config_hash,
         }
+        if self.parent_chunk_size is not None:
+            meta["parent_chunk_size"] = self.parent_chunk_size
+        return meta
 
 
 @dataclass(frozen=True)
@@ -62,6 +68,7 @@ class ChunkDraft:
     char_end: int
     metadata: dict[str, Any]
     heading: str | None = field(default=None)
+    parent_chunk_index: int | None = field(default=None)  # set on child drafts only
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -297,4 +304,56 @@ def chunk_text(text: str, config: ChunkingConfig) -> list[ChunkDraft]:
     raise ValueError(f"Unknown strategy: {config.strategy}")
 
 
-__all__ = ["ChunkDraft", "ChunkingConfig", "chunk_text"]
+def chunk_text_hierarchical(
+    text: str, config: ChunkingConfig
+) -> tuple[list[ChunkDraft], list[ChunkDraft]]:
+    """Split text into (parent_drafts, child_drafts) for parent-child indexing.
+
+    Parents are large segments used to provide full context to the LLM.
+    Children are small segments embedded for precise retrieval.
+    Each child carries ``parent_chunk_index`` pointing at its parent.
+
+    Requires ``config.parent_chunk_size`` to be set.
+    """
+    if config.parent_chunk_size is None:
+        raise ValueError("parent_chunk_size must be set to use chunk_text_hierarchical")
+    if text == "":
+        return [], []
+
+    parent_config = ChunkingConfig(
+        chunk_size=config.parent_chunk_size,
+        chunk_overlap=0,
+        strategy=config.strategy,
+    )
+    parent_drafts = chunk_text(text, parent_config)
+
+    child_config = ChunkingConfig(
+        chunk_size=config.chunk_size,
+        chunk_overlap=config.chunk_overlap,
+        strategy=config.strategy,
+    )
+
+    shared_meta = config.as_metadata()
+    child_drafts: list[ChunkDraft] = []
+    child_index = 0
+
+    for parent_draft in parent_drafts:
+        raw_children = chunk_text(parent_draft.text, child_config)
+        for rc in raw_children:
+            child_drafts.append(
+                ChunkDraft(
+                    chunk_index=child_index,
+                    text=rc.text,
+                    char_start=parent_draft.char_start + rc.char_start,
+                    char_end=parent_draft.char_start + rc.char_end,
+                    metadata={**shared_meta, **rc.metadata},
+                    heading=rc.heading or parent_draft.heading,
+                    parent_chunk_index=parent_draft.chunk_index,
+                )
+            )
+            child_index += 1
+
+    return parent_drafts, child_drafts
+
+
+__all__ = ["ChunkDraft", "ChunkingConfig", "chunk_text", "chunk_text_hierarchical"]
