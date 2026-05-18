@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
+
 import pytest
 
-from ragrig.chunkers import ChunkDraft, ChunkingConfig, chunk_text
+from ragrig.chunkers import ChunkingConfig, chunk_text
 
 pytestmark = pytest.mark.unit
 
@@ -281,8 +282,9 @@ def test_rewrite_query_decomposes_on_provider_error_returns_original() -> None:
 
 
 def test_merge_retrieval_results_deduplicates_by_chunk_id() -> None:
-    from ragrig.retrieval_rewriter import merge_retrieval_results
     import uuid
+
+    from ragrig.retrieval_rewriter import merge_retrieval_results
 
     chunk_id = uuid.uuid4()
     r1 = MagicMock(chunk_id=chunk_id, score=0.8)
@@ -300,8 +302,9 @@ def test_merge_retrieval_results_deduplicates_by_chunk_id() -> None:
 
 
 def test_apply_time_decay_noop_when_weights_zero() -> None:
-    from ragrig.retrieval import _apply_time_decay, RetrievalResult
     import uuid
+
+    from ragrig.retrieval import RetrievalResult, _apply_time_decay
 
     r = RetrievalResult(
         document_id=uuid.uuid4(),
@@ -321,8 +324,9 @@ def test_apply_time_decay_noop_when_weights_zero() -> None:
 
 
 def test_apply_time_decay_newer_doc_scores_higher() -> None:
-    from ragrig.retrieval import _apply_time_decay, RetrievalResult
     import uuid
+
+    from ragrig.retrieval import RetrievalResult, _apply_time_decay
 
     now = datetime.now(timezone.utc)
     new_chunk = RetrievalResult(

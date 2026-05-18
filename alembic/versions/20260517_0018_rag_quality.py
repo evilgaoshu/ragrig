@@ -75,7 +75,10 @@ def upgrade() -> None:
         ),
         sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
         sa.CheckConstraint(
-            "status IN ('pending', 'resolved_keep_new', 'resolved_keep_old', 'resolved_keep_both', 'resolved_auto_recency')",
+            "status IN ("
+            "'pending', 'resolved_keep_new', 'resolved_keep_old',"
+            " 'resolved_keep_both', 'resolved_auto_recency'"
+            ")",
             name="ck_conflict_reviews_status",
         ),
     )
