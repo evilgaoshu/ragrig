@@ -1,18 +1,24 @@
 """Unit tests for fine-grained per-KB RBAC (EVI-XXX).
 
-These tests exercise the repository layer only, using the shared SQLite
-``sqlite_session`` fixture from conftest.py (same pattern used throughout the
-test suite).  No PostgreSQL-specific features are involved.
+Covers both the repository layer (via sqlite_session) and the three REST
+endpoints added to main.py (via FastAPI TestClient with auth disabled).
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 
 import pytest
+import sqlalchemy
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 from ragrig.auth import DEFAULT_WORKSPACE_ID, ensure_default_workspace
-from ragrig.db.models import KnowledgeBase, User
+from ragrig.config import Settings
+from ragrig.db.models import Base, KnowledgeBase, User
+from ragrig.main import create_app
 from ragrig.repositories import (
     delete_kb_permission,
     get_kb_permission,
@@ -23,6 +29,42 @@ from ragrig.repositories import (
 from ragrig.repositories.kb_permission import resolve_effective_kb_role
 
 pytestmark = pytest.mark.unit
+
+
+# ---------------------------------------------------------------------------
+# HTTP client fixture (auth disabled, in-memory SQLite)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def http_client() -> Iterator[tuple[TestClient, Session]]:
+    engine = sqlalchemy.create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
+    Base.metadata.create_all(engine)
+
+    sessions: list[Session] = []
+
+    def _factory() -> Session:
+        s = Session(engine, expire_on_commit=False)
+        sessions.append(s)
+        return s
+
+    settings = Settings(ragrig_auth_enabled=False)
+    app = create_app(check_database=lambda: None, session_factory=_factory, settings=settings)
+    with TestClient(app) as client:
+        seed_session = Session(engine, expire_on_commit=False)
+        ensure_default_workspace(seed_session)
+        seed_session.commit()
+        yield client, seed_session
+        seed_session.close()
+
+    for s in sessions:
+        s.close()
+    engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -242,3 +284,90 @@ def test_resolve_effective_kb_role_after_delete_falls_back_to_workspace(
         workspace_role="editor",
     )
     assert effective == "editor"
+
+
+# ---------------------------------------------------------------------------
+# HTTP endpoint tests — cover main.py lines added by RBAC PR
+# ---------------------------------------------------------------------------
+
+
+def _make_kb_via_session(session: Session, name: str) -> KnowledgeBase:
+    ensure_default_workspace(session)
+    session.flush()
+    kb = get_or_create_knowledge_base(session, name, workspace_id=DEFAULT_WORKSPACE_ID)
+    session.commit()
+    return kb
+
+
+def test_list_kb_permissions_endpoint_returns_empty_list(http_client) -> None:
+    client, session = http_client
+    _make_kb_via_session(session, "test-kb")
+    resp = client.get("/knowledge-bases/test-kb/permissions")
+    assert resp.status_code == 200
+    assert resp.json()["items"] == []
+
+
+def test_list_kb_permissions_endpoint_404_on_unknown_kb(http_client) -> None:
+    client, _ = http_client
+    resp = client.get("/knowledge-bases/no-such-kb/permissions")
+    assert resp.status_code == 404
+
+
+def test_put_kb_permission_endpoint_creates_override(http_client) -> None:
+    client, session = http_client
+    _make_kb_via_session(session, "my-kb")
+    user_id = str(uuid.uuid4())
+    resp = client.put(
+        f"/knowledge-bases/my-kb/permissions/{user_id}",
+        json={"role": "viewer"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["role"] == "viewer"
+    assert body["user_id"] == user_id
+
+
+def test_put_kb_permission_endpoint_400_on_invalid_uuid(http_client) -> None:
+    client, session = http_client
+    _make_kb_via_session(session, "my-kb")
+    resp = client.put("/knowledge-bases/my-kb/permissions/not-a-uuid", json={"role": "viewer"})
+    assert resp.status_code == 400
+
+
+def test_put_kb_permission_endpoint_404_on_unknown_kb(http_client) -> None:
+    client, _ = http_client
+    resp = client.put(
+        f"/knowledge-bases/ghost-kb/permissions/{uuid.uuid4()}",
+        json={"role": "viewer"},
+    )
+    assert resp.status_code == 404
+
+
+def test_delete_kb_permission_endpoint_removes_override(http_client) -> None:
+    client, session = http_client
+    _make_kb_via_session(session, "del-kb")
+    user_id = str(uuid.uuid4())
+    client.put(f"/knowledge-bases/del-kb/permissions/{user_id}", json={"role": "editor"})
+    resp = client.delete(f"/knowledge-bases/del-kb/permissions/{user_id}")
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] is True
+
+
+def test_delete_kb_permission_endpoint_404_when_no_override(http_client) -> None:
+    client, session = http_client
+    _make_kb_via_session(session, "del-kb2")
+    resp = client.delete(f"/knowledge-bases/del-kb2/permissions/{uuid.uuid4()}")
+    assert resp.status_code == 404
+
+
+def test_delete_kb_permission_endpoint_400_on_invalid_uuid(http_client) -> None:
+    client, session = http_client
+    _make_kb_via_session(session, "del-kb3")
+    resp = client.delete("/knowledge-bases/del-kb3/permissions/bad-uuid")
+    assert resp.status_code == 400
+
+
+def test_delete_kb_permission_endpoint_404_on_unknown_kb(http_client) -> None:
+    client, _ = http_client
+    resp = client.delete(f"/knowledge-bases/ghost-kb/permissions/{uuid.uuid4()}")
+    assert resp.status_code == 404
