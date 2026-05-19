@@ -5,6 +5,8 @@ RustFS runs on http://localhost:9100 with credentials rustfsadmin/rustfsadmin.
 Buckets:  ragrig-source  (input)   ragrig-sink  (output)
 """
 
+# ruff: noqa: E402  (sys.path must be mutated before ragrig imports)
+
 from __future__ import annotations
 
 import os
@@ -15,11 +17,10 @@ sys.path.insert(0, os.path.join(project_root, "src"))
 sys.path.insert(0, project_root)  # for scripts module referenced by web_console
 
 # SQLite compatibility patches (mirrors conftest.py)
-import sqlalchemy
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
-from pgvector.sqlalchemy import Vector
 
 
 @compiles(JSONB, "sqlite")
@@ -38,9 +39,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from ragrig.db.models import Base
-from ragrig.repositories import get_or_create_knowledge_base
-from ragrig.plugins.sources.s3.connector import ingest_s3_source
 from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
+from ragrig.plugins.sources.s3.connector import ingest_s3_source
+from ragrig.repositories import get_or_create_knowledge_base
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ with session_factory() as session:
     )
     session.commit()
 
-print(f"Ingestion report:")
+print("Ingestion report:")
 print(f"  pipeline_run_id  : {report.pipeline_run_id}")
 print(f"  created_documents: {report.created_documents}")
 print(f"  created_versions : {report.created_versions}")
@@ -141,7 +142,7 @@ with session_factory() as session:
     idx_report = index_knowledge_base(session=session, knowledge_base_name=KB_NAME)
     session.commit()
 
-print(f"Indexing report:")
+print("Indexing report:")
 print(f"  pipeline_run_id  : {idx_report.pipeline_run_id}")
 print(f"  indexed_count    : {idx_report.indexed_count}")
 print(f"  chunk_count      : {idx_report.chunk_count}")
@@ -201,7 +202,7 @@ with session_factory() as session:
     )
     session.commit()
 
-print(f"Export report:")
+print("Export report:")
 print(f"  pipeline_run_id  : {export_report.pipeline_run_id}")
 print(f"  planned_count    : {export_report.planned_count}")
 print(f"  uploaded_count   : {export_report.uploaded_count}")
@@ -237,9 +238,8 @@ if json_keys:
     obj_body = s3.get_object(Bucket=SINK_BUCKET, Key=json_keys[0])["Body"].read()
     data = json.loads(obj_body)
     if isinstance(data, list):
-        print(
-            f"\n  JSON artifact has {len(data)} records. First record keys: {list(data[0].keys()) if data else '(empty)'}"
-        )
+        first_keys = list(data[0].keys()) if data else "(empty)"
+        print(f"\n  JSON artifact has {len(data)} records. First record keys: {first_keys}")
     else:
         print(f"\n  JSON artifact keys: {list(data.keys())}")
 
