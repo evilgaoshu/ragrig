@@ -5,6 +5,8 @@ import {
   useWebhookExport,
   useCloudflareR2Export,
   useBackblazeB2Export,
+  useAzureBlobExport,
+  useGcsExport,
 } from '../api/hooks'
 import type { SinkExportResult, ObjectStorageExportResult } from '../api/hooks'
 import {
@@ -509,9 +511,211 @@ function BackblazeB2Form({ kbs }: { kbs: { id: string; name: string }[] }) {
   )
 }
 
+// ── Azure Blob sink ───────────────────────────────────────────────────────────
+
+function AzureBlobForm({ kbs }: { kbs: { id: string; name: string }[] }) {
+  const exportMut = useAzureBlobExport()
+  const [kbName, setKbName] = useState(kbs[0]?.name ?? '')
+  const [accountName, setAccountName] = useState('')
+  const [accountKey, setAccountKey] = useState('')
+  const [container, setContainer] = useState('')
+  const [prefix, setPrefix] = useState('')
+  const [dryRun, setDryRun] = useState(false)
+  const [includeRetrieval, setIncludeRetrieval] = useState(true)
+  const [includeMarkdown, setIncludeMarkdown] = useState(true)
+  const [parquetExport, setParquetExport] = useState(false)
+  const [result, setResult] = useState<ObjectStorageExportResult | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setResult(null)
+    const res = await exportMut.mutateAsync({
+      kbName,
+      accountName,
+      accountKey,
+      container,
+      prefix: prefix || undefined,
+      dryRun,
+      includeRetrievalArtifact: includeRetrieval,
+      includeMarkdownSummary: includeMarkdown,
+      parquetExport,
+    })
+    setResult(res)
+  }
+
+  const isValid = !!kbName && !!accountName && !!accountKey && !!container
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <SelectField
+        label="Knowledge base"
+        value={kbName}
+        onChange={setKbName}
+        options={kbs.map((k) => ({ value: k.name, label: k.name }))}
+      />
+      <TextField
+        label="Storage Account Name"
+        value={accountName}
+        onChange={setAccountName}
+        placeholder="mystorageaccount"
+        required
+      />
+      <TextField
+        label="Account Key"
+        value={accountKey}
+        onChange={setAccountKey}
+        placeholder="Azure storage account key (secret)"
+        required
+      />
+      <TextField
+        label="Container"
+        value={container}
+        onChange={setContainer}
+        placeholder="my-exports-container"
+        required
+      />
+
+      <SectionDivider label="Options" />
+
+      <TextField
+        label="Prefix (optional)"
+        value={prefix}
+        onChange={setPrefix}
+        placeholder="exports/"
+      />
+      <CheckField label="Include retrieval JSON artifact" checked={includeRetrieval} onChange={setIncludeRetrieval} />
+      <CheckField label="Include markdown summary" checked={includeMarkdown} onChange={setIncludeMarkdown} />
+      <CheckField label="Export Parquet (requires pyarrow)" checked={parquetExport} onChange={setParquetExport} />
+      <CheckField label="Dry run (plan only, do not upload)" checked={dryRun} onChange={setDryRun} />
+
+      {exportMut.isError && (
+        <ErrorBanner message={exportMut.error?.message ?? 'Export failed'} />
+      )}
+
+      {result && <ObjectStorageResult result={result} />}
+
+      <div className="flex gap-3 pt-1">
+        <Button type="submit" disabled={exportMut.isPending || !isValid}>
+          {exportMut.isPending ? 'Exporting…' : dryRun ? 'Dry run' : 'Export to Azure Blob'}
+        </Button>
+        {result && (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => { setResult(null); exportMut.reset() }}
+          >
+            Reset
+          </Button>
+        )}
+      </div>
+    </form>
+  )
+}
+
+// ── GCS sink ──────────────────────────────────────────────────────────────────
+
+function GcsForm({ kbs }: { kbs: { id: string; name: string }[] }) {
+  const exportMut = useGcsExport()
+  const [kbName, setKbName] = useState(kbs[0]?.name ?? '')
+  const [accessKey, setAccessKey] = useState('')
+  const [secretKey, setSecretKey] = useState('')
+  const [bucket, setBucket] = useState('')
+  const [prefix, setPrefix] = useState('')
+  const [dryRun, setDryRun] = useState(false)
+  const [includeRetrieval, setIncludeRetrieval] = useState(true)
+  const [includeMarkdown, setIncludeMarkdown] = useState(true)
+  const [parquetExport, setParquetExport] = useState(false)
+  const [result, setResult] = useState<ObjectStorageExportResult | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setResult(null)
+    const res = await exportMut.mutateAsync({
+      kbName,
+      accessKey,
+      secretKey,
+      bucket,
+      prefix: prefix || undefined,
+      dryRun,
+      includeRetrievalArtifact: includeRetrieval,
+      includeMarkdownSummary: includeMarkdown,
+      parquetExport,
+    })
+    setResult(res)
+  }
+
+  const isValid = !!kbName && !!accessKey && !!secretKey && !!bucket
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <SelectField
+        label="Knowledge base"
+        value={kbName}
+        onChange={setKbName}
+        options={kbs.map((k) => ({ value: k.name, label: k.name }))}
+      />
+      <TextField
+        label="HMAC Access Key"
+        value={accessKey}
+        onChange={setAccessKey}
+        placeholder="GCS HMAC access key"
+        required
+      />
+      <TextField
+        label="HMAC Secret Key"
+        value={secretKey}
+        onChange={setSecretKey}
+        placeholder="GCS HMAC secret key"
+        required
+      />
+      <TextField
+        label="Bucket"
+        value={bucket}
+        onChange={setBucket}
+        placeholder="my-gcs-exports"
+        required
+      />
+
+      <SectionDivider label="Options" />
+
+      <TextField
+        label="Prefix (optional)"
+        value={prefix}
+        onChange={setPrefix}
+        placeholder="exports/"
+      />
+      <CheckField label="Include retrieval JSON artifact" checked={includeRetrieval} onChange={setIncludeRetrieval} />
+      <CheckField label="Include markdown summary" checked={includeMarkdown} onChange={setIncludeMarkdown} />
+      <CheckField label="Export Parquet (requires pyarrow)" checked={parquetExport} onChange={setParquetExport} />
+      <CheckField label="Dry run (plan only, do not upload)" checked={dryRun} onChange={setDryRun} />
+
+      {exportMut.isError && (
+        <ErrorBanner message={exportMut.error?.message ?? 'Export failed'} />
+      )}
+
+      {result && <ObjectStorageResult result={result} />}
+
+      <div className="flex gap-3 pt-1">
+        <Button type="submit" disabled={exportMut.isPending || !isValid}>
+          {exportMut.isPending ? 'Exporting…' : dryRun ? 'Dry run' : 'Export to GCS'}
+        </Button>
+        {result && (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => { setResult(null); exportMut.reset() }}
+          >
+            Reset
+          </Button>
+        )}
+      </div>
+    </form>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-type SinkTab = 'agent_access' | 'webhook' | 'cloudflare_r2' | 'backblaze_b2'
+type SinkTab = 'agent_access' | 'webhook' | 'cloudflare_r2' | 'backblaze_b2' | 'azure_blob' | 'gcs'
 
 export default function Sinks() {
   const { data: kbs, isLoading } = useKnowledgeBases()
@@ -524,6 +728,8 @@ export default function Sinks() {
     { id: 'webhook', label: 'Webhook' },
     { id: 'cloudflare_r2', label: 'Cloudflare R2' },
     { id: 'backblaze_b2', label: 'Backblaze B2' },
+    { id: 'azure_blob', label: 'Azure Blob' },
+    { id: 'gcs', label: 'Google Cloud Storage' },
   ]
 
   return (
@@ -567,6 +773,8 @@ export default function Sinks() {
             {tab === 'webhook' && <WebhookForm kbs={kbList} />}
             {tab === 'cloudflare_r2' && <CloudflareR2Form kbs={kbList} />}
             {tab === 'backblaze_b2' && <BackblazeB2Form kbs={kbList} />}
+            {tab === 'azure_blob' && <AzureBlobForm kbs={kbList} />}
+            {tab === 'gcs' && <GcsForm kbs={kbList} />}
           </div>
         </div>
       )}

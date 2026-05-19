@@ -26,6 +26,10 @@ function kindBadge(kind: string) {
     microsoft_365: 'bg-blue-100 text-blue-900',
     cloudflare_r2: 'bg-orange-100 text-orange-700',
     backblaze_b2: 'bg-red-100 text-red-700',
+    azure_blob: 'bg-sky-100 text-sky-700',
+    gcs: 'bg-yellow-100 text-yellow-700',
+    github: 'bg-gray-100 text-gray-800',
+    slack: 'bg-violet-100 text-violet-700',
   }
   return map[kind] ?? 'bg-gray-100 text-gray-600'
 }
@@ -36,6 +40,10 @@ function kindToPluginId(kind: string): string {
     s3: 'source.s3',
     cloudflare_r2: 'source.cloudflare_r2',
     backblaze_b2: 'source.backblaze_b2',
+    azure_blob: 'source.azure_blob',
+    gcs: 'source.gcs',
+    github: 'source.github',
+    slack: 'source.slack',
     local_directory: 'source.local',
     website: 'source.website',
     web: 'source.web',
@@ -113,7 +121,7 @@ function RunButton({ source }: { source: Source }) {
 
 // ── Source type definitions ───────────────────────────────────────────────
 
-type SourceType = 'fileshare' | 's3' | 'cloudflare_r2' | 'backblaze_b2' | 'local' | 'web' | 'confluence' | 'notion' | 'feishu' | 'microsoft_365'
+type SourceType = 'fileshare' | 's3' | 'cloudflare_r2' | 'backblaze_b2' | 'azure_blob' | 'gcs' | 'github' | 'slack' | 'local' | 'web' | 'confluence' | 'notion' | 'feishu' | 'microsoft_365'
 
 interface SourceTypeOption {
   id: SourceType
@@ -186,6 +194,34 @@ const SOURCE_TYPES: SourceTypeOption[] = [
     label: 'Backblaze B2',
     description: 'Backblaze B2 cloud storage — low-cost S3-compatible object storage',
     badge: 'bg-red-100 text-red-700',
+  },
+  {
+    id: 'azure_blob',
+    pluginId: 'source.azure_blob',
+    label: 'Azure Blob Storage',
+    description: 'Ingest files from Azure Blob containers using HMAC account key credentials',
+    badge: 'bg-sky-100 text-sky-700',
+  },
+  {
+    id: 'gcs',
+    pluginId: 'source.gcs',
+    label: 'Google Cloud Storage',
+    description: 'Ingest files from GCS buckets via S3-compatible HMAC credentials',
+    badge: 'bg-yellow-100 text-yellow-700',
+  },
+  {
+    id: 'github',
+    pluginId: 'source.github',
+    label: 'GitHub',
+    description: 'Ingest repository files from GitHub via REST API — no git clone required',
+    badge: 'bg-gray-100 text-gray-800',
+  },
+  {
+    id: 'slack',
+    pluginId: 'source.slack',
+    label: 'Slack',
+    description: 'Import channel messages from Slack via Web API using a bot token',
+    badge: 'bg-violet-100 text-violet-700',
   },
   {
     id: 'local',
@@ -277,6 +313,30 @@ function AddSourceModal({
   const [b2Bucket, setB2Bucket] = useState('')
   const [b2Prefix, setB2Prefix] = useState('')
 
+  // Azure Blob fields
+  const [azAccountName, setAzAccountName] = useState('')
+  const [azAccountKey, setAzAccountKey] = useState('env:AZURE_STORAGE_ACCOUNT_KEY')
+  const [azContainer, setAzContainer] = useState('')
+  const [azPrefix, setAzPrefix] = useState('')
+
+  // GCS fields
+  const [gcsAccessKey, setGcsAccessKey] = useState('env:GCS_ACCESS_KEY')
+  const [gcsSecretKey, setGcsSecretKey] = useState('env:GCS_SECRET_KEY')
+  const [gcsBucket, setGcsBucket] = useState('')
+  const [gcsPrefix, setGcsPrefix] = useState('')
+
+  // GitHub fields
+  const [ghRepo, setGhRepo] = useState('')
+  const [ghToken, setGhToken] = useState('env:GITHUB_TOKEN')
+  const [ghBranch, setGhBranch] = useState('main')
+  const [ghPath, setGhPath] = useState('')
+
+  // Slack fields
+  const [slackBotToken, setSlackBotToken] = useState('env:SLACK_BOT_TOKEN')
+  const [slackChannelIds, setSlackChannelIds] = useState('')
+  const [slackIncludeAll] = useState(false)
+  const [slackOldestDays, setSlackOldestDays] = useState('30')
+
   // Web fields
   const [webUrls, setWebUrls] = useState('')
   const [webMaxDepth, setWebMaxDepth] = useState('1')
@@ -343,6 +403,39 @@ function AddSourceModal({
         prefix: b2Prefix || undefined,
       }
     }
+    if (sourceType.id === 'azure_blob') {
+      return {
+        account_name: azAccountName,
+        account_key: azAccountKey,
+        container: azContainer,
+        prefix: azPrefix || undefined,
+      }
+    }
+    if (sourceType.id === 'gcs') {
+      return {
+        access_key: gcsAccessKey,
+        secret_key: gcsSecretKey,
+        bucket: gcsBucket,
+        prefix: gcsPrefix || undefined,
+      }
+    }
+    if (sourceType.id === 'github') {
+      return {
+        repo: ghRepo,
+        token: ghToken,
+        branch: ghBranch || 'main',
+        path: ghPath || undefined,
+      }
+    }
+    if (sourceType.id === 'slack') {
+      const ids = slackChannelIds.split(',').map((s) => s.trim()).filter(Boolean)
+      return {
+        bot_token: slackBotToken,
+        channel_ids: ids,
+        include_all_channels: slackIncludeAll,
+        oldest_days: parseInt(slackOldestDays, 10) || 30,
+      }
+    }
     if (sourceType.id === 'fileshare') {
       const cfg: Record<string, unknown> = {
         protocol: fsProtocol,
@@ -405,6 +498,10 @@ function AddSourceModal({
     if (sourceType.id === 'microsoft_365') return !!msftTenantId && !!msftClientId && !!msftClientSecret
     if (sourceType.id === 'cloudflare_r2') return !!r2AccountId && !!r2Bucket && !!r2AccessKeyId && !!r2SecretAccessKey
     if (sourceType.id === 'backblaze_b2') return !!b2Region && !!b2Bucket && !!b2KeyId && !!b2ApplicationKey
+    if (sourceType.id === 'azure_blob') return !!azAccountName && !!azContainer && !!azAccountKey
+    if (sourceType.id === 'gcs') return !!gcsBucket && !!gcsAccessKey && !!gcsSecretKey
+    if (sourceType.id === 'github') return !!ghRepo
+    if (sourceType.id === 'slack') return !!slackBotToken && (slackIncludeAll || !!slackChannelIds.trim())
     if (sourceType.id === 'fileshare') return !!fsHost
     if (sourceType.id === 's3') return !!s3Bucket
     if (sourceType.id === 'local') return !!localPath
@@ -861,6 +958,144 @@ function AddSourceModal({
                 onChange={setB2Prefix}
                 placeholder="docs/"
                 hint="Limit ingestion to objects with this key prefix."
+              />
+            </>
+          )}
+
+          {/* Azure Blob fields */}
+          {sourceType?.id === 'azure_blob' && (
+            <>
+              <TextField
+                label="Storage Account Name"
+                value={azAccountName}
+                onChange={setAzAccountName}
+                placeholder="mystorageaccount"
+                required
+              />
+              <TextField
+                label="Account Key"
+                value={azAccountKey}
+                onChange={setAzAccountKey}
+                placeholder="env:AZURE_STORAGE_ACCOUNT_KEY"
+                hint="Use env:VAR to reference an environment variable for the account key."
+                required
+              />
+              <TextField
+                label="Container"
+                value={azContainer}
+                onChange={setAzContainer}
+                placeholder="my-docs-container"
+                required
+              />
+              <SectionDivider label="Options" />
+              <TextField
+                label="Prefix (optional)"
+                value={azPrefix}
+                onChange={setAzPrefix}
+                placeholder="team-a/"
+                hint="Limit ingestion to blobs with this key prefix."
+              />
+            </>
+          )}
+
+          {/* GCS fields */}
+          {sourceType?.id === 'gcs' && (
+            <>
+              <TextField
+                label="Access Key"
+                value={gcsAccessKey}
+                onChange={setGcsAccessKey}
+                placeholder="env:GCS_ACCESS_KEY"
+                hint="GCS HMAC access key. Use env:VAR to reference an environment variable."
+                required
+              />
+              <TextField
+                label="Secret Key"
+                value={gcsSecretKey}
+                onChange={setGcsSecretKey}
+                placeholder="env:GCS_SECRET_KEY"
+                hint="GCS HMAC secret key. Use env:VAR to reference an environment variable."
+                required
+              />
+              <TextField
+                label="Bucket"
+                value={gcsBucket}
+                onChange={setGcsBucket}
+                placeholder="my-gcs-bucket"
+                required
+              />
+              <SectionDivider label="Options" />
+              <TextField
+                label="Prefix (optional)"
+                value={gcsPrefix}
+                onChange={setGcsPrefix}
+                placeholder="docs/"
+                hint="Limit ingestion to objects with this key prefix."
+              />
+            </>
+          )}
+
+          {/* GitHub fields */}
+          {sourceType?.id === 'github' && (
+            <>
+              <TextField
+                label="Repository"
+                value={ghRepo}
+                onChange={setGhRepo}
+                placeholder="owner/repo"
+                hint="GitHub repository in owner/repo format."
+                required
+              />
+              <TextField
+                label="Token"
+                value={ghToken}
+                onChange={setGhToken}
+                placeholder="env:GITHUB_TOKEN"
+                hint="GitHub personal access token. Use env:VAR to reference an environment variable. Leave empty for public repos (rate-limited)."
+              />
+              <SectionDivider label="Options" />
+              <TextField
+                label="Branch"
+                value={ghBranch}
+                onChange={setGhBranch}
+                placeholder="main"
+                hint="Branch to ingest. Defaults to main."
+              />
+              <TextField
+                label="Path prefix (optional)"
+                value={ghPath}
+                onChange={setGhPath}
+                placeholder="docs/"
+                hint="Limit ingestion to files under this path."
+              />
+            </>
+          )}
+
+          {/* Slack fields */}
+          {sourceType?.id === 'slack' && (
+            <>
+              <TextField
+                label="Bot Token"
+                value={slackBotToken}
+                onChange={setSlackBotToken}
+                placeholder="env:SLACK_BOT_TOKEN"
+                hint="Slack bot token with channels:read and channels:history scopes. Use env:VAR."
+                required
+              />
+              <TextField
+                label="Channel IDs (comma-separated)"
+                value={slackChannelIds}
+                onChange={setSlackChannelIds}
+                placeholder="C01234567,C09876543"
+                hint="Specific channel IDs to ingest. Leave empty and enable 'All channels' to fetch all accessible channels."
+              />
+              <SectionDivider label="Options" />
+              <TextField
+                label="Oldest messages (days)"
+                value={slackOldestDays}
+                onChange={setSlackOldestDays}
+                placeholder="30"
+                hint="Ingest messages from the last N days."
               />
             </>
           )}
