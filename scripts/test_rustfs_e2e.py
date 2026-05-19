@@ -21,13 +21,16 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from pgvector.sqlalchemy import Vector
 
+
 @compiles(JSONB, "sqlite")
 def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
     return compiler.process(JSON(), **kwargs)
 
+
 @compiles(Vector, "sqlite")
 def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
     return compiler.process(JSON(), **kwargs)
+
 
 import boto3
 from sqlalchemy import create_engine, text
@@ -61,8 +64,10 @@ engine = create_engine(
 )
 Base.metadata.create_all(engine)
 
+
 def session_factory() -> Session:
     return Session(engine, expire_on_commit=False)
+
 
 with session_factory() as session:
     kb = get_or_create_knowledge_base(session, KB_NAME)
@@ -163,9 +168,7 @@ assert chunk_count > 0, "Expected chunks in the database"
 
 # Show a sample chunk
 with engine.connect() as conn:
-    sample = conn.execute(
-        text("SELECT text FROM chunks ORDER BY id LIMIT 1")
-    ).fetchone()
+    sample = conn.execute(text("SELECT text FROM chunks ORDER BY id LIMIT 1")).fetchone()
     print(f"  Sample chunk preview: {sample[0][:100]!r} …")
 
 # ── STEP 5: Object storage sink export ────────────────────────────────────────
@@ -208,7 +211,9 @@ print(f"  dry_run          : {export_report.dry_run}")
 print(f"  artifact_keys    : {export_report.artifact_keys}")
 
 assert not export_report.dry_run
-assert export_report.failed_count == 0, f"Expected 0 failed exports, got {export_report.failed_count}"
+assert export_report.failed_count == 0, (
+    f"Expected 0 failed exports, got {export_report.failed_count}"
+)
 
 # ── STEP 6: Verify sink objects in RustFS ─────────────────────────────────────
 
@@ -228,10 +233,13 @@ assert len(sink_objects) > 0, "Expected exported objects in sink bucket"
 json_keys = [o["Key"] for o in sink_objects if o["Key"].endswith(".json")]
 if json_keys:
     import json
+
     obj_body = s3.get_object(Bucket=SINK_BUCKET, Key=json_keys[0])["Body"].read()
     data = json.loads(obj_body)
     if isinstance(data, list):
-        print(f"\n  JSON artifact has {len(data)} records. First record keys: {list(data[0].keys()) if data else '(empty)'}")
+        print(
+            f"\n  JSON artifact has {len(data)} records. First record keys: {list(data[0].keys()) if data else '(empty)'}"
+        )
     else:
         print(f"\n  JSON artifact keys: {list(data.keys())}")
 
