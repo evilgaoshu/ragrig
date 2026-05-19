@@ -180,7 +180,7 @@ async def test_website_import_endpoint_returns_accepted_and_failed_counts(
 
     from ragrig.ingestion import web_import
 
-    def fake_collect_website_imports(*, urls, sitemap_url=None):
+    def fake_collect_website_imports(*, urls, sitemap_url=None, **_kwargs):
         del sitemap_url
         return web_import.WebsiteImportResult(
             accepted_pages=[

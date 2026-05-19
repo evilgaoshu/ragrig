@@ -53,8 +53,19 @@ def import_website_pages(
     knowledge_base: KnowledgeBase,
     urls: list[str],
     sitemap_url: str | None = None,
+    bearer_token: str | None = None,
+    cookies: dict[str, str] | None = None,
+    basic_auth_username: str | None = None,
+    basic_auth_password: str | None = None,
 ) -> dict[str, Any]:
-    result = collect_website_imports(urls=urls, sitemap_url=sitemap_url)
+    result = collect_website_imports(
+        urls=urls,
+        sitemap_url=sitemap_url,
+        bearer_token=bearer_token,
+        cookies=cookies,
+        basic_auth_username=basic_auth_username,
+        basic_auth_password=basic_auth_password,
+    )
     source_uri = sitemap_url or (urls[0] if urls else "website-import")
     source = get_or_create_source(
         session,

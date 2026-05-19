@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import { useSources, useKnowledgeBases, useCreateSource, useRunSourceIngest, useTask } from '../api/hooks'
 import type { Source } from '../api/types'
+import {
+  Button,
+  TextField,
+  TextArea,
+  SelectField,
+  CheckField,
+  SectionDivider,
+  ErrorBanner,
+} from '../components/ui'
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -10,6 +19,7 @@ function kindBadge(kind: string) {
     s3: 'bg-amber-100 text-amber-700',
     fileshare: 'bg-purple-100 text-purple-700',
     website: 'bg-teal-100 text-teal-700',
+    web: 'bg-teal-100 text-teal-700',
   }
   return map[kind] ?? 'bg-gray-100 text-gray-600'
 }
@@ -20,13 +30,15 @@ function kindToPluginId(kind: string): string {
     s3: 'source.s3',
     local_directory: 'source.local',
     website: 'source.website',
+    web: 'source.web',
   }
   return map[kind] ?? `source.${kind}`
 }
 
 function ConfigSummary({ config }: { config: Record<string, unknown> }) {
   const entries = Object.entries(config).filter(
-    ([k]) => !['password', 'secret_key', 'access_key', 'private_key', 'api_key'].includes(k),
+    ([k]) =>
+      !['password', 'secret_key', 'access_key', 'private_key', 'api_key', 'bearer_token', 'basic_auth_password'].includes(k),
   )
   if (entries.length === 0) return <span className="text-gray-400">—</span>
   return (
@@ -89,7 +101,7 @@ function RunButton({ source }: { source: Source }) {
 
 // ── Source type definitions ───────────────────────────────────────────────
 
-type SourceType = 'fileshare' | 's3' | 'local'
+type SourceType = 'fileshare' | 's3' | 'local' | 'web'
 
 interface SourceTypeOption {
   id: SourceType
@@ -100,6 +112,13 @@ interface SourceTypeOption {
 }
 
 const SOURCE_TYPES: SourceTypeOption[] = [
+  {
+    id: 'web',
+    pluginId: 'source.web',
+    label: 'Web / HTTP',
+    description: 'Crawl web pages by URL — supports bearer token, cookies, and basic auth',
+    badge: 'bg-teal-100 text-teal-700',
+  },
   {
     id: 'fileshare',
     pluginId: 'source.fileshare',
@@ -122,66 +141,6 @@ const SOURCE_TYPES: SourceTypeOption[] = [
     badge: 'bg-blue-100 text-blue-700',
   },
 ]
-
-// ── Config field components ───────────────────────────────────────────────
-
-function TextField({
-  label, value, onChange, placeholder, hint, required,
-}: {
-  label: string; value: string
-  onChange: (v: string) => void; placeholder?: string; hint?: string; required?: boolean
-}) {
-  return (
-    <div className="space-y-1">
-      <label className="text-xs font-medium text-gray-600">
-        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
-      </label>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        required={required}
-        className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/40"
-      />
-      {hint && <p className="text-[11px] text-gray-400">{hint}</p>}
-    </div>
-  )
-}
-
-function SelectField({
-  label, value, onChange, options,
-}: {
-  label: string; value: string
-  onChange: (v: string) => void; options: { value: string; label: string }[]
-}) {
-  return (
-    <div className="space-y-1">
-      <label className="text-xs font-medium text-gray-600">{label}</label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
-      >
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-    </div>
-  )
-}
-
-function CheckField({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="flex items-center gap-2 cursor-pointer">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="rounded border-gray-300 text-brand focus:ring-brand/40"
-      />
-      <span className="text-xs text-gray-700">{label}</span>
-    </label>
-  )
-}
 
 // ── Add Source Modal ──────────────────────────────────────────────────────
 
@@ -222,6 +181,16 @@ function AddSourceModal({
   // Local fields
   const [localPath, setLocalPath] = useState('')
 
+  // Web fields
+  const [webUrls, setWebUrls] = useState('')
+  const [webMaxDepth, setWebMaxDepth] = useState('1')
+  const [webPageSize, setWebPageSize] = useState('20')
+  const [webBearerToken, setWebBearerToken] = useState('')
+  const [webBasicUser, setWebBasicUser] = useState('')
+  const [webBasicPass, setWebBasicPass] = useState('')
+  const [webIncludePatterns, setWebIncludePatterns] = useState('')
+  const [webExcludePatterns, setWebExcludePatterns] = useState('')
+
   const buildConfig = (): Record<string, unknown> => {
     if (!sourceType) return {}
     if (sourceType.id === 'fileshare') {
@@ -249,6 +218,31 @@ function AddSourceModal({
     if (sourceType.id === 'local') {
       return { path: localPath }
     }
+    if (sourceType.id === 'web') {
+      const urls = webUrls
+        .split('\n')
+        .map((u) => u.trim())
+        .filter(Boolean)
+      const cfg: Record<string, unknown> = {
+        urls,
+        max_depth: parseInt(webMaxDepth, 10) || 1,
+        page_size: parseInt(webPageSize, 10) || 20,
+      }
+      if (webBearerToken) cfg.bearer_token = webBearerToken
+      if (webBasicUser) cfg.basic_auth_username = webBasicUser
+      if (webBasicPass) cfg.basic_auth_password = webBasicPass
+      const includes = webIncludePatterns
+        .split('\n')
+        .map((p) => p.trim())
+        .filter(Boolean)
+      const excludes = webExcludePatterns
+        .split('\n')
+        .map((p) => p.trim())
+        .filter(Boolean)
+      if (includes.length) cfg.include_patterns = includes
+      if (excludes.length) cfg.exclude_patterns = excludes
+      return cfg
+    }
     return {}
   }
 
@@ -258,6 +252,9 @@ function AddSourceModal({
     if (sourceType.id === 'fileshare') return !!fsHost
     if (sourceType.id === 's3') return !!s3Bucket
     if (sourceType.id === 'local') return !!localPath
+    if (sourceType.id === 'web') {
+      return webUrls.split('\n').some((u) => u.trim().startsWith('http'))
+    }
     return false
   }
 
@@ -294,13 +291,19 @@ function AddSourceModal({
             )}
             <div>
               <div className="text-sm font-medium text-gray-800">
-                {task.status === 'completed' ? 'Ingestion completed' : task.status === 'failed' ? 'Ingestion failed' : 'Running ingestion…'}
+                {task.status === 'completed'
+                  ? 'Ingestion completed'
+                  : task.status === 'failed'
+                    ? 'Ingestion failed'
+                    : 'Running ingestion…'}
               </div>
               <div className="text-xs text-gray-500 mt-0.5">Task: {taskId.slice(0, 8)}…</div>
             </div>
           </div>
           {task.error && (
-            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{task.error}</div>
+            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {task.error}
+            </div>
           )}
           <button onClick={onClose} className="text-sm text-brand hover:underline">
             {isTaskDone ? 'Close' : 'Close (continues in background)'}
@@ -319,7 +322,10 @@ function AddSourceModal({
             {SOURCE_TYPES.map((t) => (
               <button
                 key={t.id}
-                onClick={() => { setSourceType(t); setStep('config') }}
+                onClick={() => {
+                  setSourceType(t)
+                  setStep('config')
+                }}
                 className="w-full text-left border border-gray-200 rounded-lg p-4 hover:border-brand/40 hover:bg-brand/5 transition-colors"
               >
                 <div className="flex items-center gap-3">
@@ -332,11 +338,7 @@ function AddSourceModal({
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          <button
-            type="button"
-            onClick={() => setStep('type')}
-            className="text-xs text-brand hover:underline"
-          >
+          <button type="button" onClick={() => setStep('type')} className="text-xs text-brand hover:underline">
             ← Change type
           </button>
 
@@ -349,18 +351,89 @@ function AddSourceModal({
           {/* KB picker */}
           <SelectField
             label="Knowledge base"
-           
             value={kbName}
             onChange={setKbName}
             options={kbs.map((k) => ({ value: k.name, label: k.name }))}
           />
+
+          {/* Web source fields */}
+          {sourceType?.id === 'web' && (
+            <>
+              <TextArea
+                label="Seed URLs"
+                value={webUrls}
+                onChange={setWebUrls}
+                placeholder={'https://docs.example.com/\nhttps://docs.example.com/guide'}
+                hint="One URL per line. The crawler will start from these pages."
+                rows={4}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <TextField
+                  label="Max depth"
+                  value={webMaxDepth}
+                  onChange={setWebMaxDepth}
+                  type="number"
+                  hint="1 = seeds only, 2 = seeds + one level of links"
+                />
+                <TextField
+                  label="Page size"
+                  value={webPageSize}
+                  onChange={setWebPageSize}
+                  type="number"
+                  hint="Max pages per crawl run"
+                />
+              </div>
+
+              <SectionDivider label="Authentication (optional)" />
+
+              <TextField
+                label="Bearer token"
+                value={webBearerToken}
+                onChange={setWebBearerToken}
+                placeholder="my-token or env:MY_TOKEN_VAR"
+                hint="Sent as Authorization: Bearer <token>. Use env:VAR to reference a server env var."
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <TextField
+                  label="Basic auth username"
+                  value={webBasicUser}
+                  onChange={setWebBasicUser}
+                  placeholder="user or env:USER_VAR"
+                />
+                <TextField
+                  label="Basic auth password"
+                  value={webBasicPass}
+                  onChange={setWebBasicPass}
+                  placeholder="pass or env:PASS_VAR"
+                />
+              </div>
+
+              <SectionDivider label="URL filters (optional)" />
+
+              <TextArea
+                label="Include patterns"
+                value={webIncludePatterns}
+                onChange={setWebIncludePatterns}
+                placeholder={'/docs/*\n/api/*'}
+                hint="Only crawl URLs matching these glob patterns. One per line."
+                rows={2}
+              />
+              <TextArea
+                label="Exclude patterns"
+                value={webExcludePatterns}
+                onChange={setWebExcludePatterns}
+                placeholder={'/admin/*\n*/login*'}
+                hint="Skip URLs matching these glob patterns. One per line."
+                rows={2}
+              />
+            </>
+          )}
 
           {/* Fileshare fields */}
           {sourceType?.id === 'fileshare' && (
             <>
               <SelectField
                 label="Protocol"
-               
                 value={fsProtocol}
                 onChange={setFsProtocol}
                 options={[
@@ -369,72 +442,84 @@ function AddSourceModal({
                   { value: 'sftp', label: 'SFTP' },
                 ]}
               />
-              <TextField label="Host" value={fsHost} onChange={setFsHost}
-                placeholder="files.example.internal" required />
+              <TextField label="Host" value={fsHost} onChange={setFsHost} placeholder="files.example.internal" required />
               {fsProtocol === 'smb' && (
-                <TextField label="Share name" value={fsShare} onChange={setFsShare}
-                  placeholder="documents" />
+                <TextField label="Share name" value={fsShare} onChange={setFsShare} placeholder="documents" />
               )}
-              <TextField label="Root path" value={fsRootPath} onChange={setFsRootPath}
-                placeholder="/" />
-              <TextField label="Username" value={fsUsername} onChange={setFsUsername}
-                hint="Use env:VAR_NAME to reference an environment variable set on the server." />
-              <TextField label="Password" value={fsPassword} onChange={setFsPassword}
-                hint="Use env:VAR_NAME to avoid storing secrets in the UI." />
+              <TextField label="Root path" value={fsRootPath} onChange={setFsRootPath} placeholder="/" />
+              <TextField
+                label="Username"
+                value={fsUsername}
+                onChange={setFsUsername}
+                hint="Use env:VAR_NAME to reference an environment variable set on the server."
+              />
+              <TextField
+                label="Password"
+                value={fsPassword}
+                onChange={setFsPassword}
+                hint="Use env:VAR_NAME to avoid storing secrets in the UI."
+              />
             </>
           )}
 
           {/* S3 fields */}
           {sourceType?.id === 's3' && (
             <>
-              <TextField label="Endpoint URL" value={s3Endpoint} onChange={setS3Endpoint}
+              <TextField
+                label="Endpoint URL"
+                value={s3Endpoint}
+                onChange={setS3Endpoint}
                 placeholder="http://minio:9000 (leave blank for AWS)"
-                hint="Leave blank for AWS S3. Set for MinIO or S3-compatible services." />
-              <TextField label="Bucket" value={s3Bucket} onChange={setS3Bucket}
-                placeholder="my-docs-bucket" required />
-              <TextField label="Prefix (optional)" value={s3Prefix} onChange={setS3Prefix}
-                placeholder="team-a/knowledge" />
-              <TextField label="Region" value={s3Region} onChange={setS3Region}
-                placeholder="us-east-1" />
-              <CheckField label="Use path-style addressing (required for MinIO)" checked={s3PathStyle} onChange={setS3PathStyle} />
-              <TextField label="Access key" value={s3AccessKey} onChange={setS3AccessKey}
-                hint="Use env:AWS_ACCESS_KEY_ID to reference a server-side env var." />
-              <TextField label="Secret key" value={s3SecretKey} onChange={setS3SecretKey}
-                hint="Use env:AWS_SECRET_ACCESS_KEY to avoid storing secrets in the UI." />
+                hint="Leave blank for AWS S3. Set for MinIO or S3-compatible services."
+              />
+              <TextField label="Bucket" value={s3Bucket} onChange={setS3Bucket} placeholder="my-docs-bucket" required />
+              <TextField label="Prefix (optional)" value={s3Prefix} onChange={setS3Prefix} placeholder="team-a/knowledge" />
+              <TextField label="Region" value={s3Region} onChange={setS3Region} placeholder="us-east-1" />
+              <CheckField
+                label="Use path-style addressing (required for MinIO)"
+                checked={s3PathStyle}
+                onChange={setS3PathStyle}
+              />
+              <TextField
+                label="Access key"
+                value={s3AccessKey}
+                onChange={setS3AccessKey}
+                hint="Use env:AWS_ACCESS_KEY_ID to reference a server-side env var."
+              />
+              <TextField
+                label="Secret key"
+                value={s3SecretKey}
+                onChange={setS3SecretKey}
+                hint="Use env:AWS_SECRET_ACCESS_KEY to avoid storing secrets in the UI."
+              />
             </>
           )}
 
           {/* Local directory fields */}
           {sourceType?.id === 'local' && (
-            <TextField label="Directory path" value={localPath} onChange={setLocalPath}
+            <TextField
+              label="Directory path"
+              value={localPath}
+              onChange={setLocalPath}
               placeholder="/data/docs"
               hint="Absolute path inside the container. Mount the directory via docker-compose volumes."
-              required />
+              required
+            />
           )}
 
           <CheckField label="Run ingestion immediately after saving" checked={runNow} onChange={setRunNow} />
 
           {(createSource.isError || runIngest.isError) && (
-            <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
-              {createSource.error?.message ?? runIngest.error?.message}
-            </div>
+            <ErrorBanner message={createSource.error?.message ?? runIngest.error?.message ?? 'Unknown error'} />
           )}
 
           <div className="flex gap-3 pt-1">
-            <button
-              type="submit"
-              disabled={isWorking || !isConfigValid()}
-              className="px-4 py-2 bg-brand text-white text-sm font-medium rounded-lg hover:bg-brand/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
+            <Button type="submit" disabled={isWorking || !isConfigValid()}>
               {isWorking ? 'Saving…' : runNow ? 'Save & run' : 'Save'}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-            >
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose}>
               Cancel
-            </button>
+            </Button>
           </div>
         </form>
       )}
@@ -442,7 +527,15 @@ function AddSourceModal({
   )
 }
 
-function ModalShell({ onClose, title, children }: { onClose: () => void; title: string; children: React.ReactNode }) {
+function ModalShell({
+  onClose,
+  title,
+  children,
+}: {
+  onClose: () => void
+  title: string
+  children: React.ReactNode
+}) {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/20" />
@@ -452,7 +545,9 @@ function ModalShell({ onClose, title, children }: { onClose: () => void; title: 
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <h2 className="text-sm font-bold text-gray-900">{title}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">
+            ×
+          </button>
         </div>
         {children}
       </div>
@@ -480,12 +575,7 @@ export default function Sources() {
           <h1 className="text-lg font-bold text-gray-900">Sources</h1>
           <p className="text-gray-500 text-sm mt-0.5">Data source connectors attached to knowledge bases</p>
         </div>
-        <button
-          onClick={() => setShowAdd(true)}
-          className="px-3 py-1.5 bg-brand text-white text-sm font-medium rounded-lg hover:bg-brand/90 transition-colors"
-        >
-          + Add source
-        </button>
+        <Button onClick={() => setShowAdd(true)}>+ Add source</Button>
       </div>
 
       {isLoading ? (
@@ -494,67 +584,69 @@ export default function Sources() {
         <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
           <p className="text-gray-500 text-sm font-medium">No sources configured yet</p>
           <p className="text-gray-400 text-xs mt-1">
-            Add a fileshare, S3 bucket, or local directory to start ingesting documents automatically.
+            Add a web crawler, fileshare, S3 bucket, or local directory to start ingesting documents.
           </p>
-          <button
-            onClick={() => setShowAdd(true)}
-            className="mt-4 px-4 py-2 bg-brand text-white text-sm font-medium rounded-lg hover:bg-brand/90 transition-colors"
-          >
+          <Button onClick={() => setShowAdd(true)} className="mt-4">
             Add first source
-          </button>
+          </Button>
         </div>
       ) : (
         <div className="space-y-6">
-          {Object.entries(byKB).sort().map(([kb, items]) => (
-            <div key={kb}>
-              <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">{kb}</h2>
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="text-left px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">Kind</th>
-                      <th className="text-left px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">URI</th>
-                      <th className="text-left px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">Config</th>
-                      <th className="text-left px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">Added</th>
-                      <th className="text-left px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((s, i) => (
-                      <tr key={s.id} className={`border-b border-gray-100 ${i % 2 === 0 ? '' : 'bg-gray-50'}`}>
-                        <td className="px-4 py-2.5">
-                          <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${kindBadge(s.kind)}`}>
-                            {s.kind}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 font-mono text-xs text-gray-700 max-w-xs truncate">
-                          {s.uri}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <ConfigSummary config={s.config} />
-                        </td>
-                        <td className="px-4 py-2.5 text-gray-400 text-xs whitespace-nowrap">
-                          {new Date(s.created_at).toLocaleDateString()}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <RunButton source={s} />
-                        </td>
+          {Object.entries(byKB)
+            .sort()
+            .map(([kb, items]) => (
+              <div key={kb}>
+                <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">{kb}</h2>
+                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="text-left px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                          Kind
+                        </th>
+                        <th className="text-left px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                          URI
+                        </th>
+                        <th className="text-left px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                          Config
+                        </th>
+                        <th className="text-left px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                          Added
+                        </th>
+                        <th className="text-left px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                          Actions
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {items.map((s, i) => (
+                        <tr key={s.id} className={`border-b border-gray-100 ${i % 2 === 0 ? '' : 'bg-gray-50'}`}>
+                          <td className="px-4 py-2.5">
+                            <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${kindBadge(s.kind)}`}>
+                              {s.kind}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 font-mono text-xs text-gray-700 max-w-xs truncate">{s.uri}</td>
+                          <td className="px-4 py-2.5">
+                            <ConfigSummary config={s.config} />
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-400 text-xs whitespace-nowrap">
+                            {new Date(s.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <RunButton source={s} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
         </div>
       )}
 
-      {showAdd && (
-        <AddSourceModal
-          kbs={kbs ?? []}
-          onClose={() => setShowAdd(false)}
-        />
-      )}
+      {showAdd && <AddSourceModal kbs={kbs ?? []} onClose={() => setShowAdd(false)} />}
     </div>
   )
 }

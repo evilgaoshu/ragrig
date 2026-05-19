@@ -308,6 +308,10 @@ class RollbackRequest(BaseModel):
 class WebsiteImportRequest(BaseModel):
     urls: list[str]
     sitemap_url: str | None = None
+    bearer_token: str | None = None
+    cookies: dict[str, str] | None = None
+    basic_auth_username: str | None = None
+    basic_auth_password: str | None = None
 
 
 class LocalPilotAnswerSmokeRequest(BaseModel):
@@ -1357,6 +1361,10 @@ def create_app(
                 knowledge_base=kb,
                 urls=request.urls,
                 sitemap_url=request.sitemap_url,
+                bearer_token=request.bearer_token,
+                cookies=request.cookies,
+                basic_auth_username=request.basic_auth_username,
+                basic_auth_password=request.basic_auth_password,
             )
         except WebsiteImportError as exc:
             return JSONResponse(status_code=400, content={"error": str(exc)})

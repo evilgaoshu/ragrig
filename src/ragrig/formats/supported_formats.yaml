@@ -88,25 +88,52 @@
 - extension: ".json"
   mime_type: "application/json"
   display_name: "JSON (.json)"
-  parser_id: "parser.text"
-  status: "preview"
+  parser_id: "parser.json"
+  status: "supported"
   max_file_size_mb: 50
   capabilities:
     - parse
-  limitations: "Parsed as plain text."
-  fallback_policy: "parse_as_plaintext"
+    - chunk
+    - embed
+  limitations: null
   docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
 
 - extension: ".xml"
   mime_type: "application/xml"
   display_name: "XML (.xml)"
-  parser_id: "parser.text"
+  parser_id: "parser.xml"
+  status: "supported"
+  max_file_size_mb: 50
+  capabilities:
+    - parse
+    - chunk
+    - embed
+  limitations: null
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".eml"
+  mime_type: "message/rfc822"
+  display_name: "Email (.eml)"
+  parser_id: "parser.email"
+  status: "supported"
+  max_file_size_mb: 25
+  capabilities:
+    - parse
+    - chunk
+    - embed
+  limitations: null
+  docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
+
+- extension: ".epub"
+  mime_type: "application/epub+zip"
+  display_name: "EPUB (.epub)"
+  parser_id: "parser.epub"
   status: "preview"
   max_file_size_mb: 50
   capabilities:
     - parse
-  limitations: "Parsed as plain text."
-  fallback_policy: "parse_as_plaintext"
+  limitations: "Requires the optional 'epub' dependency group (ebooklib)."
+  fallback_policy: "unavailable_without_ebooklib"
   docs_reference: "docs/specs/ragrig-processing-profile-spec.md"
 
 - extension: ".html"
