@@ -35,10 +35,7 @@ _FIXTURE_FILES = [
     {
         "id": "docs-001",
         "name": "Meeting Notes.docx",
-        "mimeType": (
-            "application/vnd.openxmlformats-officedocument"
-            ".wordprocessingml.document"
-        ),
+        "mimeType": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         "modifiedTime": "2026-05-13T10:00:00Z",
         "etag": '"xyz789uvw012"',
         "version": "3",
@@ -227,9 +224,7 @@ class TestScanner:
             }
         ]
         service = _make_mock_service(files=files)
-        result = scan_drive_items(
-            _config(include_patterns=["*.txt"]), env=_env(), _service=service
-        )
+        result = scan_drive_items(_config(include_patterns=["*.txt"]), env=_env(), _service=service)
         assert result.discovered[0].parent_path == "/"
 
 

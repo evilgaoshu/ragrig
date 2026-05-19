@@ -61,9 +61,7 @@ def _resolve_credential(config: dict[str, Any], env: dict[str, str]) -> str:
 
 
 def _build_drive_service(cred_json: str) -> Any:
-    creds = _SACredentials.from_service_account_info(
-        json.loads(cred_json), scopes=_DRIVE_SCOPES
-    )
+    creds = _SACredentials.from_service_account_info(json.loads(cred_json), scopes=_DRIVE_SCOPES)
     return _build_service("drive", "v3", credentials=creds, cache_discovery=False)
 
 

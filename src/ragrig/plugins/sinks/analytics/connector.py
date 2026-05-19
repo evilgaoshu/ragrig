@@ -100,9 +100,7 @@ def export_to_duckdb(
         )
 
         chunks_q = (
-            select(Chunk)
-            .where(Chunk.document_version_id == dv.id)
-            .order_by(Chunk.chunk_index)
+            select(Chunk).where(Chunk.document_version_id == dv.id).order_by(Chunk.chunk_index)
         )
         chunks: list[Chunk] = list(session.scalars(chunks_q))
 

@@ -4518,6 +4518,7 @@ vectorstores = [
 [package.dev-dependencies]
 dev = [
     { name = "cyclonedx-bom" },
+    { name = "duckdb" },
     { name = "httpx" },
     { name = "lxml" },
     { name = "pip-audit" },
@@ -4582,6 +4583,7 @@ provides-extras = ["cloud-aws", "cloud-google", "cloud-jina", "cloud-openai", "c
 [package.metadata.requires-dev]
 dev = [
     { name = "cyclonedx-bom", specifier = ">=7.3.0" },
+    { name = "duckdb", specifier = ">=1.0.0,<2.0.0" },
     { name = "httpx", specifier = ">=0.27.0,<1.0.0" },
     { name = "lxml", specifier = ">=6.1.0" },
     { name = "pip-audit", specifier = ">=2.10.0" },
