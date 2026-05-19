@@ -57,8 +57,10 @@ from ragrig.local_pilot.model_config import resolve_env_config
 from ragrig.observability import summarize_pipeline_cost_latency
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.plugins.sinks.agent_access.connector import export_to_agent_endpoint
+from ragrig.plugins.sinks.azure_blob.connector import export_to_azure_blob
 from ragrig.plugins.sinks.backblaze_b2.connector import export_to_backblaze_b2
 from ragrig.plugins.sinks.cloudflare_r2.connector import export_to_cloudflare_r2
+from ragrig.plugins.sinks.gcs.connector import export_to_gcs
 from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
 from ragrig.plugins.sinks.webhook.connector import export_to_webhook
 from ragrig.processing_profile import (
@@ -377,6 +379,32 @@ class BackblazeB2ExportRequest(BaseModel):
     region: str
     key_id: str
     application_key: str
+    bucket: str
+    prefix: str = ""
+    path_template: str = "{knowledge_base}/{run_id}/{artifact}.{format}"
+    overwrite: bool = True
+    dry_run: bool = False
+    include_retrieval_artifact: bool = True
+    include_markdown_summary: bool = True
+    parquet_export: bool = False
+
+
+class AzureBlobExportRequest(BaseModel):
+    account_name: str
+    account_key: str
+    container: str
+    prefix: str = ""
+    path_template: str = "{knowledge_base}/{run_id}/{artifact}.{format}"
+    overwrite: bool = True
+    dry_run: bool = False
+    include_retrieval_artifact: bool = True
+    include_markdown_summary: bool = True
+    parquet_export: bool = False
+
+
+class GcsExportRequest(BaseModel):
+    access_key: str
+    secret_key: str
     bucket: str
     prefix: str = ""
     path_template: str = "{knowledge_base}/{run_id}/{artifact}.{format}"
@@ -2871,6 +2899,115 @@ def create_app(
                 workspace_id=workspace_id,
                 config=config,
                 env=b2_env,
+            )
+        except ValueError as exc:
+            return JSONResponse(status_code=404, content={"error": str(exc)})
+        return JSONResponse(
+            status_code=200,
+            content={
+                "pipeline_run_id": str(report.pipeline_run_id),
+                "planned_count": report.planned_count,
+                "uploaded_count": report.uploaded_count,
+                "skipped_count": report.skipped_count,
+                "failed_count": report.failed_count,
+                "dry_run": report.dry_run,
+                "artifact_keys": report.artifact_keys,
+            },
+        )
+
+    @app.post("/knowledge-bases/{kb_name}/sink-export/azure-blob", response_model=None)
+    def knowledge_base_sink_azure_blob(
+        kb_name: str,
+        request: AzureBlobExportRequest,
+        session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+    ) -> JSONResponse:
+        access_error = _knowledge_base_role_error_by_name(
+            session=session,
+            auth=_auth,
+            kb_name=kb_name,
+            workspace_id=workspace_id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
+        azure_env = {"AZURE_STORAGE_ACCOUNT_KEY": request.account_key}
+        config: dict[str, Any] = {
+            "account_name": request.account_name,
+            "account_key": "env:AZURE_STORAGE_ACCOUNT_KEY",
+            "container": request.container,
+            "prefix": request.prefix,
+            "path_template": request.path_template,
+            "overwrite": request.overwrite,
+            "dry_run": request.dry_run,
+            "include_retrieval_artifact": request.include_retrieval_artifact,
+            "include_markdown_summary": request.include_markdown_summary,
+            "parquet_export": request.parquet_export,
+        }
+        try:
+            report = export_to_azure_blob(
+                session,
+                knowledge_base_name=kb_name,
+                workspace_id=workspace_id,
+                config=config,
+                env=azure_env,
+            )
+        except ValueError as exc:
+            return JSONResponse(status_code=404, content={"error": str(exc)})
+        return JSONResponse(
+            status_code=200,
+            content={
+                "pipeline_run_id": str(report.pipeline_run_id),
+                "planned_count": report.planned_count,
+                "uploaded_count": report.uploaded_count,
+                "skipped_count": report.skipped_count,
+                "failed_count": report.failed_count,
+                "dry_run": report.dry_run,
+                "artifact_keys": report.artifact_keys,
+            },
+        )
+
+    @app.post("/knowledge-bases/{kb_name}/sink-export/gcs", response_model=None)
+    def knowledge_base_sink_gcs(
+        kb_name: str,
+        request: GcsExportRequest,
+        session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+    ) -> JSONResponse:
+        access_error = _knowledge_base_role_error_by_name(
+            session=session,
+            auth=_auth,
+            kb_name=kb_name,
+            workspace_id=workspace_id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
+        gcs_env = {
+            "GCS_ACCESS_KEY": request.access_key,
+            "GCS_SECRET_KEY": request.secret_key,
+        }
+        config: dict[str, Any] = {
+            "access_key": "env:GCS_ACCESS_KEY",
+            "secret_key": "env:GCS_SECRET_KEY",
+            "bucket": request.bucket,
+            "prefix": request.prefix,
+            "path_template": request.path_template,
+            "overwrite": request.overwrite,
+            "dry_run": request.dry_run,
+            "include_retrieval_artifact": request.include_retrieval_artifact,
+            "include_markdown_summary": request.include_markdown_summary,
+            "parquet_export": request.parquet_export,
+        }
+        try:
+            report = export_to_gcs(
+                session,
+                knowledge_base_name=kb_name,
+                workspace_id=workspace_id,
+                config=config,
+                env=gcs_env,
             )
         except ValueError as exc:
             return JSONResponse(status_code=404, content={"error": str(exc)})
