@@ -74,6 +74,27 @@ def export_to_object_storage(
     registry = get_plugin_registry()
     validated = registry.validate_config("sink.object_storage", config)
     secrets = _resolve_secrets(validated, env=env or os.environ)
+    return _export_with_resolved_credentials(
+        session,
+        knowledge_base_name=knowledge_base_name,
+        validated=validated,
+        secrets=secrets,
+        source_kind="object_storage_sink",
+        run_type="object_storage_export",
+        client=client,
+    )
+
+
+def _export_with_resolved_credentials(
+    session: Session,
+    *,
+    knowledge_base_name: str,
+    validated: dict[str, object],
+    secrets: ResolvedObjectStorageSecrets,
+    source_kind: str,
+    run_type: str,
+    client: ObjectStorageClientProtocol | None = None,
+) -> ExportToObjectStorageReport:
     knowledge_base = get_knowledge_base_by_name(session, knowledge_base_name)
     if knowledge_base is None:
         raise ValueError(f"Knowledge base '{knowledge_base_name}' was not found")
@@ -81,7 +102,7 @@ def export_to_object_storage(
     sink_source = get_or_create_source(
         session,
         knowledge_base_id=knowledge_base.id,
-        kind="object_storage_sink",
+        kind=source_kind,
         uri=_sink_uri(str(validated["bucket"]), str(validated.get("prefix") or "")),
         config_json=validated,
     )
@@ -89,7 +110,7 @@ def export_to_object_storage(
         session,
         knowledge_base_id=knowledge_base.id,
         source_id=sink_source.id,
-        run_type="object_storage_export",
+        run_type=run_type,
         config_snapshot_json=validated,
     )
     is_dry_run = bool(validated["dry_run"])

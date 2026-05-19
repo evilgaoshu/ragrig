@@ -1,6 +1,12 @@
 import { useState } from 'react'
-import { useKnowledgeBases, useAgentAccessExport, useWebhookExport } from '../api/hooks'
-import type { SinkExportResult } from '../api/hooks'
+import {
+  useKnowledgeBases,
+  useAgentAccessExport,
+  useWebhookExport,
+  useCloudflareR2Export,
+  useBackblazeB2Export,
+} from '../api/hooks'
+import type { SinkExportResult, ObjectStorageExportResult } from '../api/hooks'
 import {
   Button,
   TextField,
@@ -231,9 +237,281 @@ function WebhookForm({ kbs }: { kbs: { id: string; name: string }[] }) {
   )
 }
 
+// ── Object storage result panel ───────────────────────────────────────────────
+
+function ObjectStorageResult({ result }: { result: ObjectStorageExportResult }) {
+  return (
+    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 space-y-2">
+      <div className="text-sm font-semibold text-emerald-800">
+        {result.dry_run ? 'Dry run complete' : 'Export complete'}
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 text-xs text-emerald-700">
+        <span>Planned</span>
+        <span className="font-mono font-bold">{result.planned_count}</span>
+        <span>Uploaded</span>
+        <span className="font-mono font-bold">{result.uploaded_count}</span>
+        {result.skipped_count > 0 && (
+          <>
+            <span>Skipped</span>
+            <span className="font-mono font-bold">{result.skipped_count}</span>
+          </>
+        )}
+        {result.failed_count > 0 && (
+          <>
+            <span className="text-red-600">Failed</span>
+            <span className="font-mono font-bold text-red-600">{result.failed_count}</span>
+          </>
+        )}
+      </div>
+      {result.artifact_keys.length > 0 && (
+        <div className="text-xs text-emerald-600 pt-1">
+          <div className="font-medium mb-1">Artifacts:</div>
+          {result.artifact_keys.map((k) => (
+            <div key={k} className="font-mono truncate">{k}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Cloudflare R2 sink ────────────────────────────────────────────────────────
+
+function CloudflareR2Form({ kbs }: { kbs: { id: string; name: string }[] }) {
+  const exportMut = useCloudflareR2Export()
+  const [kbName, setKbName] = useState(kbs[0]?.name ?? '')
+  const [accountId, setAccountId] = useState('')
+  const [accessKeyId, setAccessKeyId] = useState('')
+  const [secretAccessKey, setSecretAccessKey] = useState('')
+  const [bucket, setBucket] = useState('')
+  const [prefix, setPrefix] = useState('')
+  const [jurisdiction, setJurisdiction] = useState('')
+  const [dryRun, setDryRun] = useState(false)
+  const [includeRetrieval, setIncludeRetrieval] = useState(true)
+  const [includeMarkdown, setIncludeMarkdown] = useState(true)
+  const [parquetExport, setParquetExport] = useState(false)
+  const [result, setResult] = useState<ObjectStorageExportResult | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setResult(null)
+    const res = await exportMut.mutateAsync({
+      kbName,
+      accountId,
+      accessKeyId,
+      secretAccessKey,
+      bucket,
+      prefix: prefix || undefined,
+      jurisdiction: jurisdiction || undefined,
+      dryRun,
+      includeRetrievalArtifact: includeRetrieval,
+      includeMarkdownSummary: includeMarkdown,
+      parquetExport,
+    })
+    setResult(res)
+  }
+
+  const isValid = !!kbName && !!accountId && !!accessKeyId && !!secretAccessKey && !!bucket
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <SelectField
+        label="Knowledge base"
+        value={kbName}
+        onChange={setKbName}
+        options={kbs.map((k) => ({ value: k.name, label: k.name }))}
+      />
+      <TextField
+        label="Account ID"
+        value={accountId}
+        onChange={setAccountId}
+        placeholder="abc123..."
+        hint="Cloudflare account ID from the R2 dashboard."
+        required
+      />
+      <TextField
+        label="Access Key ID"
+        value={accessKeyId}
+        onChange={setAccessKeyId}
+        placeholder="R2 API token access key"
+        required
+      />
+      <TextField
+        label="Secret Access Key"
+        value={secretAccessKey}
+        onChange={setSecretAccessKey}
+        placeholder="R2 API token secret"
+        required
+      />
+      <TextField
+        label="Bucket"
+        value={bucket}
+        onChange={setBucket}
+        placeholder="my-ragrig-exports"
+        required
+      />
+
+      <SectionDivider label="Options" />
+
+      <TextField
+        label="Prefix (optional)"
+        value={prefix}
+        onChange={setPrefix}
+        placeholder="exports/"
+      />
+      <SelectField
+        label="Jurisdiction"
+        value={jurisdiction}
+        onChange={setJurisdiction}
+        options={[
+          { value: '', label: 'Default (global)' },
+          { value: 'eu', label: 'EU' },
+          { value: 'fedramp', label: 'FedRAMP' },
+        ]}
+      />
+      <CheckField label="Include retrieval JSON artifact" checked={includeRetrieval} onChange={setIncludeRetrieval} />
+      <CheckField label="Include markdown summary" checked={includeMarkdown} onChange={setIncludeMarkdown} />
+      <CheckField label="Export Parquet (requires pyarrow)" checked={parquetExport} onChange={setParquetExport} />
+      <CheckField label="Dry run (plan only, do not upload)" checked={dryRun} onChange={setDryRun} />
+
+      {exportMut.isError && (
+        <ErrorBanner message={exportMut.error?.message ?? 'Export failed'} />
+      )}
+
+      {result && <ObjectStorageResult result={result} />}
+
+      <div className="flex gap-3 pt-1">
+        <Button type="submit" disabled={exportMut.isPending || !isValid}>
+          {exportMut.isPending ? 'Exporting…' : dryRun ? 'Dry run' : 'Export to R2'}
+        </Button>
+        {result && (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => { setResult(null); exportMut.reset() }}
+          >
+            Reset
+          </Button>
+        )}
+      </div>
+    </form>
+  )
+}
+
+// ── Backblaze B2 sink ─────────────────────────────────────────────────────────
+
+function BackblazeB2Form({ kbs }: { kbs: { id: string; name: string }[] }) {
+  const exportMut = useBackblazeB2Export()
+  const [kbName, setKbName] = useState(kbs[0]?.name ?? '')
+  const [region, setRegion] = useState('')
+  const [keyId, setKeyId] = useState('')
+  const [applicationKey, setApplicationKey] = useState('')
+  const [bucket, setBucket] = useState('')
+  const [prefix, setPrefix] = useState('')
+  const [dryRun, setDryRun] = useState(false)
+  const [includeRetrieval, setIncludeRetrieval] = useState(true)
+  const [includeMarkdown, setIncludeMarkdown] = useState(true)
+  const [parquetExport, setParquetExport] = useState(false)
+  const [result, setResult] = useState<ObjectStorageExportResult | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setResult(null)
+    const res = await exportMut.mutateAsync({
+      kbName,
+      region,
+      keyId,
+      applicationKey,
+      bucket,
+      prefix: prefix || undefined,
+      dryRun,
+      includeRetrievalArtifact: includeRetrieval,
+      includeMarkdownSummary: includeMarkdown,
+      parquetExport,
+    })
+    setResult(res)
+  }
+
+  const isValid = !!kbName && !!region && !!keyId && !!applicationKey && !!bucket
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <SelectField
+        label="Knowledge base"
+        value={kbName}
+        onChange={setKbName}
+        options={kbs.map((k) => ({ value: k.name, label: k.name }))}
+      />
+      <TextField
+        label="Region"
+        value={region}
+        onChange={setRegion}
+        placeholder="us-west-004"
+        hint="B2 region code (e.g. us-west-004, eu-central-003)."
+        required
+      />
+      <TextField
+        label="Application Key ID"
+        value={keyId}
+        onChange={setKeyId}
+        placeholder="B2 application key ID"
+        required
+      />
+      <TextField
+        label="Application Key"
+        value={applicationKey}
+        onChange={setApplicationKey}
+        placeholder="B2 application key (secret)"
+        required
+      />
+      <TextField
+        label="Bucket"
+        value={bucket}
+        onChange={setBucket}
+        placeholder="my-b2-bucket"
+        required
+      />
+
+      <SectionDivider label="Options" />
+
+      <TextField
+        label="Prefix (optional)"
+        value={prefix}
+        onChange={setPrefix}
+        placeholder="exports/"
+      />
+      <CheckField label="Include retrieval JSON artifact" checked={includeRetrieval} onChange={setIncludeRetrieval} />
+      <CheckField label="Include markdown summary" checked={includeMarkdown} onChange={setIncludeMarkdown} />
+      <CheckField label="Export Parquet (requires pyarrow)" checked={parquetExport} onChange={setParquetExport} />
+      <CheckField label="Dry run (plan only, do not upload)" checked={dryRun} onChange={setDryRun} />
+
+      {exportMut.isError && (
+        <ErrorBanner message={exportMut.error?.message ?? 'Export failed'} />
+      )}
+
+      {result && <ObjectStorageResult result={result} />}
+
+      <div className="flex gap-3 pt-1">
+        <Button type="submit" disabled={exportMut.isPending || !isValid}>
+          {exportMut.isPending ? 'Exporting…' : dryRun ? 'Dry run' : 'Export to B2'}
+        </Button>
+        {result && (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => { setResult(null); exportMut.reset() }}
+          >
+            Reset
+          </Button>
+        )}
+      </div>
+    </form>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-type SinkTab = 'agent_access' | 'webhook'
+type SinkTab = 'agent_access' | 'webhook' | 'cloudflare_r2' | 'backblaze_b2'
 
 export default function Sinks() {
   const { data: kbs, isLoading } = useKnowledgeBases()
@@ -244,6 +522,8 @@ export default function Sinks() {
   const TABS: { id: SinkTab; label: string }[] = [
     { id: 'agent_access', label: 'Agent Access (MCP)' },
     { id: 'webhook', label: 'Webhook' },
+    { id: 'cloudflare_r2', label: 'Cloudflare R2' },
+    { id: 'backblaze_b2', label: 'Backblaze B2' },
   ]
 
   return (
@@ -285,6 +565,8 @@ export default function Sinks() {
           <div className="p-6">
             {tab === 'agent_access' && <AgentAccessForm kbs={kbList} />}
             {tab === 'webhook' && <WebhookForm kbs={kbList} />}
+            {tab === 'cloudflare_r2' && <CloudflareR2Form kbs={kbList} />}
+            {tab === 'backblaze_b2' && <BackblazeB2Form kbs={kbList} />}
           </div>
         </div>
       )}
