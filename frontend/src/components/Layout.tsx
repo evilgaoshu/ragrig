@@ -10,6 +10,7 @@ const OPERATE: NavItem[] = [
   { label: 'Overview', to: '/' },
   { label: 'Knowledge Bases', to: '/knowledge-bases' },
   { label: 'Sources', to: '/sources' },
+  { label: 'Sinks', to: '/sinks' },
   { label: 'Setup Wizard', to: '/wizard' },
   { label: 'Pipelines', to: '/pipelines' },
   { label: 'Upload', to: '/upload' },

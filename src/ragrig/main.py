@@ -55,6 +55,8 @@ from ragrig.local_pilot import (
 from ragrig.local_pilot.model_config import resolve_env_config
 from ragrig.observability import summarize_pipeline_cost_latency
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
+from ragrig.plugins.sinks.agent_access.connector import export_to_agent_endpoint
+from ragrig.plugins.sinks.webhook.connector import export_to_webhook
 from ragrig.processing_profile import (
     ProfileStatus,
     TaskType,
@@ -312,6 +314,27 @@ class WebsiteImportRequest(BaseModel):
     cookies: dict[str, str] | None = None
     basic_auth_username: str | None = None
     basic_auth_password: str | None = None
+
+
+class AgentAccessExportRequest(BaseModel):
+    endpoint_url: str
+    api_key: str
+    hmac_secret: str | None = None
+    batch_size: int = 100
+    timeout_seconds: float = 30.0
+    verify_tls: bool = True
+    dry_run: bool = False
+
+
+class WebhookExportRequest(BaseModel):
+    endpoint_url: str
+    hmac_secret: str | None = None
+    format: str = "ndjson"
+    extra_headers: dict[str, str] | None = None
+    batch_size: int = 200
+    timeout_seconds: float = 30.0
+    verify_tls: bool = True
+    dry_run: bool = False
 
 
 class LocalPilotAnswerSmokeRequest(BaseModel):
@@ -2239,6 +2262,72 @@ def create_app(
         if result is None:
             return JSONResponse(status_code=404, content={"error": "ingestion_dag_not_found"})
         return result
+
+    # ── Sink export endpoints ─────────────────────────────────────────────────
+    @app.post("/knowledge-bases/{kb_name}/sink-export/agent-access", response_model=None)
+    def knowledge_base_sink_agent_access(
+        kb_name: str,
+        request: AgentAccessExportRequest,
+        session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
+    ) -> JSONResponse:
+        try:
+            report = export_to_agent_endpoint(
+                session,
+                knowledge_base_name=kb_name,
+                endpoint_url=request.endpoint_url,
+                api_key=request.api_key,
+                hmac_secret=request.hmac_secret,
+                batch_size=request.batch_size,
+                timeout_seconds=request.timeout_seconds,
+                verify_tls=request.verify_tls,
+                dry_run=request.dry_run,
+            )
+        except ValueError as exc:
+            return JSONResponse(status_code=404, content={"error": str(exc)})
+        return JSONResponse(
+            status_code=200,
+            content={
+                "total_chunks": report.total_chunks,
+                "batches_sent": report.batches_sent,
+                "dry_run": report.dry_run,
+                "errors": report.errors,
+            },
+        )
+
+    @app.post("/knowledge-bases/{kb_name}/sink-export/webhook", response_model=None)
+    def knowledge_base_sink_webhook(
+        kb_name: str,
+        request: WebhookExportRequest,
+        session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
+    ) -> JSONResponse:
+        try:
+            report = export_to_webhook(
+                session,
+                knowledge_base_name=kb_name,
+                endpoint_url=request.endpoint_url,
+                hmac_secret=request.hmac_secret,
+                format=request.format,
+                extra_headers=request.extra_headers,
+                batch_size=request.batch_size,
+                timeout_seconds=request.timeout_seconds,
+                verify_tls=request.verify_tls,
+                dry_run=request.dry_run,
+            )
+        except ValueError as exc:
+            error_text = str(exc)
+            status = 400 if "format must be" in error_text else 404
+            return JSONResponse(status_code=status, content={"error": error_text})
+        return JSONResponse(
+            status_code=200,
+            content={
+                "total_chunks": report.total_chunks,
+                "batches_sent": report.batches_sent,
+                "dry_run": report.dry_run,
+                "errors": report.errors,
+            },
+        )
 
     # ── React SPA ──────────────────────────────────────────────────────────────
     _dist = Path(__file__).parent / "static" / "dist"

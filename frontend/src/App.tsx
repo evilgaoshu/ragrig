@@ -31,6 +31,7 @@ import Conversations from './pages/Conversations'
 import Usage from './pages/Usage'
 import Backup from './pages/Backup'
 import Team from './pages/Team'
+import Sinks from './pages/Sinks'
 import Stub from './pages/Stub'
 
 function AppRoutes() {
@@ -47,6 +48,7 @@ function AppRoutes() {
                 <Route path="/" element={<Overview />} />
                 <Route path="/knowledge-bases" element={<KnowledgeBases />} />
                 <Route path="/sources" element={<Sources />} />
+                <Route path="/sinks" element={<Sinks />} />
                 <Route path="/pipelines" element={<Pipelines />} />
                 <Route path="/retrieval-lab" element={<RetrievalLab />} />
 
