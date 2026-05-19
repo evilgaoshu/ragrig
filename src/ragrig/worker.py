@@ -13,20 +13,26 @@ import asyncio
 import logging
 from typing import Any
 
-from ragrig.tasks import TaskExecutor, TaskJob
+from ragrig.tasks import TaskDispatch, TaskExecutor, TaskJob, run_serialized_task
 
 logger = logging.getLogger(__name__)
 
 _JOB_FUNCTION = "ragrig.worker.run_job"
 
 
-async def run_job(ctx: dict, serialized_job: bytes) -> None:
-    """ARQ job entry-point — deserializes and calls the pickled callable."""
-    import pickle
-
-    job: TaskJob = pickle.loads(serialized_job)  # noqa: S301
+async def run_job(ctx: dict, dispatch_payload: dict[str, Any]) -> None:
+    """ARQ job entry-point — runs a structured, persisted task dispatch."""
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, job)
+    await loop.run_in_executor(None, _run_dispatch, dispatch_payload)
+
+
+def _run_dispatch(dispatch_payload: dict[str, Any]) -> None:
+    from ragrig.db.session import SessionLocal
+
+    run_serialized_task(
+        session_factory=SessionLocal,
+        dispatch=TaskDispatch.from_dict(dispatch_payload),
+    )
 
 
 class ArqTaskExecutor(TaskExecutor):
@@ -60,12 +66,12 @@ class ArqTaskExecutor(TaskExecutor):
         return self._pool
 
     def submit(self, job: TaskJob) -> None:
-        import pickle
+        raise RuntimeError("ARQ task backend requires structured task dispatch")
 
+    def submit_task(self, dispatch: TaskDispatch, fallback: TaskJob) -> None:
         pool = self._get_pool()
-        serialized = pickle.dumps(job)
         assert self._loop is not None
-        self._loop.run_until_complete(pool.enqueue_job(_JOB_FUNCTION, serialized))
+        self._loop.run_until_complete(pool.enqueue_job(_JOB_FUNCTION, dispatch.to_dict()))
 
     def shutdown(self, wait: bool = True) -> None:
         if self._pool is not None and self._loop is not None:

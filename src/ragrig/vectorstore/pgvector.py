@@ -218,6 +218,7 @@ class PgVectorBackend:
                 provider=profile["provider"],
                 model=profile["model"],
                 dimensions=profile["dimensions"],
+                knowledge_base_id=profile["knowledge_base_id"],
             )
             collections.append(
                 VectorCollectionStatus(

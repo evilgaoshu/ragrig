@@ -32,6 +32,7 @@ from ragrig.db.engine import create_db_engine
 from ragrig.db.session import get_session as _get_session_default
 from ragrig.deps import (
     AuthContext,
+    get_auth_context,
     get_workspace_id_from_auth,
     require_admin_auth,
     require_write_auth,
@@ -80,6 +81,7 @@ from ragrig.repositories import (
     get_or_create_knowledge_base,
     list_audit_events,
     list_kb_permissions,
+    resolve_effective_kb_role,
     set_kb_permission,
 )
 from ragrig.retrieval import (
@@ -553,6 +555,105 @@ def create_app(
     ) -> "uuid.UUID":
         return workspace_id
 
+    role_order = {"owner": 3, "admin": 2, "editor": 1, "viewer": 0, "none": -1}
+
+    def _role_meets(role: str | None, minimum: str) -> bool:
+        return role_order.get(role or "none", -1) >= role_order.get(minimum, 999)
+
+    def _knowledge_base_access_error(
+        *,
+        session: Session,
+        auth: AuthContext,
+        knowledge_base_id: uuid.UUID,
+        minimum: str,
+        allow_anonymous_reader: bool = False,
+    ) -> JSONResponse | None:
+        if not active_settings.ragrig_auth_enabled:
+            return None
+        if auth.is_anonymous:
+            if allow_anonymous_reader and minimum == "viewer":
+                return None
+            return JSONResponse(
+                status_code=401,
+                content={"error": "authentication required"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if auth.user_id is None:
+            if minimum == "viewer":
+                return None
+            return JSONResponse(
+                status_code=403,
+                content={"error": f"{minimum} role or above required"},
+            )
+        if auth.role is None:
+            return JSONResponse(
+                status_code=403,
+                content={"error": f"{minimum} role or above required"},
+            )
+        role = resolve_effective_kb_role(
+            session,
+            user_id=auth.user_id,
+            knowledge_base_id=knowledge_base_id,
+            workspace_role=auth.role,
+        )
+        if not _role_meets(role, minimum):
+            return JSONResponse(
+                status_code=403,
+                content={"error": f"{minimum} role or above required for this knowledge base"},
+            )
+        return None
+
+    def _resolve_acl_context(
+        *,
+        auth: AuthContext,
+        requested_principal_ids: list[str] | None,
+        requested_enforce_acl: bool,
+    ) -> tuple[list[str] | None, bool]:
+        if not active_settings.ragrig_auth_enabled:
+            return requested_principal_ids, requested_enforce_acl
+        return auth.principal_ids, True
+
+    def _knowledge_base_role_error_by_name(
+        *,
+        session: Session,
+        auth: AuthContext,
+        kb_name: str,
+        workspace_id: uuid.UUID,
+        minimum: str,
+    ) -> JSONResponse | None:
+        kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
+        if kb is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"knowledge base '{kb_name}' not found"},
+            )
+        return _knowledge_base_access_error(
+            session=session,
+            auth=auth,
+            knowledge_base_id=kb.id,
+            minimum=minimum,
+        )
+
+    def _resolve_evaluation_path(
+        raw_path: str | None,
+        *,
+        default_path: Path,
+        allowed_roots: tuple[Path, ...],
+    ) -> tuple[Path | None, JSONResponse | None]:
+        path = Path(raw_path) if raw_path else default_path
+        if not active_settings.ragrig_auth_enabled:
+            return path, None
+        resolved = path.resolve()
+        for root in allowed_roots:
+            root_resolved = root.resolve()
+            if resolved == root_resolved or root_resolved in resolved.parents:
+                return path, None
+        allowed = ", ".join(str(root) for root in allowed_roots)
+        return None, JSONResponse(
+            status_code=400,
+            content={"error": f"evaluation path must be under one of: {allowed}"},
+        )
+
     def _record_usage_for_request(
         session: Session,
         workspace_id: uuid.UUID,
@@ -669,8 +770,15 @@ def create_app(
     @app.get("/knowledge-bases", response_model=None)
     def knowledge_bases(
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, list[dict[str, Any]]]:
-        return {"items": list_knowledge_bases(session, settings=active_settings)}
+        return {
+            "items": list_knowledge_bases(
+                session,
+                settings=active_settings,
+                workspace_id=workspace_id,
+            )
+        }
 
     @app.post("/knowledge-bases", response_model=None)
     def create_knowledge_base(
@@ -791,21 +899,24 @@ def create_app(
     @app.get("/sources", response_model=None)
     def sources(
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, list[dict[str, Any]]]:
-        return {"items": list_sources(session)}
+        return {"items": list_sources(session, workspace_id=workspace_id)}
 
     @app.get("/pipeline-runs", response_model=None)
     def pipeline_runs(
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, list[dict[str, Any]]]:
-        return {"items": list_pipeline_runs(session)}
+        return {"items": list_pipeline_runs(session, workspace_id=workspace_id)}
 
     @app.get("/pipeline-runs/{pipeline_run_id}", response_model=None)
     def pipeline_run_detail(
         pipeline_run_id: str,
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, Any] | JSONResponse:
-        detail = get_pipeline_run_detail(session, pipeline_run_id)
+        detail = get_pipeline_run_detail(session, pipeline_run_id, workspace_id=workspace_id)
         if detail is None:
             return JSONResponse(status_code=404, content={"error": "pipeline_run_not_found"})
         return detail
@@ -814,8 +925,15 @@ def create_app(
     def pipeline_run_items(
         pipeline_run_id: str,
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, list[dict[str, Any]]]:
-        return {"items": list_pipeline_run_items(session, pipeline_run_id)}
+        return {
+            "items": list_pipeline_run_items(
+                session,
+                pipeline_run_id,
+                workspace_id=workspace_id,
+            )
+        }
 
     @app.get("/observability/cost-latency", response_model=None)
     def cost_latency_observability(
@@ -868,12 +986,14 @@ def create_app(
     def ingestion_dag_run(
         request: IngestionDagRequest,
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, Any] | JSONResponse:
         try:
             with get_session_factory()() as session:
                 run = create_ingestion_dag_run(
                     session,
                     knowledge_base_name=request.knowledge_base,
+                    workspace_id=workspace_id,
                     root_path=Path(request.root_path),
                     include_patterns=request.include_patterns,
                     exclude_patterns=request.exclude_patterns,
@@ -885,7 +1005,11 @@ def create_app(
                 session_factory=get_session_factory(),
                 task_executor=active_task_executor,
                 task_type="pipeline_dag_ingestion",
-                payload_json={**request.model_dump(), "pipeline_run_id": pipeline_run_id},
+                payload_json={
+                    **request.model_dump(),
+                    "workspace_id": str(workspace_id),
+                    "pipeline_run_id": pipeline_run_id,
+                },
                 runner=lambda: run_ingestion_dag_task(
                     session_factory=get_session_factory(),
                     pipeline_run_id=pipeline_run_id,
@@ -904,8 +1028,9 @@ def create_app(
     @app.get("/documents", response_model=None)
     def documents(
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, list[dict[str, Any]]]:
-        return {"items": list_documents(session)}
+        return {"items": list_documents(session, workspace_id=workspace_id)}
 
     @app.get("/understanding-runs", response_model=None)
     def web_understanding_runs(
@@ -991,8 +1116,15 @@ def create_app(
     def document_version_chunks(
         document_version_id: str,
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, list[dict[str, Any]]]:
-        return {"items": list_document_version_chunks(session, document_version_id)}
+        return {
+            "items": list_document_version_chunks(
+                session,
+                document_version_id,
+                workspace_id=workspace_id,
+            )
+        }
 
     @app.post("/document-versions/{document_version_id}/understand", response_model=None)
     def understand_document_version(
@@ -1418,13 +1550,22 @@ def create_app(
         request: WebsiteImportRequest,
         session: Annotated[Session, Depends(get_session)],
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> JSONResponse:
-        kb = get_knowledge_base_by_name(session, kb_name)
+        kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
         if kb is None:
             return JSONResponse(
                 status_code=404,
                 content={"error": f"knowledge base '{kb_name}' not found"},
             )
+        access_error = _knowledge_base_access_error(
+            session=session,
+            auth=_auth,
+            knowledge_base_id=kb.id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
 
         try:
             result = import_website_pages(
@@ -1451,12 +1592,20 @@ def create_app(
         workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> JSONResponse:
         rate_limiter.check_ingest(str(workspace_id))
-        kb = get_knowledge_base_by_name(session, kb_name)
+        kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
         if kb is None:
             return JSONResponse(
                 status_code=404,
                 content={"error": f"knowledge base '{kb_name}' not found"},
             )
+        access_error = _knowledge_base_access_error(
+            session=session,
+            auth=_auth,
+            knowledge_base_id=kb.id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
 
         if not files:
             return JSONResponse(
@@ -1492,6 +1641,7 @@ def create_app(
             session,
             kb_name=kb_name,
             staged_files=accepted.staged_files,
+            workspace_id=workspace_id,
         )
         task_id = enqueue_task(
             session_factory=get_session_factory(),
@@ -1499,6 +1649,7 @@ def create_app(
             task_type="knowledge_base_upload",
             payload_json={
                 "knowledge_base": kb_name,
+                "workspace_id": str(workspace_id),
                 "pipeline_run_id": pipeline_run_id,
                 "staged_files": accepted.staged_files,
             },
@@ -1507,6 +1658,7 @@ def create_app(
                 kb_name=kb_name,
                 pipeline_run_id=pipeline_run_id,
                 staged_files=accepted.staged_files,
+                workspace_id=workspace_id,
             ),
         )
 
@@ -1527,8 +1679,46 @@ def create_app(
         request: RetrievalSearchRequest,
         session: Annotated[Session, Depends(get_session)],
         workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        auth: Annotated[AuthContext, Depends(get_auth_context)],
     ) -> dict[str, Any] | JSONResponse:
         rate_limiter.check_search(str(workspace_id))
+        if active_settings.ragrig_auth_enabled:
+            if not request.query.strip():
+                return JSONResponse(
+                    status_code=400,
+                    content=_serialize_error(
+                        EmptyQueryError("Query must not be empty", details={"query": request.query})
+                    ),
+                )
+            kb = get_knowledge_base_by_name(
+                session,
+                request.knowledge_base,
+                workspace_id=workspace_id,
+            )
+            if kb is None:
+                return JSONResponse(
+                    status_code=404,
+                    content=_serialize_error(
+                        KnowledgeBaseNotFoundError(
+                            f"Knowledge base '{request.knowledge_base}' was not found",
+                            details={"knowledge_base": request.knowledge_base},
+                        )
+                    ),
+                )
+            access_error = _knowledge_base_access_error(
+                session=session,
+                auth=auth,
+                knowledge_base_id=kb.id,
+                minimum="viewer",
+                allow_anonymous_reader=True,
+            )
+            if access_error is not None:
+                return access_error
+        principal_ids, enforce_acl = _resolve_acl_context(
+            auth=auth,
+            requested_principal_ids=request.principal_ids,
+            requested_enforce_acl=request.enforce_acl,
+        )
         try:
             vector_backend = resolve_vector_backend()
             report = search_knowledge_base(
@@ -1540,8 +1730,9 @@ def create_app(
                 model=request.model,
                 dimensions=request.dimensions,
                 vector_backend=vector_backend,
-                principal_ids=request.principal_ids,
-                enforce_acl=request.enforce_acl,
+                principal_ids=principal_ids,
+                enforce_acl=enforce_acl,
+                workspace_id=workspace_id,
                 mode=request.mode,
                 lexical_weight=request.lexical_weight,
                 vector_weight=request.vector_weight,
@@ -1614,25 +1805,44 @@ def create_app(
     def permission_preview(
         request: PermissionPreviewRequest,
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, Any]:
-        return build_permission_preview(session, principal_ids=request.principal_ids)
+        return build_permission_preview(
+            session,
+            principal_ids=request.principal_ids,
+            workspace_id=workspace_id,
+        )
 
     @app.post("/evaluations/runs", response_model=None)
     def evaluation_run(
         request: EvaluationRunRequest,
         session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
     ) -> dict[str, Any] | JSONResponse:
         """Run a golden question evaluation against a knowledge base."""
-        from pathlib import Path
-
-        golden_path = Path(request.golden_path)
+        golden_path, path_error = _resolve_evaluation_path(
+            request.golden_path,
+            default_path=Path("evaluation_runs"),
+            allowed_roots=(Path("evaluation_runs"), Path("evaluation_baselines"), Path("tests")),
+        )
+        if path_error is not None:
+            return path_error
+        assert golden_path is not None
         if not golden_path.exists():
             return JSONResponse(
                 status_code=404,
                 content={"error": f"Golden question file not found: {golden_path}"},
             )
 
-        baseline_path = Path(request.baseline_path) if request.baseline_path else None
+        baseline_path: Path | None = None
+        if request.baseline_path:
+            baseline_path, path_error = _resolve_evaluation_path(
+                request.baseline_path,
+                default_path=Path("evaluation_baselines"),
+                allowed_roots=(Path("evaluation_baselines"), Path("evaluation_runs")),
+            )
+            if path_error is not None:
+                return path_error
         try:
             run = run_evaluation(
                 session=session,
@@ -1655,10 +1865,18 @@ def create_app(
     @app.get("/evaluations/runs/{run_id}", response_model=None)
     def evaluation_run_detail(
         run_id: str,
+        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
         store_dir: str | None = None,
     ) -> dict[str, Any] | JSONResponse:
         """Get details for a specific evaluation run."""
-        store_path = Path(store_dir) if store_dir else Path("evaluation_runs")
+        store_path, path_error = _resolve_evaluation_path(
+            store_dir,
+            default_path=Path("evaluation_runs"),
+            allowed_roots=(Path("evaluation_runs"),),
+        )
+        if path_error is not None:
+            return path_error
+        assert store_path is not None
         run = load_run_from_store(run_id, store_dir=store_path)
         if run is None:
             return JSONResponse(
@@ -1669,21 +1887,37 @@ def create_app(
 
     @app.get("/evaluations", response_model=None)
     def evaluation_runs_list(
+        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
         store_dir: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | JSONResponse:
         """List all evaluation runs."""
-        store_path = Path(store_dir) if store_dir else Path("evaluation_runs")
+        store_path, path_error = _resolve_evaluation_path(
+            store_dir,
+            default_path=Path("evaluation_runs"),
+            allowed_roots=(Path("evaluation_runs"),),
+        )
+        if path_error is not None:
+            return path_error
+        assert store_path is not None
         runs = list_runs_from_store(store_dir=store_path)
         return build_evaluation_list_report(runs)
 
     @app.get("/evaluations/baselines", response_model=None)
     def evaluation_baselines_list(
+        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
         baseline_dir: str | None = None,
     ) -> dict[str, Any] | JSONResponse:
         """List all baselines and current baseline id."""
         from ragrig.evaluation.baseline import list_baselines
 
-        path = Path(baseline_dir) if baseline_dir else Path("evaluation_baselines")
+        path, path_error = _resolve_evaluation_path(
+            baseline_dir,
+            default_path=Path("evaluation_baselines"),
+            allowed_roots=(Path("evaluation_baselines"),),
+        )
+        if path_error is not None:
+            return path_error
+        assert path is not None
         try:
             return list_baselines(baseline_dir=path)
         except Exception as exc:
@@ -1697,8 +1931,46 @@ def create_app(
         request: AnswerRequest,
         session: Annotated[Session, Depends(get_session)],
         workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        auth: Annotated[AuthContext, Depends(get_auth_context)],
     ) -> dict[str, Any] | JSONResponse:
         rate_limiter.check_search(str(workspace_id))
+        if active_settings.ragrig_auth_enabled:
+            if not request.query.strip():
+                return JSONResponse(
+                    status_code=400,
+                    content=_serialize_error(
+                        EmptyQueryError("Query must not be empty", details={"query": request.query})
+                    ),
+                )
+            kb = get_knowledge_base_by_name(
+                session,
+                request.knowledge_base,
+                workspace_id=workspace_id,
+            )
+            if kb is None:
+                return JSONResponse(
+                    status_code=404,
+                    content=_serialize_error(
+                        KnowledgeBaseNotFoundError(
+                            f"Knowledge base '{request.knowledge_base}' was not found",
+                            details={"knowledge_base": request.knowledge_base},
+                        )
+                    ),
+                )
+            access_error = _knowledge_base_access_error(
+                session=session,
+                auth=auth,
+                knowledge_base_id=kb.id,
+                minimum="viewer",
+                allow_anonymous_reader=True,
+            )
+            if access_error is not None:
+                return access_error
+        principal_ids, enforce_acl = _resolve_acl_context(
+            auth=auth,
+            requested_principal_ids=request.principal_ids,
+            requested_enforce_acl=request.enforce_acl,
+        )
         try:
             provider_config = None
             if request.config is not None:
@@ -1746,8 +2018,9 @@ def create_app(
                 answer_provider_config=answer_provider_config,
                 dimensions=request.dimensions,
                 vector_backend=vector_backend,
-                principal_ids=request.principal_ids,
-                enforce_acl=request.enforce_acl,
+                principal_ids=principal_ids,
+                enforce_acl=enforce_acl,
+                workspace_id=workspace_id,
             )
         except ModelConfigError as exc:
             return JSONResponse(
@@ -2138,15 +2411,31 @@ def create_app(
         request: SourceConfigSaveRequest,
         session: Annotated[Session, Depends(get_session)],
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, Any] | JSONResponse:
         """Validate and save a source configuration."""
         try:
+            existing_kb = get_knowledge_base_by_name(
+                session,
+                request.knowledge_base,
+                workspace_id=workspace_id,
+            )
+            if existing_kb is not None:
+                access_error = _knowledge_base_access_error(
+                    session=session,
+                    auth=_auth,
+                    knowledge_base_id=existing_kb.id,
+                    minimum="editor",
+                )
+                if access_error is not None:
+                    return access_error
             result = save_source_config(
                 session,
                 plugin_id=request.plugin_id,
                 config=request.config,
                 knowledge_base_name=request.knowledge_base,
                 operator=request.operator,
+                workspace_id=workspace_id,
             )
         except Exception as exc:
             return JSONResponse(
@@ -2195,6 +2484,8 @@ def create_app(
     def source_run_ingest(
         request: SourceRunIngestRequest,
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        session: Annotated[Session, Depends(get_session)],
     ) -> dict[str, Any] | JSONResponse:
         """Enqueue source ingestion as a background task.
 
@@ -2216,6 +2507,20 @@ def create_app(
             )
 
         try:
+            existing_kb = get_knowledge_base_by_name(
+                session,
+                request.knowledge_base,
+                workspace_id=workspace_id,
+            )
+            if existing_kb is not None:
+                access_error = _knowledge_base_access_error(
+                    session=session,
+                    auth=_auth,
+                    knowledge_base_id=existing_kb.id,
+                    minimum="editor",
+                )
+                if access_error is not None:
+                    return access_error
             task_id = enqueue_task(
                 session_factory=get_session_factory(),
                 task_executor=active_task_executor,
@@ -2223,6 +2528,8 @@ def create_app(
                 payload_json={
                     "plugin_id": request.plugin_id,
                     "knowledge_base": request.knowledge_base,
+                    "workspace_id": str(workspace_id),
+                    "config": request.config,
                     "operator": request.operator,
                 },
                 runner=lambda: run_source_ingest_task(
@@ -2231,6 +2538,7 @@ def create_app(
                     config=request.config,
                     knowledge_base_name=request.knowledge_base,
                     operator=request.operator,
+                    workspace_id=workspace_id,
                 ),
             )
         except Exception as exc:
@@ -2246,9 +2554,10 @@ def create_app(
     def pipeline_run_item_detail(
         item_id: str,
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, Any] | JSONResponse:
         """Inspect a single pipeline run item."""
-        detail = get_pipeline_run_item_detail(session, item_id)
+        detail = get_pipeline_run_item_detail(session, item_id, workspace_id=workspace_id)
         if detail is None:
             return JSONResponse(status_code=404, content={"error": "pipeline_run_item_not_found"})
         return detail
@@ -2263,6 +2572,7 @@ def create_app(
         request: RetryRequest,
         session: Annotated[Session, Depends(get_session)],
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, Any] | JSONResponse:
         """Retry a single failed pipeline run item.
 
@@ -2273,6 +2583,7 @@ def create_app(
             session,
             item_id=item_id,
             operator=request.operator,
+            workspace_id=workspace_id,
         )
         if result is None:
             return JSONResponse(status_code=404, content={"error": "pipeline_run_item_not_found"})
@@ -2284,6 +2595,7 @@ def create_app(
         request: RetryRequest,
         session: Annotated[Session, Depends(get_session)],
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, Any] | JSONResponse:
         """Retry all failed items in a pipeline run.
 
@@ -2295,6 +2607,7 @@ def create_app(
             run_id=run_id,
             operator=request.operator,
             new_snapshot=request.new_snapshot,
+            workspace_id=workspace_id,
         )
         if result is None:
             return JSONResponse(status_code=404, content={"error": "pipeline_run_not_found"})
@@ -2305,8 +2618,9 @@ def create_app(
         run_id: str,
         session: Annotated[Session, Depends(get_session)],
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> dict[str, Any] | JSONResponse:
-        result = resume_pipeline_dag(session, run_id=run_id)
+        result = resume_pipeline_dag(session, run_id=run_id, workspace_id=workspace_id)
         if result is None:
             return JSONResponse(status_code=404, content={"error": "ingestion_dag_not_found"})
         return result
@@ -2318,13 +2632,24 @@ def create_app(
         request: AgentAccessExportRequest,
         session: Annotated[Session, Depends(get_session)],
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> JSONResponse:
+        access_error = _knowledge_base_role_error_by_name(
+            session=session,
+            auth=_auth,
+            kb_name=kb_name,
+            workspace_id=workspace_id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
         try:
             report = export_to_agent_endpoint(
                 session,
                 knowledge_base_name=kb_name,
                 endpoint_url=request.endpoint_url,
                 api_key=request.api_key,
+                workspace_id=workspace_id,
                 hmac_secret=request.hmac_secret,
                 batch_size=request.batch_size,
                 timeout_seconds=request.timeout_seconds,
@@ -2349,12 +2674,23 @@ def create_app(
         request: WebhookExportRequest,
         session: Annotated[Session, Depends(get_session)],
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> JSONResponse:
+        access_error = _knowledge_base_role_error_by_name(
+            session=session,
+            auth=_auth,
+            kb_name=kb_name,
+            workspace_id=workspace_id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
         try:
             report = export_to_webhook(
                 session,
                 knowledge_base_name=kb_name,
                 endpoint_url=request.endpoint_url,
+                workspace_id=workspace_id,
                 hmac_secret=request.hmac_secret,
                 format=request.format,
                 extra_headers=request.extra_headers,
@@ -2383,7 +2719,17 @@ def create_app(
         request: ObjectStorageExportRequest,
         session: Annotated[Session, Depends(get_session)],
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> JSONResponse:
+        access_error = _knowledge_base_role_error_by_name(
+            session=session,
+            auth=_auth,
+            kb_name=kb_name,
+            workspace_id=workspace_id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
         config: dict[str, Any] = {
             "bucket": request.bucket,
             "path_template": request.path_template,
@@ -2404,7 +2750,12 @@ def create_app(
         config["use_path_style"] = request.use_path_style
         config["verify_tls"] = request.verify_tls
         try:
-            report = export_to_object_storage(session, knowledge_base_name=kb_name, config=config)
+            report = export_to_object_storage(
+                session,
+                knowledge_base_name=kb_name,
+                workspace_id=workspace_id,
+                config=config,
+            )
         except ValueError as exc:
             return JSONResponse(status_code=404, content={"error": str(exc)})
         return JSONResponse(
@@ -2426,7 +2777,17 @@ def create_app(
         request: CloudflareR2ExportRequest,
         session: Annotated[Session, Depends(get_session)],
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> JSONResponse:
+        access_error = _knowledge_base_role_error_by_name(
+            session=session,
+            auth=_auth,
+            kb_name=kb_name,
+            workspace_id=workspace_id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
         r2_env = {
             "CF_R2_ACCESS_KEY_ID": request.access_key_id,
             "CF_R2_SECRET_ACCESS_KEY": request.secret_access_key,
@@ -2448,7 +2809,11 @@ def create_app(
             config["jurisdiction"] = request.jurisdiction
         try:
             report = export_to_cloudflare_r2(
-                session, knowledge_base_name=kb_name, config=config, env=r2_env
+                session,
+                knowledge_base_name=kb_name,
+                workspace_id=workspace_id,
+                config=config,
+                env=r2_env,
             )
         except ValueError as exc:
             return JSONResponse(status_code=404, content={"error": str(exc)})
@@ -2471,7 +2836,17 @@ def create_app(
         request: BackblazeB2ExportRequest,
         session: Annotated[Session, Depends(get_session)],
         _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     ) -> JSONResponse:
+        access_error = _knowledge_base_role_error_by_name(
+            session=session,
+            auth=_auth,
+            kb_name=kb_name,
+            workspace_id=workspace_id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
         b2_env = {
             "B2_APPLICATION_KEY_ID": request.key_id,
             "B2_APPLICATION_KEY": request.application_key,
@@ -2491,7 +2866,11 @@ def create_app(
         }
         try:
             report = export_to_backblaze_b2(
-                session, knowledge_base_name=kb_name, config=config, env=b2_env
+                session,
+                knowledge_base_name=kb_name,
+                workspace_id=workspace_id,
+                config=config,
+                env=b2_env,
             )
         except ValueError as exc:
             return JSONResponse(status_code=404, content={"error": str(exc)})

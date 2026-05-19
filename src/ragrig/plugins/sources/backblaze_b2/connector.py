@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING, Mapping
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,7 @@ def ingest_backblaze_b2_source(
     *,
     knowledge_base_name: str,
     config: dict[str, object],
+    workspace_id: UUID | None = None,
     env: Mapping[str, str] | None = None,
     client=None,
 ) -> IngestionReport:
@@ -62,6 +64,7 @@ def ingest_backblaze_b2_source(
     return _run_s3_compatible_ingest(
         session,
         knowledge_base_name=knowledge_base_name,
+        workspace_id=workspace_id,
         source_kind="backblaze_b2",
         run_type="b2_ingest",
         bucket=str(validated["bucket"]),

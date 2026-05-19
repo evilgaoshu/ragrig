@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Mapping
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -52,6 +53,7 @@ def ingest_fileshare_source(
     *,
     knowledge_base_name: str,
     config: dict[str, object],
+    workspace_id: UUID | None = None,
     env: Mapping[str, str] | None = None,
     client: FileshareClientProtocol | None = None,
     dry_run: bool = False,
@@ -74,7 +76,14 @@ def ingest_fileshare_source(
     secrets = _resolve_secrets(validated, env=env or os.environ)
     active_client = client or _build_client(validated, secrets=secrets)
     source_uri = _source_uri(validated)
-    knowledge_base = get_or_create_knowledge_base(session, knowledge_base_name)
+    if workspace_id is None:
+        knowledge_base = get_or_create_knowledge_base(session, knowledge_base_name)
+    else:
+        knowledge_base = get_or_create_knowledge_base(
+            session,
+            knowledge_base_name,
+            workspace_id=workspace_id,
+        )
     source = get_or_create_source(
         session,
         knowledge_base_id=knowledge_base.id,

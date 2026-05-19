@@ -35,6 +35,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ragrig.answer import (
@@ -42,8 +43,11 @@ from ragrig.answer import (
     ProviderUnavailableError,
     generate_answer,
 )
+from ragrig.config import Settings, get_settings
+from ragrig.db.models import KnowledgeBase
 from ragrig.db.session import get_session
 from ragrig.deps import AuthContext, get_auth_context
+from ragrig.repositories import resolve_effective_kb_role
 from ragrig.retrieval import (
     EmbeddingProfileMismatchError,
     EmptyQueryError,
@@ -53,6 +57,7 @@ from ragrig.retrieval import (
 )
 
 router = APIRouter(tags=["openai-compat"])
+_ROLE_ORDER = {"owner": 3, "admin": 2, "editor": 1, "viewer": 0, "none": -1}
 
 
 class ChatMessage(BaseModel):
@@ -103,6 +108,10 @@ def _completion_id() -> str:
 
 def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
+
+
+def _role_meets(role: str | None, minimum: str) -> bool:
+    return _ROLE_ORDER.get(role or "none", -1) >= _ROLE_ORDER.get(minimum, 999)
 
 
 def _format_completion(
@@ -226,6 +235,7 @@ def chat_completions(
     request: ChatCompletionRequest,
     session: Annotated[Session, Depends(get_session)],
     _auth: Annotated[AuthContext, Depends(get_auth_context)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> Any:
     try:
         query = _last_user_query(request.messages)
@@ -243,6 +253,43 @@ def chat_completions(
 
     kb_name, provider, model_name = _parse_model(request.model)
     top_k = request.top_k or 5
+    kb = session.scalar(
+        select(KnowledgeBase)
+        .where(KnowledgeBase.workspace_id == _auth.workspace_id)
+        .where(KnowledgeBase.name == kb_name)
+        .limit(1)
+    )
+    if kb is None:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": {
+                    "message": f"knowledge base '{kb_name}' not found",
+                    "type": "not_found",
+                    "code": "knowledge_base_not_found",
+                }
+            },
+        )
+    if settings.ragrig_auth_enabled and _auth.user_id is not None and _auth.role is not None:
+        effective_role = resolve_effective_kb_role(
+            session,
+            user_id=_auth.user_id,
+            knowledge_base_id=kb.id,
+            workspace_role=_auth.role,
+        )
+        if not _role_meets(effective_role, "viewer"):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": {
+                        "message": "viewer role or above required for this knowledge base",
+                        "type": "forbidden",
+                        "code": "knowledge_base_forbidden",
+                    }
+                },
+            )
+    principal_ids = None if not settings.ragrig_auth_enabled else _auth.principal_ids
+    enforce_acl = request.enforce_acl if not settings.ragrig_auth_enabled else True
 
     try:
         report = generate_answer(
@@ -254,7 +301,9 @@ def chat_completions(
             model=model_name,
             answer_provider=provider,
             answer_model=model_name,
-            enforce_acl=request.enforce_acl,
+            principal_ids=principal_ids,
+            enforce_acl=enforce_acl,
+            workspace_id=_auth.workspace_id,
         )
     except NoEvidenceError as exc:
         empty = (

@@ -42,9 +42,34 @@ _TASK_RETRY_LOCKS_GUARD = threading.Lock()
 _TASK_RETRY_LOCKS: dict[str, threading.Lock] = {}
 
 
+@dataclass(frozen=True)
+class TaskDispatch:
+    task_id: str
+    task_type: str
+    payload_json: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "task_type": self.task_type,
+            "payload_json": self.payload_json,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> TaskDispatch:
+        return cls(
+            task_id=str(payload["task_id"]),
+            task_type=str(payload["task_type"]),
+            payload_json=dict(payload.get("payload_json") or {}),
+        )
+
+
 class TaskExecutor:
     def submit(self, job: TaskJob) -> None:
         raise NotImplementedError
+
+    def submit_task(self, dispatch: TaskDispatch, fallback: TaskJob) -> None:
+        self.submit(fallback)
 
     def shutdown(self, wait: bool = True) -> None:
         raise NotImplementedError
@@ -111,53 +136,129 @@ def enqueue_task(
         task_id = str(task.id)
 
     def _wrapped() -> None:
-        _settings = get_settings()
+        run_task_payload(
+            session_factory=session_factory,
+            task_id=task_id,
+            task_type=task_type,
+            runner=runner,
+        )
+
+    dispatch = TaskDispatch(
+        task_id=task_id,
+        task_type=task_type,
+        payload_json=payload_json,
+    )
+    submit_task = getattr(task_executor, "submit_task", None)
+    if callable(submit_task):
+        submit_task(dispatch, _wrapped)
+    else:
+        task_executor.submit(_wrapped)
+    return task_id
+
+
+def run_task_payload(
+    *,
+    session_factory: Callable[[], Session],
+    task_id: str,
+    task_type: str,
+    runner: Callable[[], dict[str, Any]],
+) -> None:
+    _settings = get_settings()
+    with session_factory() as session:
+        update_task_status(
+            session,
+            task_id=task_id,
+            status="running",
+            progress={"current": 0, "total": 1, "message": "Task started."},
+        )
+        session.commit()
+    try:
+        result = runner()
+    except Exception as exc:
+        error_summary = summarize_exception(exc)
         with session_factory() as session:
             update_task_status(
                 session,
                 task_id=task_id,
-                status="running",
-                progress={"current": 0, "total": 1, "message": "Task started."},
-            )
-            session.commit()
-        try:
-            result = runner()
-        except Exception as exc:
-            error_summary = summarize_exception(exc)
-            with session_factory() as session:
-                update_task_status(
-                    session,
-                    task_id=task_id,
-                    status="failed",
-                    error=error_summary,
-                    progress={"current": 1, "total": 1, "message": "Task failed."},
-                )
-                session.commit()
-            notify_task_failure(
-                _settings,
-                task_id=task_id,
-                task_type=task_type,
+                status="failed",
                 error=error_summary,
-            )
-            return
-        with session_factory() as session:
-            update_task_status(
-                session,
-                task_id=task_id,
-                status="completed",
-                result_json=result,
-                progress={"current": 1, "total": 1, "message": "Task completed."},
+                progress={"current": 1, "total": 1, "message": "Task failed."},
             )
             session.commit()
-        notify_task_complete(
+        notify_task_failure(
             _settings,
             task_id=task_id,
             task_type=task_type,
-            summary=result if isinstance(result, dict) else None,
+            error=error_summary,
         )
+        return
+    with session_factory() as session:
+        update_task_status(
+            session,
+            task_id=task_id,
+            status="completed",
+            result_json=result,
+            progress={"current": 1, "total": 1, "message": "Task completed."},
+        )
+        session.commit()
+    notify_task_complete(
+        _settings,
+        task_id=task_id,
+        task_type=task_type,
+        summary=result if isinstance(result, dict) else None,
+    )
 
-    task_executor.submit(_wrapped)
-    return task_id
+
+def run_serialized_task(
+    *,
+    session_factory: Callable[[], Session],
+    dispatch: TaskDispatch | dict[str, Any],
+) -> None:
+    task_dispatch = (
+        dispatch if isinstance(dispatch, TaskDispatch) else TaskDispatch.from_dict(dispatch)
+    )
+    runner = _runner_for_dispatch(
+        session_factory=session_factory,
+        task_type=task_dispatch.task_type,
+        payload_json=task_dispatch.payload_json,
+    )
+    run_task_payload(
+        session_factory=session_factory,
+        task_id=task_dispatch.task_id,
+        task_type=task_dispatch.task_type,
+        runner=runner,
+    )
+
+
+def _runner_for_dispatch(
+    *,
+    session_factory: Callable[[], Session],
+    task_type: str,
+    payload_json: dict[str, Any],
+) -> Callable[[], dict[str, Any]]:
+    if task_type == "pipeline_dag_ingestion":
+        return lambda: run_ingestion_dag_task(
+            session_factory=session_factory,
+            pipeline_run_id=str(payload_json["pipeline_run_id"]),
+        )
+    if task_type == "knowledge_base_upload":
+        return lambda: run_upload_pipeline(
+            session_factory=session_factory,
+            kb_name=str(payload_json["knowledge_base"]),
+            pipeline_run_id=str(payload_json["pipeline_run_id"]),
+            staged_files=list(payload_json.get("staged_files") or []),
+            workspace_id=payload_json.get("workspace_id"),
+        )
+    if task_type == "source_ingest":
+        return lambda: run_source_ingest_task(
+            session_factory=session_factory,
+            plugin_id=str(payload_json["plugin_id"]),
+            config=dict(payload_json.get("config") or {}),
+            knowledge_base_name=str(payload_json["knowledge_base"]),
+            operator=payload_json.get("operator"),
+            workspace_id=payload_json.get("workspace_id"),
+        )
+    raise ValueError(f"unsupported serialized task type: {task_type}")
 
 
 def summarize_exception(exc: BaseException, *, max_chars: int = 2000) -> str:
@@ -329,6 +430,7 @@ def _prepare_pipeline_dag_retry(
 
     request = {
         "knowledge_base": previous_payload.get("knowledge_base", "fixture-local"),
+        "workspace_id": previous_payload.get("workspace_id"),
         "root_path": previous_payload["root_path"],
         "include_patterns": previous_payload.get("include_patterns"),
         "exclude_patterns": previous_payload.get("exclude_patterns"),
@@ -339,6 +441,9 @@ def _prepare_pipeline_dag_retry(
         run = create_ingestion_dag_run(
             session,
             knowledge_base_name=str(request["knowledge_base"]),
+            workspace_id=uuid.UUID(str(request["workspace_id"]))
+            if request.get("workspace_id") is not None
+            else None,
             root_path=Path(str(request["root_path"])),
             include_patterns=request["include_patterns"],
             exclude_patterns=request["exclude_patterns"],
@@ -369,14 +474,17 @@ def _prepare_upload_retry(
 ) -> dict[str, Any]:
     staged_files = list(previous_payload.get("staged_files") or [])
     knowledge_base = str(previous_payload["knowledge_base"])
+    workspace_id = previous_payload.get("workspace_id")
     with session_factory() as session:
         pipeline_run_id, _source_id = create_upload_pipeline_run(
             session,
             kb_name=knowledge_base,
             staged_files=staged_files,
+            workspace_id=uuid.UUID(str(workspace_id)) if workspace_id is not None else None,
         )
     payload_json = {
         "knowledge_base": knowledge_base,
+        "workspace_id": workspace_id,
         "pipeline_run_id": pipeline_run_id,
         "staged_files": staged_files,
         "retry_of": previous_task_id,
@@ -389,6 +497,7 @@ def _prepare_upload_retry(
             kb_name=knowledge_base,
             pipeline_run_id=pipeline_run_id,
             staged_files=staged_files,
+            workspace_id=workspace_id,
         ),
     }
 
@@ -605,8 +714,9 @@ def create_upload_pipeline_run(
     *,
     kb_name: str,
     staged_files: list[dict[str, str]],
+    workspace_id: uuid.UUID | None = None,
 ) -> tuple[str, str]:
-    kb = get_knowledge_base_by_name(session, kb_name)
+    kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
     if kb is None:
         raise ValueError(f"knowledge base '{kb_name}' not found")
     staging_path = str(Path(staged_files[0]["path"]).parent)
@@ -624,6 +734,7 @@ def create_upload_pipeline_run(
         config_snapshot_json={
             "source": "web_upload",
             "knowledge_base": kb_name,
+            "workspace_id": str(kb.workspace_id),
             "file_count": len(staged_files),
         },
     )
@@ -637,13 +748,17 @@ def run_upload_pipeline(
     kb_name: str,
     pipeline_run_id: str,
     staged_files: list[dict[str, str]],
+    workspace_id: uuid.UUID | str | None = None,
 ) -> dict[str, Any]:
+    workspace_uuid = uuid.UUID(str(workspace_id)) if workspace_id is not None else None
     retain_staged_files = False
+    resolved_workspace_id: uuid.UUID | None = workspace_uuid
     try:
         with session_factory() as session:
-            kb = get_knowledge_base_by_name(session, kb_name)
+            kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_uuid)
             if kb is None:
                 raise ValueError(f"knowledge base '{kb_name}' not found")
+            resolved_workspace_id = kb.workspace_id
             run = session.get(PipelineRun, uuid.UUID(pipeline_run_id))
             if run is None:
                 raise ValueError(f"pipeline run '{pipeline_run_id}' not found")
@@ -753,11 +868,13 @@ def run_upload_pipeline(
             session.commit()
 
         try:
-            with knowledge_base_index_lock(kb_name):
+            lock_key = f"{resolved_workspace_id}:{kb_name}"
+            with knowledge_base_index_lock(lock_key):
                 with session_factory() as indexing_session:
                     indexing_report = index_knowledge_base(
                         session=indexing_session,
                         knowledge_base_name=kb_name,
+                        workspace_id=resolved_workspace_id,
                     )
         except Exception as exc:
             mark_pipeline_run_failed(
@@ -805,6 +922,7 @@ def run_source_ingest_task(
     config: dict[str, Any],
     knowledge_base_name: str,
     operator: str | None = None,
+    workspace_id: uuid.UUID | str | None = None,
 ) -> dict[str, Any]:
     from ragrig.web_console import run_source_ingest
 
@@ -815,4 +933,5 @@ def run_source_ingest_task(
             config=config,
             knowledge_base_name=knowledge_base_name,
             operator=operator,
+            workspace_id=uuid.UUID(str(workspace_id)) if workspace_id is not None else None,
         )

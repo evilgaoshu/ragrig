@@ -174,11 +174,19 @@ def build_system_status(
     }
 
 
-def list_knowledge_bases(session: Session, *, settings: Settings) -> list[dict[str, Any]]:
+def list_knowledge_bases(
+    session: Session,
+    *,
+    settings: Settings,
+    workspace_id: uuid.UUID | None = None,
+) -> list[dict[str, Any]]:
     plugin_discovery = _plugin_discovery_by_id()
     vector_plugin = plugin_discovery.get("vector.qdrant")
     items: list[dict[str, Any]] = []
-    for knowledge_base in session.scalars(select(KnowledgeBase).order_by(KnowledgeBase.name)):
+    statement = select(KnowledgeBase).order_by(KnowledgeBase.name)
+    if workspace_id is not None:
+        statement = statement.where(KnowledgeBase.workspace_id == workspace_id)
+    for knowledge_base in session.scalars(statement):
         source_count = session.scalar(
             select(func.count(Source.id)).where(Source.knowledge_base_id == knowledge_base.id)
         )
@@ -225,17 +233,21 @@ def build_permission_preview(
     session: Session,
     *,
     principal_ids: list[str] | None,
+    workspace_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     principals = normalize_principal_ids(principal_ids)
     degraded = len(principals) == 0
     latest_versions = _latest_versions_subquery()
-    rows = session.execute(
+    statement = (
         select(KnowledgeBase, Document, DocumentVersion)
         .join(Document, Document.knowledge_base_id == KnowledgeBase.id)
         .join(latest_versions, latest_versions.c.document_id == Document.id)
         .join(DocumentVersion, DocumentVersion.id == latest_versions.c.document_version_id)
         .order_by(KnowledgeBase.name, Document.uri)
-    ).all()
+    )
+    if workspace_id is not None:
+        statement = statement.where(KnowledgeBase.workspace_id == workspace_id)
+    rows = session.execute(statement).all()
 
     kb_map: dict[str, dict[str, Any]] = {}
     for knowledge_base, document, version in rows:
@@ -279,13 +291,19 @@ def build_permission_preview(
     }
 
 
-def list_sources(session: Session) -> list[dict[str, Any]]:
+def list_sources(
+    session: Session,
+    *,
+    workspace_id: uuid.UUID | None = None,
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     statement = (
         select(Source, KnowledgeBase)
         .join(KnowledgeBase, KnowledgeBase.id == Source.knowledge_base_id)
         .order_by(KnowledgeBase.name, Source.uri)
     )
+    if workspace_id is not None:
+        statement = statement.where(KnowledgeBase.workspace_id == workspace_id)
     for source, knowledge_base in session.execute(statement):
         items.append(
             {
@@ -318,7 +336,11 @@ def _serialize_pipeline_run(run: PipelineRun | None) -> dict[str, Any] | None:
     }
 
 
-def list_pipeline_runs(session: Session) -> list[dict[str, Any]]:
+def list_pipeline_runs(
+    session: Session,
+    *,
+    workspace_id: uuid.UUID | None = None,
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     statement = (
         select(PipelineRun, KnowledgeBase, Source)
@@ -326,6 +348,8 @@ def list_pipeline_runs(session: Session) -> list[dict[str, Any]]:
         .outerjoin(Source, Source.id == PipelineRun.source_id)
         .order_by(PipelineRun.started_at.desc())
     )
+    if workspace_id is not None:
+        statement = statement.where(KnowledgeBase.workspace_id == workspace_id)
     for run, knowledge_base, source in session.execute(statement):
         skipped_count = session.scalar(
             select(func.count(PipelineRunItem.id)).where(
@@ -358,15 +382,23 @@ def list_pipeline_runs(session: Session) -> list[dict[str, Any]]:
     return items
 
 
-def get_pipeline_run_detail(session: Session, pipeline_run_id: str) -> dict[str, Any] | None:
+def get_pipeline_run_detail(
+    session: Session,
+    pipeline_run_id: str,
+    *,
+    workspace_id: uuid.UUID | None = None,
+) -> dict[str, Any] | None:
     run_id = uuid.UUID(pipeline_run_id)
-    row = session.execute(
+    statement = (
         select(PipelineRun, KnowledgeBase, Source)
         .join(KnowledgeBase, KnowledgeBase.id == PipelineRun.knowledge_base_id)
         .outerjoin(Source, Source.id == PipelineRun.source_id)
         .where(PipelineRun.id == run_id)
         .limit(1)
-    ).first()
+    )
+    if workspace_id is not None:
+        statement = statement.where(KnowledgeBase.workspace_id == workspace_id)
+    row = session.execute(statement).first()
     if row is None:
         return None
     run, knowledge_base, source = row
@@ -396,15 +428,24 @@ def get_pipeline_run_detail(session: Session, pipeline_run_id: str) -> dict[str,
     }
 
 
-def list_pipeline_run_items(session: Session, pipeline_run_id: str) -> list[dict[str, Any]]:
+def list_pipeline_run_items(
+    session: Session,
+    pipeline_run_id: str,
+    *,
+    workspace_id: uuid.UUID | None = None,
+) -> list[dict[str, Any]]:
     run_id = uuid.UUID(pipeline_run_id)
     items: list[dict[str, Any]] = []
     statement = (
         select(PipelineRunItem, Document)
         .join(Document, Document.id == PipelineRunItem.document_id)
+        .join(PipelineRun, PipelineRun.id == PipelineRunItem.pipeline_run_id)
+        .join(KnowledgeBase, KnowledgeBase.id == PipelineRun.knowledge_base_id)
         .where(PipelineRunItem.pipeline_run_id == run_id)
         .order_by(PipelineRunItem.started_at.asc())
     )
+    if workspace_id is not None:
+        statement = statement.where(KnowledgeBase.workspace_id == workspace_id)
     for item, document in session.execute(statement):
         items.append(
             {
@@ -421,7 +462,11 @@ def list_pipeline_run_items(session: Session, pipeline_run_id: str) -> list[dict
     return items
 
 
-def list_documents(session: Session) -> list[dict[str, Any]]:
+def list_documents(
+    session: Session,
+    *,
+    workspace_id: uuid.UUID | None = None,
+) -> list[dict[str, Any]]:
     latest_versions = _latest_versions_subquery()
     items: list[dict[str, Any]] = []
     statement = (
@@ -432,6 +477,8 @@ def list_documents(session: Session) -> list[dict[str, Any]]:
         .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
         .order_by(KnowledgeBase.name, Document.uri)
     )
+    if workspace_id is not None:
+        statement = statement.where(KnowledgeBase.workspace_id == workspace_id)
     for document, version, source, knowledge_base in session.execute(statement):
         chunk_count = session.scalar(
             select(func.count(Chunk.id)).where(Chunk.document_version_id == version.id)
@@ -463,15 +510,23 @@ def list_documents(session: Session) -> list[dict[str, Any]]:
 
 
 def list_document_version_chunks(
-    session: Session, document_version_id: str
+    session: Session,
+    document_version_id: str,
+    *,
+    workspace_id: uuid.UUID | None = None,
 ) -> list[dict[str, Any]]:
     version_id = uuid.UUID(document_version_id)
     items: list[dict[str, Any]] = []
     statement = (
         select(Chunk)
+        .join(DocumentVersion, DocumentVersion.id == Chunk.document_version_id)
+        .join(Document, Document.id == DocumentVersion.document_id)
+        .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
         .where(Chunk.document_version_id == version_id)
         .order_by(Chunk.chunk_index.asc())
     )
+    if workspace_id is not None:
+        statement = statement.where(KnowledgeBase.workspace_id == workspace_id)
     for chunk in session.scalars(statement):
         items.append(
             {
@@ -2143,6 +2198,7 @@ def run_source_ingest(
     config: dict[str, Any],
     knowledge_base_name: str,
     operator: str | None = None,
+    workspace_id: uuid.UUID | None = None,
     env: dict[str, str] | None = None,
     client=None,
 ) -> dict[str, Any]:
@@ -2171,6 +2227,7 @@ def run_source_ingest(
             session=session,
             knowledge_base_name=knowledge_base_name,
             config=validated,
+            workspace_id=workspace_id,
             env=env,
             client=client,
         )
@@ -2179,6 +2236,7 @@ def run_source_ingest(
             session=session,
             knowledge_base_name=knowledge_base_name,
             config=validated,
+            workspace_id=workspace_id,
             env=env,
             client=client,
         )
@@ -2187,6 +2245,7 @@ def run_source_ingest(
             session=session,
             knowledge_base_name=knowledge_base_name,
             config=validated,
+            workspace_id=workspace_id,
             env=env,
             client=client,
         )
@@ -2195,6 +2254,7 @@ def run_source_ingest(
             session=session,
             knowledge_base_name=knowledge_base_name,
             config=validated,
+            workspace_id=workspace_id,
             env=env,
             client=client,
         )
@@ -2204,6 +2264,7 @@ def run_source_ingest(
         indexing_report = index_knowledge_base(
             session=session,
             knowledge_base_name=knowledge_base_name,
+            workspace_id=workspace_id,
         )
         indexing_payload = _serialize_indexing_report(indexing_report)
 
@@ -2234,6 +2295,7 @@ def save_source_config(
     config: dict[str, Any],
     knowledge_base_name: str,
     operator: str | None = None,
+    workspace_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Validate and save a source configuration.
 
@@ -2244,11 +2306,17 @@ def save_source_config(
     validated = registry.validate_config(plugin_id, config)
 
     source_kind = plugin_id.removeprefix("source.")
+
+    def _workspace_kb(_get_or_create_kb):
+        if workspace_id is None:
+            return _get_or_create_kb(session, knowledge_base_name)
+        return _get_or_create_kb(session, knowledge_base_name, workspace_id=workspace_id)
+
     if source_kind == "local":
         from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
         from ragrig.repositories import get_or_create_source as _get_or_create_src
 
-        kb = _get_or_create_kb(session, knowledge_base_name)
+        kb = _workspace_kb(_get_or_create_kb)
         root_path = Path(str(validated.get("root_path", "")))
         source_uri = str(root_path.resolve()) if root_path else "local://unspecified"
 
@@ -2263,7 +2331,7 @@ def save_source_config(
         from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
         from ragrig.repositories import get_or_create_source as _get_or_create_src
 
-        kb = _get_or_create_kb(session, knowledge_base_name)
+        kb = _workspace_kb(_get_or_create_kb)
         bucket = str(validated.get("bucket", ""))
         prefix = str(validated.get("prefix", ""))
         source_uri = f"s3://{bucket}/{prefix}" if prefix else f"s3://{bucket}"
@@ -2279,7 +2347,7 @@ def save_source_config(
         from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
         from ragrig.repositories import get_or_create_source as _get_or_create_src
 
-        kb = _get_or_create_kb(session, knowledge_base_name)
+        kb = _workspace_kb(_get_or_create_kb)
         account_id = str(validated.get("account_id", ""))
         bucket = str(validated.get("bucket", ""))
         prefix = str(validated.get("prefix", ""))
@@ -2298,7 +2366,7 @@ def save_source_config(
         from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
         from ragrig.repositories import get_or_create_source as _get_or_create_src
 
-        kb = _get_or_create_kb(session, knowledge_base_name)
+        kb = _workspace_kb(_get_or_create_kb)
         region = str(validated.get("region", ""))
         bucket = str(validated.get("bucket", ""))
         prefix = str(validated.get("prefix", ""))
@@ -2315,7 +2383,7 @@ def save_source_config(
         from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
         from ragrig.repositories import get_or_create_source as _get_or_create_src
 
-        kb = _get_or_create_kb(session, knowledge_base_name)
+        kb = _workspace_kb(_get_or_create_kb)
         protocol = str(validated.get("protocol", "smb"))
         host = str(validated.get("host", ""))
         share = str(validated.get("share", ""))
@@ -2332,7 +2400,7 @@ def save_source_config(
         from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
         from ragrig.repositories import get_or_create_source as _get_or_create_src
 
-        kb = _get_or_create_kb(session, knowledge_base_name)
+        kb = _workspace_kb(_get_or_create_kb)
         engine = str(validated.get("engine", "postgresql"))
         source_name = str(validated.get("source_name", "database-source"))
         source_uri = f"database://{engine}/{source_name}"
@@ -2533,16 +2601,25 @@ def _safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
 # ── Pipeline Run Item Inspect & Retry ───────────────────────────────────────
 
 
-def get_pipeline_run_item_detail(session: Session, item_id: str) -> dict[str, Any] | None:
+def get_pipeline_run_item_detail(
+    session: Session,
+    item_id: str,
+    *,
+    workspace_id: uuid.UUID | None = None,
+) -> dict[str, Any] | None:
     """Return detail for a single pipeline run item."""
     item_uuid = uuid.UUID(item_id)
-    row = session.execute(
+    statement = (
         select(PipelineRunItem, Document, PipelineRun)
         .join(Document, Document.id == PipelineRunItem.document_id)
         .join(PipelineRun, PipelineRun.id == PipelineRunItem.pipeline_run_id)
+        .join(KnowledgeBase, KnowledgeBase.id == PipelineRun.knowledge_base_id)
         .where(PipelineRunItem.id == item_uuid)
         .limit(1)
-    ).first()
+    )
+    if workspace_id is not None:
+        statement = statement.where(KnowledgeBase.workspace_id == workspace_id)
+    row = session.execute(statement).first()
     if row is None:
         return None
     item, document, run = row
@@ -2566,6 +2643,7 @@ def retry_pipeline_run_item(
     *,
     item_id: str,
     operator: str | None = None,
+    workspace_id: uuid.UUID | None = None,
 ) -> dict[str, Any] | None:
     """Retry a single failed pipeline run item.
 
@@ -2573,7 +2651,7 @@ def retry_pipeline_run_item(
     Returns the new item status, or None if the item is not found.
     """
     item_uuid = uuid.UUID(item_id)
-    row = session.execute(
+    statement = (
         select(PipelineRunItem, PipelineRun, Document, Source, KnowledgeBase)
         .join(PipelineRun, PipelineRun.id == PipelineRunItem.pipeline_run_id)
         .join(Document, Document.id == PipelineRunItem.document_id)
@@ -2581,7 +2659,10 @@ def retry_pipeline_run_item(
         .join(KnowledgeBase, KnowledgeBase.id == PipelineRun.knowledge_base_id)
         .where(PipelineRunItem.id == item_uuid)
         .limit(1)
-    ).first()
+    )
+    if workspace_id is not None:
+        statement = statement.where(KnowledgeBase.workspace_id == workspace_id)
+    row = session.execute(statement).first()
     if row is None:
         return None
 
@@ -2950,6 +3031,7 @@ def retry_pipeline_run(
     run_id: str,
     operator: str | None = None,
     new_snapshot: bool = False,
+    workspace_id: uuid.UUID | None = None,
 ) -> dict[str, Any] | None:
     """Retry all failed items in a pipeline run.
 
@@ -2961,6 +3043,10 @@ def retry_pipeline_run(
     run = session.get(PipelineRun, run_uuid)
     if run is None:
         return None
+    if workspace_id is not None:
+        kb = session.get(KnowledgeBase, run.knowledge_base_id)
+        if kb is None or kb.workspace_id != workspace_id:
+            return None
 
     # Run-level guardrail check
     guardrail = _check_run_retry_guardrails(session, run=run)
@@ -3008,7 +3094,12 @@ def retry_pipeline_run(
 
     results: list[dict[str, Any]] = []
     for item in failed_items:
-        result = retry_pipeline_run_item(session, item_id=str(item.id), operator=operator)
+        result = retry_pipeline_run_item(
+            session,
+            item_id=str(item.id),
+            operator=operator,
+            workspace_id=workspace_id,
+        )
         if result is not None:
             results.append(result)
 
@@ -3044,8 +3135,16 @@ def resume_pipeline_dag(
     session: Session,
     *,
     run_id: str,
+    workspace_id: uuid.UUID | None = None,
 ) -> dict[str, Any] | None:
     """Resume a persisted ingestion DAG from its first incomplete node."""
+    if workspace_id is not None:
+        run = session.get(PipelineRun, uuid.UUID(run_id))
+        if run is None:
+            return None
+        kb = session.get(KnowledgeBase, run.knowledge_base_id)
+        if kb is None or kb.workspace_id != workspace_id:
+            return None
     return resume_ingestion_dag(session, pipeline_run_id=run_id)
 
 

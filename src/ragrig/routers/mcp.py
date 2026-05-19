@@ -44,9 +44,11 @@ from ragrig.answer import (
     ProviderUnavailableError,
     generate_answer,
 )
+from ragrig.config import Settings, get_settings
 from ragrig.db.models import KnowledgeBase
 from ragrig.db.session import get_session
 from ragrig.deps import AuthContext, get_auth_context
+from ragrig.repositories import resolve_effective_kb_role
 from ragrig.retrieval import (
     EmbeddingProfileMismatchError,
     EmptyQueryError,
@@ -60,6 +62,7 @@ router = APIRouter(tags=["mcp"])
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "ragrig"
+_ROLE_ORDER = {"owner": 3, "admin": 2, "editor": 1, "viewer": 0, "none": -1}
 
 
 _TOOLS: list[dict[str, Any]] = [
@@ -130,20 +133,52 @@ def _err(rpc_id: Any, code: int, message: str, data: Any | None = None) -> dict[
     return {"jsonrpc": "2.0", "id": rpc_id, "error": body}
 
 
+def _role_meets(role: str | None, minimum: str) -> bool:
+    return _ROLE_ORDER.get(role or "none", -1) >= _ROLE_ORDER.get(minimum, 999)
+
+
+def _kb_read_allowed(session: Session, auth: AuthContext, settings: Settings, kb_name: str) -> bool:
+    if not settings.ragrig_auth_enabled or auth.user_id is None or auth.role is None:
+        return True
+    kb = session.scalar(
+        select(KnowledgeBase)
+        .where(KnowledgeBase.workspace_id == auth.workspace_id)
+        .where(KnowledgeBase.name == kb_name)
+        .limit(1)
+    )
+    if kb is None:
+        return True
+    role = resolve_effective_kb_role(
+        session,
+        user_id=auth.user_id,
+        knowledge_base_id=kb.id,
+        workspace_role=auth.role,
+    )
+    return _role_meets(role, "viewer")
+
+
 def _tool_search(
-    session: Session, auth: AuthContext, args: dict[str, Any]
+    session: Session, auth: AuthContext, settings: Settings, args: dict[str, Any]
 ) -> dict[str, Any] | None:
     kb_name = args.get("knowledge_base")
     query = args.get("query")
     top_k = int(args.get("top_k") or 5)
     if not kb_name or not query:
         return {"isError": True, "content": [{"type": "text", "text": "missing arguments"}]}
+    if not _kb_read_allowed(session, auth, settings, str(kb_name)):
+        return {
+            "isError": True,
+            "content": [{"type": "text", "text": "knowledge base forbidden"}],
+        }
     try:
         report = search_knowledge_base(
             session=session,
             knowledge_base_name=str(kb_name),
             query=str(query),
             top_k=top_k,
+            principal_ids=None if not settings.ragrig_auth_enabled else auth.principal_ids,
+            enforce_acl=True,
+            workspace_id=auth.workspace_id,
         )
     except KnowledgeBaseNotFoundError as exc:
         return {
@@ -187,7 +222,7 @@ def _tool_search(
 
 
 def _tool_answer(
-    session: Session, auth: AuthContext, args: dict[str, Any]
+    session: Session, auth: AuthContext, settings: Settings, args: dict[str, Any]
 ) -> dict[str, Any] | None:
     kb_name = args.get("knowledge_base")
     query = args.get("query")
@@ -196,6 +231,11 @@ def _tool_answer(
     model = args.get("model")
     if not kb_name or not query:
         return {"isError": True, "content": [{"type": "text", "text": "missing arguments"}]}
+    if not _kb_read_allowed(session, auth, settings, str(kb_name)):
+        return {
+            "isError": True,
+            "content": [{"type": "text", "text": "knowledge base forbidden"}],
+        }
     try:
         report = generate_answer(
             session=session,
@@ -206,6 +246,9 @@ def _tool_answer(
             model=str(model) if model else None,
             answer_provider=provider,
             answer_model=str(model) if model else None,
+            principal_ids=None if not settings.ragrig_auth_enabled else auth.principal_ids,
+            enforce_acl=True,
+            workspace_id=auth.workspace_id,
         )
     except NoEvidenceError as exc:
         return {
@@ -270,7 +313,12 @@ def _list_resources(session: Session, auth: AuthContext) -> dict[str, Any]:
     }
 
 
-def _dispatch(session: Session, auth: AuthContext, payload: dict[str, Any]) -> dict[str, Any]:
+def _dispatch(
+    session: Session,
+    auth: AuthContext,
+    settings: Settings,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
     rpc_id = payload.get("id")
     method = payload.get("method")
     params = payload.get("params") or {}
@@ -297,9 +345,9 @@ def _dispatch(session: Session, auth: AuthContext, payload: dict[str, Any]) -> d
         name = params.get("name")
         args = params.get("arguments") or {}
         if name == "search_knowledge_base":
-            result = _tool_search(session, auth, args)
+            result = _tool_search(session, auth, settings, args)
         elif name == "answer_question":
-            result = _tool_answer(session, auth, args)
+            result = _tool_answer(session, auth, settings, args)
         else:
             return _err(rpc_id, -32601, f"unknown tool: {name}")
         return _ok(rpc_id, result)
@@ -312,6 +360,7 @@ async def mcp_endpoint(
     request: Request,
     session: Annotated[Session, Depends(get_session)],
     auth: Annotated[AuthContext, Depends(get_auth_context)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> Any:
     """JSON-RPC 2.0 entry point.
 
@@ -325,10 +374,10 @@ async def mcp_endpoint(
             content=_err(None, -32700, "parse error: invalid JSON"),
         )
     if isinstance(payload, list):
-        return [_dispatch(session, auth, item) for item in payload]
+        return [_dispatch(session, auth, settings, item) for item in payload]
     if not isinstance(payload, dict):
         return JSONResponse(
             status_code=400,
             content=_err(None, -32700, "parse error: expected JSON object or array"),
         )
-    return _dispatch(session, auth, payload)
+    return _dispatch(session, auth, settings, payload)

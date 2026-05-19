@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from typing import Mapping
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,7 @@ def export_to_backblaze_b2(
     *,
     knowledge_base_name: str,
     config: dict[str, object],
+    workspace_id: UUID | None = None,
     env: Mapping[str, str] | None = None,
     client: ObjectStorageClientProtocol | None = None,
 ) -> ExportToObjectStorageReport:
@@ -47,6 +49,7 @@ def export_to_backblaze_b2(
     return _export_with_resolved_credentials(
         session,
         knowledge_base_name=knowledge_base_name,
+        workspace_id=workspace_id,
         validated=enriched,
         secrets=secrets,
         source_kind="backblaze_b2_sink",

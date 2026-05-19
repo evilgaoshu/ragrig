@@ -940,6 +940,7 @@ def search_knowledge_base(
     rewrite_config: "Any | None" = None,
     hyde_config: "Any | None" = None,
     include_summary_search: bool = False,
+    workspace_id=None,
 ) -> RetrievalReport:
     """Search a knowledge base with optional hybrid/rerank modes.
 
@@ -982,7 +983,11 @@ def search_knowledge_base(
         except Exception:
             pass  # Degraded: fall back to single query
 
-    knowledge_base = get_knowledge_base_by_name(session, knowledge_base_name)
+    knowledge_base = get_knowledge_base_by_name(
+        session,
+        knowledge_base_name,
+        workspace_id=workspace_id,
+    )
     if knowledge_base is None:
         raise KnowledgeBaseNotFoundError(
             f"Knowledge base '{knowledge_base_name}' was not found",
@@ -1049,6 +1054,7 @@ def search_knowledge_base(
         provider=resolved_provider,
         model=resolved_model,
         dimensions=resolved_dimensions,
+        knowledge_base_id=knowledge_base.id,
     )
 
     # ── Phase 1: Dense vector retrieval ────────────────────────
@@ -1277,6 +1283,7 @@ def search_knowledge_base(
             session,
             event_type=event_type,
             actor="retrieval",
+            workspace_id=kb_workspace_id,
             knowledge_base_id=knowledge_base.id,
             payload_json={
                 "knowledge_base": knowledge_base_name,

@@ -47,10 +47,17 @@ def _mock_client(
 
 
 class MockResponse:
-    def __init__(self, status_code: int, text: str, content_type: str = "text/html"):
+    def __init__(
+        self,
+        status_code: int,
+        text: str,
+        content_type: str = "text/html",
+        url: str = "https://example.com/",
+    ):
         self.status_code = status_code
         self.text = text
         self.headers = {"content-type": content_type}
+        self.url = url
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -58,8 +65,8 @@ class MockResponse:
 
             raise httpx.HTTPStatusError(
                 f"{self.status_code}",
-                request=None,  # type: ignore[arg-type]
-                response=None,  # type: ignore[arg-type]
+                request=httpx.Request("GET", self.url),
+                response=self,  # type: ignore[arg-type]
             )
 
 
@@ -72,8 +79,8 @@ class MockClient:
         self.requests.append(url)
         if url in self._responses:
             code, body, ct = self._responses[url]
-            return MockResponse(code, body, ct)
-        return MockResponse(200, SIMPLE_HTML)
+            return MockResponse(code, body, ct, url)
+        return MockResponse(200, SIMPLE_HTML, url=url)
 
     def close(self) -> None:
         pass
@@ -198,6 +205,20 @@ class TestScanWebPages:
         result = scan_web_pages({"urls": ["https://example.com/file.pdf"]}, env={}, _client=client)
         assert result.fetched == []
         assert len(result.skipped) == 1
+
+    def test_blocks_private_network_url_by_default(self) -> None:
+        client = _mock_client({"http://127.0.0.1/private": (200, SIMPLE_HTML, "text/html")})
+        result = scan_web_pages({"urls": ["http://127.0.0.1/private"]}, env={}, _client=client)
+        assert result.fetched == []
+        assert result.failed
+        assert result.failed[0][1].startswith("url_blocked:")
+        assert client.requests == []
+
+    def test_http_error_is_not_indexed(self) -> None:
+        client = _mock_client({"https://example.com/missing": (404, SIMPLE_HTML, "text/html")})
+        result = scan_web_pages({"urls": ["https://example.com/missing"]}, env={}, _client=client)
+        assert result.fetched == []
+        assert result.failed == [("https://example.com/missing", "http_404")]
 
     def test_missing_env_secret_returns_failed(self) -> None:
         result = scan_web_pages({"urls": ["https://x.com"], "bearer_token": "env:MISSING"}, env={})

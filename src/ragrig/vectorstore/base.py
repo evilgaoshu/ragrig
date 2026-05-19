@@ -201,8 +201,10 @@ def build_vector_collection(
     provider: str,
     model: str,
     dimensions: int,
+    knowledge_base_id: uuid.UUID | None = None,
 ) -> VectorCollection:
-    raw = "|".join([knowledge_base_name, provider, model, str(dimensions)])
+    raw_kb = str(knowledge_base_id) if knowledge_base_id is not None else knowledge_base_name
+    raw = "|".join([raw_kb, provider, model, str(dimensions)])
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
     prefix = "_".join(
         [
@@ -220,6 +222,7 @@ def build_vector_collection(
         provider=provider,
         model=model,
         dimensions=dimensions,
+        knowledge_base_id=knowledge_base_id,
     )
 
 

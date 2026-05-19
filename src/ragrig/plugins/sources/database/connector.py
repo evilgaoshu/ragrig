@@ -42,6 +42,7 @@ def ingest_database_source(
     *,
     knowledge_base_name: str,
     config: dict[str, object],
+    workspace_id: UUID | None = None,
     env: Mapping[str, str] | None = None,
     client: DatabaseClientProtocol | None = None,
 ) -> IngestionReport:
@@ -52,7 +53,14 @@ def ingest_database_source(
         engine=str(validated["engine"]),
         source_name=str(validated["source_name"]),
     )
-    knowledge_base = get_or_create_knowledge_base(session, knowledge_base_name)
+    if workspace_id is None:
+        knowledge_base = get_or_create_knowledge_base(session, knowledge_base_name)
+    else:
+        knowledge_base = get_or_create_knowledge_base(
+            session,
+            knowledge_base_name,
+            workspace_id=workspace_id,
+        )
     source = get_or_create_source(
         session,
         knowledge_base_id=knowledge_base.id,

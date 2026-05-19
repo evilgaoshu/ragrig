@@ -9,6 +9,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -37,6 +38,7 @@ def export_to_filesystem(
     *,
     knowledge_base_name: str,
     base_path: str,
+    workspace_id: UUID | None = None,
     format: str = "jsonl",
     overwrite: bool = True,
     dry_run: bool = False,
@@ -52,7 +54,11 @@ def export_to_filesystem(
     if format not in ("jsonl", "markdown", "both"):
         raise ValueError(f"format must be 'jsonl', 'markdown', or 'both'; got {format!r}")
 
-    knowledge_base = get_knowledge_base_by_name(session, knowledge_base_name)
+    knowledge_base = get_knowledge_base_by_name(
+        session,
+        knowledge_base_name,
+        workspace_id=workspace_id,
+    )
     if knowledge_base is None:
         raise ValueError(f"Knowledge base '{knowledge_base_name}' was not found")
 

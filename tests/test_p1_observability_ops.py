@@ -362,6 +362,39 @@ def test_arq_executor_raises_on_missing_arq():
 
 
 @pytest.mark.unit
+def test_arq_executor_enqueues_structured_dispatch_without_pickle():
+    import asyncio
+
+    from ragrig.tasks import TaskDispatch
+    from ragrig.worker import ArqTaskExecutor
+
+    class FakePool:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        async def enqueue_job(self, function_name: str, payload: dict[str, object]) -> None:
+            self.calls.append((function_name, payload))
+
+    loop = asyncio.new_event_loop()
+    executor = ArqTaskExecutor(redis_url="redis://localhost:6379")
+    executor._loop = loop
+    executor._pool = FakePool()
+    executor._get_pool = lambda: executor._pool  # type: ignore[method-assign]
+    dispatch = TaskDispatch(
+        task_id="task-1",
+        task_type="source_ingest",
+        payload_json={"knowledge_base": "kb", "plugin_id": "source.s3", "config": {}},
+    )
+    try:
+        executor.submit_task(dispatch, lambda: None)
+        assert executor._pool.calls == [("ragrig.worker.run_job", dispatch.to_dict())]
+        with pytest.raises(RuntimeError, match="structured task dispatch"):
+            executor.submit(lambda: None)
+    finally:
+        loop.close()
+
+
+@pytest.mark.unit
 def test_worker_settings_has_run_job_function():
     """WorkerSettings exposes run_job; mock arq so test runs without the optional dep."""
     import types

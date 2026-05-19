@@ -185,6 +185,7 @@ def generate_answer(
         vector_backend=vector_backend,
         principal_ids=principal_ids,
         enforce_acl=enforce_acl,
+        workspace_id=workspace_id,
     )
     retrieval_latency_ms = (perf_counter() - retrieval_started) * 1000
 

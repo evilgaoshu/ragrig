@@ -15,6 +15,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -61,6 +62,7 @@ def export_to_duckdb(
     *,
     knowledge_base_name: str,
     db_path: str,
+    workspace_id: UUID | None = None,
     table_prefix: str = "",
     include_embeddings: bool = False,
     dry_run: bool = False,
@@ -74,7 +76,11 @@ def export_to_duckdb(
         include_embeddings: When True, also export the embeddings table.
         dry_run: Plan the export without writing anything; returns counts only.
     """
-    knowledge_base = get_knowledge_base_by_name(session, knowledge_base_name)
+    knowledge_base = get_knowledge_base_by_name(
+        session,
+        knowledge_base_name,
+        workspace_id=workspace_id,
+    )
     if knowledge_base is None:
         raise ValueError(f"Knowledge base '{knowledge_base_name}' was not found")
 

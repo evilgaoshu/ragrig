@@ -69,6 +69,7 @@ def create_ingestion_dag_run(
     exclude_patterns: list[str] | None = None,
     max_file_size_bytes: int = 10 * 1024 * 1024,
     failure_node: str | None = None,
+    workspace_id: uuid.UUID | None = None,
 ) -> PipelineRun:
     if failure_node is not None and failure_node not in DAG_NODE_IDS:
         raise IngestionDagRejected(f"unknown DAG failure node: {failure_node}")
@@ -81,7 +82,7 @@ def create_ingestion_dag_run(
         "failure_node": failure_node,
     }
     _reject_secret_like_payload(request)
-    kb = get_or_create_knowledge_base(session, knowledge_base_name)
+    kb = get_or_create_knowledge_base(session, knowledge_base_name, workspace_id=workspace_id)
     run = create_pipeline_run(
         session,
         knowledge_base_id=kb.id,

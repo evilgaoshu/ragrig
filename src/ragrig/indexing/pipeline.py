@@ -333,6 +333,7 @@ def _mirror_version_index(
         provider=provider_name,
         model=model_name,
         dimensions=embedding_provider.dimensions,
+        knowledge_base_id=knowledge_base_id,
     )
     collection = type(collection)(
         name=collection.name,
@@ -377,10 +378,15 @@ def index_knowledge_base(
     vector_backend: VectorBackend | None = None,
     force_reindex: bool = False,
     pii_redaction: bool = False,
+    workspace_id: object = None,
 ) -> IndexingReport:
     run_started = perf_counter()
     get_plugin_registry()
-    knowledge_base = get_knowledge_base_by_name(session, knowledge_base_name)
+    knowledge_base = get_knowledge_base_by_name(
+        session,
+        knowledge_base_name,
+        workspace_id=workspace_id,
+    )
     if knowledge_base is None:
         raise ValueError(f"Knowledge base '{knowledge_base_name}' was not found")
 

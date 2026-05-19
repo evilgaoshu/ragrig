@@ -13,6 +13,8 @@ from ragrig.auth import (
     API_KEY_TOKEN_PREFIX,
     DEFAULT_WORKSPACE_ID,
     SESSION_TOKEN_PREFIX,
+    principal_group_subjects,
+    principal_user_subject,
     verify_api_key,
     verify_session_token,
 )
@@ -39,12 +41,14 @@ class AuthContext:
         is_anonymous: bool,
         scopes: list[str],
         role: str | None = None,
+        principal_ids: list[str] | None = None,
     ) -> None:
         self.workspace_id = workspace_id
         self.user_id = user_id
         self.is_anonymous = is_anonymous
         self.scopes = scopes
         self.role = role
+        self.principal_ids = principal_ids or []
 
     def has_role(self, minimum: str) -> bool:
         """Return True if the context role meets or exceeds *minimum*."""
@@ -87,6 +91,12 @@ def _resolve_auth(
         if token.startswith(SESSION_TOKEN_PREFIX):
             user_session = verify_session_token(session, token)
             if user_session is not None:
+                if "mfa:pending" in user_session.scopes:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="MFA challenge required",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
                 role = _lookup_role(session, user_session.user_id, user_session.workspace_id)
                 return AuthContext(
                     workspace_id=user_session.workspace_id,
@@ -94,16 +104,30 @@ def _resolve_auth(
                     is_anonymous=False,
                     scopes=list(user_session.scopes),
                     role=role,
+                    principal_ids=[
+                        principal_user_subject(user_session.user_id),
+                        str(user_session.user_id),
+                    ],
                 )
         elif token.startswith(API_KEY_TOKEN_PREFIX):
             api_key = verify_api_key(session, token)
             if api_key is not None:
+                principal_ids: list[str] = []
+                if api_key.principal_user_id:
+                    principal_ids.extend(
+                        [
+                            principal_user_subject(api_key.principal_user_id),
+                            api_key.principal_user_id,
+                        ]
+                    )
+                principal_ids.extend(principal_group_subjects(api_key.principal_group_ids))
                 return AuthContext(
                     workspace_id=api_key.workspace_id,
                     user_id=None,
                     is_anonymous=False,
                     scopes=list(api_key.scopes),
                     role=None,
+                    principal_ids=principal_ids,
                 )
 
     return AuthContext(
@@ -125,8 +149,11 @@ def get_auth_context(
 
 def require_auth(
     auth: Annotated[AuthContext, Depends(get_auth_context)],
+    settings: Annotated[Settings, Depends(get_settings)] = None,  # type: ignore[assignment]
 ) -> AuthContext:
     """Require a valid authenticated identity (not anonymous)."""
+    if settings is not None and not settings.ragrig_auth_enabled:
+        return auth
     if auth.is_anonymous:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

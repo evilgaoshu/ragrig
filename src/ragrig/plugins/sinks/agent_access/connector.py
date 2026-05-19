@@ -25,6 +25,7 @@ import hmac
 import json
 from dataclasses import dataclass
 from typing import Any, Mapping
+from uuid import UUID
 
 import httpx
 from sqlalchemy import select
@@ -68,6 +69,7 @@ def export_to_agent_endpoint(
     knowledge_base_name: str,
     endpoint_url: str,
     api_key: str,
+    workspace_id: UUID | None = None,
     env: Mapping[str, str] | None = None,
     hmac_secret: str | None = None,
     batch_size: int = 100,
@@ -88,7 +90,11 @@ def export_to_agent_endpoint(
     resolved_key = _resolve(api_key, _env)
     resolved_secret = _resolve(hmac_secret, _env) if hmac_secret else None
 
-    kb = get_knowledge_base_by_name(session, knowledge_base_name)
+    kb = get_knowledge_base_by_name(
+        session,
+        knowledge_base_name,
+        workspace_id=workspace_id,
+    )
     if kb is None:
         raise ValueError(f"Knowledge base '{knowledge_base_name}' not found")
 
