@@ -16,6 +16,9 @@ class Microsoft365SourceConfig(PluginConfigModel):
     tenant_id: str
     client_id: str
     client_secret: str
+    site_url: str | None = None
+    scope: str = "sharepoint"
+    page_size: int = 100
 
 
 class WikiSourceConfig(PluginConfigModel):
@@ -1071,7 +1074,10 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="source.microsoft_365",
             display_name="Microsoft 365 Source",
-            description="Stub manifest for SharePoint and OneDrive sources.",
+            description=(
+                "SharePoint and OneDrive connector via Microsoft Graph API. "
+                "Uses app-only client credentials — no external SDK required."
+            ),
             plugin_type=PluginType.SOURCE,
             family="microsoft_365",
             capabilities=(
@@ -1079,19 +1085,34 @@ def official_stub_manifests() -> list[PluginManifest]:
                 Capability.INCREMENTAL_SYNC,
                 Capability.PERMISSION_MAPPING,
             ),
-            optional_dependencies=("msgraph",),
             config_model=Microsoft365SourceConfig,
             example_config={
-                "tenant_id": "tenant-id",
-                "client_id": "client-id",
+                "tenant_id": "env:MICROSOFT_365_TENANT_ID",
+                "client_id": "env:MICROSOFT_365_CLIENT_ID",
                 "client_secret": "env:MICROSOFT_365_CLIENT_SECRET",
+                "site_url": "https://myorg.sharepoint.com/sites/Engineering",
+                "scope": "sharepoint",
+                "page_size": 100,
             },
             secret_requirements=(
                 SecretRequirement(
-                    name="MICROSOFT_365_CLIENT_SECRET", description="Microsoft 365 client secret"
+                    name="MICROSOFT_365_TENANT_ID",
+                    description="Azure AD tenant ID",
+                    required=True,
+                ),
+                SecretRequirement(
+                    name="MICROSOFT_365_CLIENT_ID",
+                    description="Azure AD app registration client ID",
+                    required=True,
+                ),
+                SecretRequirement(
+                    name="MICROSOFT_365_CLIENT_SECRET",
+                    description="Azure AD app registration client secret",
+                    required=True,
                 ),
             ),
-            unavailable_reason="Microsoft 365 connector logic is intentionally out of scope.",
+            status=PluginStatus.READY,
+            unavailable_reason=None,
         ),
         _official_manifest(
             plugin_id="source.wiki",

@@ -23,6 +23,7 @@ function kindBadge(kind: string) {
     confluence: 'bg-blue-100 text-blue-800',
     notion: 'bg-gray-100 text-gray-700',
     feishu: 'bg-cyan-100 text-cyan-700',
+    microsoft_365: 'bg-blue-100 text-blue-900',
   }
   return map[kind] ?? 'bg-gray-100 text-gray-600'
 }
@@ -37,6 +38,7 @@ function kindToPluginId(kind: string): string {
     confluence: 'source.confluence',
     notion: 'source.notion',
     feishu: 'source.feishu',
+    microsoft_365: 'source.microsoft_365',
   }
   return map[kind] ?? `source.${kind}`
 }
@@ -107,7 +109,7 @@ function RunButton({ source }: { source: Source }) {
 
 // ── Source type definitions ───────────────────────────────────────────────
 
-type SourceType = 'fileshare' | 's3' | 'local' | 'web' | 'confluence' | 'notion' | 'feishu'
+type SourceType = 'fileshare' | 's3' | 'local' | 'web' | 'confluence' | 'notion' | 'feishu' | 'microsoft_365'
 
 interface SourceTypeOption {
   id: SourceType
@@ -145,6 +147,13 @@ const SOURCE_TYPES: SourceTypeOption[] = [
     label: 'Feishu / Lark',
     description: 'Sync wiki spaces and documents from Feishu (Lark) Knowledge Base',
     badge: 'bg-cyan-100 text-cyan-700',
+  },
+  {
+    id: 'microsoft_365',
+    pluginId: 'source.microsoft_365',
+    label: 'Microsoft 365',
+    description: 'SharePoint and OneDrive via Microsoft Graph API (app-only client credentials)',
+    badge: 'bg-blue-100 text-blue-900',
   },
   {
     id: 'fileshare',
@@ -227,6 +236,14 @@ function AddSourceModal({
   const [feishuBaseUrl, setFeishuBaseUrl] = useState('https://open.feishu.cn')
   const [feishuPageSize, setFeishuPageSize] = useState('50')
 
+  // Microsoft 365 fields
+  const [msftTenantId, setMsftTenantId] = useState('env:MICROSOFT_365_TENANT_ID')
+  const [msftClientId, setMsftClientId] = useState('env:MICROSOFT_365_CLIENT_ID')
+  const [msftClientSecret, setMsftClientSecret] = useState('env:MICROSOFT_365_CLIENT_SECRET')
+  const [msftSiteUrl, setMsftSiteUrl] = useState('')
+  const [msftScope, setMsftScope] = useState('sharepoint')
+  const [msftPageSize, setMsftPageSize] = useState('100')
+
   // Web fields
   const [webUrls, setWebUrls] = useState('')
   const [webMaxDepth, setWebMaxDepth] = useState('1')
@@ -262,6 +279,16 @@ function AddSourceModal({
         app_secret: feishuAppSecret,
         base_url: feishuBaseUrl,
         page_size: parseInt(feishuPageSize, 10) || 50,
+      }
+    }
+    if (sourceType.id === 'microsoft_365') {
+      return {
+        tenant_id: msftTenantId,
+        client_id: msftClientId,
+        client_secret: msftClientSecret,
+        site_url: msftSiteUrl || undefined,
+        scope: msftScope,
+        page_size: parseInt(msftPageSize, 10) || 100,
       }
     }
     if (sourceType.id === 'fileshare') {
@@ -323,6 +350,7 @@ function AddSourceModal({
     if (sourceType.id === 'confluence') return !!cfBaseUrl && !!cfEmail && !!cfApiToken
     if (sourceType.id === 'notion') return !!notionApiToken
     if (sourceType.id === 'feishu') return !!feishuSpaceId && !!feishuAppId && !!feishuAppSecret
+    if (sourceType.id === 'microsoft_365') return !!msftTenantId && !!msftClientId && !!msftClientSecret
     if (sourceType.id === 'fileshare') return !!fsHost
     if (sourceType.id === 's3') return !!s3Bucket
     if (sourceType.id === 'local') return !!localPath
@@ -618,6 +646,63 @@ function AddSourceModal({
                 onChange={setFeishuPageSize}
                 type="number"
                 hint="Documents fetched per paginated request."
+              />
+            </>
+          )}
+
+          {/* Microsoft 365 fields */}
+          {sourceType?.id === 'microsoft_365' && (
+            <>
+              <TextField
+                label="Tenant ID"
+                value={msftTenantId}
+                onChange={setMsftTenantId}
+                placeholder="env:MICROSOFT_365_TENANT_ID"
+                hint="Azure AD tenant ID (GUID). Prefer env:VAR."
+                required
+              />
+              <TextField
+                label="Client ID"
+                value={msftClientId}
+                onChange={setMsftClientId}
+                placeholder="env:MICROSOFT_365_CLIENT_ID"
+                hint="Azure AD app registration client ID (GUID). Prefer env:VAR."
+                required
+              />
+              <TextField
+                label="Client secret"
+                value={msftClientSecret}
+                onChange={setMsftClientSecret}
+                placeholder="env:MICROSOFT_365_CLIENT_SECRET"
+                hint="App registration client secret. Prefer env:VAR."
+                required
+              />
+
+              <SectionDivider label="Options" />
+
+              <TextField
+                label="SharePoint site URL (optional)"
+                value={msftSiteUrl}
+                onChange={setMsftSiteUrl}
+                placeholder="https://myorg.sharepoint.com/sites/Engineering"
+                hint="Scope to a specific SharePoint site. Leave blank to enumerate all accessible sites."
+              />
+              <SelectField
+                label="Content scope"
+                value={msftScope}
+                onChange={setMsftScope}
+                options={[
+                  { value: 'sharepoint', label: 'SharePoint only' },
+                  { value: 'onedrive', label: 'OneDrive only' },
+                  { value: 'both', label: 'SharePoint + OneDrive' },
+                ]}
+              />
+              <TextField
+                label="Page size"
+                value={msftPageSize}
+                onChange={setMsftPageSize}
+                type="number"
+                hint="Drive items fetched per Graph API request (max 1000)."
               />
             </>
           )}
