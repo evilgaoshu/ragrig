@@ -851,10 +851,8 @@ def official_stub_manifests() -> list[PluginManifest]:
                     required=False,
                 ),
             ),
-            unavailable_reason=(
-                None if s3_ready else "Install boto3 to enable the S3-compatible export runtime."
-            ),
-            status=PluginStatus.READY if s3_ready else PluginStatus.UNAVAILABLE,
+            unavailable_reason=None,
+            status=PluginStatus.READY if s3_ready else PluginStatus.DEGRADED,
         ),
         _official_manifest(
             plugin_id="source.fileshare",

@@ -6,6 +6,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 from ragrig.plugins.sources.google_workspace.console import (
     CONNECTOR_ID,
@@ -15,6 +16,42 @@ from ragrig.plugins.sources.google_workspace.console import (
     format_console_output_json,
 )
 from ragrig.plugins.sources.google_workspace.scanner import scan_drive_items
+
+_FIXTURE_FILES = [
+    {
+        "id": "drive-001",
+        "name": "Project Proposal.pdf",
+        "mimeType": "application/pdf",
+        "modifiedTime": "2026-05-13T10:00:00Z",
+        "etag": '"abc123def456"',
+        "version": "1",
+        "parents": ["parent-001"],
+        "webViewLink": "https://drive.google.com/file/d/drive-001/view",
+        "size": "102400",
+    },
+    {
+        "id": "docs-001",
+        "name": "Meeting Notes.docx",
+        "mimeType": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "modifiedTime": "2026-05-13T10:00:00Z",
+        "etag": '"xyz789uvw012"',
+        "version": "3",
+        "parents": ["parent-001"],
+        "webViewLink": "https://docs.google.com/document/d/docs-001/edit",
+    },
+]
+
+
+def _make_fixture_service() -> MagicMock:
+    service = MagicMock()
+    files_mock = service.files.return_value
+    files_mock.list.return_value.execute.return_value = {
+        "files": _FIXTURE_FILES,
+        "nextPageToken": None,
+    }
+    files_mock.get.return_value.execute.return_value = {"name": "My Drive"}
+    return service
+
 
 DEFAULT_OUTPUT = Path("docs/operations/artifacts/google-workspace-diagnostics.json")
 RAW_SECRET_MARKERS = (
@@ -60,6 +97,7 @@ def build_google_workspace_diagnostics_report(
                 )
             },
             "run_discovery": True,
+            "service": _make_fixture_service(),
         },
     ]
 
@@ -67,7 +105,11 @@ def build_google_workspace_diagnostics_report(
     for scenario in scenarios:
         scan_result = None
         if scenario["run_discovery"]:
-            scan_result = scan_drive_items(scenario["config"], env=scenario["env"])
+            scan_result = scan_drive_items(
+                scenario["config"],
+                env=scenario["env"],
+                _service=scenario.get("service"),
+            )
         state = build_connector_state(
             scenario["config"],
             env=scenario["env"],
