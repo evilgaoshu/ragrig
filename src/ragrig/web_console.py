@@ -1791,9 +1791,7 @@ def _dry_run_r2_source(
 
     _env = env or {}
     access_key = _resolve_env_ref(str(config["access_key_id"]), _env, "CF_R2_ACCESS_KEY_ID")
-    secret_key = _resolve_env_ref(
-        str(config["secret_access_key"]), _env, "CF_R2_SECRET_ACCESS_KEY"
-    )
+    secret_key = _resolve_env_ref(str(config["secret_access_key"]), _env, "CF_R2_SECRET_ACCESS_KEY")
     endpoint_url = _build_r2_endpoint(str(config["account_id"]), config.get("jurisdiction"))
     s3_cfg: dict[str, object] = {
         **config,
@@ -1851,9 +1849,7 @@ def _dry_run_b2_source(
 
     _env = env or {}
     key_id = _resolve_env_ref(str(config["key_id"]), _env, "B2_APPLICATION_KEY_ID")
-    application_key = _resolve_env_ref(
-        str(config["application_key"]), _env, "B2_APPLICATION_KEY"
-    )
+    application_key = _resolve_env_ref(str(config["application_key"]), _env, "B2_APPLICATION_KEY")
     region = str(config["region"])
     endpoint_url = f"https://s3.{region}.backblazeb2.com"
     s3_cfg: dict[str, object] = {
@@ -2287,7 +2283,9 @@ def save_source_config(
         account_id = str(validated.get("account_id", ""))
         bucket = str(validated.get("bucket", ""))
         prefix = str(validated.get("prefix", ""))
-        source_uri = f"r2://{account_id}/{bucket}/{prefix}" if prefix else f"r2://{account_id}/{bucket}"
+        source_uri = (
+            f"r2://{account_id}/{bucket}/{prefix}" if prefix else f"r2://{account_id}/{bucket}"
+        )
 
         source = _get_or_create_src(
             session,
@@ -2698,9 +2696,7 @@ def retry_pipeline_run_item(
                     _resolve_env_ref as _b2_resolve,
                 )
 
-                key_id = _b2_resolve(
-                    str(config_snapshot["key_id"]), {}, "B2_APPLICATION_KEY_ID"
-                )
+                key_id = _b2_resolve(str(config_snapshot["key_id"]), {}, "B2_APPLICATION_KEY_ID")
                 application_key = _b2_resolve(
                     str(config_snapshot["application_key"]), {}, "B2_APPLICATION_KEY"
                 )
@@ -2937,7 +2933,10 @@ def retry_pipeline_run_item(
         }
     finally:
         if file_path and run.run_type in (
-            "s3_ingest", "r2_ingest", "b2_ingest", "fileshare_ingest"
+            "s3_ingest",
+            "r2_ingest",
+            "b2_ingest",
+            "fileshare_ingest",
         ):
             try:
                 file_path.unlink(missing_ok=True)

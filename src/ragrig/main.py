@@ -2404,9 +2404,7 @@ def create_app(
         config["use_path_style"] = request.use_path_style
         config["verify_tls"] = request.verify_tls
         try:
-            report = export_to_object_storage(
-                session, knowledge_base_name=kb_name, config=config
-            )
+            report = export_to_object_storage(session, knowledge_base_name=kb_name, config=config)
         except ValueError as exc:
             return JSONResponse(status_code=404, content={"error": str(exc)})
         return JSONResponse(
