@@ -85,7 +85,8 @@ def build_cloud_model_metadata(
 VERTEX_AI_METADATA = build_cloud_model_metadata(
     name="model.vertex_ai",
     description=(
-        "Contract-only Google Vertex AI cloud provider stub for chat, generate, and embeddings."
+        "Google Vertex AI cloud provider for chat, generate, and text embeddings "
+        "via the google-cloud-aiplatform SDK."
     ),
     capabilities={
         ProviderCapability.CHAT,
@@ -102,7 +103,7 @@ VERTEX_AI_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="optional-google-cloud-aiplatform-sdk",
     dependency_group="cloud-google",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret", "request_failed"],
     audit_fields=["provider", "project", "location", "model", "embedding_model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "managed_enterprise"],
@@ -115,8 +116,8 @@ VERTEX_AI_METADATA = build_cloud_model_metadata(
 BEDROCK_METADATA = build_cloud_model_metadata(
     name="model.bedrock",
     description=(
-        "Contract-only Amazon Bedrock cloud provider stub for chat, generate, "
-        "embeddings, and rerank."
+        "Amazon Bedrock cloud provider for chat/generate via Claude, "
+        "embeddings via Titan, and rerank via Cohere."
     ),
     capabilities={
         ProviderCapability.CHAT,
@@ -134,7 +135,7 @@ BEDROCK_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="optional-boto3-bedrock-runtime",
     dependency_group="cloud-aws",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret", "request_failed"],
     audit_fields=["provider", "region", "model", "embedding_model", "reranker_model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "managed_enterprise"],
@@ -1223,6 +1224,336 @@ def create_jina_provider(**config: Any) -> JinaProvider:
     )
 
 
+# ── Vertex AI provider ────────────────────────────────────────────────────────
+
+
+class VertexAIProvider(BaseProvider):
+    """Google Vertex AI — chat, generate, and text embeddings via the aiplatform SDK."""
+
+    def __init__(
+        self,
+        *,
+        project: str,
+        location: str = "us-central1",
+        model_name: str = "gemini-2.5-pro",
+        embedding_model_name: str = "text-embedding-005",
+        config: dict[str, Any] | None = None,
+    ) -> None:
+        self.metadata = VERTEX_AI_METADATA
+        self._project = project
+        self._location = location
+        self._model_name = model_name
+        self._embedding_model_name = embedding_model_name
+        self._config = config or {}
+        self._initialized = False
+
+    def _init_vertexai(self) -> None:
+        if self._initialized:
+            return
+        try:
+            import vertexai
+
+            vertexai.init(project=self._project, location=self._location)
+            self._initialized = True
+        except ImportError as exc:
+            raise _optional_dependency_error(
+                provider="model.vertex_ai", dependencies=["google-cloud-aiplatform"]
+            ) from exc
+
+    def health_check(self) -> ProviderHealth:
+        project = self._project or os.getenv("VERTEX_AI_PROJECT", "")
+        if not project:
+            return ProviderHealth(
+                status="unavailable",
+                detail="VERTEX_AI_PROJECT is required",
+                metrics={"provider": "model.vertex_ai"},
+            )
+        try:
+            self._init_vertexai()
+        except ProviderError as exc:
+            return ProviderHealth(status="unavailable", detail=str(exc), metrics=exc.details)
+        return ProviderHealth(
+            status="healthy",
+            detail=f"Vertex AI configured — project={self._project} location={self._location}",
+            metrics={
+                "provider": "model.vertex_ai",
+                "project": self._project,
+                "location": self._location,
+                "model": self._model_name,
+            },
+        )
+
+    def generate(self, prompt: str) -> str:
+        self._init_vertexai()
+        try:
+            from vertexai.generative_models import GenerativeModel
+
+            model = GenerativeModel(self._model_name)
+            response = model.generate_content(prompt)
+            return str(response.text or "")
+        except ImportError as exc:
+            raise _optional_dependency_error(
+                provider="model.vertex_ai", dependencies=["google-cloud-aiplatform"]
+            ) from exc
+        except Exception as exc:
+            raise ProviderError(
+                f"Vertex AI generate failed: {exc}",
+                code="request_failed",
+                retryable=True,
+                details={"provider": "model.vertex_ai"},
+            ) from exc
+
+    def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        parts = []
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            parts.append(f"{role}: {content}")
+        text = self.generate("\n\n".join(parts))
+        return {"choices": [{"message": {"role": "assistant", "content": text}}]}
+
+    def embed_text(self, text: str) -> EmbeddingResult:
+        self._init_vertexai()
+        try:
+            from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
+
+            model = TextEmbeddingModel.from_pretrained(self._embedding_model_name)
+            inputs = [TextEmbeddingInput(text)]
+            embeddings = model.get_embeddings(inputs)
+            vector = [float(v) for v in embeddings[0].values]
+            return EmbeddingResult(
+                provider="model.vertex_ai",
+                model=self._embedding_model_name,
+                dimensions=len(vector),
+                vector=vector,
+                metadata={"project": self._project, "location": self._location},
+            )
+        except ImportError as exc:
+            raise _optional_dependency_error(
+                provider="model.vertex_ai", dependencies=["google-cloud-aiplatform"]
+            ) from exc
+        except Exception as exc:
+            raise ProviderError(
+                f"Vertex AI embed failed: {exc}",
+                code="request_failed",
+                retryable=True,
+                details={"provider": "model.vertex_ai"},
+            ) from exc
+
+
+def create_vertex_ai_provider(**config: Any) -> VertexAIProvider:
+    schema = VERTEX_AI_METADATA.config_schema
+    project = str(config.get("project") or os.getenv("VERTEX_AI_PROJECT", ""))
+    if not project:
+        raise ProviderError(
+            "Vertex AI requires 'project' config field or VERTEX_AI_PROJECT env var",
+            code="missing_required_secret",
+            retryable=False,
+            details={"provider": "model.vertex_ai", "secret": "VERTEX_AI_PROJECT"},
+        )
+    return VertexAIProvider(
+        project=project,
+        location=str(config.get("location", schema["location"]["default"])),
+        model_name=str(config.get("model_name", schema["model_name"]["default"])),
+        embedding_model_name=str(
+            config.get("embedding_model_name", schema["embedding_model_name"]["default"])
+        ),
+        config=dict(config),
+    )
+
+
+# ── Amazon Bedrock provider ────────────────────────────────────────────────────
+
+
+class BedrockProvider(BaseProvider):
+    """Amazon Bedrock — chat/generate via Claude, embeddings via Titan, rerank via Cohere."""
+
+    def __init__(
+        self,
+        *,
+        region: str = "us-east-1",
+        model_name: str = "anthropic.claude-3-7-sonnet-20250219-v1:0",
+        embedding_model_name: str = "amazon.titan-embed-text-v2:0",
+        reranker_model_name: str = "cohere.rerank-v3-5:0",
+        config: dict[str, Any] | None = None,
+    ) -> None:
+        self.metadata = BEDROCK_METADATA
+        self._region = region
+        self._model_name = model_name
+        self._embedding_model_name = embedding_model_name
+        self._reranker_model_name = reranker_model_name
+        self._config = config or {}
+
+    def _client(self) -> Any:
+        try:
+            import boto3
+
+            return boto3.client("bedrock-runtime", region_name=self._region)
+        except ImportError as exc:
+            raise _optional_dependency_error(
+                provider="model.bedrock", dependencies=["boto3"]
+            ) from exc
+
+    def health_check(self) -> ProviderHealth:
+        try:
+            import boto3  # noqa: F401
+        except ImportError:
+            return ProviderHealth(
+                status="unavailable",
+                detail="boto3 is not installed (pip install boto3)",
+                metrics={"provider": "model.bedrock"},
+            )
+        access_key = os.getenv("AWS_ACCESS_KEY_ID", "")
+        if not access_key:
+            return ProviderHealth(
+                status="unavailable",
+                detail="AWS_ACCESS_KEY_ID is not configured",
+                metrics={"provider": "model.bedrock"},
+            )
+        return ProviderHealth(
+            status="healthy",
+            detail=f"Bedrock configured — region={self._region}",
+            metrics={
+                "provider": "model.bedrock",
+                "region": self._region,
+                "model": self._model_name,
+            },
+        )
+
+    def generate(self, prompt: str) -> str:
+        return str(
+            self.chat([{"role": "user", "content": prompt}])["choices"][0]["message"]["content"]
+        )
+
+    def chat(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        bedrock_messages = []
+        system_parts: list[dict[str, Any]] = []
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if role == "system":
+                system_parts.append({"text": content})
+            else:
+                bedrock_messages.append({"role": role, "content": [{"text": content}]})
+        try:
+            client = self._client()
+            kwargs: dict[str, Any] = {
+                "modelId": self._model_name,
+                "messages": bedrock_messages,
+            }
+            if system_parts:
+                kwargs["system"] = system_parts
+            response = client.converse(**kwargs)
+            text = response["output"]["message"]["content"][0]["text"]
+            return {"choices": [{"message": {"role": "assistant", "content": text}}]}
+        except Exception as exc:
+            if "Import" in type(exc).__name__:
+                raise
+            raise ProviderError(
+                f"Bedrock chat failed: {exc}",
+                code="request_failed",
+                retryable=True,
+                details={"provider": "model.bedrock"},
+            ) from exc
+
+    def embed_text(self, text: str) -> EmbeddingResult:
+        import json as _json
+
+        try:
+            client = self._client()
+            if "titan" in self._embedding_model_name:
+                body = _json.dumps({"inputText": text})
+                response = client.invoke_model(
+                    modelId=self._embedding_model_name,
+                    body=body,
+                    contentType="application/json",
+                    accept="application/json",
+                )
+                result = _json.loads(response["body"].read())
+                vector = [float(v) for v in result["embedding"]]
+            else:
+                body = _json.dumps({"texts": [text], "input_type": "search_document"})
+                response = client.invoke_model(
+                    modelId=self._embedding_model_name,
+                    body=body,
+                    contentType="application/json",
+                    accept="application/json",
+                )
+                result = _json.loads(response["body"].read())
+                vector = [float(v) for v in result["embeddings"][0]]
+            return EmbeddingResult(
+                provider="model.bedrock",
+                model=self._embedding_model_name,
+                dimensions=len(vector),
+                vector=vector,
+                metadata={"region": self._region},
+            )
+        except Exception as exc:
+            if "Import" in type(exc).__name__:
+                raise
+            raise ProviderError(
+                f"Bedrock embed failed: {exc}",
+                code="request_failed",
+                retryable=True,
+                details={"provider": "model.bedrock"},
+            ) from exc
+
+    def rerank(self, query: str, documents: list[str]) -> list[dict[str, Any]]:
+        import json as _json
+
+        try:
+            client = self._client()
+            body = _json.dumps(
+                {
+                    "query": query,
+                    "documents": [{"text": d} for d in documents],
+                    "numberOfResults": len(documents),
+                }
+            )
+            response = client.invoke_model(
+                modelId=self._reranker_model_name,
+                body=body,
+                contentType="application/json",
+                accept="application/json",
+            )
+            result = _json.loads(response["body"].read())
+            results = result.get("results", [])
+            return [
+                {
+                    "document": documents[item["index"]],
+                    "index": item["index"],
+                    "score": float(item.get("relevanceScore", 0.0)),
+                }
+                for item in results
+            ]
+        except Exception as exc:
+            if "Import" in type(exc).__name__:
+                raise
+            raise ProviderError(
+                f"Bedrock rerank failed: {exc}",
+                code="request_failed",
+                retryable=True,
+                details={"provider": "model.bedrock"},
+            ) from exc
+
+
+def create_bedrock_provider(**config: Any) -> BedrockProvider:
+    schema = BEDROCK_METADATA.config_schema
+    return BedrockProvider(
+        region=str(config.get("region") or os.getenv("AWS_REGION") or schema["region"]["default"]),
+        model_name=str(config.get("model_name", schema["model_name"]["default"])),
+        embedding_model_name=str(
+            config.get("embedding_model_name", schema["embedding_model_name"]["default"])
+        ),
+        reranker_model_name=str(
+            config.get("reranker_model_name", schema["reranker_model_name"]["default"])
+        ),
+        config=dict(config),
+    )
+
+
+# ── Cloud metadata registry ────────────────────────────────────────────────────
+
 CLOUD_MODEL_METADATA = {
     VERTEX_AI_METADATA.name: (VERTEX_AI_METADATA, ["google-cloud-aiplatform"]),
     BEDROCK_METADATA.name: (BEDROCK_METADATA, ["boto3"]),
@@ -1335,14 +1666,18 @@ __all__ = [
     "ZHIPU_METADATA",
     "AnthropicProvider",
     "AzureOpenAIProvider",
+    "BedrockProvider",
     "CloudStubProvider",
     "GeminiProvider",
     "JinaProvider",
     "OpenAICompatibleCloudProvider",
+    "VertexAIProvider",
     "create_anthropic_provider",
     "create_azure_openai_provider",
+    "create_bedrock_provider",
     "create_cloud_stub_provider",
     "create_jina_provider",
     "create_openai_compatible_cloud_provider",
+    "create_vertex_ai_provider",
     "load_cloud_client",
 ]

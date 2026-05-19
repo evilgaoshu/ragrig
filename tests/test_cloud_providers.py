@@ -589,3 +589,346 @@ def test_gemini_resolve_client_returns_cached_client() -> None:
     fake_client = object()
     provider = GeminiProvider(api_key="google-test", client=fake_client)
     assert provider._resolve_client() is fake_client
+
+
+# ── VertexAIProvider ──────────────────────────────────────────────────────────
+
+
+class FakeVertexModel:
+    def __init__(self, response_text: str) -> None:
+        self._text = response_text
+
+    def generate_content(self, prompt: str) -> object:
+        class _Resp:
+            text = None
+
+        resp = _Resp()
+        resp.text = self._text  # type: ignore[attr-defined]
+        return resp
+
+
+class FakeTextEmbeddingModel:
+    def __init__(self, vector: list[float]) -> None:
+        self._vector = vector
+
+    @classmethod
+    def from_pretrained(cls, name: str) -> "FakeTextEmbeddingModel":
+        return cls([0.1, 0.2, 0.3])
+
+    def get_embeddings(self, inputs: list[Any]) -> list[Any]:
+        class _Emb:
+            values = [0.1, 0.2, 0.3]
+
+        return [_Emb()]
+
+
+def _make_vertex_modules(response_text: str = "vertex answer") -> dict[str, Any]:
+    import types
+
+    vertexai_mod = types.ModuleType("vertexai")
+    vertexai_mod.init = lambda **kw: None  # type: ignore[attr-defined]
+
+    gen_models_mod = types.ModuleType("vertexai.generative_models")
+    gen_models_mod.GenerativeModel = lambda name: FakeVertexModel(response_text)  # type: ignore[attr-defined]
+
+    lang_models_mod = types.ModuleType("vertexai.language_models")
+    lang_models_mod.TextEmbeddingModel = FakeTextEmbeddingModel  # type: ignore[attr-defined]
+
+    class _FakeInput:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    lang_models_mod.TextEmbeddingInput = _FakeInput  # type: ignore[attr-defined]
+
+    return {
+        "vertexai": vertexai_mod,
+        "vertexai.generative_models": gen_models_mod,
+        "vertexai.language_models": lang_models_mod,
+    }
+
+
+def test_vertex_ai_health_unavailable_when_no_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragrig.providers.cloud import VertexAIProvider
+
+    monkeypatch.delenv("VERTEX_AI_PROJECT", raising=False)
+    provider = VertexAIProvider(project="")
+    health = provider.health_check()
+    assert health.status == "unavailable"
+    assert "VERTEX_AI_PROJECT" in health.detail
+
+
+def test_vertex_ai_health_ok_with_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ragrig.providers.cloud import VertexAIProvider
+
+    for name, mod in _make_vertex_modules().items():
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    provider = VertexAIProvider(project="my-gcp-project")
+    health = provider.health_check()
+    assert health.status == "healthy"
+    assert "my-gcp-project" in health.detail
+
+
+def test_vertex_ai_generate_returns_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ragrig.providers.cloud import VertexAIProvider
+
+    for name, mod in _make_vertex_modules("vertex answer").items():
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    provider = VertexAIProvider(project="my-gcp-project")
+    result = provider.generate("Tell me something")
+    assert result == "vertex answer"
+
+
+def test_vertex_ai_chat_formats_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ragrig.providers.cloud import VertexAIProvider
+
+    for name, mod in _make_vertex_modules("chat reply").items():
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    provider = VertexAIProvider(project="my-gcp-project")
+    result = provider.chat([{"role": "user", "content": "Hello"}])
+    assert result["choices"][0]["message"]["content"] == "chat reply"
+
+
+def test_vertex_ai_embed_text_returns_vector(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ragrig.providers.cloud import VertexAIProvider
+
+    for name, mod in _make_vertex_modules().items():
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    provider = VertexAIProvider(project="my-gcp-project")
+    result = provider.embed_text("some text")
+    assert result.provider == "model.vertex_ai"
+    assert len(result.vector) == 3
+
+
+def test_create_vertex_ai_provider_missing_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ragrig.providers import ProviderError
+    from ragrig.providers.cloud import create_vertex_ai_provider
+
+    monkeypatch.delenv("VERTEX_AI_PROJECT", raising=False)
+    with pytest.raises(ProviderError, match="VERTEX_AI_PROJECT"):
+        create_vertex_ai_provider()
+
+
+def test_create_vertex_ai_provider_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ragrig.providers.cloud import VertexAIProvider, create_vertex_ai_provider
+
+    monkeypatch.setenv("VERTEX_AI_PROJECT", "env-project")
+    provider = create_vertex_ai_provider()
+    assert isinstance(provider, VertexAIProvider)
+    assert provider._project == "env-project"
+
+
+def test_vertex_ai_health_unavailable_when_sdk_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    from ragrig.providers.cloud import VertexAIProvider
+
+    monkeypatch.setitem(sys.modules, "vertexai", None)  # type: ignore[arg-type]
+    provider = VertexAIProvider(project="my-gcp-project")
+    health = provider.health_check()
+    assert health.status == "unavailable"
+
+
+def test_registry_vertex_ai_returns_real_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ragrig.providers import get_provider_registry
+    from ragrig.providers.cloud import VertexAIProvider
+
+    monkeypatch.delenv("VERTEX_AI_PROJECT", raising=False)
+    registry = get_provider_registry()
+    # Factory raises if no project, but health_check on a bare instance works
+    provider = VertexAIProvider(project="")
+    health = provider.health_check()
+    assert health.status == "unavailable"
+    # Verify registry factory produces the right type when project is provided
+    monkeypatch.setenv("VERTEX_AI_PROJECT", "test-project")
+    p = registry.get("model.vertex_ai")
+    assert isinstance(p, VertexAIProvider)
+
+
+# ── BedrockProvider ───────────────────────────────────────────────────────────
+
+
+def _make_bedrock_client(converse_text: str = "bedrock reply") -> Any:
+    import io
+    import json
+    import types
+
+    class _FakeBedrockClient:
+        def converse(self, **kwargs: Any) -> dict[str, Any]:
+            return {"output": {"message": {"content": [{"text": converse_text}]}}}
+
+        def invoke_model(self, **kwargs: Any) -> dict[str, Any]:
+            model_id = kwargs.get("modelId", "")
+            if "titan" in model_id:
+                body = json.dumps({"embedding": [0.4, 0.5, 0.6]}).encode()
+            elif "rerank" in model_id:
+                body = json.dumps({"results": [{"index": 0, "relevanceScore": 0.9}]}).encode()
+            else:
+                # cohere.embed or any other non-titan embed model
+                body = json.dumps({"embeddings": [[0.1, 0.2, 0.3]]}).encode()
+            return {"body": io.BytesIO(body)}
+
+    boto3_mod = types.ModuleType("boto3")
+    boto3_mod.client = lambda service, region_name=None: _FakeBedrockClient()  # type: ignore[attr-defined]
+    return boto3_mod
+
+
+def test_bedrock_health_unavailable_when_boto3_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    from ragrig.providers.cloud import BedrockProvider
+
+    monkeypatch.setitem(sys.modules, "boto3", None)  # type: ignore[arg-type]
+    provider = BedrockProvider()
+    health = provider.health_check()
+    assert health.status == "unavailable"
+    assert "boto3" in health.detail
+
+
+def test_bedrock_health_unavailable_when_no_access_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    from ragrig.providers.cloud import BedrockProvider
+
+    monkeypatch.setitem(sys.modules, "boto3", _make_bedrock_client())
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    provider = BedrockProvider()
+    health = provider.health_check()
+    assert health.status == "unavailable"
+    assert "AWS_ACCESS_KEY_ID" in health.detail
+
+
+def test_bedrock_health_ok_with_access_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ragrig.providers.cloud import BedrockProvider
+
+    monkeypatch.setitem(sys.modules, "boto3", _make_bedrock_client())
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+    provider = BedrockProvider()
+    health = provider.health_check()
+    assert health.status == "healthy"
+    assert "us-east-1" in health.detail
+
+
+def test_bedrock_chat_returns_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ragrig.providers.cloud import BedrockProvider
+
+    monkeypatch.setitem(sys.modules, "boto3", _make_bedrock_client("hello from bedrock"))
+    provider = BedrockProvider()
+    result = provider.chat([{"role": "user", "content": "Hi"}])
+    assert result["choices"][0]["message"]["content"] == "hello from bedrock"
+
+
+def test_bedrock_chat_strips_system_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ragrig.providers.cloud import BedrockProvider
+
+    monkeypatch.setitem(sys.modules, "boto3", _make_bedrock_client("reply"))
+    provider = BedrockProvider()
+    result = provider.chat(
+        [
+            {"role": "system", "content": "Be brief."},
+            {"role": "user", "content": "Hello"},
+        ]
+    )
+    assert result["choices"][0]["message"]["content"] == "reply"
+
+
+def test_bedrock_generate_delegates_to_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ragrig.providers.cloud import BedrockProvider
+
+    monkeypatch.setitem(sys.modules, "boto3", _make_bedrock_client("generated"))
+    provider = BedrockProvider()
+    result = provider.generate("Tell me something")
+    assert result == "generated"
+
+
+def test_bedrock_embed_text_titan(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ragrig.providers.cloud import BedrockProvider
+
+    monkeypatch.setitem(sys.modules, "boto3", _make_bedrock_client())
+    provider = BedrockProvider(embedding_model_name="amazon.titan-embed-text-v2:0")
+    result = provider.embed_text("hello")
+    assert result.provider == "model.bedrock"
+    assert result.vector == [0.4, 0.5, 0.6]
+
+
+def test_bedrock_embed_text_cohere(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ragrig.providers.cloud import BedrockProvider
+
+    monkeypatch.setitem(sys.modules, "boto3", _make_bedrock_client())
+    provider = BedrockProvider(embedding_model_name="cohere.embed-multilingual-v3")
+    result = provider.embed_text("hello")
+    assert result.provider == "model.bedrock"
+    assert len(result.vector) == 3
+
+
+def test_bedrock_rerank_returns_scored_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ragrig.providers.cloud import BedrockProvider
+
+    monkeypatch.setitem(sys.modules, "boto3", _make_bedrock_client())
+    provider = BedrockProvider()
+    results = provider.rerank("query", ["doc 0"])
+    assert results[0]["score"] == pytest.approx(0.9)
+    assert results[0]["index"] == 0
+
+
+def test_create_bedrock_provider_defaults() -> None:
+    from ragrig.providers.cloud import BedrockProvider, create_bedrock_provider
+
+    p = create_bedrock_provider()
+    assert isinstance(p, BedrockProvider)
+    assert p._region == "us-east-1"
+
+
+def test_create_bedrock_provider_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ragrig.providers.cloud import BedrockProvider, create_bedrock_provider
+
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+    p = create_bedrock_provider()
+    assert isinstance(p, BedrockProvider)
+    assert p._region == "eu-west-1"
+
+
+def test_registry_bedrock_returns_real_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ragrig.providers import get_provider_registry
+    from ragrig.providers.cloud import BedrockProvider
+
+    monkeypatch.setitem(sys.modules, "boto3", _make_bedrock_client())
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIATEST")
+    registry = get_provider_registry()
+    p = registry.get("model.bedrock")
+    assert isinstance(p, BedrockProvider)

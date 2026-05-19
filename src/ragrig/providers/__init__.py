@@ -234,9 +234,10 @@ def create_provider_registry() -> ProviderRegistry:
         GeminiProvider,
         create_anthropic_provider,
         create_azure_openai_provider,
-        create_cloud_stub_provider,
+        create_bedrock_provider,
         create_jina_provider,
         create_openai_compatible_cloud_provider,
+        create_vertex_ai_provider,
     )
     from ragrig.providers.local import (
         LLAMA_CPP_METADATA,
@@ -301,15 +302,9 @@ def create_provider_registry() -> ProviderRegistry:
     registry.register(BGE_EMBEDDING_METADATA, create_bge_embedding_provider)
     registry.register(BGE_RERANKER_METADATA, create_bge_reranker_provider)
 
-    # Cloud stubs (complex auth — Bedrock/Vertex AI kept as stubs)
-    registry.register(
-        VERTEX_AI_METADATA,
-        lambda **config: create_cloud_stub_provider("model.vertex_ai", **config),
-    )
-    registry.register(
-        BEDROCK_METADATA,
-        lambda **config: create_cloud_stub_provider("model.bedrock", **config),
-    )
+    # Real cloud providers — Vertex AI and Bedrock
+    registry.register(VERTEX_AI_METADATA, create_vertex_ai_provider)
+    registry.register(BEDROCK_METADATA, create_bedrock_provider)
 
     # Real cloud providers
     registry.register(ANTHROPIC_METADATA, create_anthropic_provider)
