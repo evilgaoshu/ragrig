@@ -5,10 +5,13 @@ from pydantic import Field
 from ragrig.plugins import guards
 from ragrig.plugins.manifest import PluginConfigModel, PluginManifest, SecretRequirement
 from ragrig.plugins.object_storage.config import ObjectStorageSinkConfig
+from ragrig.plugins.sinks.elasticsearch.config import ElasticsearchSinkConfig
+from ragrig.plugins.sources.azure_blob.config import AzureBlobSourceConfig
 from ragrig.plugins.sources.backblaze_b2.config import BackblazeB2SourceConfig
 from ragrig.plugins.sources.cloudflare_r2.config import CloudflareR2SourceConfig
 from ragrig.plugins.sources.database.config import DatabaseSourceConfig
 from ragrig.plugins.sources.fileshare.config import FileshareSourceConfig
+from ragrig.plugins.sources.gcs.config import GcsSourceConfig
 from ragrig.plugins.sources.google_workspace.config import GoogleWorkspaceSourceConfig
 from ragrig.plugins.sources.s3.config import S3SourceConfig
 from ragrig.plugins.types import Capability, PluginStatus, PluginTier, PluginType
@@ -51,6 +54,38 @@ class BackblazeB2SinkConfig(PluginConfigModel):
     object_metadata: dict[str, str] = Field(default_factory=dict)
 
 
+class AzureBlobSinkConfig(PluginConfigModel):
+    account_name: str = Field(min_length=1)
+    account_key: str
+    container: str = Field(min_length=1)
+    prefix: str = ""
+    path_template: str = "{knowledge_base}/{run_id}/{artifact}.{format}"
+    overwrite: bool = False
+    dry_run: bool = False
+    include_retrieval_artifact: bool = True
+    include_markdown_summary: bool = True
+    parquet_export: bool = False
+    max_retries: int = Field(default=3, ge=0)
+    object_metadata: dict[str, str] = Field(default_factory=dict)
+
+
+class GcsSinkConfig(PluginConfigModel):
+    access_key: str
+    secret_key: str
+    bucket: str = Field(min_length=1)
+    prefix: str = ""
+    path_template: str = "{knowledge_base}/{run_id}/{artifact}.{format}"
+    overwrite: bool = False
+    dry_run: bool = False
+    include_retrieval_artifact: bool = True
+    include_markdown_summary: bool = True
+    parquet_export: bool = False
+    max_retries: int = Field(default=3, ge=0)
+    connect_timeout_seconds: int = Field(default=10, gt=0)
+    read_timeout_seconds: int = Field(default=30, gt=0)
+    object_metadata: dict[str, str] = Field(default_factory=dict)
+
+
 class Microsoft365SourceConfig(PluginConfigModel):
     tenant_id: str
     client_id: str
@@ -58,6 +93,25 @@ class Microsoft365SourceConfig(PluginConfigModel):
     site_url: str | None = None
     scope: str = "sharepoint"
     page_size: int = 100
+
+
+class GithubSourcePluginConfig(PluginConfigModel):
+    repo: str
+    token: str = ""
+    branch: str = "main"
+    path: str = ""
+    include_patterns: list[str] = ["*.md", "*.txt", "*.rst", "*.py"]
+    exclude_patterns: list[str] = []
+    max_file_size_mb: float = 10.0
+    page_size: int = 100
+
+
+class SlackSourcePluginConfig(PluginConfigModel):
+    bot_token: str
+    channel_ids: list[str] = []
+    include_all_channels: bool = False
+    oldest_days: int = 30
+    page_size: int = 200
 
 
 class WikiSourceConfig(PluginConfigModel):
@@ -156,6 +210,16 @@ class BgeRerankerConfig(PluginConfigModel):
     model_name: str = "BAAI/bge-reranker-base"
 
 
+class CohereEmbeddingConfig(PluginConfigModel):
+    model_name: str = "embed-v4.0"
+    input_type: str = "search_document"
+
+
+class VoyageEmbeddingConfig(PluginConfigModel):
+    model_name: str = "voyage-3"
+    input_type: str = "document"
+
+
 class QdrantVectorConfig(PluginConfigModel):
     endpoint_url: str
     api_key: str | None = None
@@ -234,8 +298,18 @@ def _official_manifest(
     )
 
 
+def _is_azure_blob_available() -> bool:
+    try:
+        import azure.storage.blob  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 def official_stub_manifests() -> list[PluginManifest]:
     s3_ready = guards.is_dependency_available("boto3")
+    azure_ready = _is_azure_blob_available()
     pyarrow_ready = guards.is_dependency_available("pyarrow")
     qdrant_ready = guards.is_dependency_available("qdrant_client")
     google_workspace_ready = guards.is_dependency_available("googleapiclient")
@@ -1101,6 +1175,168 @@ def official_stub_manifests() -> list[PluginManifest]:
             status=PluginStatus.READY if (s3_ready and pyarrow_ready) else PluginStatus.DEGRADED,
         ),
         _official_manifest(
+            plugin_id="source.azure_blob",
+            display_name="Azure Blob Storage Source",
+            description=(
+                "Reads Azure Blob Storage containers into the ingestion pipeline "
+                "using the azure-storage-blob SDK."
+            ),
+            plugin_type=PluginType.SOURCE,
+            family="azure_blob",
+            capabilities=(
+                Capability.READ,
+                Capability.INCREMENTAL_SYNC,
+            ),
+            docs_reference="docs/specs/ragrig-plugin-system-spec.md",
+            optional_dependencies=("azure-storage-blob",),
+            config_model=AzureBlobSourceConfig,
+            example_config={
+                "account_name": "mystorageaccount",
+                "account_key": "env:AZURE_STORAGE_ACCOUNT_KEY",
+                "container": "docs",
+                "prefix": "team-a",
+                "include_patterns": ["*.md", "*.txt"],
+                "exclude_patterns": [],
+                "max_object_size_mb": 50,
+                "page_size": 1000,
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="AZURE_STORAGE_ACCOUNT_KEY",
+                    description="Azure Storage account key",
+                ),
+            ),
+            unavailable_reason=(
+                None
+                if azure_ready
+                else "Install azure-storage-blob to enable the Azure Blob Storage source connector."
+            ),
+            status=PluginStatus.READY if azure_ready else PluginStatus.UNAVAILABLE,
+        ),
+        _official_manifest(
+            plugin_id="sink.azure_blob",
+            display_name="Azure Blob Storage Sink",
+            description=("Exports governed assets and audit artifacts to Azure Blob Storage."),
+            plugin_type=PluginType.SINK,
+            family="azure_blob",
+            capabilities=(Capability.WRITE,),
+            docs_reference="docs/specs/ragrig-plugin-system-spec.md",
+            optional_dependencies=("azure-storage-blob", "pyarrow"),
+            degraded_missing_dependencies=("azure-storage-blob", "pyarrow"),
+            config_model=AzureBlobSinkConfig,
+            example_config={
+                "account_name": "mystorageaccount",
+                "account_key": "env:AZURE_STORAGE_ACCOUNT_KEY",
+                "container": "exports",
+                "prefix": "team-a",
+                "path_template": "{knowledge_base}/{run_id}/{artifact}.{format}",
+                "overwrite": False,
+                "dry_run": False,
+                "include_retrieval_artifact": True,
+                "include_markdown_summary": True,
+                "parquet_export": False,
+                "max_retries": 3,
+                "object_metadata": {},
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="AZURE_STORAGE_ACCOUNT_KEY",
+                    description="Azure Storage account key",
+                ),
+            ),
+            unavailable_reason=None,
+            status=(
+                PluginStatus.READY if (azure_ready and pyarrow_ready) else PluginStatus.DEGRADED
+            ),
+        ),
+        _official_manifest(
+            plugin_id="source.gcs",
+            display_name="Google Cloud Storage Source",
+            description=(
+                "Reads Google Cloud Storage buckets into the ingestion pipeline "
+                "via the GCS S3-compatible XML API using HMAC credentials."
+            ),
+            plugin_type=PluginType.SOURCE,
+            family="gcs",
+            capabilities=(
+                Capability.READ,
+                Capability.INCREMENTAL_SYNC,
+            ),
+            docs_reference="docs/specs/ragrig-plugin-system-spec.md",
+            optional_dependencies=("boto3",),
+            config_model=GcsSourceConfig,
+            example_config={
+                "access_key": "env:GCS_ACCESS_KEY",
+                "secret_key": "env:GCS_SECRET_KEY",
+                "bucket": "my-gcs-bucket",
+                "prefix": "team-a",
+                "include_patterns": ["*.md", "*.txt"],
+                "exclude_patterns": [],
+                "max_object_size_mb": 50,
+                "page_size": 1000,
+                "max_retries": 3,
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="GCS_ACCESS_KEY",
+                    description="GCS HMAC access key",
+                ),
+                SecretRequirement(
+                    name="GCS_SECRET_KEY",
+                    description="GCS HMAC secret key",
+                ),
+            ),
+            unavailable_reason=(
+                None
+                if s3_ready
+                else "Install boto3 to enable the Google Cloud Storage source connector."
+            ),
+            status=PluginStatus.READY if s3_ready else PluginStatus.UNAVAILABLE,
+        ),
+        _official_manifest(
+            plugin_id="sink.gcs",
+            display_name="Google Cloud Storage Sink",
+            description=(
+                "Exports governed assets and audit artifacts to Google Cloud Storage "
+                "via the GCS S3-compatible XML API using HMAC credentials."
+            ),
+            plugin_type=PluginType.SINK,
+            family="gcs",
+            capabilities=(Capability.WRITE,),
+            docs_reference="docs/specs/ragrig-plugin-system-spec.md",
+            optional_dependencies=("boto3", "pyarrow"),
+            degraded_missing_dependencies=("boto3", "pyarrow"),
+            config_model=GcsSinkConfig,
+            example_config={
+                "access_key": "env:GCS_ACCESS_KEY",
+                "secret_key": "env:GCS_SECRET_KEY",
+                "bucket": "my-gcs-exports",
+                "prefix": "team-a",
+                "path_template": "{knowledge_base}/{run_id}/{artifact}.{format}",
+                "overwrite": False,
+                "dry_run": False,
+                "include_retrieval_artifact": True,
+                "include_markdown_summary": True,
+                "parquet_export": False,
+                "max_retries": 3,
+                "connect_timeout_seconds": 10,
+                "read_timeout_seconds": 30,
+                "object_metadata": {},
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="GCS_ACCESS_KEY",
+                    description="GCS HMAC access key",
+                ),
+                SecretRequirement(
+                    name="GCS_SECRET_KEY",
+                    description="GCS HMAC secret key",
+                ),
+            ),
+            unavailable_reason=None,
+            status=PluginStatus.READY if (s3_ready and pyarrow_ready) else PluginStatus.DEGRADED,
+        ),
+        _official_manifest(
             plugin_id="source.fileshare",
             display_name="Fileshare Source",
             description="Enterprise fileshare source for SMB, mounted NFS, WebDAV, and SFTP.",
@@ -1549,6 +1785,141 @@ def official_stub_manifests() -> list[PluginManifest]:
                     description="HMAC-SHA256 signing secret for webhook verification",
                     required=False,
                 ),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="source.github",
+            display_name="GitHub Source",
+            description=(
+                "Ingests files from a GitHub repository via the GitHub REST API. "
+                "No git clone required — fetches content over HTTPS using httpx."
+            ),
+            plugin_type=PluginType.SOURCE,
+            family="github",
+            capabilities=(Capability.READ, Capability.INCREMENTAL_SYNC),
+            config_model=GithubSourcePluginConfig,
+            example_config={
+                "repo": "owner/repo",
+                "token": "env:GITHUB_TOKEN",
+                "branch": "main",
+                "path": "",
+                "include_patterns": ["*.md", "*.txt", "*.rst", "*.py"],
+                "exclude_patterns": [],
+                "max_file_size_mb": 10.0,
+                "page_size": 100,
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="GITHUB_TOKEN",
+                    description="GitHub personal access token",
+                    required=False,
+                ),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="source.slack",
+            display_name="Slack Source",
+            description=(
+                "Ingests messages from Slack channels via the Slack Web API. "
+                "Aggregates channel messages into documents for indexing."
+            ),
+            plugin_type=PluginType.SOURCE,
+            family="slack",
+            capabilities=(Capability.READ, Capability.INCREMENTAL_SYNC),
+            config_model=SlackSourcePluginConfig,
+            example_config={
+                "bot_token": "env:SLACK_BOT_TOKEN",
+                "channel_ids": ["C01234567"],
+                "include_all_channels": False,
+                "oldest_days": 30,
+                "page_size": 200,
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="SLACK_BOT_TOKEN",
+                    description="Slack bot token with channels:read and channels:history scopes",
+                    required=True,
+                ),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="sink.elasticsearch",
+            display_name="Elasticsearch Sink",
+            description=(
+                "Exports knowledge-base chunks and embeddings to an Elasticsearch or "
+                "OpenSearch index using bulk indexing."
+            ),
+            plugin_type=PluginType.SINK,
+            family="elasticsearch",
+            capabilities=(Capability.WRITE,),
+            config_model=ElasticsearchSinkConfig,
+            optional_dependencies=("elasticsearch",),
+            example_config={
+                "url": "http://localhost:9200",
+                "index": "ragrig-chunks",
+                "api_key": "env:ELASTICSEARCH_API_KEY",
+                "batch_size": 500,
+                "dry_run": False,
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="ELASTICSEARCH_API_KEY",
+                    description="Elasticsearch API key",
+                    required=False,
+                ),
+                SecretRequirement(
+                    name="ELASTICSEARCH_PASSWORD",
+                    description="Elasticsearch basic-auth password",
+                    required=False,
+                ),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="embedding.cohere",
+            display_name="Cohere Embedding",
+            description=(
+                "Cohere cloud embedding provider using the Embed API v2 "
+                "(embed-v4.0, embed-english-v3.0, embed-multilingual-v3.0)."
+            ),
+            plugin_type=PluginType.EMBEDDING,
+            family="cohere",
+            capabilities=(Capability.WRITE, Capability.EMBED_TEXT),
+            config_model=CohereEmbeddingConfig,
+            example_config={
+                "model_name": "embed-v4.0",
+                "input_type": "search_document",
+            },
+            secret_requirements=(
+                SecretRequirement(name="COHERE_API_KEY", description="Cohere API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="embedding.voyage",
+            display_name="Voyage AI Embedding",
+            description=(
+                "Voyage AI cloud embedding provider using the Embeddings API "
+                "(voyage-3, voyage-3-lite, voyage-code-3, voyage-finance-2)."
+            ),
+            plugin_type=PluginType.EMBEDDING,
+            family="voyage",
+            capabilities=(Capability.WRITE, Capability.EMBED_TEXT),
+            config_model=VoyageEmbeddingConfig,
+            example_config={
+                "model_name": "voyage-3",
+                "input_type": "document",
+            },
+            secret_requirements=(
+                SecretRequirement(name="VOYAGE_API_KEY", description="Voyage AI API key"),
             ),
             status=PluginStatus.READY,
             unavailable_reason=None,

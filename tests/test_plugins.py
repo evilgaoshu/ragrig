@@ -54,7 +54,7 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     manifests = registry.list()
     manifest_ids = {manifest.plugin_id for manifest in manifests}
 
-    assert len(manifests) == 66
+    assert len(manifests) == 75
     assert {
         "source.local",
         "parser.markdown",
