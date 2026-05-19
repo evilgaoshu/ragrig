@@ -194,6 +194,7 @@ def _official_manifest(
 
 def official_stub_manifests() -> list[PluginManifest]:
     s3_ready = guards.is_dependency_available("boto3")
+    pyarrow_ready = guards.is_dependency_available("pyarrow")
     qdrant_ready = guards.is_dependency_available("qdrant_client")
     google_workspace_ready = guards.is_dependency_available("googleapiclient")
     duckdb_ready = guards.is_dependency_available("duckdb")
@@ -886,7 +887,7 @@ def official_stub_manifests() -> list[PluginManifest]:
                 ),
             ),
             unavailable_reason=None,
-            status=PluginStatus.READY if s3_ready else PluginStatus.DEGRADED,
+            status=PluginStatus.READY if (s3_ready and pyarrow_ready) else PluginStatus.DEGRADED,
         ),
         _official_manifest(
             plugin_id="source.fileshare",
