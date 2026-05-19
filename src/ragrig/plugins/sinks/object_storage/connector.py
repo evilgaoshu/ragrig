@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -68,6 +69,7 @@ def export_to_object_storage(
     *,
     knowledge_base_name: str,
     config: dict[str, object],
+    workspace_id: UUID | None = None,
     env: Mapping[str, str] | None = None,
     client: ObjectStorageClientProtocol | None = None,
 ) -> ExportToObjectStorageReport:
@@ -77,6 +79,7 @@ def export_to_object_storage(
     return _export_with_resolved_credentials(
         session,
         knowledge_base_name=knowledge_base_name,
+        workspace_id=workspace_id,
         validated=validated,
         secrets=secrets,
         source_kind="object_storage_sink",
@@ -89,13 +92,18 @@ def _export_with_resolved_credentials(
     session: Session,
     *,
     knowledge_base_name: str,
+    workspace_id: UUID | None = None,
     validated: dict[str, object],
     secrets: ResolvedObjectStorageSecrets,
     source_kind: str,
     run_type: str,
     client: ObjectStorageClientProtocol | None = None,
 ) -> ExportToObjectStorageReport:
-    knowledge_base = get_knowledge_base_by_name(session, knowledge_base_name)
+    knowledge_base = get_knowledge_base_by_name(
+        session,
+        knowledge_base_name,
+        workspace_id=workspace_id,
+    )
     if knowledge_base is None:
         raise ValueError(f"Knowledge base '{knowledge_base_name}' was not found")
 

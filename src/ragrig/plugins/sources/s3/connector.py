@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Mapping
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -44,6 +45,7 @@ def ingest_s3_source(
     *,
     knowledge_base_name: str,
     config: dict[str, object],
+    workspace_id: UUID | None = None,
     env: Mapping[str, str] | None = None,
     client: S3ClientProtocol | None = None,
 ) -> IngestionReport:
@@ -54,6 +56,7 @@ def ingest_s3_source(
     return _run_s3_compatible_ingest(
         session,
         knowledge_base_name=knowledge_base_name,
+        workspace_id=workspace_id,
         source_kind="s3",
         run_type="s3_ingest",
         bucket=str(validated["bucket"]),
@@ -68,6 +71,7 @@ def _run_s3_compatible_ingest(
     session: Session,
     *,
     knowledge_base_name: str,
+    workspace_id: UUID | None = None,
     source_kind: str,
     run_type: str,
     bucket: str,
@@ -77,7 +81,14 @@ def _run_s3_compatible_ingest(
     secret_values: list[str],
 ) -> IngestionReport:
     source_uri = _source_uri(bucket, prefix)
-    knowledge_base = get_or_create_knowledge_base(session, knowledge_base_name)
+    if workspace_id is None:
+        knowledge_base = get_or_create_knowledge_base(session, knowledge_base_name)
+    else:
+        knowledge_base = get_or_create_knowledge_base(
+            session,
+            knowledge_base_name,
+            workspace_id=workspace_id,
+        )
     source = get_or_create_source(
         session,
         knowledge_base_id=knowledge_base.id,

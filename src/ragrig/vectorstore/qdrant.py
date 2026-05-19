@@ -226,6 +226,7 @@ class QdrantBackend:
                 provider=profile["provider"],
                 model=profile["model"],
                 dimensions=profile["dimensions"],
+                knowledge_base_id=profile["knowledge_base_id"],
             )
             info = live_collections.get(collection.name)
             if info is None:

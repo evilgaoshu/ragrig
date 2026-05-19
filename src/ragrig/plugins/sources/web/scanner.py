@@ -21,6 +21,8 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from ragrig.ingestion.web_import import WebsiteImportError, _validate_http_url
+
 
 @dataclass(frozen=True)
 class WebPage:
@@ -157,6 +159,7 @@ def scan_web_pages(
     includes: list[str] = config.get("include_patterns") or []
     excludes: list[str] = config.get("exclude_patterns") or []
     verify_tls = bool(config.get("verify_tls", True))
+    allow_private_network = bool(config.get("allow_private_network", False))
 
     try:
         auth_headers = _build_auth_headers(config, env)
@@ -208,7 +211,10 @@ def scan_web_pages(
                 continue
 
             try:
+                _validate_http_url(url, allow_private_network=allow_private_network)
                 resp = client.get(url)
+                _validate_http_url(str(resp.url), allow_private_network=allow_private_network)
+                resp.raise_for_status()
                 ct = resp.headers.get("content-type", "")
                 if "text/html" not in ct and "text/plain" not in ct:
                     skipped.append((url, f"unsupported_content_type:{ct}"))
@@ -223,6 +229,14 @@ def scan_web_pages(
                 if depth < max_depth and "text/html" in ct:
                     links = _extract_links(html_content, url)
                     for link in links:
+                        try:
+                            _validate_http_url(
+                                link,
+                                allow_private_network=allow_private_network,
+                            )
+                        except WebsiteImportError:
+                            skipped.append((link, "blocked_private_or_invalid_url"))
+                            continue
                         if link not in visited:
                             queue.append((link, depth + 1))
 
@@ -240,6 +254,8 @@ def scan_web_pages(
                 )
             except httpx.HTTPStatusError as exc:
                 failed.append((url, f"http_{exc.response.status_code}"))
+            except WebsiteImportError as exc:
+                failed.append((url, f"url_blocked:{exc}"))
             except httpx.RequestError as exc:
                 failed.append((url, f"request_error:{type(exc).__name__}"))
     finally:

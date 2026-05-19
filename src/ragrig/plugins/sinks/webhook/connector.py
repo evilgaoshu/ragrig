@@ -20,6 +20,7 @@ import hmac
 import json
 from dataclasses import dataclass
 from typing import Any, Mapping
+from uuid import UUID
 
 import httpx
 from sqlalchemy import select
@@ -65,6 +66,7 @@ def export_to_webhook(
     endpoint_url: str,
     env: Mapping[str, str] | None = None,
     hmac_secret: str | None = None,
+    workspace_id: UUID | None = None,
     format: str = "ndjson",
     extra_headers: dict[str, str] | None = None,
     batch_size: int = 200,
@@ -88,7 +90,11 @@ def export_to_webhook(
     _env = dict(env or {})
     resolved_secret = _resolve(hmac_secret, _env) if hmac_secret else None
 
-    kb = get_knowledge_base_by_name(session, knowledge_base_name)
+    kb = get_knowledge_base_by_name(
+        session,
+        knowledge_base_name,
+        workspace_id=workspace_id,
+    )
     if kb is None:
         raise ValueError(f"Knowledge base '{knowledge_base_name}' not found")
 

@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+from ragrig.config import Settings
 from ragrig.main import create_app
 from scripts.local_pilot_smoke import _create_file_session_factory
 
@@ -40,7 +41,14 @@ def _check_ephemeral_sqlite_health() -> str:
         session_factory, engine = _create_file_session_factory(database_path)
         try:
             client = TestClient(
-                create_app(check_database=lambda: None, session_factory=session_factory)
+                create_app(
+                    check_database=lambda: None,
+                    session_factory=session_factory,
+                    settings=Settings(
+                        database_url=f"sqlite+pysqlite:///{database_path}",
+                        ragrig_auth_enabled=False,
+                    ),
+                )
             )
             response = client.get("/health")
             response.raise_for_status()

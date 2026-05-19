@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -375,6 +376,36 @@ class TestMfaApi:
         data = login_resp.json()
         assert data["mfa_required"] is True
 
+    def test_mfa_pending_token_cannot_use_protected_routes(self, client, engine):
+        import pyotp
+
+        email = "mfa_pending_blocked@example.com"
+        token = _register(client, email)
+        client.post("/auth/mfa/setup", headers={"Authorization": f"Bearer {token}"})
+
+        with Session(engine) as s:
+            user = s.scalar(select(User).where(User.email == email).limit(1))
+            secret = user.totp_secret
+
+        code = pyotp.TOTP(secret).now()
+        confirm_resp = client.post(
+            "/auth/mfa/confirm",
+            json={"code": code},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert confirm_resp.status_code == 200
+
+        login_resp = client.post("/auth/login", json={"email": email, "password": "Password1!"})
+        pending_token = login_resp.json()["token"]
+        assert login_resp.json()["mfa_required"] is True
+
+        blocked = client.post(
+            "/knowledge-bases",
+            json={"name": "must-not-create-with-pending-token"},
+            headers={"Authorization": f"Bearer {pending_token}"},
+        )
+        assert blocked.status_code == 401
+
     def test_mfa_challenge_completes_login(self, client, engine):
         import pyotp
 
@@ -459,6 +490,82 @@ class TestMfaApi:
             json={"session_token": pending_token, "code": backup_codes[0]},
         )
         assert challenge_resp.status_code == 200
+
+
+# ── Retrieval ACL endpoint tests ─────────────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_retrieval_search_uses_token_principals_not_request_body(
+    engine,
+    monkeypatch,
+) -> None:
+    import ragrig.main as main_module
+    from ragrig.config import Settings
+    from ragrig.main import create_app
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    def _factory() -> Session:
+        return Session(engine, expire_on_commit=False)
+
+    settings = Settings(
+        database_url="sqlite://",
+        ragrig_auth_enabled=True,
+        ragrig_open_registration=True,
+    )
+    app = create_app(check_database=lambda: None, session_factory=_factory, settings=settings)
+    local_client = TestClient(app, raise_server_exceptions=True)
+
+    token = _register(local_client, "retrieval_acl@example.com")
+    me = local_client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).json()
+    with Session(engine) as s:
+        get_or_create_knowledge_base(
+            s,
+            "acl-token-context",
+            workspace_id=uuid.UUID(me["workspace_id"]),
+        )
+        s.commit()
+
+    captured: dict[str, object] = {}
+
+    def fake_search_knowledge_base(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            knowledge_base=kwargs["knowledge_base_name"],
+            query=kwargs["query"],
+            top_k=kwargs["top_k"],
+            provider=kwargs["provider"],
+            model=kwargs["model"],
+            dimensions=kwargs["dimensions"],
+            distance_metric="cosine_distance",
+            backend="test",
+            backend_metadata={},
+            cost_latency={},
+            total_results=0,
+            acl_explain={},
+            results=[],
+            degraded=False,
+            degraded_reason="",
+        )
+
+    monkeypatch.setattr(main_module, "search_knowledge_base", fake_search_knowledge_base)
+
+    resp = local_client.post(
+        "/retrieval/search",
+        json={
+            "knowledge_base": "acl-token-context",
+            "query": "hello",
+            "principal_ids": ["user:attacker"],
+            "enforce_acl": False,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert resp.status_code == 200
+    assert captured["principal_ids"] == [f"user:{me['user_id']}", me["user_id"]]
+    assert captured["enforce_acl"] is True
+    assert captured["workspace_id"] == uuid.UUID(me["workspace_id"])
+    local_client.close()
 
 
 # ── Hard-delete / right-to-erasure tests ─────────────────────────────────────

@@ -243,13 +243,39 @@ jobs:
         if: steps.docker_needed.outputs.needed == 'true'
         run: docker build -t ragrig:ci .
 
+      - name: Start Postgres for container health
+        if: steps.docker_needed.outputs.needed == 'true'
+        run: |
+          docker network create ragrig-ci-net
+          docker run -d \
+            --name ragrig-ci-db \
+            --network ragrig-ci-net \
+            -e POSTGRES_USER=ci \
+            -e POSTGRES_PASSWORD=ci \
+            -e POSTGRES_DB=ci \
+            --health-cmd="pg_isready -U ci -d ci" \
+            --health-interval=5s \
+            --health-timeout=5s \
+            --health-retries=12 \
+            postgres:16-alpine
+          for i in $(seq 1 24); do
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' ragrig-ci-db)" = "healthy" ]; then
+              echo "Postgres healthy after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs ragrig-ci-db
+          exit 1
+
       - name: Start container
         if: steps.docker_needed.outputs.needed == 'true'
         run: |
           docker run -d \
             --name ragrig-ci \
+            --network ragrig-ci-net \
             -p 8099:8000 \
-            -e DATABASE_URL=postgresql://ci:ci@localhost:5432/ci \
+            -e DATABASE_URL=postgresql://ci:ci@ragrig-ci-db:5432/ci \
             ragrig:ci
 
       - name: Wait for app to respond
@@ -277,7 +303,10 @@ jobs:
 
       - name: Stop container
         if: always() && steps.docker_needed.outputs.needed == 'true'
-        run: docker rm -f ragrig-ci || true
+        run: |
+          docker rm -f ragrig-ci || true
+          docker rm -f ragrig-ci-db || true
+          docker network rm ragrig-ci-net || true
 
   frontend:
     name: RAGRig CI / frontend

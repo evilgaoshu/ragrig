@@ -1,5 +1,6 @@
 const BASE = import.meta.env.DEV ? '' : ''
 const TOKEN_KEY = 'ragrig_token'
+const LOGIN_PATH = '/app/login'
 
 function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
@@ -15,7 +16,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith('/auth/')) {
       localStorage.removeItem(TOKEN_KEY)
-      window.location.href = '/login'
+      window.location.href = LOGIN_PATH
     }
     const body = await res.json().catch(() => ({}))
     throw new Error(body?.error ?? body?.detail ?? `HTTP ${res.status}`)
@@ -31,7 +32,7 @@ async function requestForm<T>(path: string, body: FormData): Promise<T> {
   if (!res.ok) {
     if (res.status === 401) {
       localStorage.removeItem(TOKEN_KEY)
-      window.location.href = '/login'
+      window.location.href = LOGIN_PATH
     }
     const b = await res.json().catch(() => ({}))
     throw new Error(b?.error ?? b?.detail ?? `HTTP ${res.status}`)

@@ -27,6 +27,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
+from ragrig.config import Settings
 from ragrig.db.models import Base
 from ragrig.evaluation.engine import (
     _compute_metrics,
@@ -898,6 +899,23 @@ async def test_evaluation_api_list_empty(tmp_path) -> None:
     assert payload["runs"] == []
     assert payload["latest_id"] is None
     assert payload["latest_metrics"] is None
+
+
+@pytest.mark.anyio
+async def test_evaluation_api_requires_admin_when_auth_enabled(tmp_path) -> None:
+    database_path = tmp_path / "eval-auth-required.db"
+    session_factory = _create_file_session_factory(database_path)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        settings=Settings(ragrig_auth_enabled=True),
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/evaluations")
+
+    assert response.status_code == 401
 
 
 @pytest.mark.anyio

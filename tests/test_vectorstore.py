@@ -734,6 +734,7 @@ def test_qdrant_backend_health_reports_missing_collection_and_dimension_mismatch
             provider="deterministic-local",
             model="hash-8d",
             dimensions=8,
+            knowledge_base_id=knowledge_base.id,
         ).name
         backend.client = FakeClient(
             {expected_name: FakeCollectionInfo(size=16, distance="Cosine", count=3)}
