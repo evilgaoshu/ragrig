@@ -73,15 +73,26 @@ def collect_website_imports(
     client: httpx.Client | None = None,
     timeout: float = 10.0,
     allow_private_network: bool = False,
+    bearer_token: str | None = None,
+    cookies: dict[str, str] | None = None,
+    basic_auth_username: str | None = None,
+    basic_auth_password: str | None = None,
 ) -> WebsiteImportResult:
     collected_urls = list(urls)
 
     for url in collected_urls:
         _validate_http_url(url, allow_private_network=allow_private_network)
 
+    auth_kwargs = dict(
+        bearer_token=bearer_token,
+        cookies=cookies,
+        basic_auth_username=basic_auth_username,
+        basic_auth_password=basic_auth_password,
+    )
+
     if sitemap_url:
         _validate_http_url(sitemap_url, allow_private_network=allow_private_network)
-        active_client, should_close = _resolve_client(client, timeout=timeout)
+        active_client, should_close = _resolve_client(client, timeout=timeout, **auth_kwargs)
         try:
             collected_urls.extend(
                 _fetch_sitemap_urls(
@@ -101,7 +112,7 @@ def collect_website_imports(
 
     accepted_pages: list[ImportedPage] = []
     failures: list[ImportFailure] = []
-    active_client, should_close = _resolve_client(client, timeout=timeout)
+    active_client, should_close = _resolve_client(client, timeout=timeout, **auth_kwargs)
     try:
         for url in collected_urls:
             _collect_page(
@@ -118,10 +129,35 @@ def collect_website_imports(
     return WebsiteImportResult(accepted_pages=accepted_pages, failures=failures)
 
 
-def _resolve_client(client: httpx.Client | None, *, timeout: float) -> tuple[httpx.Client, bool]:
+def _resolve_client(
+    client: httpx.Client | None,
+    *,
+    timeout: float,
+    bearer_token: str | None = None,
+    cookies: dict[str, str] | None = None,
+    basic_auth_username: str | None = None,
+    basic_auth_password: str | None = None,
+) -> tuple[httpx.Client, bool]:
     if client is not None:
         return client, False
-    return httpx.Client(follow_redirects=True, timeout=timeout), True
+    headers: dict[str, str] = {}
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
+    auth = (
+        httpx.BasicAuth(basic_auth_username, basic_auth_password)
+        if basic_auth_username and basic_auth_password
+        else None
+    )
+    return (
+        httpx.Client(
+            follow_redirects=True,
+            timeout=timeout,
+            headers=headers,
+            cookies=cookies or {},
+            auth=auth,
+        ),
+        True,
+    )
 
 
 def _validate_http_url(url: str, *, allow_private_network: bool = False) -> None:

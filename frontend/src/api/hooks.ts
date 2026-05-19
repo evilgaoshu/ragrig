@@ -737,14 +737,26 @@ export function useWebsiteImport() {
       kbName,
       urls,
       sitemapUrl,
+      bearerToken,
+      cookies,
+      basicAuthUsername,
+      basicAuthPassword,
     }: {
       kbName: string
       urls: string[]
       sitemapUrl?: string
+      bearerToken?: string
+      cookies?: Record<string, string>
+      basicAuthUsername?: string
+      basicAuthPassword?: string
     }) =>
       api.post<WebImportResult>(`/knowledge-bases/${kbName}/website-import`, {
         urls,
         sitemap_url: sitemapUrl || null,
+        bearer_token: bearerToken || null,
+        cookies: cookies || null,
+        basic_auth_username: basicAuthUsername || null,
+        basic_auth_password: basicAuthPassword || null,
       }),
   })
 }

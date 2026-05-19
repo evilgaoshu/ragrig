@@ -261,6 +261,10 @@ function WebTab({ kbName }: { kbName: string }) {
   const webImport = useWebsiteImport()
   const [urlsText, setUrlsText] = useState('')
   const [sitemapUrl, setSitemapUrl] = useState('')
+  const [bearerToken, setBearerToken] = useState('')
+  const [basicUser, setBasicUser] = useState('')
+  const [basicPass, setBasicPass] = useState('')
+  const [showAuth, setShowAuth] = useState(false)
   const [result, setResult] = useState<WebImportResult | null>(null)
 
   const urls = urlsText
@@ -276,6 +280,9 @@ function WebTab({ kbName }: { kbName: string }) {
         kbName,
         urls,
         sitemapUrl: sitemapUrl.trim() || undefined,
+        bearerToken: bearerToken.trim() || undefined,
+        basicAuthUsername: basicUser.trim() || undefined,
+        basicAuthPassword: basicPass.trim() || undefined,
       })
       setResult(r)
     } catch {
@@ -287,6 +294,9 @@ function WebTab({ kbName }: { kbName: string }) {
     setResult(null)
     setUrlsText('')
     setSitemapUrl('')
+    setBearerToken('')
+    setBasicUser('')
+    setBasicPass('')
     webImport.reset()
   }
 
@@ -306,7 +316,9 @@ function WebTab({ kbName }: { kbName: string }) {
           onChange={(e) => setUrlsText(e.target.value)}
         />
         {urls.length > 0 && (
-          <div className="text-[11px] text-gray-400">{urls.length} URL{urls.length !== 1 ? 's' : ''}</div>
+          <div className="text-[11px] text-gray-400">
+            {urls.length} URL{urls.length !== 1 ? 's' : ''}
+          </div>
         )}
       </div>
 
@@ -321,6 +333,57 @@ function WebTab({ kbName }: { kbName: string }) {
           value={sitemapUrl}
           onChange={(e) => setSitemapUrl(e.target.value)}
         />
+      </div>
+
+      {/* Auth accordion */}
+      <div className="border border-gray-200 rounded-lg overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowAuth((v) => !v)}
+          className="w-full flex items-center justify-between px-3 py-2 bg-gray-50 text-xs font-medium text-gray-600 hover:bg-gray-100 transition-colors"
+        >
+          <span>Authentication (optional)</span>
+          <span className="text-gray-400">{showAuth ? '▲' : '▼'}</span>
+        </button>
+        {showAuth && (
+          <div className="p-3 space-y-3 border-t border-gray-200">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-gray-600">Bearer token</label>
+              <input
+                type="text"
+                className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/40"
+                placeholder="my-token or env:MY_TOKEN_VAR"
+                value={bearerToken}
+                onChange={(e) => setBearerToken(e.target.value)}
+              />
+              <p className="text-[11px] text-gray-400">
+                Sent as <span className="font-mono">Authorization: Bearer &lt;token&gt;</span>
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-600">Basic auth username</label>
+                <input
+                  type="text"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/40"
+                  placeholder="username"
+                  value={basicUser}
+                  onChange={(e) => setBasicUser(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-600">Basic auth password</label>
+                <input
+                  type="password"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/40"
+                  placeholder="password"
+                  value={basicPass}
+                  onChange={(e) => setBasicPass(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-[11px] text-gray-500 space-y-0.5">
