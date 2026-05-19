@@ -927,3 +927,87 @@ export function useBackblazeB2Export() {
       }),
   })
 }
+
+export function useAzureBlobExport() {
+  return useMutation({
+    mutationFn: ({
+      kbName,
+      accountName,
+      accountKey,
+      container,
+      prefix,
+      pathTemplate,
+      overwrite,
+      dryRun,
+      includeRetrievalArtifact,
+      includeMarkdownSummary,
+      parquetExport,
+    }: {
+      kbName: string
+      accountName: string
+      accountKey: string
+      container: string
+      prefix?: string
+      pathTemplate?: string
+      overwrite?: boolean
+      dryRun?: boolean
+      includeRetrievalArtifact?: boolean
+      includeMarkdownSummary?: boolean
+      parquetExport?: boolean
+    }) =>
+      api.post<ObjectStorageExportResult>(`/knowledge-bases/${kbName}/sink-export/azure-blob`, {
+        account_name: accountName,
+        account_key: accountKey,
+        container,
+        prefix: prefix ?? '',
+        path_template: pathTemplate ?? '{knowledge_base}/{run_id}/{artifact}.{format}',
+        overwrite: overwrite ?? true,
+        dry_run: dryRun ?? false,
+        include_retrieval_artifact: includeRetrievalArtifact ?? true,
+        include_markdown_summary: includeMarkdownSummary ?? true,
+        parquet_export: parquetExport ?? false,
+      }),
+  })
+}
+
+export function useGcsExport() {
+  return useMutation({
+    mutationFn: ({
+      kbName,
+      accessKey,
+      secretKey,
+      bucket,
+      prefix,
+      pathTemplate,
+      overwrite,
+      dryRun,
+      includeRetrievalArtifact,
+      includeMarkdownSummary,
+      parquetExport,
+    }: {
+      kbName: string
+      accessKey: string
+      secretKey: string
+      bucket: string
+      prefix?: string
+      pathTemplate?: string
+      overwrite?: boolean
+      dryRun?: boolean
+      includeRetrievalArtifact?: boolean
+      includeMarkdownSummary?: boolean
+      parquetExport?: boolean
+    }) =>
+      api.post<ObjectStorageExportResult>(`/knowledge-bases/${kbName}/sink-export/gcs`, {
+        access_key: accessKey,
+        secret_key: secretKey,
+        bucket,
+        prefix: prefix ?? '',
+        path_template: pathTemplate ?? '{knowledge_base}/{run_id}/{artifact}.{format}',
+        overwrite: overwrite ?? true,
+        dry_run: dryRun ?? false,
+        include_retrieval_artifact: includeRetrievalArtifact ?? true,
+        include_markdown_summary: includeMarkdownSummary ?? true,
+        parquet_export: parquetExport ?? false,
+      }),
+  })
+}

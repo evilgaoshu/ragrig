@@ -54,7 +54,7 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     manifests = registry.list()
     manifest_ids = {manifest.plugin_id for manifest in manifests}
 
-    assert len(manifests) == 66
+    assert len(manifests) == 75
     assert {
         "source.local",
         "parser.markdown",
@@ -279,10 +279,10 @@ def test_registry_discovery_reports_status_dependencies_and_secret_requirements(
 
     monkeypatch.setattr("ragrig.plugins.guards.is_dependency_available", _fake_dependency_check)
 
-    # Reset cached registry so the monkeypatch takes effect
+    # Reset cached registry so the monkeypatch takes effect; monkeypatch restores it after the test
     import ragrig.plugins
 
-    ragrig.plugins._REGISTRY = None
+    monkeypatch.setattr(ragrig.plugins, "_REGISTRY", None)
     registry = get_plugin_registry()
 
     discovery = {item["plugin_id"]: item for item in registry.list_discovery()}
@@ -414,7 +414,11 @@ async def test_plugins_endpoint_exposes_registry_status(tmp_path) -> None:
     object_storage_sink = next(
         item for item in payload["items"] if item["plugin_id"] == "sink.object_storage"
     )
-    expected_object_storage_status = "degraded"
+    expected_object_storage_status = (
+        "ready"
+        if is_dependency_available("boto3") and is_dependency_available("pyarrow")
+        else "degraded"
+    )
     assert object_storage_sink["status"] == expected_object_storage_status
     assert object_storage_sink["configurable"] is True
     assert "AWS_SESSION_TOKEN" in object_storage_sink["secret_requirements"]

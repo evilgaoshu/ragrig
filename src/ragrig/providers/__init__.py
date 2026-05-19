@@ -299,8 +299,19 @@ def create_provider_registry() -> ProviderRegistry:
         LOCALAI_METADATA,
         lambda **config: create_openai_compatible_provider("model.localai", **config),
     )
+    from ragrig.providers.cohere import (
+        COHERE_EMBEDDING_METADATA,
+        create_cohere_embedding_provider,
+    )
+    from ragrig.providers.voyage import (
+        VOYAGE_EMBEDDING_METADATA,
+        create_voyage_embedding_provider,
+    )
+
     registry.register(BGE_EMBEDDING_METADATA, create_bge_embedding_provider)
     registry.register(BGE_RERANKER_METADATA, create_bge_reranker_provider)
+    registry.register(COHERE_EMBEDDING_METADATA, create_cohere_embedding_provider)
+    registry.register(VOYAGE_EMBEDDING_METADATA, create_voyage_embedding_provider)
 
     # Real cloud providers — Vertex AI and Bedrock
     registry.register(VERTEX_AI_METADATA, create_vertex_ai_provider)

@@ -29,10 +29,14 @@ from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.observability import pipeline_run_duration_ms
 from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
+from ragrig.plugins.sources.azure_blob.connector import ingest_azure_blob_source
 from ragrig.plugins.sources.backblaze_b2.connector import ingest_backblaze_b2_source
 from ragrig.plugins.sources.cloudflare_r2.connector import ingest_cloudflare_r2_source
 from ragrig.plugins.sources.database.connector import ingest_database_source
+from ragrig.plugins.sources.gcs.connector import ingest_gcs_source
+from ragrig.plugins.sources.github.connector import ingest_github_source
 from ragrig.plugins.sources.s3.connector import ingest_s3_source
+from ragrig.plugins.sources.slack.connector import ingest_slack_source
 from ragrig.providers import get_provider_registry
 from ragrig.providers.model_catalog import serialize_provider_catalog
 from ragrig.repositories.audit import create_audit_event
@@ -1595,6 +1599,10 @@ _SOURCE_SECRET_FIELDS = {
     "source.s3": ["access_key", "secret_key", "session_token"],
     "source.cloudflare_r2": ["access_key_id", "secret_access_key"],
     "source.backblaze_b2": ["key_id", "application_key"],
+    "source.azure_blob": ["account_key"],
+    "source.gcs": ["access_key", "secret_key"],
+    "source.github": ["token"],
+    "source.slack": ["bot_token"],
     "source.fileshare": ["username", "password", "private_key"],
     "source.database": ["dsn"],
 }
@@ -1615,6 +1623,10 @@ def validate_source_config(
         "source.s3",
         "source.cloudflare_r2",
         "source.backblaze_b2",
+        "source.azure_blob",
+        "source.gcs",
+        "source.github",
+        "source.slack",
         "source.fileshare",
         "source.database",
     ):
@@ -1950,6 +1962,259 @@ def _dry_run_b2_source(
     )
 
 
+def _dry_run_azure_blob_source(
+    session: Session,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+    client=None,
+) -> DryRunReport:
+    from fnmatch import fnmatch
+
+    from ragrig.ingestion.scanner import DEFAULT_INCLUDE_PATTERNS
+    from ragrig.plugins.sources.azure_blob.connector import (
+        _build_azure_client,
+        _resolve_account_key,
+    )
+
+    _env = env or {}
+    account_name = str(config["account_name"])
+    account_key = _resolve_account_key(str(config["account_key"]), _env)
+    active_client = client or _build_azure_client(account_name, account_key)
+
+    container = str(config["container"])
+    prefix = str(config.get("prefix") or "")
+    includes = list(config.get("include_patterns") or []) or list(DEFAULT_INCLUDE_PATTERNS)
+    excludes = list(config.get("exclude_patterns") or [])
+    max_bytes = int(float(config.get("max_object_size_mb", 50)) * 1024 * 1024)
+    page_size = int(config.get("page_size", 1000))
+
+    try:
+        all_blobs = active_client.list_blobs(
+            container=container, prefix=prefix, max_results=page_size
+        )
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="azure_blob",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[DryRunFile(path=f"azure-blob://{container}", status="failed", reason=str(exc))],
+        )
+
+    discovered: list[DryRunFile] = []
+    skipped: list[DryRunFile] = []
+    for blob in all_blobs:
+        key = blob.key
+        if any(fnmatch(key, p) for p in excludes):
+            skipped.append(DryRunFile(path=key, status="skipped", reason="excluded"))
+        elif not any(fnmatch(key, p) or fnmatch(key.rsplit("/", 1)[-1], p) for p in includes):
+            skipped.append(DryRunFile(path=key, status="skipped", reason="unsupported_extension"))
+        elif blob.size > max_bytes:
+            skipped.append(DryRunFile(path=key, status="skipped", reason="object_too_large"))
+        else:
+            discovered.append(
+                DryRunFile(
+                    path=key,
+                    status="discovered",
+                    parser=f"azure_blob:{blob.content_type or 'unknown'}",
+                )
+            )
+    return DryRunReport(
+        source_id=None,
+        source_kind="azure_blob",
+        total=len(discovered) + len(skipped),
+        discovered=discovered,
+        skipped=skipped,
+        failed=[],
+    )
+
+
+def _dry_run_gcs_source(
+    session: Session,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+    client=None,
+) -> DryRunReport:
+    from ragrig.plugins.sources.gcs.connector import _resolve_env_ref
+    from ragrig.plugins.sources.s3.client import build_boto3_client
+    from ragrig.plugins.sources.s3.scanner import scan_objects
+
+    _GCS_ENDPOINT_URL = "https://storage.googleapis.com"
+    _env = env or {}
+    access_key = _resolve_env_ref(str(config["access_key"]), _env, "GCS_ACCESS_KEY")
+    secret_key = _resolve_env_ref(str(config["secret_key"]), _env, "GCS_SECRET_KEY")
+    s3_cfg: dict[str, object] = {
+        **config,
+        "access_key": access_key,
+        "secret_key": secret_key,
+        "endpoint_url": _GCS_ENDPOINT_URL,
+        "region": "auto",
+        "use_path_style": False,
+    }
+    active_client = client or build_boto3_client(s3_cfg)
+
+    try:
+        scan_result = scan_objects(active_client, config=config)
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="gcs",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[DryRunFile(path="gcs://scan", status="failed", reason=str(exc))],
+        )
+
+    discovered: list[DryRunFile] = []
+    skipped: list[DryRunFile] = []
+    for sk in scan_result.skipped:
+        skipped.append(DryRunFile(path=sk.object_metadata.key, status="skipped", reason=sk.reason))
+    for cand in scan_result.discovered:
+        discovered.append(
+            DryRunFile(
+                path=cand.object_metadata.key,
+                status="discovered",
+                parser=f"gcs:{cand.object_metadata.content_type or 'unknown'}",
+            )
+        )
+    return DryRunReport(
+        source_id=None,
+        source_kind="gcs",
+        total=len(discovered) + len(skipped),
+        discovered=discovered,
+        skipped=skipped,
+        failed=[],
+    )
+
+
+def _dry_run_github_source(
+    session: Session,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+) -> DryRunReport:
+    from ragrig.plugins.sources.github.connector import (
+        _build_headers,
+        _default_transport,
+        _fetch_tree,
+        _matches_patterns,
+        _resolve_token,
+    )
+
+    _env = env or {}
+    token = _resolve_token(str(config.get("token") or ""), _env)
+    headers = _build_headers(token)
+    repo = str(config["repo"])
+    branch = str(config.get("branch") or "main")
+    path_prefix = str(config.get("path") or "")
+    includes = list(config.get("include_patterns") or ["*.md", "*.txt", "*.pdf"])
+    excludes = list(config.get("exclude_patterns") or [])
+    max_bytes = int(float(config.get("max_file_size_mb", 10)) * 1024 * 1024)
+
+    if "/" not in repo:
+        return DryRunReport(
+            source_id=None,
+            source_kind="github",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[
+                DryRunFile(
+                    path=f"github://{repo}",
+                    status="failed",
+                    reason="repo must be owner/repo format",
+                )
+            ],
+        )
+    owner, repo_name = repo.split("/", 1)
+
+    try:
+        tree = _fetch_tree(owner, repo_name, branch, headers=headers, transport=_default_transport)
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="github",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[DryRunFile(path=f"github://{repo}", status="failed", reason=str(exc))],
+        )
+
+    discovered: list[DryRunFile] = []
+    skipped: list[DryRunFile] = []
+    for item in tree:
+        if item.get("type") != "blob":
+            continue
+        file_path = str(item.get("path", ""))
+        if path_prefix:
+            pfx = path_prefix.rstrip("/") + "/"
+            if not file_path.startswith(pfx) and file_path != path_prefix:
+                continue
+        size = int(item.get("size") or 0)
+        if not _matches_patterns(file_path, include=includes, exclude=excludes):
+            skipped.append(DryRunFile(path=file_path, status="skipped", reason="pattern_excluded"))
+        elif size > max_bytes:
+            skipped.append(DryRunFile(path=file_path, status="skipped", reason="file_too_large"))
+        else:
+            discovered.append(DryRunFile(path=file_path, status="discovered", parser="github:text"))
+    return DryRunReport(
+        source_id=None,
+        source_kind="github",
+        total=len(discovered) + len(skipped),
+        discovered=discovered,
+        skipped=skipped,
+        failed=[],
+    )
+
+
+def _dry_run_slack_source(
+    session: Session,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+) -> DryRunReport:
+    from ragrig.plugins.sources.slack.connector import (
+        _build_headers,
+        _default_transport,
+        _list_all_channels,
+        _resolve_token,
+    )
+
+    _env = env or {}
+    token = _resolve_token(str(config.get("bot_token") or ""), _env)
+    headers = _build_headers(token)
+    channel_ids = list(config.get("channel_ids") or [])
+    include_all = bool(config.get("include_all_channels", False))
+
+    try:
+        if include_all:
+            channels = _list_all_channels(headers=headers, transport=_default_transport)
+            channel_names = [c.get("name", c.get("id", "unknown")) for c in channels]
+        else:
+            channel_names = channel_ids
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="slack",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[DryRunFile(path="slack://channels", status="failed", reason=str(exc))],
+        )
+
+    discovered = [
+        DryRunFile(path=f"slack://{name}", status="discovered", parser="slack:text")
+        for name in channel_names
+    ]
+    return DryRunReport(
+        source_id=None,
+        source_kind="slack",
+        total=len(discovered),
+        discovered=discovered,
+        skipped=[],
+        failed=[],
+    )
+
+
 def _dry_run_fileshare_source(
     session: Session,
     config: dict[str, Any],
@@ -2138,6 +2403,14 @@ def dry_run_source(
         report = _dry_run_r2_source(session, validated, env=env, client=client)
     elif plugin_id == "source.backblaze_b2":
         report = _dry_run_b2_source(session, validated, env=env, client=client)
+    elif plugin_id == "source.azure_blob":
+        report = _dry_run_azure_blob_source(session, validated, env=env, client=client)
+    elif plugin_id == "source.gcs":
+        report = _dry_run_gcs_source(session, validated, env=env, client=client)
+    elif plugin_id == "source.github":
+        report = _dry_run_github_source(session, validated, env=env)
+    elif plugin_id == "source.slack":
+        report = _dry_run_slack_source(session, validated, env=env)
     elif plugin_id == "source.fileshare":
         report = _dry_run_fileshare_source(session, validated, env=env)
     elif plugin_id == "source.database":
@@ -2218,6 +2491,10 @@ def run_source_ingest(
         "source.s3",
         "source.cloudflare_r2",
         "source.backblaze_b2",
+        "source.azure_blob",
+        "source.gcs",
+        "source.github",
+        "source.slack",
         "source.database",
     }:
         raise ValueError(f"unsupported source plugin for run-ingest: {plugin_id}")
@@ -2248,6 +2525,38 @@ def run_source_ingest(
             workspace_id=workspace_id,
             env=env,
             client=client,
+        )
+    elif plugin_id == "source.azure_blob":
+        ingestion_report = ingest_azure_blob_source(
+            session=session,
+            knowledge_base_name=knowledge_base_name,
+            config=validated,
+            workspace_id=workspace_id,
+            env=env,
+            client=client,
+        )
+    elif plugin_id == "source.gcs":
+        ingestion_report = ingest_gcs_source(
+            session=session,
+            knowledge_base_name=knowledge_base_name,
+            config=validated,
+            workspace_id=workspace_id,
+            env=env,
+            client=client,
+        )
+    elif plugin_id == "source.github":
+        ingestion_report = ingest_github_source(
+            session=session,
+            knowledge_base_name=knowledge_base_name,
+            config=validated,
+            env=env,
+        )
+    elif plugin_id == "source.slack":
+        ingestion_report = ingest_slack_source(
+            session=session,
+            knowledge_base_name=knowledge_base_name,
+            config=validated,
+            env=env,
         )
     else:
         ingestion_report = ingest_database_source(
@@ -2371,6 +2680,70 @@ def save_source_config(
         bucket = str(validated.get("bucket", ""))
         prefix = str(validated.get("prefix", ""))
         source_uri = f"b2://{region}/{bucket}/{prefix}" if prefix else f"b2://{region}/{bucket}"
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    elif source_kind == "azure_blob":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _workspace_kb(_get_or_create_kb)
+        container = str(validated.get("container", ""))
+        prefix = str(validated.get("prefix", ""))
+        source_uri = f"azure-blob://{container}/{prefix}" if prefix else f"azure-blob://{container}"
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    elif source_kind == "gcs":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _workspace_kb(_get_or_create_kb)
+        bucket = str(validated.get("bucket", ""))
+        prefix = str(validated.get("prefix", ""))
+        source_uri = f"gcs://{bucket}/{prefix}" if prefix else f"gcs://{bucket}"
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    elif source_kind == "github":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _workspace_kb(_get_or_create_kb)
+        repo = str(validated.get("repo", ""))
+        branch = str(validated.get("branch", "main"))
+        source_uri = f"github://{repo}@{branch}"
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    elif source_kind == "slack":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _workspace_kb(_get_or_create_kb)
+        channel_ids = list(validated.get("channel_ids") or [])
+        channel_label = ",".join(channel_ids) if channel_ids else "all"
+        source_uri = f"slack://channels/{channel_label}"
 
         source = _get_or_create_src(
             session,
@@ -2827,6 +3200,83 @@ def retry_pipeline_run_item(
                 "retried": True,
             }
 
+    elif run.run_type == "azure_blob_ingest":
+        try:
+            from ragrig.plugins.sources.azure_blob.connector import (
+                _build_azure_client,
+                _resolve_account_key,
+            )
+
+            account_name = str(config_snapshot.get("account_name", ""))
+            account_key = _resolve_account_key(str(config_snapshot.get("account_key", "")), {})
+            container = str(config_snapshot.get("container", ""))
+            azure_client = _build_azure_client(account_name, account_key)
+            key = metadata_path or ""
+            body = azure_client.download_blob(container=container, key=key)
+            suffix = Path(key).suffix
+            tmp = NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp.write(body)
+            tmp.close()
+            file_path = Path(tmp.name)
+        except Exception as exc:
+            error_msg = _sanitize_retry_error(str(exc))
+            item.status = "failed"
+            item.error_message = error_msg
+            item.finished_at = datetime.now(timezone.utc)
+            session.commit()
+            return {
+                "id": str(item.id),
+                "pipeline_run_id": str(run.id),
+                "document_uri": doc_uri,
+                "status": "failed",
+                "error_message": error_msg,
+                "retried": True,
+            }
+
+    elif run.run_type == "gcs_ingest":
+        try:
+            from ragrig.plugins.sources.gcs.connector import _resolve_env_ref
+            from ragrig.plugins.sources.s3.client import build_boto3_client
+
+            _GCS_ENDPOINT_URL = "https://storage.googleapis.com"
+            access_key = _resolve_env_ref(
+                str(config_snapshot.get("access_key", "")), {}, "GCS_ACCESS_KEY"
+            )
+            secret_key = _resolve_env_ref(
+                str(config_snapshot.get("secret_key", "")), {}, "GCS_SECRET_KEY"
+            )
+            s3_cfg: dict[str, object] = {
+                **config_snapshot,
+                "access_key": access_key,
+                "secret_key": secret_key,
+                "endpoint_url": _GCS_ENDPOINT_URL,
+                "region": "auto",
+                "use_path_style": False,
+            }
+            retry_client = build_boto3_client(s3_cfg)
+            bucket = str(config_snapshot.get("bucket", ""))
+            key = metadata_path or ""
+            body = retry_client.download_object(bucket=bucket, key=key)
+            suffix = Path(key).suffix
+            tmp = NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp.write(body)
+            tmp.close()
+            file_path = Path(tmp.name)
+        except Exception as exc:
+            error_msg = _sanitize_retry_error(str(exc))
+            item.status = "failed"
+            item.error_message = error_msg
+            item.finished_at = datetime.now(timezone.utc)
+            session.commit()
+            return {
+                "id": str(item.id),
+                "pipeline_run_id": str(run.id),
+                "document_uri": doc_uri,
+                "status": "failed",
+                "error_message": error_msg,
+                "retried": True,
+            }
+
     elif run.run_type == "fileshare_ingest":
         from ragrig.plugins.sources.fileshare.connector import (
             _build_client,
@@ -3017,6 +3467,8 @@ def retry_pipeline_run_item(
             "s3_ingest",
             "r2_ingest",
             "b2_ingest",
+            "azure_blob_ingest",
+            "gcs_ingest",
             "fileshare_ingest",
         ):
             try:
