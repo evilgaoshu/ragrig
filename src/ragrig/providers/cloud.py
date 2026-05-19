@@ -297,7 +297,7 @@ GOOGLE_GEMINI_METADATA = build_cloud_model_metadata(
 
 MISTRAL_METADATA = build_cloud_model_metadata(
     name="model.mistral",
-    description="Contract-only Mistral AI provider stub.",
+    description="Mistral AI cloud provider via OpenAI-compatible API.",
     capabilities={
         ProviderCapability.CHAT,
         ProviderCapability.GENERATE,
@@ -312,7 +312,7 @@ MISTRAL_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model", "embedding_model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "managed_api"],
@@ -324,7 +324,7 @@ MISTRAL_METADATA = build_cloud_model_metadata(
 
 TOGETHER_METADATA = build_cloud_model_metadata(
     name="model.together",
-    description="Contract-only Together AI OpenAI-compatible provider stub.",
+    description="Together AI cloud provider via OpenAI-compatible API.",
     capabilities={
         ProviderCapability.CHAT,
         ProviderCapability.GENERATE,
@@ -342,7 +342,7 @@ TOGETHER_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model", "embedding_model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "open_model_hosting"],
@@ -354,7 +354,7 @@ TOGETHER_METADATA = build_cloud_model_metadata(
 
 FIREWORKS_METADATA = build_cloud_model_metadata(
     name="model.fireworks",
-    description="Contract-only Fireworks AI OpenAI-compatible provider stub.",
+    description="Fireworks AI cloud provider via OpenAI-compatible API.",
     capabilities={
         ProviderCapability.CHAT,
         ProviderCapability.GENERATE,
@@ -368,7 +368,7 @@ FIREWORKS_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "open_model_hosting"],
@@ -378,7 +378,7 @@ FIREWORKS_METADATA = build_cloud_model_metadata(
 
 GROQ_METADATA = build_cloud_model_metadata(
     name="model.groq",
-    description="Contract-only Groq OpenAI-compatible provider stub.",
+    description="Groq cloud provider via OpenAI-compatible API.",
     capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
     required_secrets=["GROQ_API_KEY"],
     config_schema={
@@ -387,7 +387,7 @@ GROQ_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "low_latency"],
@@ -397,7 +397,7 @@ GROQ_METADATA = build_cloud_model_metadata(
 
 DEEPSEEK_METADATA = build_cloud_model_metadata(
     name="model.deepseek",
-    description="Contract-only DeepSeek OpenAI-compatible provider stub.",
+    description="DeepSeek cloud provider via OpenAI-compatible API.",
     capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
     required_secrets=["DEEPSEEK_API_KEY"],
     config_schema={
@@ -406,7 +406,7 @@ DEEPSEEK_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "managed_api"],
@@ -416,7 +416,7 @@ DEEPSEEK_METADATA = build_cloud_model_metadata(
 
 MOONSHOT_METADATA = build_cloud_model_metadata(
     name="model.moonshot",
-    description="Contract-only Moonshot Kimi OpenAI-compatible provider stub.",
+    description="Moonshot Kimi cloud provider via OpenAI-compatible API.",
     capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
     required_secrets=["MOONSHOT_API_KEY"],
     config_schema={
@@ -425,7 +425,7 @@ MOONSHOT_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "managed_api"],
@@ -435,7 +435,7 @@ MOONSHOT_METADATA = build_cloud_model_metadata(
 
 MINIMAX_METADATA = build_cloud_model_metadata(
     name="model.minimax",
-    description="Contract-only MiniMax OpenAI-compatible provider stub.",
+    description="MiniMax cloud provider via OpenAI-compatible API.",
     capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
     required_secrets=["MINIMAX_API_KEY"],
     config_schema={
@@ -444,7 +444,7 @@ MINIMAX_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "managed_api"],
@@ -454,7 +454,7 @@ MINIMAX_METADATA = build_cloud_model_metadata(
 
 DASHSCOPE_METADATA = build_cloud_model_metadata(
     name="model.dashscope",
-    description="Contract-only Alibaba Cloud DashScope OpenAI-compatible provider stub.",
+    description="Alibaba Cloud DashScope provider via OpenAI-compatible API.",
     capabilities={
         ProviderCapability.CHAT,
         ProviderCapability.GENERATE,
@@ -472,7 +472,7 @@ DASHSCOPE_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model", "embedding_model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "managed_api"],
@@ -484,7 +484,7 @@ DASHSCOPE_METADATA = build_cloud_model_metadata(
 
 SILICONFLOW_METADATA = build_cloud_model_metadata(
     name="model.siliconflow",
-    description="Contract-only SiliconFlow OpenAI-compatible provider stub.",
+    description="SiliconFlow cloud provider via OpenAI-compatible API.",
     capabilities={
         ProviderCapability.CHAT,
         ProviderCapability.GENERATE,
@@ -500,7 +500,7 @@ SILICONFLOW_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model", "embedding_model", "reranker_model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "open_model_hosting"],
@@ -512,7 +512,7 @@ SILICONFLOW_METADATA = build_cloud_model_metadata(
 
 ZHIPU_METADATA = build_cloud_model_metadata(
     name="model.zhipu",
-    description="Contract-only Zhipu / Z.ai GLM OpenAI-compatible provider stub.",
+    description="Zhipu / Z.ai GLM cloud provider via OpenAI-compatible API.",
     capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
     required_secrets=["ZHIPU_API_KEY"],
     config_schema={
@@ -521,7 +521,7 @@ ZHIPU_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "managed_api"],
@@ -531,7 +531,7 @@ ZHIPU_METADATA = build_cloud_model_metadata(
 
 BAIDU_QIANFAN_METADATA = build_cloud_model_metadata(
     name="model.baidu_qianfan",
-    description="Contract-only Baidu Qianfan OpenAI-compatible provider stub.",
+    description="Baidu Qianfan ERNIE cloud provider via OpenAI-compatible API.",
     capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE, ProviderCapability.BATCH},
     required_secrets=["QIANFAN_API_KEY"],
     config_schema={
@@ -540,7 +540,7 @@ BAIDU_QIANFAN_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "managed_api"],
@@ -550,7 +550,7 @@ BAIDU_QIANFAN_METADATA = build_cloud_model_metadata(
 
 VOLCENGINE_ARK_METADATA = build_cloud_model_metadata(
     name="model.volcengine_ark",
-    description="Contract-only Volcengine Ark OpenAI-compatible provider stub.",
+    description="Volcengine Ark Doubao cloud provider via OpenAI-compatible API.",
     capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE, ProviderCapability.BATCH},
     required_secrets=["ARK_API_KEY"],
     config_schema={
@@ -559,7 +559,7 @@ VOLCENGINE_ARK_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "managed_api"],
@@ -569,7 +569,7 @@ VOLCENGINE_ARK_METADATA = build_cloud_model_metadata(
 
 XAI_METADATA = build_cloud_model_metadata(
     name="model.xai",
-    description="Contract-only xAI OpenAI-compatible provider stub.",
+    description="xAI Grok cloud provider via OpenAI-compatible API.",
     capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
     required_secrets=["XAI_API_KEY"],
     config_schema={
@@ -578,7 +578,7 @@ XAI_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "managed_api"],
@@ -588,7 +588,7 @@ XAI_METADATA = build_cloud_model_metadata(
 
 PERPLEXITY_METADATA = build_cloud_model_metadata(
     name="model.perplexity",
-    description="Contract-only Perplexity OpenAI-compatible provider stub.",
+    description="Perplexity cloud provider via OpenAI-compatible API.",
     capabilities={ProviderCapability.CHAT, ProviderCapability.GENERATE},
     required_secrets=["PERPLEXITY_API_KEY"],
     config_schema={
@@ -597,7 +597,7 @@ PERPLEXITY_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "web_grounded"],
@@ -607,7 +607,7 @@ PERPLEXITY_METADATA = build_cloud_model_metadata(
 
 NVIDIA_NIM_METADATA = build_cloud_model_metadata(
     name="model.nvidia_nim",
-    description="Contract-only NVIDIA NIM OpenAI-compatible provider stub.",
+    description="NVIDIA NIM cloud provider via OpenAI-compatible API.",
     capabilities={
         ProviderCapability.CHAT,
         ProviderCapability.GENERATE,
@@ -621,7 +621,7 @@ NVIDIA_NIM_METADATA = build_cloud_model_metadata(
     },
     sdk_protocol="openai-compatible-cloud",
     dependency_group="cloud-llm",
-    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    failure_modes=["optional_dependency_missing", "missing_required_secret"],
     audit_fields=["provider", "api_base_url", "model"],
     metric_fields=["requests_total", "tokens_in", "tokens_out"],
     intended_uses=["cloud_second", "nim"],

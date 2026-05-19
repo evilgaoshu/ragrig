@@ -22,12 +22,42 @@ class WikiSourceConfig(PluginConfigModel):
 
 
 class AnalyticsSinkConfig(PluginConfigModel):
-    target: str
+    db_path: str = ":memory:"
+    table_prefix: str = ""
+    include_embeddings: bool = False
 
 
 class AgentAccessSinkConfig(PluginConfigModel):
     endpoint_url: str
     api_key: str
+
+
+class ConfluenceSourcePluginConfig(PluginConfigModel):
+    base_url: str
+    space_key: str | None = None
+    email: str = ""
+    api_token: str = ""
+    page_size: int = 50
+
+
+class NotionSourcePluginConfig(PluginConfigModel):
+    api_token: str
+    page_size: int = 50
+    filter_kind: str | None = None
+    notion_version: str = "2022-06-28"
+
+
+class FeishuSourcePluginConfig(PluginConfigModel):
+    space_id: str
+    app_id: str
+    app_secret: str
+    base_url: str = "https://open.feishu.cn"
+    page_size: int = 50
+
+
+class AnthropicCloudModelConfig(PluginConfigModel):
+    api_base_url: str = "https://api.anthropic.com/v1"
+    model_name: str = "claude-sonnet-4-5"
 
 
 class LocalRuntimeModelConfig(PluginConfigModel):
@@ -133,6 +163,8 @@ def _official_manifest(
 def official_stub_manifests() -> list[PluginManifest]:
     s3_ready = guards.is_dependency_available("boto3")
     qdrant_ready = guards.is_dependency_available("qdrant_client")
+    google_workspace_ready = guards.is_dependency_available("googleapiclient")
+    duckdb_ready = guards.is_dependency_available("duckdb")
     fileshare_protocol_dependencies = {
         "nfs_mounted": (),
         "sftp": ("paramiko",),
@@ -412,6 +444,298 @@ def official_stub_manifests() -> list[PluginManifest]:
             unavailable_reason=None,
         ),
         _official_manifest(
+            plugin_id="model.anthropic",
+            display_name="Anthropic Claude Cloud Provider",
+            description="Anthropic Claude provider for chat and generation via the Messages API.",
+            plugin_type=PluginType.MODEL,
+            family="anthropic",
+            capabilities=(Capability.GENERATE_TEXT,),
+            config_model=AnthropicCloudModelConfig,
+            example_config={
+                "api_base_url": "https://api.anthropic.com/v1",
+                "model_name": "claude-sonnet-4-5",
+            },
+            secret_requirements=(
+                SecretRequirement(name="ANTHROPIC_API_KEY", description="Anthropic API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.mistral",
+            display_name="Mistral AI Cloud Provider",
+            description="Mistral AI provider for chat, generation, and embeddings via OpenAI API.",
+            plugin_type=PluginType.MODEL,
+            family="mistral",
+            capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT),
+            config_model=CloudEmbeddingModelConfig,
+            example_config={
+                "api_base_url": "https://api.mistral.ai/v1",
+                "model_name": "mistral-large-latest",
+                "embedding_model_name": "mistral-embed",
+            },
+            secret_requirements=(
+                SecretRequirement(name="MISTRAL_API_KEY", description="Mistral AI API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.together",
+            display_name="Together AI Cloud Provider",
+            description="Together AI provider for chat, generation, and embeddings via OpenAI API.",
+            plugin_type=PluginType.MODEL,
+            family="together",
+            capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT),
+            config_model=CloudEmbeddingModelConfig,
+            example_config={
+                "api_base_url": "https://api.together.xyz/v1",
+                "model_name": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                "embedding_model_name": "togethercomputer/m2-bert-80M-8k-retrieval",
+            },
+            secret_requirements=(
+                SecretRequirement(name="TOGETHER_API_KEY", description="Together AI API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.fireworks",
+            display_name="Fireworks AI Cloud Provider",
+            description="Fireworks AI provider for chat and generation via OpenAI-compatible API.",
+            plugin_type=PluginType.MODEL,
+            family="fireworks",
+            capabilities=(Capability.GENERATE_TEXT,),
+            config_model=CloudModelConfig,
+            example_config={
+                "api_base_url": "https://api.fireworks.ai/inference/v1",
+                "model_name": "accounts/fireworks/models/llama-v3p1-70b",
+            },
+            secret_requirements=(
+                SecretRequirement(name="FIREWORKS_API_KEY", description="Fireworks AI API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.groq",
+            display_name="Groq Cloud Provider",
+            description="Groq provider for ultra-fast chat and generation via OpenAI API.",
+            plugin_type=PluginType.MODEL,
+            family="groq",
+            capabilities=(Capability.GENERATE_TEXT,),
+            config_model=CloudModelConfig,
+            example_config={
+                "api_base_url": "https://api.groq.com/openai/v1",
+                "model_name": "llama-3.3-70b-versatile",
+            },
+            secret_requirements=(
+                SecretRequirement(name="GROQ_API_KEY", description="Groq API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.deepseek",
+            display_name="DeepSeek Cloud Provider",
+            description="DeepSeek provider for chat and generation via OpenAI-compatible API.",
+            plugin_type=PluginType.MODEL,
+            family="deepseek",
+            capabilities=(Capability.GENERATE_TEXT,),
+            config_model=CloudModelConfig,
+            example_config={
+                "api_base_url": "https://api.deepseek.com/v1",
+                "model_name": "deepseek-chat",
+            },
+            secret_requirements=(
+                SecretRequirement(name="DEEPSEEK_API_KEY", description="DeepSeek API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.moonshot",
+            display_name="Moonshot Kimi Cloud Provider",
+            description="Moonshot Kimi provider for chat and generation via OpenAI-compatible API.",
+            plugin_type=PluginType.MODEL,
+            family="moonshot",
+            capabilities=(Capability.GENERATE_TEXT,),
+            config_model=CloudModelConfig,
+            example_config={
+                "api_base_url": "https://api.moonshot.ai/v1",
+                "model_name": "kimi-k2.5",
+            },
+            secret_requirements=(
+                SecretRequirement(name="MOONSHOT_API_KEY", description="Moonshot API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.minimax",
+            display_name="MiniMax Cloud Provider",
+            description="MiniMax provider for chat and generation via OpenAI-compatible API.",
+            plugin_type=PluginType.MODEL,
+            family="minimax",
+            capabilities=(Capability.GENERATE_TEXT,),
+            config_model=CloudModelConfig,
+            example_config={
+                "api_base_url": "https://api.minimax.io/v1",
+                "model_name": "MiniMax-M2.7",
+            },
+            secret_requirements=(
+                SecretRequirement(name="MINIMAX_API_KEY", description="MiniMax API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.dashscope",
+            display_name="Alibaba DashScope Cloud Provider",
+            description="SiliconFlow provider for chat, generation, embeddings, and rerank.",
+            plugin_type=PluginType.MODEL,
+            family="dashscope",
+            capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT),
+            config_model=CloudEmbeddingModelConfig,
+            example_config={
+                "api_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "model_name": "qwen-plus",
+                "embedding_model_name": "text-embedding-v4",
+            },
+            secret_requirements=(
+                SecretRequirement(name="DASHSCOPE_API_KEY", description="DashScope API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.siliconflow",
+            display_name="SiliconFlow Cloud Provider",
+            description="Zhipu / Z.ai GLM provider for chat and generation via OpenAI API.",
+            plugin_type=PluginType.MODEL,
+            family="siliconflow",
+            capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT, Capability.RERANK),
+            config_model=CloudGenerateEmbeddingRerankModelConfig,
+            example_config={
+                "api_base_url": "https://api.siliconflow.cn/v1",
+                "model_name": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+                "embedding_model_name": "BAAI/bge-m3",
+                "reranker_model_name": "BAAI/bge-reranker-v2-m3",
+            },
+            secret_requirements=(
+                SecretRequirement(name="SILICONFLOW_API_KEY", description="SiliconFlow API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.zhipu",
+            display_name="Zhipu GLM Cloud Provider",
+            description="Baidu Qianfan ERNIE provider for chat and generation via OpenAI API.",
+            plugin_type=PluginType.MODEL,
+            family="zhipu",
+            capabilities=(Capability.GENERATE_TEXT,),
+            config_model=CloudModelConfig,
+            example_config={
+                "api_base_url": "https://open.bigmodel.cn/api/paas/v4",
+                "model_name": "glm-4.5",
+            },
+            secret_requirements=(
+                SecretRequirement(name="ZHIPU_API_KEY", description="Zhipu API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.baidu_qianfan",
+            display_name="Baidu Qianfan Cloud Provider",
+            description="Volcengine Ark Doubao provider for chat and generation via OpenAI API.",
+            plugin_type=PluginType.MODEL,
+            family="baidu_qianfan",
+            capabilities=(Capability.GENERATE_TEXT,),
+            config_model=CloudModelConfig,
+            example_config={
+                "api_base_url": "https://qianfan.baidubce.com/v2",
+                "model_name": "ernie-4.5-turbo",
+            },
+            secret_requirements=(
+                SecretRequirement(name="QIANFAN_API_KEY", description="Baidu Qianfan API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.volcengine_ark",
+            display_name="Volcengine Ark Cloud Provider",
+            description="xAI Grok provider for chat and generation via OpenAI-compatible API.",
+            plugin_type=PluginType.MODEL,
+            family="volcengine_ark",
+            capabilities=(Capability.GENERATE_TEXT,),
+            config_model=CloudModelConfig,
+            example_config={
+                "api_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+                "model_name": "doubao-seed-1-6",
+            },
+            secret_requirements=(
+                SecretRequirement(name="ARK_API_KEY", description="Volcengine Ark API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.xai",
+            display_name="xAI Grok Cloud Provider",
+            description="xAI Grok provider for chat and generation via OpenAI-compatible API.",
+            plugin_type=PluginType.MODEL,
+            family="xai",
+            capabilities=(Capability.GENERATE_TEXT,),
+            config_model=CloudModelConfig,
+            example_config={
+                "api_base_url": "https://api.x.ai/v1",
+                "model_name": "grok-4",
+            },
+            secret_requirements=(SecretRequirement(name="XAI_API_KEY", description="xAI API key"),),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.perplexity",
+            display_name="Perplexity Cloud Provider",
+            description="NVIDIA NIM provider for chat, generation, and embeddings via OpenAI API.",
+            plugin_type=PluginType.MODEL,
+            family="perplexity",
+            capabilities=(Capability.GENERATE_TEXT,),
+            config_model=CloudModelConfig,
+            example_config={
+                "api_base_url": "https://api.perplexity.ai/v1",
+                "model_name": "sonar-pro",
+            },
+            secret_requirements=(
+                SecretRequirement(name="PERPLEXITY_API_KEY", description="Perplexity API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="model.nvidia_nim",
+            display_name="NVIDIA NIM Cloud Provider",
+            description="Alibaba DashScope provider for chat, generation, and embeddings.",
+            plugin_type=PluginType.MODEL,
+            family="nvidia_nim",
+            capabilities=(Capability.GENERATE_TEXT, Capability.EMBED_TEXT),
+            config_model=CloudEmbeddingModelConfig,
+            example_config={
+                "api_base_url": "https://integrate.api.nvidia.com/v1",
+                "model_name": "meta/llama-3.1-70b-instruct",
+                "embedding_model_name": "nvidia/nv-embedqa-e5-v5",
+            },
+            secret_requirements=(
+                SecretRequirement(name="NVIDIA_API_KEY", description="NVIDIA API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
             plugin_id="embedding.bge",
             display_name="BGE Embedding",
             description="Optional local BGE embedding provider.",
@@ -528,10 +852,9 @@ def official_stub_manifests() -> list[PluginManifest]:
                 ),
             ),
             unavailable_reason=(
-                "S3-compatible export runtime is available when boto3 is installed. "
-                "GCS and Azure Blob remain contract-only in this phase."
+                None if s3_ready else "Install boto3 to enable the S3-compatible export runtime."
             ),
-            status=PluginStatus.DEGRADED,
+            status=PluginStatus.READY if s3_ready else PluginStatus.UNAVAILABLE,
         ),
         _official_manifest(
             plugin_id="source.fileshare",
@@ -606,9 +929,74 @@ def official_stub_manifests() -> list[PluginManifest]:
                 ),
             ),
             unavailable_reason=(
-                "Install google-api-python-client to enable live Google Workspace discovery."
+                None
+                if google_workspace_ready
+                else "Install google-api-python-client to enable live Google Workspace discovery."
             ),
-            status=PluginStatus.DEGRADED,
+            status=PluginStatus.READY if google_workspace_ready else PluginStatus.DEGRADED,
+        ),
+        _official_manifest(
+            plugin_id="source.confluence",
+            display_name="Confluence Cloud Source",
+            description="Confluence Cloud connector — lists pages via REST API with basic auth.",
+            plugin_type=PluginType.SOURCE,
+            family="confluence",
+            capabilities=(Capability.READ, Capability.INCREMENTAL_SYNC),
+            config_model=ConfluenceSourcePluginConfig,
+            example_config={
+                "base_url": "https://your-org.atlassian.net/wiki",
+                "space_key": "ENG",
+                "email": "env:CONFLUENCE_EMAIL",
+                "api_token": "env:CONFLUENCE_API_TOKEN",
+                "page_size": 50,
+            },
+            secret_requirements=(
+                SecretRequirement(name="CONFLUENCE_EMAIL", description="Atlassian account email"),
+                SecretRequirement(name="CONFLUENCE_API_TOKEN", description="Confluence API token"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="source.notion",
+            display_name="Notion Source",
+            description="Confluence Cloud connector — lists pages via REST API with basic auth.",
+            plugin_type=PluginType.SOURCE,
+            family="notion",
+            capabilities=(Capability.READ, Capability.INCREMENTAL_SYNC),
+            config_model=NotionSourcePluginConfig,
+            example_config={
+                "api_token": "env:NOTION_API_TOKEN",
+                "page_size": 50,
+                "filter_kind": "page",
+            },
+            secret_requirements=(
+                SecretRequirement(name="NOTION_API_TOKEN", description="Notion integration token"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="source.feishu",
+            display_name="Feishu / Lark Source",
+            description="Notion connector — enumerates pages and databases via the Notion API.",
+            plugin_type=PluginType.SOURCE,
+            family="feishu",
+            capabilities=(Capability.READ, Capability.INCREMENTAL_SYNC),
+            config_model=FeishuSourcePluginConfig,
+            example_config={
+                "space_id": "your-wiki-space-id",
+                "app_id": "env:FEISHU_APP_ID",
+                "app_secret": "env:FEISHU_APP_SECRET",
+                "base_url": "https://open.feishu.cn",
+                "page_size": 50,
+            },
+            secret_requirements=(
+                SecretRequirement(name="FEISHU_APP_ID", description="Feishu app ID"),
+                SecretRequirement(name="FEISHU_APP_SECRET", description="Feishu app secret"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
         ),
         _official_manifest(
             plugin_id="source.microsoft_365",
@@ -739,13 +1127,19 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="sink.analytics",
             display_name="Analytics Sink",
-            description="Stub manifest for analytics-oriented output sinks.",
+            description="DuckDB analytics sink — exports chunks and embeddings to a local DB.",
             plugin_type=PluginType.SINK,
             family="analytics",
             capabilities=(Capability.WRITE,),
             config_model=AnalyticsSinkConfig,
-            example_config={"target": "duckdb"},
-            unavailable_reason="Analytics sink execution is intentionally out of scope.",
+            optional_dependencies=("duckdb",),
+            example_config={"db_path": "/data/kb.duckdb", "table_prefix": ""},
+            status=PluginStatus.READY if duckdb_ready else PluginStatus.UNAVAILABLE,
+            unavailable_reason=(
+                None
+                if duckdb_ready
+                else "Install duckdb to enable the analytics sink: pip install duckdb"
+            ),
         ),
         _official_manifest(
             plugin_id="sink.agent_access",
