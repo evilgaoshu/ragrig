@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,6 +20,48 @@ from ragrig.plugins.sources.google_workspace.scanner import (
 )
 from ragrig.plugins.types import Capability
 
+_FIXTURE_FILES = [
+    {
+        "id": "drive-001",
+        "name": "Project Proposal.pdf",
+        "mimeType": "application/pdf",
+        "modifiedTime": "2026-05-13T10:00:00Z",
+        "etag": '"abc123def456"',
+        "version": "1",
+        "parents": ["parent-001"],
+        "webViewLink": "https://drive.google.com/file/d/drive-001/view",
+        "size": "102400",
+    },
+    {
+        "id": "docs-001",
+        "name": "Meeting Notes.docx",
+        "mimeType": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "modifiedTime": "2026-05-13T10:00:00Z",
+        "etag": '"xyz789uvw012"',
+        "version": "3",
+        "parents": ["parent-001"],
+        "webViewLink": "https://docs.google.com/document/d/docs-001/edit",
+    },
+]
+
+
+def _make_mock_service(
+    files: list | None = None,
+    next_page_token: str | None = None,
+    parent_name: str = "My Drive",
+) -> MagicMock:
+    if files is None:
+        files = _FIXTURE_FILES
+
+    service = MagicMock()
+    files_mock = service.files.return_value
+    files_mock.list.return_value.execute.return_value = {
+        "files": files,
+        "nextPageToken": next_page_token,
+    }
+    files_mock.get.return_value.execute.return_value = {"name": parent_name}
+    return service
+
 
 def _config(**overrides: object) -> dict[str, object]:
     config: dict[str, object] = {
@@ -34,13 +77,16 @@ def _config(**overrides: object) -> dict[str, object]:
     return config
 
 
+def _env() -> dict[str, str]:
+    return {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
+
+
 class TestPluginRegistry:
     def test_registry_entry_exists(self) -> None:
         registry = build_plugin_registry()
         manifest = registry.get("source.google_workspace")
         assert manifest.plugin_id == "source.google_workspace"
         assert manifest.family == "google_workspace"
-        assert "drive_file" not in manifest.description.lower() or True  # description updated
 
     def test_plugin_config_validation_accepts_declared_secret(self) -> None:
         registry = build_plugin_registry()
@@ -77,7 +123,6 @@ class TestPluginRegistry:
     def test_permission_mapping_capability_is_not_declared_without_runtime_support(self) -> None:
         registry = build_plugin_registry()
         manifest = registry.get("source.google_workspace")
-
         assert Capability.PERMISSION_MAPPING not in manifest.capabilities
 
 
@@ -87,72 +132,117 @@ class TestScanner:
         assert result.discovered == []
         assert result.total_count == 0
 
-    def test_scan_returns_fixture_items_with_valid_credentials(self) -> None:
-        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
-        result = scan_drive_items(_config(), env=env)
+    def test_scan_returns_items_via_mock_service(self) -> None:
+        result = scan_drive_items(_config(), env=_env(), _service=_make_mock_service())
         assert len(result.discovered) == 2
         assert result.total_count == 2
 
-    def test_scan_drive_file_fixture(self) -> None:
-        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
-        result = scan_drive_items(_config(), env=env)
-        drive_items = [i for i in result.discovered if i.mime_type == "application/pdf"]
-        assert len(drive_items) >= 1
-        item = drive_items[0]
+    def test_scan_drive_file_item(self) -> None:
+        result = scan_drive_items(_config(), env=_env(), _service=_make_mock_service())
+        pdf_items = [i for i in result.discovered if i.mime_type == "application/pdf"]
+        assert len(pdf_items) == 1
+        item = pdf_items[0]
         assert item.name == "Project Proposal.pdf"
         assert item.item_id == "drive-001"
         assert item.version == "1"
         assert item.etag == '"abc123def456"'
 
-    def test_scan_docs_document_fixture(self) -> None:
-        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
-        result = scan_drive_items(_config(), env=env)
-        docs_items = [
-            i
-            for i in result.discovered
-            if i.mime_type
-            == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ]
-        assert len(docs_items) >= 1
-        item = docs_items[0]
+    def test_scan_docx_item(self) -> None:
+        result = scan_drive_items(_config(), env=_env(), _service=_make_mock_service())
+        docx_items = [i for i in result.discovered if i.name.endswith(".docx")]
+        assert len(docx_items) == 1
+        item = docx_items[0]
         assert item.name == "Meeting Notes.docx"
         assert item.item_id == "docs-001"
         assert item.version == "3"
 
-    def test_scan_pagination_cursor(self) -> None:
-        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
-        result = scan_drive_items(_config(), env=env, cursor="page1")
+    def test_scan_pagination_passes_cursor_as_page_token(self) -> None:
+        service = _make_mock_service(files=[_FIXTURE_FILES[1]], next_page_token=None)
+        result = scan_drive_items(_config(), env=_env(), cursor="tok-abc", _service=service)
+        call_kwargs = service.files.return_value.list.call_args[1]
+        assert call_kwargs["pageToken"] == "tok-abc"
         assert len(result.discovered) == 1
-        assert result.discovered[0].item_id == "docs-001"
 
-    def test_scan_pagination_page2_empty(self) -> None:
-        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
-        result = scan_drive_items(_config(), env=env, cursor="page2")
-        assert result.discovered == []
+    def test_scan_next_cursor_propagated(self) -> None:
+        service = _make_mock_service(next_page_token="next-tok-xyz")
+        result = scan_drive_items(_config(), env=_env(), _service=service)
+        assert result.next_cursor == "next-tok-xyz"
+
+    def test_scan_no_next_cursor_when_last_page(self) -> None:
+        service = _make_mock_service(next_page_token=None)
+        result = scan_drive_items(_config(), env=_env(), _service=service)
+        assert result.next_cursor is None
 
     def test_scan_items_have_stable_identity(self) -> None:
-        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
-        result = scan_drive_items(_config(), env=env)
+        result = scan_drive_items(_config(), env=_env(), _service=_make_mock_service())
         for item in result.discovered:
             assert item.item_id
             assert item.modified_at
             assert item.etag
 
+    def test_scan_exclude_pattern_skips_matching_files(self) -> None:
+        cfg = _config(exclude_patterns=["*.pdf"])
+        result = scan_drive_items(cfg, env=_env(), _service=_make_mock_service())
+        names = [i.name for i in result.discovered]
+        assert "Project Proposal.pdf" not in names
+        assert "Meeting Notes.docx" in names
+
+    def test_scan_unsupported_extension_is_skipped(self) -> None:
+        files = [
+            {
+                "id": "vid-001",
+                "name": "demo.mp4",
+                "mimeType": "video/mp4",
+                "modifiedTime": "2026-05-13T10:00:00Z",
+                "etag": "etag1",
+                "version": "1",
+                "parents": [],
+            }
+        ]
+        service = _make_mock_service(files=files)
+        result = scan_drive_items(_config(), env=_env(), _service=service)
+        assert result.discovered == []
+        assert len(result.skipped) == 1
+        assert result.skipped[0][1] == "unsupported_extension"
+
+    def test_scan_parent_path_resolved_from_parent_id(self) -> None:
+        result = scan_drive_items(
+            _config(), env=_env(), _service=_make_mock_service(parent_name="Projects Folder")
+        )
+        assert all(item.parent_path == "/Projects Folder" for item in result.discovered)
+
+    def test_scan_item_without_parents_gets_root_path(self) -> None:
+        files = [
+            {
+                "id": "root-001",
+                "name": "readme.txt",
+                "mimeType": "text/plain",
+                "modifiedTime": "2026-05-13T10:00:00Z",
+                "etag": "etag2",
+                "version": "1",
+                "parents": [],
+            }
+        ]
+        service = _make_mock_service(files=files)
+        result = scan_drive_items(_config(include_patterns=["*.txt"]), env=_env(), _service=service)
+        assert result.discovered[0].parent_path == "/"
+
 
 class TestDeduplicateItems:
     def test_deduplicate_by_id(self) -> None:
-        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
-        result = scan_drive_items(_config(), env=env)
+        result = scan_drive_items(_config(), env=_env(), _service=_make_mock_service())
         items = list(result.discovered)
-        items.append(items[0])  # duplicate first item
+        items.append(items[0])  # duplicate
         deduped = deduplicate_items(items)
         assert len(deduped) == 2
 
     def test_no_duplicates_unchanged(self) -> None:
-        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
-        result = scan_drive_items(_config(), env=env)
+        result = scan_drive_items(_config(), env=_env(), _service=_make_mock_service())
         deduped = deduplicate_items(result.discovered)
         assert len(deduped) == 2
+
+    def test_deduplicate_empty_list(self) -> None:
+        assert deduplicate_items([]) == []
 
 
 class TestConsoleOutput:
@@ -164,9 +254,8 @@ class TestConsoleOutput:
         assert "configure" in state["next_step_command"]
 
     def test_state_healthy_with_valid_config(self) -> None:
-        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
-        scan_result = scan_drive_items(_config(), env=env)
-        state = build_connector_state(_config(), env=env, scan_result=scan_result)
+        scan_result = scan_drive_items(_config(), env=_env(), _service=_make_mock_service())
+        state = build_connector_state(_config(), env=_env(), scan_result=scan_result)
         assert state["status"] == "healthy"
         assert state["config_valid"] is True
         assert state["schema_version"] == "1.1.0"
@@ -192,16 +281,13 @@ class TestConsoleOutput:
 
     def test_state_degraded_for_invalid_json_service_account(self) -> None:
         env = {"GOOGLE_SERVICE_ACCOUNT_JSON": "not-valid-json"}
-
         state = build_connector_state(_config(), env=env)
-
         assert state["status"] == "degraded"
         assert state["degraded_reason"]
         assert state["skip_reason"] is None
 
     def test_state_degraded_for_invalid_config(self) -> None:
         state = build_connector_state(_config(service_account_json="raw-secret-value"), env={})
-
         assert state["status"] == "degraded"
         assert state["degraded_reason"]
         assert state["skip_reason"] is None
@@ -212,19 +298,15 @@ class TestConsoleOutput:
         assert config_shape["status"] == "fail"
 
     def test_format_console_output_contains_no_secrets(self) -> None:
-        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
-        scan_result = scan_drive_items(_config(), env=env)
-        state = build_connector_state(_config(), env=env, scan_result=scan_result)
+        scan_result = scan_drive_items(_config(), env=_env(), _service=_make_mock_service())
+        state = build_connector_state(_config(), env=_env(), scan_result=scan_result)
         text = format_console_output(state)
         assert "service_account_json" not in text
-        assert "service_account" not in text.lower() or True
-        assert "type" not in text or True  # generic word
         assert "REDACTED" not in text or True  # no raw secrets
 
     def test_format_console_output_json_contains_no_secrets(self) -> None:
-        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
-        scan_result = scan_drive_items(_config(), env=env)
-        state = build_connector_state(_config(), env=env, scan_result=scan_result)
+        scan_result = scan_drive_items(_config(), env=_env(), _service=_make_mock_service())
+        state = build_connector_state(_config(), env=_env(), scan_result=scan_result)
         json_text = format_console_output_json(state)
         assert "service_account_json" not in json_text
 
@@ -243,9 +325,7 @@ class TestConsoleOutput:
             "next_step_command": "ragrig-connectors google-workspace configure --credentials",
             "last_discovery": None,
         }
-
         text = format_console_output(state)
-
         assert "client_secret" not in text
         assert "refresh_token" not in text
         assert "access_token" not in text
@@ -264,9 +344,8 @@ class TestConsoleOutput:
         assert state["next_step_command"] in text
 
     def test_format_console_output_shows_discovery_summary(self) -> None:
-        env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"type": "service_account"})}
-        scan_result = scan_drive_items(_config(), env=env)
-        state = build_connector_state(_config(), env=env, scan_result=scan_result)
+        scan_result = scan_drive_items(_config(), env=_env(), _service=_make_mock_service())
+        state = build_connector_state(_config(), env=_env(), scan_result=scan_result)
         text = format_console_output(state)
         assert "Last Discovery Summary" in text
         assert "drive-001" in text
@@ -276,8 +355,7 @@ class TestConsoleOutput:
 class TestSecretLeakInterception:
     def test_no_secret_in_raw_discovery(self) -> None:
         env = {"GOOGLE_SERVICE_ACCOUNT_JSON": json.dumps({"client_secret": "super-secret"})}
-        result = scan_drive_items(_config(), env=env)
-        # Scanner should not leak credentials into items
+        result = scan_drive_items(_config(), env=env, _service=_make_mock_service())
         for item in result.discovered:
             assert "super-secret" not in item.name
             assert "super-secret" not in item.item_id

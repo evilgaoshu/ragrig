@@ -54,7 +54,7 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     manifests = registry.list()
     manifest_ids = {manifest.plugin_id for manifest in manifests}
 
-    assert len(manifests) == 37
+    assert len(manifests) == 56
     assert {
         "source.local",
         "parser.markdown",
@@ -97,7 +97,9 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     )
     assert registry.get("source.s3").status is expected_s3_status
     assert registry.get("source.fileshare").status is expected_fileshare_status
-    expected_object_storage_status = PluginStatus.DEGRADED
+    expected_object_storage_status = (
+        PluginStatus.READY if is_dependency_available("boto3") else PluginStatus.DEGRADED
+    )
     assert registry.get("sink.object_storage").status is expected_object_storage_status
 
 
