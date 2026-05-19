@@ -760,3 +760,67 @@ export function useWebsiteImport() {
       }),
   })
 }
+
+export interface SinkExportResult {
+  total_chunks: number
+  batches_sent: number
+  dry_run: boolean
+  errors: string[]
+}
+
+export function useAgentAccessExport() {
+  return useMutation({
+    mutationFn: ({
+      kbName,
+      endpointUrl,
+      apiKey,
+      hmacSecret,
+      batchSize,
+      dryRun,
+    }: {
+      kbName: string
+      endpointUrl: string
+      apiKey: string
+      hmacSecret?: string
+      batchSize?: number
+      dryRun?: boolean
+    }) =>
+      api.post<SinkExportResult>(`/knowledge-bases/${kbName}/sink-export/agent-access`, {
+        endpoint_url: endpointUrl,
+        api_key: apiKey,
+        hmac_secret: hmacSecret || null,
+        batch_size: batchSize ?? 100,
+        dry_run: dryRun ?? false,
+      }),
+  })
+}
+
+export function useWebhookExport() {
+  return useMutation({
+    mutationFn: ({
+      kbName,
+      endpointUrl,
+      hmacSecret,
+      format,
+      extraHeaders,
+      batchSize,
+      dryRun,
+    }: {
+      kbName: string
+      endpointUrl: string
+      hmacSecret?: string
+      format?: string
+      extraHeaders?: Record<string, string>
+      batchSize?: number
+      dryRun?: boolean
+    }) =>
+      api.post<SinkExportResult>(`/knowledge-bases/${kbName}/sink-export/webhook`, {
+        endpoint_url: endpointUrl,
+        hmac_secret: hmacSecret || null,
+        format: format ?? 'ndjson',
+        extra_headers: extraHeaders || null,
+        batch_size: batchSize ?? 200,
+        dry_run: dryRun ?? false,
+      }),
+  })
+}
