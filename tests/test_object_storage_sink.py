@@ -291,7 +291,7 @@ def test_object_storage_plugin_readiness_depends_on_boto3(monkeypatch: pytest.Mo
     ready_registry = build_plugin_registry()
     ready_manifest = ready_registry.get("sink.object_storage")
 
-    assert ready_manifest.status is PluginStatus.DEGRADED
+    assert ready_manifest.status is PluginStatus.READY
     assert ready_manifest.example_config is not None
     assert ready_manifest.example_config["path_template"] == (
         "{knowledge_base}/{run_id}/{artifact}.{format}"

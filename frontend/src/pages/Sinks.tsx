@@ -23,16 +23,13 @@ function ExportResult({ result }: { result: SinkExportResult }) {
         <span className="font-mono font-bold">{result.total_chunks}</span>
         <span>Batches sent</span>
         <span className="font-mono font-bold">{result.batches_sent}</span>
+        {result.failed_batches > 0 && (
+          <>
+            <span className="text-red-600">Failed batches</span>
+            <span className="font-mono font-bold text-red-600">{result.failed_batches}</span>
+          </>
+        )}
       </div>
-      {result.errors.length > 0 && (
-        <div className="mt-2 space-y-1">
-          {result.errors.map((e, i) => (
-            <div key={i} className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">
-              {e}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   )
 }

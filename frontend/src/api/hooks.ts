@@ -764,8 +764,8 @@ export function useWebsiteImport() {
 export interface SinkExportResult {
   total_chunks: number
   batches_sent: number
+  failed_batches: number
   dry_run: boolean
-  errors: string[]
 }
 
 export function useAgentAccessExport() {

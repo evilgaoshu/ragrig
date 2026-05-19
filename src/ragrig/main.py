@@ -2288,10 +2288,10 @@ def create_app(
         return JSONResponse(
             status_code=200,
             content={
-                "total_chunks": report.total_chunks,
-                "batches_sent": report.batches_sent,
+                "total_chunks": report.chunk_count,
+                "batches_sent": report.delivered_batches,
+                "failed_batches": report.failed_batches,
                 "dry_run": report.dry_run,
-                "errors": report.errors,
             },
         )
 
@@ -2322,10 +2322,10 @@ def create_app(
         return JSONResponse(
             status_code=200,
             content={
-                "total_chunks": report.total_chunks,
-                "batches_sent": report.batches_sent,
+                "total_chunks": report.chunk_count,
+                "batches_sent": report.delivered_batches,
+                "failed_batches": report.failed_batches,
                 "dry_run": report.dry_run,
-                "errors": report.errors,
             },
         )
 
