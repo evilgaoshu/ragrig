@@ -11,12 +11,17 @@ from ragrig.ingestion.scanner import scan_paths
 from ragrig.parsers import (
     CsvParser,
     DocxParser,
+    EmailParser,
+    EpubParser,
     ExcelParser,
     HtmlParser,
+    ImageParser,
+    JsonParser,
     MarkdownParser,
     PdfParser,
     PlainTextParser,
     PptxParser,
+    XmlParser,
 )
 from ragrig.plugins import get_plugin_registry
 from ragrig.processing_profile import TaskType, resolve_profile
@@ -47,7 +52,7 @@ def _select_parser(path: Path):
         return MarkdownParser()
     if ext == ".csv":
         return CsvParser()
-    if ext == ".html":
+    if ext in {".html", ".htm"}:
         return HtmlParser()
     if ext == ".pdf":
         return PdfParser()
@@ -57,6 +62,16 @@ def _select_parser(path: Path):
         return ExcelParser()
     if ext == ".pptx":
         return PptxParser()
+    if ext == ".json":
+        return JsonParser()
+    if ext in {".xml", ".rss", ".atom"}:
+        return XmlParser()
+    if ext in {".eml", ".msg"}:
+        return EmailParser()
+    if ext == ".epub":
+        return EpubParser()
+    if ext in {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif", ".webp"}:
+        return ImageParser()
     return PlainTextParser()
 
 

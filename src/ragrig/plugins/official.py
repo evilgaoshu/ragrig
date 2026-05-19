@@ -242,6 +242,9 @@ def official_stub_manifests() -> list[PluginManifest]:
     duckdb_ready = guards.is_dependency_available("duckdb")
     docling_ready = guards.is_dependency_available("docling")
     ebooklib_ready = guards.is_dependency_available("ebooklib")
+    ocr_ready = guards.is_dependency_available("pytesseract") and guards.is_dependency_available(
+        "PIL"
+    )
     fileshare_protocol_dependencies = {
         "nfs_mounted": (),
         "sftp": ("paramiko",),
@@ -1466,12 +1469,17 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="ocr",
             display_name="OCR Plugin",
-            description="Stub manifest for OCR support.",
+            description="Extracts text from raster images (PNG, JPEG, TIFF …) via Tesseract OCR.",
             plugin_type=PluginType.OCR,
             family="ocr",
             capabilities=(Capability.READ, Capability.OCR_TEXT),
-            optional_dependencies=("paddleocr",),
-            unavailable_reason="OCR integrations are intentionally out of scope.",
+            optional_dependencies=("pytesseract", "Pillow"),
+            status=PluginStatus.READY if ocr_ready else PluginStatus.UNAVAILABLE,
+            unavailable_reason=(
+                None
+                if ocr_ready
+                else "Install pytesseract and Pillow for image OCR: pip install pytesseract Pillow"
+            ),
         ),
         _official_manifest(
             plugin_id="sink.analytics",
