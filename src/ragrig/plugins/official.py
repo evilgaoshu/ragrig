@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pydantic import Field
+
 from ragrig.plugins import guards
 from ragrig.plugins.manifest import PluginConfigModel, PluginManifest, SecretRequirement
 from ragrig.plugins.object_storage.config import ObjectStorageSinkConfig
@@ -25,11 +27,6 @@ class AnalyticsSinkConfig(PluginConfigModel):
     db_path: str = ":memory:"
     table_prefix: str = ""
     include_embeddings: bool = False
-
-
-class AgentAccessSinkConfig(PluginConfigModel):
-    endpoint_url: str
-    api_key: str
 
 
 class ConfluenceSourcePluginConfig(PluginConfigModel):
@@ -122,6 +119,41 @@ class QdrantVectorConfig(PluginConfigModel):
     api_key: str | None = None
 
 
+class WebSourceConfig(PluginConfigModel):
+    urls: list[str]
+    max_depth: int = Field(default=1, ge=1)
+    page_size: int = Field(default=20, gt=0)
+    timeout_seconds: float = Field(default=15.0, gt=0)
+    verify_tls: bool = True
+    user_agent: str = "RAGRig-WebSource/1.0"
+    include_patterns: list[str] = []
+    exclude_patterns: list[str] = []
+    cookies: dict[str, str] = {}
+    headers: dict[str, str] = {}
+    bearer_token: str | None = None
+    basic_auth_username: str | None = None
+    basic_auth_password: str | None = None
+
+
+class AgentAccessSinkFullConfig(PluginConfigModel):
+    endpoint_url: str
+    api_key: str
+    hmac_secret: str | None = None
+    batch_size: int = Field(default=100, gt=0)
+    timeout_seconds: float = Field(default=30.0, gt=0)
+    verify_tls: bool = True
+
+
+class WebhookSinkConfig(PluginConfigModel):
+    endpoint_url: str
+    hmac_secret: str | None = None
+    format: str = "ndjson"
+    extra_headers: dict[str, str] = {}
+    batch_size: int = Field(default=200, gt=0)
+    timeout_seconds: float = Field(default=30.0, gt=0)
+    verify_tls: bool = True
+
+
 def _official_manifest(
     *,
     plugin_id: str,
@@ -165,6 +197,8 @@ def official_stub_manifests() -> list[PluginManifest]:
     qdrant_ready = guards.is_dependency_available("qdrant_client")
     google_workspace_ready = guards.is_dependency_available("googleapiclient")
     duckdb_ready = guards.is_dependency_available("duckdb")
+    docling_ready = guards.is_dependency_available("docling")
+    ebooklib_ready = guards.is_dependency_available("ebooklib")
     fileshare_protocol_dependencies = {
         "nfs_mounted": (),
         "sftp": ("paramiko",),
@@ -997,6 +1031,43 @@ def official_stub_manifests() -> list[PluginManifest]:
             unavailable_reason=None,
         ),
         _official_manifest(
+            plugin_id="source.web",
+            display_name="Web Source",
+            description=(
+                "Fetches web pages via HTTP with cookie, bearer, basic-auth, "
+                "and custom-header support."
+            ),
+            plugin_type=PluginType.SOURCE,
+            family="web",
+            capabilities=(Capability.READ, Capability.INCREMENTAL_SYNC),
+            config_model=WebSourceConfig,
+            example_config={
+                "urls": ["https://docs.example.com/"],
+                "max_depth": 2,
+                "bearer_token": "env:WEB_BEARER_TOKEN",
+                "cookies": {"session": "env:WEB_SESSION_COOKIE"},
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="WEB_BEARER_TOKEN",
+                    description="Bearer token for authenticated web sources",
+                    required=False,
+                ),
+                SecretRequirement(
+                    name="WEB_SESSION_COOKIE",
+                    description="Session cookie value for authenticated web sources",
+                    required=False,
+                ),
+                SecretRequirement(
+                    name="WEB_BASIC_AUTH_PASSWORD",
+                    description="Basic auth password for authenticated web sources",
+                    required=False,
+                ),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
             plugin_id="source.microsoft_365",
             display_name="Microsoft 365 Source",
             description="Stub manifest for SharePoint and OneDrive sources.",
@@ -1103,13 +1174,66 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="parser.advanced_documents",
             display_name="Advanced Document Parser",
-            description="Stub manifest for PDF, DOCX, PPTX, XLSX, and layout-aware parsing.",
+            description=(
+                "Layout-aware PDF/DOCX/PPTX/XLSX parser with table extraction via Docling."
+            ),
             plugin_type=PluginType.PARSER,
             family="advanced_documents",
             capabilities=(Capability.READ, Capability.PARSE_TEXT),
             optional_dependencies=("docling",),
+            status=PluginStatus.READY if docling_ready else PluginStatus.UNAVAILABLE,
             unavailable_reason=(
-                "Advanced parsing SDKs stay optional and are not implemented in this phase."
+                None
+                if docling_ready
+                else "Install docling to enable layout-aware parsing: pip install docling"
+            ),
+        ),
+        _official_manifest(
+            plugin_id="parser.email",
+            display_name="Email Parser",
+            description="Parses EML and MSG email files — extracts headers and body text.",
+            plugin_type=PluginType.PARSER,
+            family="email",
+            capabilities=(Capability.READ, Capability.PARSE_TEXT),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+            example_config={},
+        ),
+        _official_manifest(
+            plugin_id="parser.xml",
+            display_name="XML Parser",
+            description="Extracts text nodes from XML documents using the standard library.",
+            plugin_type=PluginType.PARSER,
+            family="xml",
+            capabilities=(Capability.READ, Capability.PARSE_TEXT),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+            example_config={},
+        ),
+        _official_manifest(
+            plugin_id="parser.json",
+            display_name="JSON Parser",
+            description="Flattens JSON documents into key-path: value text for indexing.",
+            plugin_type=PluginType.PARSER,
+            family="json",
+            capabilities=(Capability.READ, Capability.PARSE_TEXT),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+            example_config={},
+        ),
+        _official_manifest(
+            plugin_id="parser.epub",
+            display_name="EPUB Parser",
+            description="Parses EPUB e-books into plain text via ebooklib.",
+            plugin_type=PluginType.PARSER,
+            family="epub",
+            capabilities=(Capability.READ, Capability.PARSE_TEXT),
+            optional_dependencies=("ebooklib",),
+            status=PluginStatus.READY if ebooklib_ready else PluginStatus.UNAVAILABLE,
+            unavailable_reason=(
+                None
+                if ebooklib_ready
+                else "Install ebooklib to enable EPUB parsing: pip install ebooklib"
             ),
         ),
         _official_manifest(
@@ -1142,18 +1266,56 @@ def official_stub_manifests() -> list[PluginManifest]:
         _official_manifest(
             plugin_id="sink.agent_access",
             display_name="Agent Access Sink",
-            description="Stub manifest for agent-oriented export adapters.",
+            description=(
+                "Pushes chunks to an MCP-compatible HTTP endpoint with "
+                "Bearer auth and optional HMAC signing."
+            ),
             plugin_type=PluginType.SINK,
             family="agent_access",
             capabilities=(Capability.WRITE,),
-            config_model=AgentAccessSinkConfig,
+            config_model=AgentAccessSinkFullConfig,
             example_config={
-                "endpoint_url": "https://example.com/mcp",
+                "endpoint_url": "https://example.com/mcp/ingest",
                 "api_key": "env:AGENT_ACCESS_API_KEY",
+                "hmac_secret": "env:AGENT_ACCESS_HMAC_SECRET",
+                "batch_size": 100,
             },
             secret_requirements=(
                 SecretRequirement(name="AGENT_ACCESS_API_KEY", description="Agent access API key"),
+                SecretRequirement(
+                    name="AGENT_ACCESS_HMAC_SECRET",
+                    description="HMAC-SHA256 signing secret",
+                    required=False,
+                ),
             ),
-            unavailable_reason="Agent-access export adapters are intentionally out of scope.",
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="sink.webhook",
+            display_name="Webhook Sink",
+            description=(
+                "Pushes chunks to any HTTP endpoint as NDJSON or JSON "
+                "with optional HMAC-SHA256 signature."
+            ),
+            plugin_type=PluginType.SINK,
+            family="webhook",
+            capabilities=(Capability.WRITE,),
+            config_model=WebhookSinkConfig,
+            example_config={
+                "endpoint_url": "https://example.com/webhooks/ragrig",
+                "hmac_secret": "env:WEBHOOK_HMAC_SECRET",
+                "format": "ndjson",
+                "batch_size": 200,
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="WEBHOOK_HMAC_SECRET",
+                    description="HMAC-SHA256 signing secret for webhook verification",
+                    required=False,
+                ),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
         ),
     ]
