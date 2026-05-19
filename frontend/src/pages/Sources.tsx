@@ -20,6 +20,9 @@ function kindBadge(kind: string) {
     fileshare: 'bg-purple-100 text-purple-700',
     website: 'bg-teal-100 text-teal-700',
     web: 'bg-teal-100 text-teal-700',
+    confluence: 'bg-blue-100 text-blue-800',
+    notion: 'bg-gray-100 text-gray-700',
+    feishu: 'bg-cyan-100 text-cyan-700',
   }
   return map[kind] ?? 'bg-gray-100 text-gray-600'
 }
@@ -31,6 +34,9 @@ function kindToPluginId(kind: string): string {
     local_directory: 'source.local',
     website: 'source.website',
     web: 'source.web',
+    confluence: 'source.confluence',
+    notion: 'source.notion',
+    feishu: 'source.feishu',
   }
   return map[kind] ?? `source.${kind}`
 }
@@ -101,7 +107,7 @@ function RunButton({ source }: { source: Source }) {
 
 // ── Source type definitions ───────────────────────────────────────────────
 
-type SourceType = 'fileshare' | 's3' | 'local' | 'web'
+type SourceType = 'fileshare' | 's3' | 'local' | 'web' | 'confluence' | 'notion' | 'feishu'
 
 interface SourceTypeOption {
   id: SourceType
@@ -118,6 +124,27 @@ const SOURCE_TYPES: SourceTypeOption[] = [
     label: 'Web / HTTP',
     description: 'Crawl web pages by URL — supports bearer token, cookies, and basic auth',
     badge: 'bg-teal-100 text-teal-700',
+  },
+  {
+    id: 'confluence',
+    pluginId: 'source.confluence',
+    label: 'Confluence',
+    description: 'Sync pages and spaces from Atlassian Confluence Cloud or Server',
+    badge: 'bg-blue-100 text-blue-800',
+  },
+  {
+    id: 'notion',
+    pluginId: 'source.notion',
+    label: 'Notion',
+    description: 'Import pages and databases from Notion via the Integration API',
+    badge: 'bg-gray-100 text-gray-700',
+  },
+  {
+    id: 'feishu',
+    pluginId: 'source.feishu',
+    label: 'Feishu / Lark',
+    description: 'Sync wiki spaces and documents from Feishu (Lark) Knowledge Base',
+    badge: 'bg-cyan-100 text-cyan-700',
   },
   {
     id: 'fileshare',
@@ -181,6 +208,25 @@ function AddSourceModal({
   // Local fields
   const [localPath, setLocalPath] = useState('')
 
+  // Confluence fields
+  const [cfBaseUrl, setCfBaseUrl] = useState('https://your-org.atlassian.net')
+  const [cfSpaceKey, setCfSpaceKey] = useState('')
+  const [cfEmail, setCfEmail] = useState('env:CONFLUENCE_EMAIL')
+  const [cfApiToken, setCfApiToken] = useState('env:CONFLUENCE_API_TOKEN')
+  const [cfPageSize, setCfPageSize] = useState('50')
+
+  // Notion fields
+  const [notionApiToken, setNotionApiToken] = useState('env:NOTION_API_TOKEN')
+  const [notionFilterKind, setNotionFilterKind] = useState('all')
+  const [notionPageSize, setNotionPageSize] = useState('50')
+
+  // Feishu fields
+  const [feishuSpaceId, setFeishuSpaceId] = useState('')
+  const [feishuAppId, setFeishuAppId] = useState('env:FEISHU_APP_ID')
+  const [feishuAppSecret, setFeishuAppSecret] = useState('env:FEISHU_APP_SECRET')
+  const [feishuBaseUrl, setFeishuBaseUrl] = useState('https://open.feishu.cn')
+  const [feishuPageSize, setFeishuPageSize] = useState('50')
+
   // Web fields
   const [webUrls, setWebUrls] = useState('')
   const [webMaxDepth, setWebMaxDepth] = useState('1')
@@ -193,6 +239,31 @@ function AddSourceModal({
 
   const buildConfig = (): Record<string, unknown> => {
     if (!sourceType) return {}
+    if (sourceType.id === 'confluence') {
+      return {
+        base_url: cfBaseUrl,
+        space_key: cfSpaceKey || undefined,
+        email: cfEmail,
+        api_token: cfApiToken,
+        page_size: parseInt(cfPageSize, 10) || 50,
+      }
+    }
+    if (sourceType.id === 'notion') {
+      return {
+        api_token: notionApiToken,
+        filter_kind: notionFilterKind,
+        page_size: parseInt(notionPageSize, 10) || 50,
+      }
+    }
+    if (sourceType.id === 'feishu') {
+      return {
+        space_id: feishuSpaceId,
+        app_id: feishuAppId,
+        app_secret: feishuAppSecret,
+        base_url: feishuBaseUrl,
+        page_size: parseInt(feishuPageSize, 10) || 50,
+      }
+    }
     if (sourceType.id === 'fileshare') {
       const cfg: Record<string, unknown> = {
         protocol: fsProtocol,
@@ -249,6 +320,9 @@ function AddSourceModal({
   const isConfigValid = (): boolean => {
     if (!sourceType) return false
     if (!kbName) return false
+    if (sourceType.id === 'confluence') return !!cfBaseUrl && !!cfEmail && !!cfApiToken
+    if (sourceType.id === 'notion') return !!notionApiToken
+    if (sourceType.id === 'feishu') return !!feishuSpaceId && !!feishuAppId && !!feishuAppSecret
     if (sourceType.id === 'fileshare') return !!fsHost
     if (sourceType.id === 's3') return !!s3Bucket
     if (sourceType.id === 'local') return !!localPath
@@ -425,6 +499,125 @@ function AddSourceModal({
                 placeholder={'/admin/*\n*/login*'}
                 hint="Skip URLs matching these glob patterns. One per line."
                 rows={2}
+              />
+            </>
+          )}
+
+          {/* Confluence fields */}
+          {sourceType?.id === 'confluence' && (
+            <>
+              <TextField
+                label="Base URL"
+                value={cfBaseUrl}
+                onChange={setCfBaseUrl}
+                placeholder="https://your-org.atlassian.net"
+                hint="Cloud: https://org.atlassian.net  Server: https://confluence.internal"
+                required
+              />
+              <TextField
+                label="Space key (optional)"
+                value={cfSpaceKey}
+                onChange={setCfSpaceKey}
+                placeholder="DOCS"
+                hint="Leave blank to sync all spaces the token has access to."
+              />
+              <TextField
+                label="Email"
+                value={cfEmail}
+                onChange={setCfEmail}
+                placeholder="user@example.com or env:CONFLUENCE_EMAIL"
+                hint="Atlassian account email. Use env:VAR to reference a server env var."
+                required
+              />
+              <TextField
+                label="API token"
+                value={cfApiToken}
+                onChange={setCfApiToken}
+                placeholder="env:CONFLUENCE_API_TOKEN"
+                hint="Create at id.atlassian.com → Security → API tokens. Prefer env:VAR."
+                required
+              />
+              <TextField
+                label="Page size"
+                value={cfPageSize}
+                onChange={setCfPageSize}
+                type="number"
+                hint="Pages fetched per paginated request (max 250)."
+              />
+            </>
+          )}
+
+          {/* Notion fields */}
+          {sourceType?.id === 'notion' && (
+            <>
+              <TextField
+                label="Integration API token"
+                value={notionApiToken}
+                onChange={setNotionApiToken}
+                placeholder="env:NOTION_API_TOKEN"
+                hint="Create an internal integration at notion.so/my-integrations. Prefer env:VAR."
+                required
+              />
+              <SelectField
+                label="Filter kind"
+                value={notionFilterKind}
+                onChange={setNotionFilterKind}
+                options={[
+                  { value: 'all', label: 'All (pages and databases)' },
+                  { value: 'page', label: 'Pages only' },
+                  { value: 'database', label: 'Database entries only' },
+                ]}
+              />
+              <TextField
+                label="Page size"
+                value={notionPageSize}
+                onChange={setNotionPageSize}
+                type="number"
+                hint="Results per paginated API request (max 100)."
+              />
+            </>
+          )}
+
+          {/* Feishu fields */}
+          {sourceType?.id === 'feishu' && (
+            <>
+              <TextField
+                label="Wiki space ID"
+                value={feishuSpaceId}
+                onChange={setFeishuSpaceId}
+                placeholder="7123456789012345678"
+                hint="The numeric ID of the Feishu wiki space to sync."
+                required
+              />
+              <TextField
+                label="App ID"
+                value={feishuAppId}
+                onChange={setFeishuAppId}
+                placeholder="env:FEISHU_APP_ID"
+                hint="Feishu Open Platform app ID. Prefer env:VAR."
+                required
+              />
+              <TextField
+                label="App secret"
+                value={feishuAppSecret}
+                onChange={setFeishuAppSecret}
+                placeholder="env:FEISHU_APP_SECRET"
+                hint="Feishu Open Platform app secret. Prefer env:VAR."
+                required
+              />
+              <TextField
+                label="Base URL"
+                value={feishuBaseUrl}
+                onChange={setFeishuBaseUrl}
+                placeholder="https://open.feishu.cn"
+                hint="Use https://open.larksuite.com for international Lark accounts."
+              />
+              <TextField
+                label="Page size"
+                value={feishuPageSize}
+                onChange={setFeishuPageSize}
+                type="number"
+                hint="Documents fetched per paginated request."
               />
             </>
           )}
