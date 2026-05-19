@@ -5,11 +5,50 @@ from pydantic import Field
 from ragrig.plugins import guards
 from ragrig.plugins.manifest import PluginConfigModel, PluginManifest, SecretRequirement
 from ragrig.plugins.object_storage.config import ObjectStorageSinkConfig
+from ragrig.plugins.sources.backblaze_b2.config import BackblazeB2SourceConfig
+from ragrig.plugins.sources.cloudflare_r2.config import CloudflareR2SourceConfig
 from ragrig.plugins.sources.database.config import DatabaseSourceConfig
 from ragrig.plugins.sources.fileshare.config import FileshareSourceConfig
 from ragrig.plugins.sources.google_workspace.config import GoogleWorkspaceSourceConfig
 from ragrig.plugins.sources.s3.config import S3SourceConfig
 from ragrig.plugins.types import Capability, PluginStatus, PluginTier, PluginType
+
+
+class CloudflareR2SinkConfig(PluginConfigModel):
+    account_id: str = Field(min_length=1)
+    access_key_id: str
+    secret_access_key: str
+    bucket: str = Field(min_length=1)
+    prefix: str = ""
+    jurisdiction: str | None = None
+    path_template: str = "{knowledge_base}/{run_id}/{artifact}.{format}"
+    overwrite: bool = False
+    dry_run: bool = False
+    include_retrieval_artifact: bool = True
+    include_markdown_summary: bool = True
+    parquet_export: bool = False
+    max_retries: int = Field(default=3, ge=0)
+    connect_timeout_seconds: int = Field(default=10, gt=0)
+    read_timeout_seconds: int = Field(default=30, gt=0)
+    object_metadata: dict[str, str] = Field(default_factory=dict)
+
+
+class BackblazeB2SinkConfig(PluginConfigModel):
+    region: str = Field(min_length=1)
+    key_id: str
+    application_key: str
+    bucket: str = Field(min_length=1)
+    prefix: str = ""
+    path_template: str = "{knowledge_base}/{run_id}/{artifact}.{format}"
+    overwrite: bool = False
+    dry_run: bool = False
+    include_retrieval_artifact: bool = True
+    include_markdown_summary: bool = True
+    parquet_export: bool = False
+    max_retries: int = Field(default=3, ge=0)
+    connect_timeout_seconds: int = Field(default=10, gt=0)
+    read_timeout_seconds: int = Field(default=30, gt=0)
+    object_metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class Microsoft365SourceConfig(PluginConfigModel):
@@ -887,6 +926,172 @@ def official_stub_manifests() -> list[PluginManifest]:
                     name="AWS_SESSION_TOKEN",
                     description="Optional session token for temporary credentials",
                     required=False,
+                ),
+            ),
+            unavailable_reason=None,
+            status=PluginStatus.READY if (s3_ready and pyarrow_ready) else PluginStatus.DEGRADED,
+        ),
+        _official_manifest(
+            plugin_id="source.cloudflare_r2",
+            display_name="Cloudflare R2 Source",
+            description=(
+                "Reads Cloudflare R2 object storage into the ingestion pipeline "
+                "using S3-compatible API with SigV4 authentication."
+            ),
+            plugin_type=PluginType.SOURCE,
+            family="cloudflare_r2",
+            capabilities=(
+                Capability.READ,
+                Capability.INCREMENTAL_SYNC,
+            ),
+            docs_reference="docs/specs/ragrig-plugin-system-spec.md",
+            optional_dependencies=("boto3",),
+            config_model=CloudflareR2SourceConfig,
+            example_config={
+                "account_id": "your-account-id",
+                "access_key_id": "env:CF_R2_ACCESS_KEY_ID",
+                "secret_access_key": "env:CF_R2_SECRET_ACCESS_KEY",
+                "bucket": "docs",
+                "prefix": "team-a",
+                "jurisdiction": None,
+                "include_patterns": ["*.md", "*.txt"],
+                "exclude_patterns": [],
+                "max_object_size_mb": 50,
+                "page_size": 1000,
+                "max_retries": 3,
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="CF_R2_ACCESS_KEY_ID", description="Cloudflare R2 access key id"
+                ),
+                SecretRequirement(
+                    name="CF_R2_SECRET_ACCESS_KEY", description="Cloudflare R2 secret access key"
+                ),
+            ),
+            unavailable_reason=(
+                None if s3_ready else "Install boto3 to enable the Cloudflare R2 source connector."
+            ),
+            status=PluginStatus.READY if s3_ready else PluginStatus.UNAVAILABLE,
+        ),
+        _official_manifest(
+            plugin_id="source.backblaze_b2",
+            display_name="Backblaze B2 Source",
+            description=(
+                "Reads Backblaze B2 object storage into the ingestion pipeline "
+                "using the S3-compatible API."
+            ),
+            plugin_type=PluginType.SOURCE,
+            family="backblaze_b2",
+            capabilities=(
+                Capability.READ,
+                Capability.INCREMENTAL_SYNC,
+            ),
+            docs_reference="docs/specs/ragrig-plugin-system-spec.md",
+            optional_dependencies=("boto3",),
+            config_model=BackblazeB2SourceConfig,
+            example_config={
+                "region": "us-west-004",
+                "key_id": "env:B2_APPLICATION_KEY_ID",
+                "application_key": "env:B2_APPLICATION_KEY",
+                "bucket": "docs",
+                "prefix": "team-a",
+                "include_patterns": ["*.md", "*.txt"],
+                "exclude_patterns": [],
+                "max_object_size_mb": 50,
+                "page_size": 1000,
+                "max_retries": 3,
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="B2_APPLICATION_KEY_ID", description="Backblaze B2 application key id"
+                ),
+                SecretRequirement(
+                    name="B2_APPLICATION_KEY", description="Backblaze B2 application key"
+                ),
+            ),
+            unavailable_reason=(
+                None if s3_ready else "Install boto3 to enable the Backblaze B2 source connector."
+            ),
+            status=PluginStatus.READY if s3_ready else PluginStatus.UNAVAILABLE,
+        ),
+        _official_manifest(
+            plugin_id="sink.cloudflare_r2",
+            display_name="Cloudflare R2 Sink",
+            description=(
+                "Exports governed assets and audit artifacts to Cloudflare R2 object storage."
+            ),
+            plugin_type=PluginType.SINK,
+            family="cloudflare_r2",
+            capabilities=(Capability.WRITE,),
+            docs_reference="docs/specs/ragrig-plugin-system-spec.md",
+            optional_dependencies=("boto3", "pyarrow"),
+            degraded_missing_dependencies=("boto3", "pyarrow"),
+            config_model=CloudflareR2SinkConfig,
+            example_config={
+                "account_id": "your-account-id",
+                "access_key_id": "env:CF_R2_ACCESS_KEY_ID",
+                "secret_access_key": "env:CF_R2_SECRET_ACCESS_KEY",
+                "bucket": "exports",
+                "prefix": "team-a",
+                "jurisdiction": None,
+                "path_template": "{knowledge_base}/{run_id}/{artifact}.{format}",
+                "overwrite": False,
+                "dry_run": False,
+                "include_retrieval_artifact": True,
+                "include_markdown_summary": True,
+                "parquet_export": False,
+                "max_retries": 3,
+                "connect_timeout_seconds": 10,
+                "read_timeout_seconds": 30,
+                "object_metadata": {},
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="CF_R2_ACCESS_KEY_ID", description="Cloudflare R2 access key id"
+                ),
+                SecretRequirement(
+                    name="CF_R2_SECRET_ACCESS_KEY", description="Cloudflare R2 secret access key"
+                ),
+            ),
+            unavailable_reason=None,
+            status=PluginStatus.READY if (s3_ready and pyarrow_ready) else PluginStatus.DEGRADED,
+        ),
+        _official_manifest(
+            plugin_id="sink.backblaze_b2",
+            display_name="Backblaze B2 Sink",
+            description=(
+                "Exports governed assets and audit artifacts to Backblaze B2 object storage."
+            ),
+            plugin_type=PluginType.SINK,
+            family="backblaze_b2",
+            capabilities=(Capability.WRITE,),
+            docs_reference="docs/specs/ragrig-plugin-system-spec.md",
+            optional_dependencies=("boto3", "pyarrow"),
+            degraded_missing_dependencies=("boto3", "pyarrow"),
+            config_model=BackblazeB2SinkConfig,
+            example_config={
+                "region": "us-west-004",
+                "key_id": "env:B2_APPLICATION_KEY_ID",
+                "application_key": "env:B2_APPLICATION_KEY",
+                "bucket": "exports",
+                "prefix": "team-a",
+                "path_template": "{knowledge_base}/{run_id}/{artifact}.{format}",
+                "overwrite": False,
+                "dry_run": False,
+                "include_retrieval_artifact": True,
+                "include_markdown_summary": True,
+                "parquet_export": False,
+                "max_retries": 3,
+                "connect_timeout_seconds": 10,
+                "read_timeout_seconds": 30,
+                "object_metadata": {},
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="B2_APPLICATION_KEY_ID", description="Backblaze B2 application key id"
+                ),
+                SecretRequirement(
+                    name="B2_APPLICATION_KEY", description="Backblaze B2 application key"
                 ),
             ),
             unavailable_reason=None,

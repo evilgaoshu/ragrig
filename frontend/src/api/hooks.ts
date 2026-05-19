@@ -768,6 +768,16 @@ export interface SinkExportResult {
   dry_run: boolean
 }
 
+export interface ObjectStorageExportResult {
+  pipeline_run_id: string
+  planned_count: number
+  uploaded_count: number
+  skipped_count: number
+  failed_count: number
+  dry_run: boolean
+  artifact_keys: string[]
+}
+
 export function useAgentAccessExport() {
   return useMutation({
     mutationFn: ({
@@ -821,6 +831,99 @@ export function useWebhookExport() {
         extra_headers: extraHeaders || null,
         batch_size: batchSize ?? 200,
         dry_run: dryRun ?? false,
+      }),
+  })
+}
+
+export function useCloudflareR2Export() {
+  return useMutation({
+    mutationFn: ({
+      kbName,
+      accountId,
+      accessKeyId,
+      secretAccessKey,
+      bucket,
+      prefix,
+      jurisdiction,
+      pathTemplate,
+      overwrite,
+      dryRun,
+      includeRetrievalArtifact,
+      includeMarkdownSummary,
+      parquetExport,
+    }: {
+      kbName: string
+      accountId: string
+      accessKeyId: string
+      secretAccessKey: string
+      bucket: string
+      prefix?: string
+      jurisdiction?: string
+      pathTemplate?: string
+      overwrite?: boolean
+      dryRun?: boolean
+      includeRetrievalArtifact?: boolean
+      includeMarkdownSummary?: boolean
+      parquetExport?: boolean
+    }) =>
+      api.post<ObjectStorageExportResult>(`/knowledge-bases/${kbName}/sink-export/cloudflare-r2`, {
+        account_id: accountId,
+        access_key_id: accessKeyId,
+        secret_access_key: secretAccessKey,
+        bucket,
+        prefix: prefix ?? '',
+        jurisdiction: jurisdiction || null,
+        path_template: pathTemplate ?? '{knowledge_base}/{run_id}/{artifact}.{format}',
+        overwrite: overwrite ?? true,
+        dry_run: dryRun ?? false,
+        include_retrieval_artifact: includeRetrievalArtifact ?? true,
+        include_markdown_summary: includeMarkdownSummary ?? true,
+        parquet_export: parquetExport ?? false,
+      }),
+  })
+}
+
+export function useBackblazeB2Export() {
+  return useMutation({
+    mutationFn: ({
+      kbName,
+      region,
+      keyId,
+      applicationKey,
+      bucket,
+      prefix,
+      pathTemplate,
+      overwrite,
+      dryRun,
+      includeRetrievalArtifact,
+      includeMarkdownSummary,
+      parquetExport,
+    }: {
+      kbName: string
+      region: string
+      keyId: string
+      applicationKey: string
+      bucket: string
+      prefix?: string
+      pathTemplate?: string
+      overwrite?: boolean
+      dryRun?: boolean
+      includeRetrievalArtifact?: boolean
+      includeMarkdownSummary?: boolean
+      parquetExport?: boolean
+    }) =>
+      api.post<ObjectStorageExportResult>(`/knowledge-bases/${kbName}/sink-export/backblaze-b2`, {
+        region,
+        key_id: keyId,
+        application_key: applicationKey,
+        bucket,
+        prefix: prefix ?? '',
+        path_template: pathTemplate ?? '{knowledge_base}/{run_id}/{artifact}.{format}',
+        overwrite: overwrite ?? true,
+        dry_run: dryRun ?? false,
+        include_retrieval_artifact: includeRetrievalArtifact ?? true,
+        include_markdown_summary: includeMarkdownSummary ?? true,
+        parquet_export: parquetExport ?? false,
       }),
   })
 }

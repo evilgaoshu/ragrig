@@ -24,6 +24,8 @@ function kindBadge(kind: string) {
     notion: 'bg-gray-100 text-gray-700',
     feishu: 'bg-cyan-100 text-cyan-700',
     microsoft_365: 'bg-blue-100 text-blue-900',
+    cloudflare_r2: 'bg-orange-100 text-orange-700',
+    backblaze_b2: 'bg-red-100 text-red-700',
   }
   return map[kind] ?? 'bg-gray-100 text-gray-600'
 }
@@ -32,6 +34,8 @@ function kindToPluginId(kind: string): string {
   const map: Record<string, string> = {
     fileshare: 'source.fileshare',
     s3: 'source.s3',
+    cloudflare_r2: 'source.cloudflare_r2',
+    backblaze_b2: 'source.backblaze_b2',
     local_directory: 'source.local',
     website: 'source.website',
     web: 'source.web',
@@ -109,7 +113,7 @@ function RunButton({ source }: { source: Source }) {
 
 // ── Source type definitions ───────────────────────────────────────────────
 
-type SourceType = 'fileshare' | 's3' | 'local' | 'web' | 'confluence' | 'notion' | 'feishu' | 'microsoft_365'
+type SourceType = 'fileshare' | 's3' | 'cloudflare_r2' | 'backblaze_b2' | 'local' | 'web' | 'confluence' | 'notion' | 'feishu' | 'microsoft_365'
 
 interface SourceTypeOption {
   id: SourceType
@@ -166,8 +170,22 @@ const SOURCE_TYPES: SourceTypeOption[] = [
     id: 's3',
     pluginId: 'source.s3',
     label: 'S3 / MinIO',
-    description: 'S3-compatible object storage — AWS S3, MinIO, Cloudflare R2, etc.',
+    description: 'S3-compatible object storage — AWS S3, MinIO, RustFS, and other S3-API servers',
     badge: 'bg-amber-100 text-amber-700',
+  },
+  {
+    id: 'cloudflare_r2',
+    pluginId: 'source.cloudflare_r2',
+    label: 'Cloudflare R2',
+    description: 'Cloudflare R2 object storage — zero egress fees, global CDN-backed buckets',
+    badge: 'bg-orange-100 text-orange-700',
+  },
+  {
+    id: 'backblaze_b2',
+    pluginId: 'source.backblaze_b2',
+    label: 'Backblaze B2',
+    description: 'Backblaze B2 cloud storage — low-cost S3-compatible object storage',
+    badge: 'bg-red-100 text-red-700',
   },
   {
     id: 'local',
@@ -244,6 +262,21 @@ function AddSourceModal({
   const [msftScope, setMsftScope] = useState('sharepoint')
   const [msftPageSize, setMsftPageSize] = useState('100')
 
+  // Cloudflare R2 fields
+  const [r2AccountId, setR2AccountId] = useState('')
+  const [r2AccessKeyId, setR2AccessKeyId] = useState('env:CF_R2_ACCESS_KEY_ID')
+  const [r2SecretAccessKey, setR2SecretAccessKey] = useState('env:CF_R2_SECRET_ACCESS_KEY')
+  const [r2Bucket, setR2Bucket] = useState('')
+  const [r2Prefix, setR2Prefix] = useState('')
+  const [r2Jurisdiction, setR2Jurisdiction] = useState('')
+
+  // Backblaze B2 fields
+  const [b2Region, setB2Region] = useState('')
+  const [b2KeyId, setB2KeyId] = useState('env:B2_APPLICATION_KEY_ID')
+  const [b2ApplicationKey, setB2ApplicationKey] = useState('env:B2_APPLICATION_KEY')
+  const [b2Bucket, setB2Bucket] = useState('')
+  const [b2Prefix, setB2Prefix] = useState('')
+
   // Web fields
   const [webUrls, setWebUrls] = useState('')
   const [webMaxDepth, setWebMaxDepth] = useState('1')
@@ -289,6 +322,25 @@ function AddSourceModal({
         site_url: msftSiteUrl || undefined,
         scope: msftScope,
         page_size: parseInt(msftPageSize, 10) || 100,
+      }
+    }
+    if (sourceType.id === 'cloudflare_r2') {
+      return {
+        account_id: r2AccountId,
+        access_key_id: r2AccessKeyId,
+        secret_access_key: r2SecretAccessKey,
+        bucket: r2Bucket,
+        prefix: r2Prefix || undefined,
+        jurisdiction: r2Jurisdiction || undefined,
+      }
+    }
+    if (sourceType.id === 'backblaze_b2') {
+      return {
+        region: b2Region,
+        key_id: b2KeyId,
+        application_key: b2ApplicationKey,
+        bucket: b2Bucket,
+        prefix: b2Prefix || undefined,
       }
     }
     if (sourceType.id === 'fileshare') {
@@ -351,6 +403,8 @@ function AddSourceModal({
     if (sourceType.id === 'notion') return !!notionApiToken
     if (sourceType.id === 'feishu') return !!feishuSpaceId && !!feishuAppId && !!feishuAppSecret
     if (sourceType.id === 'microsoft_365') return !!msftTenantId && !!msftClientId && !!msftClientSecret
+    if (sourceType.id === 'cloudflare_r2') return !!r2AccountId && !!r2Bucket && !!r2AccessKeyId && !!r2SecretAccessKey
+    if (sourceType.id === 'backblaze_b2') return !!b2Region && !!b2Bucket && !!b2KeyId && !!b2ApplicationKey
     if (sourceType.id === 'fileshare') return !!fsHost
     if (sourceType.id === 's3') return !!s3Bucket
     if (sourceType.id === 'local') return !!localPath
@@ -703,6 +757,110 @@ function AddSourceModal({
                 onChange={setMsftPageSize}
                 type="number"
                 hint="Drive items fetched per Graph API request (max 1000)."
+              />
+            </>
+          )}
+
+          {/* Cloudflare R2 fields */}
+          {sourceType?.id === 'cloudflare_r2' && (
+            <>
+              <TextField
+                label="Account ID"
+                value={r2AccountId}
+                onChange={setR2AccountId}
+                placeholder="abc123def456..."
+                hint="Cloudflare account ID from the R2 dashboard."
+                required
+              />
+              <TextField
+                label="Access Key ID"
+                value={r2AccessKeyId}
+                onChange={setR2AccessKeyId}
+                placeholder="env:CF_R2_ACCESS_KEY_ID"
+                hint="R2 API token access key. Use env:VAR to reference an environment variable."
+                required
+              />
+              <TextField
+                label="Secret Access Key"
+                value={r2SecretAccessKey}
+                onChange={setR2SecretAccessKey}
+                placeholder="env:CF_R2_SECRET_ACCESS_KEY"
+                hint="R2 API token secret. Use env:VAR to reference an environment variable."
+                required
+              />
+              <TextField
+                label="Bucket"
+                value={r2Bucket}
+                onChange={setR2Bucket}
+                placeholder="my-bucket"
+                required
+              />
+
+              <SectionDivider label="Options" />
+
+              <TextField
+                label="Prefix (optional)"
+                value={r2Prefix}
+                onChange={setR2Prefix}
+                placeholder="docs/"
+                hint="Limit ingestion to objects with this key prefix."
+              />
+              <SelectField
+                label="Jurisdiction (optional)"
+                value={r2Jurisdiction}
+                onChange={setR2Jurisdiction}
+                options={[
+                  { value: '', label: 'Default (global)' },
+                  { value: 'eu', label: 'EU jurisdiction' },
+                  { value: 'fedramp', label: 'FedRAMP' },
+                ]}
+              />
+            </>
+          )}
+
+          {/* Backblaze B2 fields */}
+          {sourceType?.id === 'backblaze_b2' && (
+            <>
+              <TextField
+                label="Region"
+                value={b2Region}
+                onChange={setB2Region}
+                placeholder="us-west-004"
+                hint="B2 region code (e.g. us-west-004, eu-central-003)."
+                required
+              />
+              <TextField
+                label="Application Key ID"
+                value={b2KeyId}
+                onChange={setB2KeyId}
+                placeholder="env:B2_APPLICATION_KEY_ID"
+                hint="B2 application key ID. Use env:VAR to reference an environment variable."
+                required
+              />
+              <TextField
+                label="Application Key"
+                value={b2ApplicationKey}
+                onChange={setB2ApplicationKey}
+                placeholder="env:B2_APPLICATION_KEY"
+                hint="B2 application key (secret). Use env:VAR to reference an environment variable."
+                required
+              />
+              <TextField
+                label="Bucket"
+                value={b2Bucket}
+                onChange={setB2Bucket}
+                placeholder="my-b2-bucket"
+                required
+              />
+
+              <SectionDivider label="Options" />
+
+              <TextField
+                label="Prefix (optional)"
+                value={b2Prefix}
+                onChange={setB2Prefix}
+                placeholder="docs/"
+                hint="Limit ingestion to objects with this key prefix."
               />
             </>
           )}

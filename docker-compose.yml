@@ -75,6 +75,20 @@ services:
     volumes:
       - minio_data:/data
 
+  rustfs:
+    image: rustfs/rustfs:latest
+    profiles:
+      - rustfs
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+    ports:
+      - "${RUSTFS_API_PORT:-9100}:9000"
+      - "${RUSTFS_CONSOLE_PORT:-9101}:9001"
+    volumes:
+      - rustfs_data:/data
+      - rustfs_logs:/logs
+
   samba:
     image: dperson/samba:latest
     profiles:
@@ -118,6 +132,8 @@ volumes:
   pgdata:
   qdrant_data:
   minio_data:
+  rustfs_data:
+  rustfs_logs:
   fileshare_samba_data:
   fileshare_webdav_data:
   fileshare_sftp_data:

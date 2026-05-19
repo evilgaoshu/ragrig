@@ -56,6 +56,9 @@ from ragrig.local_pilot.model_config import resolve_env_config
 from ragrig.observability import summarize_pipeline_cost_latency
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.plugins.sinks.agent_access.connector import export_to_agent_endpoint
+from ragrig.plugins.sinks.backblaze_b2.connector import export_to_backblaze_b2
+from ragrig.plugins.sinks.cloudflare_r2.connector import export_to_cloudflare_r2
+from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
 from ragrig.plugins.sinks.webhook.connector import export_to_webhook
 from ragrig.processing_profile import (
     ProfileStatus,
@@ -335,6 +338,51 @@ class WebhookExportRequest(BaseModel):
     timeout_seconds: float = 30.0
     verify_tls: bool = True
     dry_run: bool = False
+
+
+class ObjectStorageExportRequest(BaseModel):
+    bucket: str
+    endpoint_url: str | None = None
+    access_key: str | None = None
+    secret_key: str | None = None
+    region: str | None = None
+    use_path_style: bool = False
+    verify_tls: bool = True
+    path_template: str = "{knowledge_base}/{run_id}/{artifact}.{format}"
+    overwrite: bool = True
+    dry_run: bool = False
+    include_retrieval_artifact: bool = True
+    include_markdown_summary: bool = True
+    parquet_export: bool = False
+
+
+class CloudflareR2ExportRequest(BaseModel):
+    account_id: str
+    access_key_id: str
+    secret_access_key: str
+    bucket: str
+    prefix: str = ""
+    jurisdiction: str | None = None
+    path_template: str = "{knowledge_base}/{run_id}/{artifact}.{format}"
+    overwrite: bool = True
+    dry_run: bool = False
+    include_retrieval_artifact: bool = True
+    include_markdown_summary: bool = True
+    parquet_export: bool = False
+
+
+class BackblazeB2ExportRequest(BaseModel):
+    region: str
+    key_id: str
+    application_key: str
+    bucket: str
+    prefix: str = ""
+    path_template: str = "{knowledge_base}/{run_id}/{artifact}.{format}"
+    overwrite: bool = True
+    dry_run: bool = False
+    include_retrieval_artifact: bool = True
+    include_markdown_summary: bool = True
+    parquet_export: bool = False
 
 
 class LocalPilotAnswerSmokeRequest(BaseModel):
@@ -2326,6 +2374,137 @@ def create_app(
                 "batches_sent": report.delivered_batches,
                 "failed_batches": report.failed_batches,
                 "dry_run": report.dry_run,
+            },
+        )
+
+    @app.post("/knowledge-bases/{kb_name}/sink-export/object-storage", response_model=None)
+    def knowledge_base_sink_object_storage(
+        kb_name: str,
+        request: ObjectStorageExportRequest,
+        session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
+    ) -> JSONResponse:
+        config: dict[str, Any] = {
+            "bucket": request.bucket,
+            "path_template": request.path_template,
+            "overwrite": request.overwrite,
+            "dry_run": request.dry_run,
+            "include_retrieval_artifact": request.include_retrieval_artifact,
+            "include_markdown_summary": request.include_markdown_summary,
+            "parquet_export": request.parquet_export,
+        }
+        if request.endpoint_url:
+            config["endpoint_url"] = request.endpoint_url
+        if request.access_key:
+            config["access_key"] = request.access_key
+        if request.secret_key:
+            config["secret_key"] = request.secret_key
+        if request.region:
+            config["region"] = request.region
+        config["use_path_style"] = request.use_path_style
+        config["verify_tls"] = request.verify_tls
+        try:
+            report = export_to_object_storage(session, knowledge_base_name=kb_name, config=config)
+        except ValueError as exc:
+            return JSONResponse(status_code=404, content={"error": str(exc)})
+        return JSONResponse(
+            status_code=200,
+            content={
+                "pipeline_run_id": str(report.pipeline_run_id),
+                "planned_count": report.planned_count,
+                "uploaded_count": report.uploaded_count,
+                "skipped_count": report.skipped_count,
+                "failed_count": report.failed_count,
+                "dry_run": report.dry_run,
+                "artifact_keys": report.artifact_keys,
+            },
+        )
+
+    @app.post("/knowledge-bases/{kb_name}/sink-export/cloudflare-r2", response_model=None)
+    def knowledge_base_sink_cloudflare_r2(
+        kb_name: str,
+        request: CloudflareR2ExportRequest,
+        session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
+    ) -> JSONResponse:
+        r2_env = {
+            "CF_R2_ACCESS_KEY_ID": request.access_key_id,
+            "CF_R2_SECRET_ACCESS_KEY": request.secret_access_key,
+        }
+        config: dict[str, Any] = {
+            "account_id": request.account_id,
+            "access_key_id": "env:CF_R2_ACCESS_KEY_ID",
+            "secret_access_key": "env:CF_R2_SECRET_ACCESS_KEY",
+            "bucket": request.bucket,
+            "prefix": request.prefix,
+            "path_template": request.path_template,
+            "overwrite": request.overwrite,
+            "dry_run": request.dry_run,
+            "include_retrieval_artifact": request.include_retrieval_artifact,
+            "include_markdown_summary": request.include_markdown_summary,
+            "parquet_export": request.parquet_export,
+        }
+        if request.jurisdiction:
+            config["jurisdiction"] = request.jurisdiction
+        try:
+            report = export_to_cloudflare_r2(
+                session, knowledge_base_name=kb_name, config=config, env=r2_env
+            )
+        except ValueError as exc:
+            return JSONResponse(status_code=404, content={"error": str(exc)})
+        return JSONResponse(
+            status_code=200,
+            content={
+                "pipeline_run_id": str(report.pipeline_run_id),
+                "planned_count": report.planned_count,
+                "uploaded_count": report.uploaded_count,
+                "skipped_count": report.skipped_count,
+                "failed_count": report.failed_count,
+                "dry_run": report.dry_run,
+                "artifact_keys": report.artifact_keys,
+            },
+        )
+
+    @app.post("/knowledge-bases/{kb_name}/sink-export/backblaze-b2", response_model=None)
+    def knowledge_base_sink_backblaze_b2(
+        kb_name: str,
+        request: BackblazeB2ExportRequest,
+        session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
+    ) -> JSONResponse:
+        b2_env = {
+            "B2_APPLICATION_KEY_ID": request.key_id,
+            "B2_APPLICATION_KEY": request.application_key,
+        }
+        config: dict[str, Any] = {
+            "region": request.region,
+            "key_id": "env:B2_APPLICATION_KEY_ID",
+            "application_key": "env:B2_APPLICATION_KEY",
+            "bucket": request.bucket,
+            "prefix": request.prefix,
+            "path_template": request.path_template,
+            "overwrite": request.overwrite,
+            "dry_run": request.dry_run,
+            "include_retrieval_artifact": request.include_retrieval_artifact,
+            "include_markdown_summary": request.include_markdown_summary,
+            "parquet_export": request.parquet_export,
+        }
+        try:
+            report = export_to_backblaze_b2(
+                session, knowledge_base_name=kb_name, config=config, env=b2_env
+            )
+        except ValueError as exc:
+            return JSONResponse(status_code=404, content={"error": str(exc)})
+        return JSONResponse(
+            status_code=200,
+            content={
+                "pipeline_run_id": str(report.pipeline_run_id),
+                "planned_count": report.planned_count,
+                "uploaded_count": report.uploaded_count,
+                "skipped_count": report.skipped_count,
+                "failed_count": report.failed_count,
+                "dry_run": report.dry_run,
+                "artifact_keys": report.artifact_keys,
             },
         )
 

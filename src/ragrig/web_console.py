@@ -29,6 +29,8 @@ from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.observability import pipeline_run_duration_ms
 from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
+from ragrig.plugins.sources.backblaze_b2.connector import ingest_backblaze_b2_source
+from ragrig.plugins.sources.cloudflare_r2.connector import ingest_cloudflare_r2_source
 from ragrig.plugins.sources.database.connector import ingest_database_source
 from ragrig.plugins.sources.s3.connector import ingest_s3_source
 from ragrig.providers import get_provider_registry
@@ -1536,6 +1538,8 @@ def get_advanced_parser_corpus() -> dict[str, Any]:
 _SOURCE_SECRET_FIELDS = {
     "source.local": [],
     "source.s3": ["access_key", "secret_key", "session_token"],
+    "source.cloudflare_r2": ["access_key_id", "secret_access_key"],
+    "source.backblaze_b2": ["key_id", "application_key"],
     "source.fileshare": ["username", "password", "private_key"],
     "source.database": ["dsn"],
 }
@@ -1551,7 +1555,14 @@ def validate_source_config(
       {"valid": True, "status": "degraded", "reason": "...", ...}
       {"valid": False, "status": "disabled", "reason": "...", ...}
     """
-    if plugin_id not in ("source.local", "source.s3", "source.fileshare", "source.database"):
+    if plugin_id not in (
+        "source.local",
+        "source.s3",
+        "source.cloudflare_r2",
+        "source.backblaze_b2",
+        "source.fileshare",
+        "source.database",
+    ):
         return {
             "valid": False,
             "status": "disabled",
@@ -1765,6 +1776,125 @@ def _dry_run_s3_source(
     )
 
 
+def _dry_run_r2_source(
+    session: Session,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+    client=None,
+) -> DryRunReport:
+    from ragrig.plugins.sources.cloudflare_r2.connector import (
+        _build_r2_endpoint,
+        _resolve_env_ref,
+    )
+    from ragrig.plugins.sources.s3.client import build_boto3_client
+    from ragrig.plugins.sources.s3.scanner import scan_objects
+
+    _env = env or {}
+    access_key = _resolve_env_ref(str(config["access_key_id"]), _env, "CF_R2_ACCESS_KEY_ID")
+    secret_key = _resolve_env_ref(str(config["secret_access_key"]), _env, "CF_R2_SECRET_ACCESS_KEY")
+    endpoint_url = _build_r2_endpoint(str(config["account_id"]), config.get("jurisdiction"))
+    s3_cfg: dict[str, object] = {
+        **config,
+        "access_key": access_key,
+        "secret_key": secret_key,
+        "endpoint_url": endpoint_url,
+        "region": "auto",
+        "use_path_style": False,
+    }
+    active_client = client or build_boto3_client(s3_cfg)
+
+    try:
+        scan_result = scan_objects(active_client, config=config)
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="cloudflare_r2",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[DryRunFile(path="r2://scan", status="failed", reason=str(exc))],
+        )
+
+    discovered: list[DryRunFile] = []
+    skipped: list[DryRunFile] = []
+    for sk in scan_result.skipped:
+        skipped.append(DryRunFile(path=sk.object_metadata.key, status="skipped", reason=sk.reason))
+    for cand in scan_result.discovered:
+        discovered.append(
+            DryRunFile(
+                path=cand.object_metadata.key,
+                status="discovered",
+                parser=f"r2:{cand.object_metadata.content_type or 'unknown'}",
+            )
+        )
+    return DryRunReport(
+        source_id=None,
+        source_kind="cloudflare_r2",
+        total=len(discovered) + len(skipped),
+        discovered=discovered,
+        skipped=skipped,
+        failed=[],
+    )
+
+
+def _dry_run_b2_source(
+    session: Session,
+    config: dict[str, Any],
+    env: dict[str, str] | None = None,
+    client=None,
+) -> DryRunReport:
+    from ragrig.plugins.sources.backblaze_b2.connector import _resolve_env_ref
+    from ragrig.plugins.sources.s3.client import build_boto3_client
+    from ragrig.plugins.sources.s3.scanner import scan_objects
+
+    _env = env or {}
+    key_id = _resolve_env_ref(str(config["key_id"]), _env, "B2_APPLICATION_KEY_ID")
+    application_key = _resolve_env_ref(str(config["application_key"]), _env, "B2_APPLICATION_KEY")
+    region = str(config["region"])
+    endpoint_url = f"https://s3.{region}.backblazeb2.com"
+    s3_cfg: dict[str, object] = {
+        **config,
+        "access_key": key_id,
+        "secret_key": application_key,
+        "endpoint_url": endpoint_url,
+        "use_path_style": False,
+    }
+    active_client = client or build_boto3_client(s3_cfg)
+
+    try:
+        scan_result = scan_objects(active_client, config=config)
+    except Exception as exc:
+        return DryRunReport(
+            source_id=None,
+            source_kind="backblaze_b2",
+            total=0,
+            discovered=[],
+            skipped=[],
+            failed=[DryRunFile(path="b2://scan", status="failed", reason=str(exc))],
+        )
+
+    discovered: list[DryRunFile] = []
+    skipped: list[DryRunFile] = []
+    for sk in scan_result.skipped:
+        skipped.append(DryRunFile(path=sk.object_metadata.key, status="skipped", reason=sk.reason))
+    for cand in scan_result.discovered:
+        discovered.append(
+            DryRunFile(
+                path=cand.object_metadata.key,
+                status="discovered",
+                parser=f"b2:{cand.object_metadata.content_type or 'unknown'}",
+            )
+        )
+    return DryRunReport(
+        source_id=None,
+        source_kind="backblaze_b2",
+        total=len(discovered) + len(skipped),
+        discovered=discovered,
+        skipped=skipped,
+        failed=[],
+    )
+
+
 def _dry_run_fileshare_source(
     session: Session,
     config: dict[str, Any],
@@ -1949,6 +2079,10 @@ def dry_run_source(
         report = _dry_run_local_directory(session, validated)
     elif plugin_id == "source.s3":
         report = _dry_run_s3_source(session, validated, env=env, client=client)
+    elif plugin_id == "source.cloudflare_r2":
+        report = _dry_run_r2_source(session, validated, env=env, client=client)
+    elif plugin_id == "source.backblaze_b2":
+        report = _dry_run_b2_source(session, validated, env=env, client=client)
     elif plugin_id == "source.fileshare":
         report = _dry_run_fileshare_source(session, validated, env=env)
     elif plugin_id == "source.database":
@@ -2024,11 +2158,32 @@ def run_source_ingest(
     )
     session.commit()
 
-    if plugin_id not in {"source.s3", "source.database"}:
+    if plugin_id not in {
+        "source.s3",
+        "source.cloudflare_r2",
+        "source.backblaze_b2",
+        "source.database",
+    }:
         raise ValueError(f"unsupported source plugin for run-ingest: {plugin_id}")
 
     if plugin_id == "source.s3":
         ingestion_report = ingest_s3_source(
+            session=session,
+            knowledge_base_name=knowledge_base_name,
+            config=validated,
+            env=env,
+            client=client,
+        )
+    elif plugin_id == "source.cloudflare_r2":
+        ingestion_report = ingest_cloudflare_r2_source(
+            session=session,
+            knowledge_base_name=knowledge_base_name,
+            config=validated,
+            env=env,
+            client=client,
+        )
+    elif plugin_id == "source.backblaze_b2":
+        ingestion_report = ingest_backblaze_b2_source(
             session=session,
             knowledge_base_name=knowledge_base_name,
             config=validated,
@@ -2112,6 +2267,42 @@ def save_source_config(
         bucket = str(validated.get("bucket", ""))
         prefix = str(validated.get("prefix", ""))
         source_uri = f"s3://{bucket}/{prefix}" if prefix else f"s3://{bucket}"
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    elif source_kind == "cloudflare_r2":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _get_or_create_kb(session, knowledge_base_name)
+        account_id = str(validated.get("account_id", ""))
+        bucket = str(validated.get("bucket", ""))
+        prefix = str(validated.get("prefix", ""))
+        source_uri = (
+            f"r2://{account_id}/{bucket}/{prefix}" if prefix else f"r2://{account_id}/{bucket}"
+        )
+
+        source = _get_or_create_src(
+            session,
+            knowledge_base_id=kb.id,
+            kind=source_kind,
+            uri=source_uri,
+            config_json=validated,
+        )
+    elif source_kind == "backblaze_b2":
+        from ragrig.repositories import get_or_create_knowledge_base as _get_or_create_kb
+        from ragrig.repositories import get_or_create_source as _get_or_create_src
+
+        kb = _get_or_create_kb(session, knowledge_base_name)
+        region = str(validated.get("region", ""))
+        bucket = str(validated.get("bucket", ""))
+        prefix = str(validated.get("prefix", ""))
+        source_uri = f"b2://{region}/{bucket}/{prefix}" if prefix else f"b2://{region}/{bucket}"
 
         source = _get_or_create_src(
             session,
@@ -2470,6 +2661,91 @@ def retry_pipeline_run_item(
                 "retried": True,
             }
 
+    elif run.run_type in ("r2_ingest", "b2_ingest"):
+        # R2/B2 items use S3-compatible download via a pre-built client
+        try:
+            from ragrig.plugins.sources.s3.client import build_boto3_client
+
+            if run.run_type == "r2_ingest":
+                from ragrig.plugins.sources.cloudflare_r2.connector import (
+                    _build_r2_endpoint,
+                )
+                from ragrig.plugins.sources.cloudflare_r2.connector import (
+                    _resolve_env_ref as _r2_resolve,
+                )
+
+                access_key = _r2_resolve(
+                    str(config_snapshot["access_key_id"]), {}, "CF_R2_ACCESS_KEY_ID"
+                )
+                secret_key = _r2_resolve(
+                    str(config_snapshot["secret_access_key"]), {}, "CF_R2_SECRET_ACCESS_KEY"
+                )
+                endpoint_url = _build_r2_endpoint(
+                    str(config_snapshot["account_id"]), config_snapshot.get("jurisdiction")
+                )
+                s3_cfg = {
+                    **config_snapshot,
+                    "access_key": access_key,
+                    "secret_key": secret_key,
+                    "endpoint_url": endpoint_url,
+                    "region": "auto",
+                    "use_path_style": False,
+                }
+            else:
+                from ragrig.plugins.sources.backblaze_b2.connector import (
+                    _resolve_env_ref as _b2_resolve,
+                )
+
+                key_id = _b2_resolve(str(config_snapshot["key_id"]), {}, "B2_APPLICATION_KEY_ID")
+                application_key = _b2_resolve(
+                    str(config_snapshot["application_key"]), {}, "B2_APPLICATION_KEY"
+                )
+                region = str(config_snapshot["region"])
+                s3_cfg = {
+                    **config_snapshot,
+                    "access_key": key_id,
+                    "secret_key": application_key,
+                    "endpoint_url": f"https://s3.{region}.backblazeb2.com",
+                    "use_path_style": False,
+                }
+
+            retry_client = build_boto3_client(s3_cfg)
+            from tempfile import NamedTemporaryFile
+
+            bucket = str(config_snapshot.get("bucket", ""))
+            key = metadata_path or ""
+            body = retry_client.download_object(bucket=bucket, key=key)
+            suffix = Path(key).suffix
+            tmp = NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp.write(body)
+            tmp.close()
+            file_path = Path(tmp.name)
+        except Exception as exc:
+            error_msg = _sanitize_retry_error(str(exc))
+            item.status = "failed"
+            item.error_message = error_msg
+            item.finished_at = datetime.now(timezone.utc)
+            session.commit()
+            create_audit_event(
+                session,
+                event_type="retry_complete",
+                actor=operator,
+                knowledge_base_id=kb.id,
+                document_id=document.id,
+                run_id=run.id,
+                item_id=item.id,
+                payload_json={"status": "failed", "error_message": error_msg},
+            )
+            session.commit()
+            return {
+                "id": str(item.id),
+                "pipeline_run_id": str(run.id),
+                "document_uri": doc_uri,
+                "status": "failed",
+                "error_message": error_msg,
+                "retried": True,
+            }
+
     elif run.run_type == "fileshare_ingest":
         from ragrig.plugins.sources.fileshare.connector import (
             _build_client,
@@ -2656,7 +2932,12 @@ def retry_pipeline_run_item(
             "retried": True,
         }
     finally:
-        if file_path and run.run_type in ("s3_ingest", "fileshare_ingest"):
+        if file_path and run.run_type in (
+            "s3_ingest",
+            "r2_ingest",
+            "b2_ingest",
+            "fileshare_ingest",
+        ):
             try:
                 file_path.unlink(missing_ok=True)
             except OSError:

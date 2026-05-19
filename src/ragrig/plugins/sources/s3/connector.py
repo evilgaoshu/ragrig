@@ -50,28 +50,54 @@ def ingest_s3_source(
     registry = get_plugin_registry()
     validated = registry.validate_config("source.s3", config)
     secrets = _resolve_secrets(validated, env=env or os.environ)
-    source_uri = _source_uri(str(validated["bucket"]), str(validated.get("prefix") or ""))
+    active_client = client or build_boto3_client({**validated, **secrets.__dict__})
+    return _run_s3_compatible_ingest(
+        session,
+        knowledge_base_name=knowledge_base_name,
+        source_kind="s3",
+        run_type="s3_ingest",
+        bucket=str(validated["bucket"]),
+        prefix=str(validated.get("prefix") or ""),
+        scan_config=validated,
+        client=active_client,
+        secret_values=[secrets.access_key, secrets.secret_key, secrets.session_token or ""],
+    )
+
+
+def _run_s3_compatible_ingest(
+    session: Session,
+    *,
+    knowledge_base_name: str,
+    source_kind: str,
+    run_type: str,
+    bucket: str,
+    prefix: str,
+    scan_config: dict[str, object],
+    client: S3ClientProtocol,
+    secret_values: list[str],
+) -> IngestionReport:
+    source_uri = _source_uri(bucket, prefix)
     knowledge_base = get_or_create_knowledge_base(session, knowledge_base_name)
     source = get_or_create_source(
         session,
         knowledge_base_id=knowledge_base.id,
-        kind="s3",
+        kind=source_kind,
         uri=source_uri,
-        config_json=validated,
+        config_json=scan_config,
     )
     run = create_pipeline_run(
         session,
         knowledge_base_id=knowledge_base.id,
         source_id=source.id,
-        run_type="s3_ingest",
-        config_snapshot_json=validated,
+        run_type=run_type,
+        config_snapshot_json=scan_config,
     )
 
-    active_client = client or build_boto3_client({**validated, **secrets.__dict__})
     try:
-        scan_result = scan_objects(active_client, config=validated)
+        merged_scan_config = {**scan_config, "bucket": bucket, "prefix": prefix}
+        scan_result = scan_objects(client, config=merged_scan_config)
     except (S3ConfigError, S3CredentialError) as exc:
-        _fail_run(run, exc, secrets=secrets)
+        _fail_run_generic(run, exc, secret_values=secret_values)
         session.commit()
         raise exc.__class__(run.error_message or str(exc)) from exc
 
@@ -85,7 +111,7 @@ def ingest_s3_source(
             session,
             knowledge_base_id=knowledge_base.id,
             source_id=source.id,
-            bucket=str(validated["bucket"]),
+            bucket=bucket,
             object_metadata=skipped.object_metadata,
             content_hash=f"skipped:{skipped.reason}",
             mime_type=skipped.object_metadata.content_type or "application/octet-stream",
@@ -112,7 +138,7 @@ def ingest_s3_source(
         object_metadata = candidate.object_metadata
         try:
             with session.begin_nested():
-                document_uri = _document_uri(str(validated["bucket"]), object_metadata.key)
+                document_uri = _document_uri(bucket, object_metadata.key)
                 document = get_document_by_uri(
                     session,
                     knowledge_base_id=knowledge_base.id,
@@ -137,17 +163,17 @@ def ingest_s3_source(
                     continue
 
                 body = _download_with_retries(
-                    active_client,
-                    bucket=str(validated["bucket"]),
+                    client,
+                    bucket=bucket,
                     key=object_metadata.key,
-                    max_retries=int(validated["max_retries"]),
+                    max_retries=int(scan_config["max_retries"]),
                 )
                 if b"\x00" in body[:8192]:
                     document, was_created = _get_or_create_s3_document(
                         session,
                         knowledge_base_id=knowledge_base.id,
                         source_id=source.id,
-                        bucket=str(validated["bucket"]),
+                        bucket=bucket,
                         object_metadata=object_metadata,
                         content_hash="skipped:binary_file",
                         mime_type=object_metadata.content_type or "application/octet-stream",
@@ -181,7 +207,7 @@ def ingest_s3_source(
                     session,
                     knowledge_base_id=knowledge_base.id,
                     source_id=source.id,
-                    bucket=str(validated["bucket"]),
+                    bucket=bucket,
                     object_metadata=object_metadata,
                     content_hash=parse_result.content_hash,
                     mime_type=parse_result.mime_type,
@@ -214,7 +240,7 @@ def ingest_s3_source(
                     },
                 )
         except (S3ConfigError, S3CredentialError) as exc:
-            _fail_run(run, exc, secrets=secrets)
+            _fail_run_generic(run, exc, secret_values=secret_values)
             session.commit()
             raise exc.__class__(run.error_message or str(exc)) from exc
         except (S3PermanentError, S3RetryableError, UnicodeDecodeError) as exc:
@@ -222,15 +248,12 @@ def ingest_s3_source(
             reason = "object_read_failed"
             if isinstance(exc, UnicodeDecodeError):
                 reason = "parse_failed"
-            sanitized = sanitize_error_message(
-                str(exc),
-                secrets=[secrets.access_key, secrets.secret_key, secrets.session_token or ""],
-            )
+            sanitized = sanitize_error_message(str(exc), secrets=secret_values)
             document, was_created = _get_or_create_s3_document(
                 session,
                 knowledge_base_id=knowledge_base.id,
                 source_id=source.id,
-                bucket=str(validated["bucket"]),
+                bucket=bucket,
                 object_metadata=object_metadata,
                 content_hash="failed",
                 mime_type=object_metadata.content_type or "text/plain",
@@ -369,10 +392,7 @@ def _get_or_create_s3_document(
     )
 
 
-def _fail_run(run, exc: Exception, *, secrets: ResolvedS3Secrets) -> None:
+def _fail_run_generic(run, exc: Exception, *, secret_values: list[str]) -> None:
     run.status = "failed"
-    run.error_message = sanitize_error_message(
-        str(exc),
-        secrets=[secrets.access_key, secrets.secret_key, secrets.session_token or ""],
-    )
+    run.error_message = sanitize_error_message(str(exc), secrets=secret_values)
     run.finished_at = datetime.now(timezone.utc)
