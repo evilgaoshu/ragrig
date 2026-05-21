@@ -20,12 +20,18 @@ import ParserCorpus from './pages/ParserCorpus'
 import OpsDiagnostics from './pages/OpsDiagnostics'
 import CostLatency from './pages/CostLatency'
 import Models from './pages/Models'
+import Notifications from './pages/Notifications'
+import PipelineProfiles from './pages/PipelineProfiles'
+import Quality from './pages/Quality'
+import Access from './pages/Access'
+import Operations from './pages/Operations'
+import Understanding from './pages/Understanding'
+import Conflicts from './pages/Conflicts'
 import Plugins from './pages/Plugins'
 import Evaluation from './pages/Evaluation'
 import KnowledgeMap from './pages/KnowledgeMap'
 import ProfileMatrix from './pages/ProfileMatrix'
 import AnswerGen from './pages/AnswerGen'
-import Settings from './pages/Settings'
 import Wizard from './pages/Wizard'
 import Conversations from './pages/Conversations'
 import Usage from './pages/Usage'
@@ -51,6 +57,13 @@ function AppRoutes() {
                 <Route path="/sinks" element={<Sinks />} />
                 <Route path="/pipelines" element={<Pipelines />} />
                 <Route path="/retrieval-lab" element={<RetrievalLab />} />
+                <Route path="/pipeline-profiles" element={<PipelineProfiles />} />
+                <Route path="/notifications" element={<Notifications />} />
+                <Route path="/quality" element={<Quality />} />
+                <Route path="/access" element={<Access />} />
+                <Route path="/operations" element={<Operations />} />
+                <Route path="/understanding" element={<Understanding />} />
+                <Route path="/conflicts" element={<Conflicts />} />
 
                 <Route path="/wizard" element={<Wizard />} />
                 <Route path="/upload" element={<Upload />} />
@@ -74,7 +87,6 @@ function AppRoutes() {
                 <Route path="/usage" element={<Usage />} />
                 <Route path="/backup" element={<Backup />} />
                 <Route path="/team" element={<Team />} />
-                <Route path="/settings" element={<Settings />} />
 
                 <Route path="*" element={<Stub title="Not Found" description="This page does not exist." />} />
               </Routes>

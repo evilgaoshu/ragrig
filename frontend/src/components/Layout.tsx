@@ -6,67 +6,82 @@ interface NavItem {
   to: string
 }
 
-const OPERATE: NavItem[] = [
-  { label: 'Overview', to: '/' },
-  { label: 'Knowledge Bases', to: '/knowledge-bases' },
-  { label: 'Sources', to: '/sources' },
-  { label: 'Sinks', to: '/sinks' },
-  { label: 'Setup Wizard', to: '/wizard' },
-  { label: 'Pipelines', to: '/pipelines' },
-  { label: 'Upload', to: '/upload' },
-  { label: 'Formats', to: '/formats' },
-  { label: 'Sanitizer Coverage', to: '/sanitizer-coverage' },
-  { label: 'Sanitizer Drift', to: '/sanitizer-drift' },
-  { label: 'Retrieval Benchmark', to: '/retrieval-benchmark' },
-  { label: 'Baseline Integrity', to: '/baseline-integrity' },
-  { label: 'Answer Live Smoke', to: '/answer-live-smoke' },
-  { label: 'Parser Corpus', to: '/parser-corpus' },
-  { label: 'Ops Diagnostics', to: '/ops-diagnostics' },
-  { label: 'Cost & Latency', to: '/cost-latency' },
-  { label: 'Documents', to: '/documents' },
-]
-
-const INSPECT: NavItem[] = [
-  { label: 'Retrieval Lab', to: '/retrieval-lab' },
-  { label: 'Answer Gen', to: '/answer-gen' },
-  { label: 'Conversations', to: '/conversations' },
-  { label: 'Models', to: '/models' },
-  { label: 'Profile Matrix', to: '/profile-matrix' },
-  { label: 'Plugins', to: '/plugins' },
-  { label: 'Evaluation', to: '/evaluation' },
-  { label: 'Knowledge Map', to: '/knowledge-map' },
-  { label: 'Settings', to: '/settings' },
-]
-
-const ADMIN: NavItem[] = [
-  { label: 'Usage & Budget', to: '/usage' },
-  { label: 'Backup', to: '/backup' },
-  { label: 'Team', to: '/team' },
+const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
+  {
+    label: 'Operate',
+    items: [
+      { label: 'Overview', to: '/' },
+      { label: 'Pipelines', to: '/pipelines' },
+      { label: 'Datasets', to: '/knowledge-bases' },
+      { label: 'Documents', to: '/documents' },
+      { label: 'Sources', to: '/sources' },
+      { label: 'Sinks', to: '/sinks' },
+    ],
+  },
+  {
+    label: 'Configure',
+    items: [
+      { label: 'Pipeline profiles', to: '/pipeline-profiles' },
+      { label: 'AI Providers', to: '/models' },
+      { label: 'Notifications', to: '/notifications' },
+      { label: 'Plugins', to: '/plugins' },
+    ],
+  },
+  {
+    label: 'Inspect',
+    items: [
+      { label: 'Retrieval Lab', to: '/retrieval-lab' },
+      { label: 'Evaluations', to: '/evaluation' },
+      { label: 'Understanding', to: '/understanding' },
+      { label: 'Knowledge Map', to: '/knowledge-map' },
+      { label: 'Conversations', to: '/conversations' },
+      { label: 'Conflicts', to: '/conflicts' },
+    ],
+  },
+  {
+    label: 'Quality',
+    items: [
+      { label: 'Quality Suite', to: '/quality' },
+      { label: 'Retrieval Benchmark', to: '/retrieval-benchmark' },
+      { label: 'Sanitizer Drift', to: '/sanitizer-drift' },
+      { label: 'Parser Corpus', to: '/parser-corpus' },
+    ],
+  },
+  {
+    label: 'Admin',
+    items: [
+      { label: 'Access', to: '/access' },
+      { label: 'Usage & Budget', to: '/usage' },
+      { label: 'Operations', to: '/operations' },
+    ],
+  },
 ]
 
 function NavGroup({ label, items }: { label: string; items: NavItem[] }) {
   return (
-    <>
-      <div className="mt-4 mb-1 px-3 text-[10px] font-bold uppercase tracking-widest text-gray-400">
+    <div className="mt-4">
+      <div className="mb-1 px-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">
         {label}
       </div>
-      {items.map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.to === '/'}
-          className={({ isActive }) =>
-            `block px-3 py-1.5 rounded text-[13px] transition-colors ${
-              isActive
-                ? 'bg-brand/10 text-brand font-semibold'
-                : 'text-gray-700 hover:bg-gray-100'
-            }`
-          }
-        >
-          {item.label}
-        </NavLink>
-      ))}
-    </>
+      <div className="space-y-0.5">
+        {items.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.to === '/'}
+            className={({ isActive }) =>
+              `relative block rounded-lg px-3 py-2 text-[13px] transition-colors ${
+                isActive
+                  ? 'bg-brand/10 font-semibold text-brand before:absolute before:left-0 before:top-2 before:h-5 before:w-0.5 before:rounded-full before:bg-brand'
+                  : 'text-slate-600 hover:bg-blue-50 hover:text-ink'
+              }`
+            }
+          >
+            {item.label}
+          </NavLink>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -74,38 +89,39 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth()
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-52 shrink-0 border-r border-gray-200 bg-white flex flex-col overflow-y-auto">
-        <div className="px-3 pt-4 pb-2">
-          <div className="text-[15px] font-bold text-brand">RAGRig</div>
-          <div className="text-[10px] text-gray-400">source-governed RAG</div>
+    <div className="flex h-screen overflow-hidden bg-canvas text-ink">
+      <aside className="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-line bg-white/90">
+        <div className="px-4 pb-3 pt-4">
+          <div className="flex items-center gap-3">
+            <img src="/assets/ragrig-icon.svg" alt="" className="h-9 w-9 rounded-lg" />
+            <div>
+              <div className="text-[15px] font-bold text-ink">RAGRig</div>
+              <div className="text-[11px] text-muted">Traceable RAG console</div>
+            </div>
+          </div>
         </div>
-        <nav className="flex-1 px-2 pb-4">
-          <NavGroup label="Operate" items={OPERATE} />
-          <NavGroup label="Inspect" items={INSPECT} />
-          <NavGroup label="Admin" items={ADMIN} />
+        <nav className="flex-1 px-3 pb-4">
+          {NAV_GROUPS.map((group) => (
+            <NavGroup key={group.label} label={group.label} items={group.items} />
+          ))}
         </nav>
-        <div className="px-3 pb-3 border-t border-gray-100 pt-3">
+        <div className="border-t border-line px-4 py-3">
           {user && (
-            <div className="mb-2">
-              <div className="text-[11px] text-gray-700 font-medium truncate">
+            <div className="mb-3">
+              <div className="truncate text-xs font-medium text-ink">
                 {user.display_name ?? user.email ?? 'User'}
               </div>
-              <div className="text-[10px] text-gray-400 truncate">{user.role}</div>
+              <div className="truncate text-[11px] text-muted">{user.role}</div>
             </div>
           )}
-          <div className="flex items-center gap-2 text-[11px] text-gray-400">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
             <a href="/docs" className="hover:text-brand">Swagger</a>
             <span>·</span>
             <a href="/console" className="hover:text-brand">Legacy UI</a>
             {user && (
               <>
                 <span>·</span>
-                <button
-                  onClick={() => logout()}
-                  className="hover:text-red-500 transition-colors"
-                >
+                <button onClick={() => logout()} className="hover:text-red-600">
                   Sign out
                 </button>
               </>
@@ -114,8 +130,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Main */}
-      <main className="flex-1 overflow-y-auto bg-gray-50">
+      <main className="min-w-0 flex-1 overflow-y-auto">
+        <div className="sticky top-0 z-10 flex min-h-14 items-center justify-between gap-3 border-b border-line bg-canvas/90 px-6 backdrop-blur">
+          <div className="text-xs text-muted">ragrig / workspace / demo</div>
+          <div className="flex items-center gap-2">
+            <input
+              type="search"
+              placeholder="Search docs, runs, chunks"
+              className="h-9 w-72 max-w-[40vw] rounded-lg border border-line bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-brand/30"
+            />
+            <button className="h-9 rounded-lg border border-line bg-white px-3 text-sm font-medium text-slate-600 hover:bg-blue-50">
+              中文
+            </button>
+          </div>
+        </div>
         {children}
       </main>
     </div>

@@ -4,7 +4,13 @@
 
 @layer base {
   body {
-    @apply bg-gray-50 text-gray-900 text-sm font-sans;
+    @apply bg-canvas text-ink text-sm font-sans;
     margin: 0;
+  }
+}
+
+@layer utilities {
+  .font-mono-tabular {
+    font-variant-numeric: tabular-nums;
   }
 }
