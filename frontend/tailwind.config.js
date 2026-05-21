@@ -4,10 +4,14 @@ export default {
   theme: {
     extend: {
       colors: {
-        brand: '#0e7a6e',
+        brand: '#2F6FEB',
+        ink: '#111827',
+        muted: '#667085',
+        line: '#D8E2F3',
+        canvas: '#F3F7FE',
+        panel: '#FFFFFF',
       },
     },
   },
   plugins: [],
 }
-

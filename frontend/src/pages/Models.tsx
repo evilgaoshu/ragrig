@@ -1,140 +1,89 @@
-import { useModels } from '../api/hooks'
-import StatusCard from '../components/StatusCard'
+import { useState } from 'react'
+import { Button } from '../components/ui'
+import { ConsolePage, DataTable, Panel, StatusPill } from '../components/console'
+import { SchemaModal, type SchemaSubmit } from '../components/SchemaModal'
+import { PROVIDER_SCHEMAS } from './consoleSchemas'
 
-type Provider = {
+type ProviderRow = {
+  id: string
   name: string
   kind: string
-  description?: string
-  capabilities: string[]
-  default_dimensions?: number
-  max_dimensions?: number
-  required_secrets?: string[]
-  healthcheck?: string
-  sdk_protocol?: string
+  models: string
+  capabilities: string
+  status: 'healthy' | 'needs key'
 }
 
-type EmbeddingProfile = {
-  provider: string
-  model: string
-  dimensions: number
-  chunk_count: number
-  status: string
-}
-
-function capBadge(cap: string) {
-  const colors: Record<string, string> = {
-    embed: 'text-teal-700 bg-teal-50',
-    chat: 'text-violet-700 bg-violet-50',
-    generate: 'text-blue-700 bg-blue-50',
-    rerank: 'text-amber-700 bg-amber-50',
-  }
-  return colors[cap] ?? 'text-gray-600 bg-gray-100'
-}
+const INITIAL_PROVIDERS: ProviderRow[] = [
+  { id: 'openai', name: 'openai-prod', kind: 'OpenAI-compatible', models: 'gpt-4.1-mini · text-embedding-3-small', capabilities: 'chat, embed', status: 'healthy' },
+  { id: 'voyage', name: 'voyage-retrieval', kind: 'Voyage embeddings', models: 'voyage-3-large', capabilities: 'embed', status: 'healthy' },
+  { id: 'ollama', name: 'local-pilot', kind: 'Ollama local', models: 'llama3.1 · nomic-embed-text', capabilities: 'chat, embed', status: 'needs key' },
+]
 
 export default function Models() {
-  const { data, isLoading } = useModels()
+  const [providers, setProviders] = useState(INITIAL_PROVIDERS)
+  const [showModal, setShowModal] = useState(false)
+  const [message, setMessage] = useState('')
 
-  const models = data as {
-    embedding_profiles?: EmbeddingProfile[]
-    registered_providers?: Provider[]
-    registry_shell?: Record<string, { status: string; reason: string; providers: string[] }>
-  } | undefined
-
-  const profiles = models?.embedding_profiles ?? []
-  const providers = models?.registered_providers ?? []
+  const addProvider = (payload: SchemaSubmit) => {
+    setProviders((current) => [
+      {
+        id: `provider-${Date.now()}`,
+        name: payload.values.chatModel || payload.values.model || payload.label,
+        kind: payload.label,
+        models: [payload.values.chatModel, payload.values.embeddingModel, payload.values.model].filter(Boolean).join(' · ') || 'configured model',
+        capabilities: payload.schemaId === 'voyage' ? 'embed' : 'chat, embed',
+        status: 'healthy',
+      },
+      ...current,
+    ])
+    setMessage(`${payload.label} provider created.`)
+    setShowModal(false)
+  }
 
   return (
-    <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-lg font-bold text-gray-900">Models</h1>
-        <p className="text-gray-500 text-sm mt-0.5">Embedding models and rerankers</p>
+    <ConsolePage
+      title="AI Providers"
+      description="Model providers, embedding profiles, fallbacks, and health state."
+      actions={<Button onClick={() => setShowModal(true)}>New provider</Button>}
+    >
+      <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+        <Panel title="Providers" description="Provider-specific fields are shown at creation time.">
+          {message && <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">{message}</div>}
+          <DataTable
+            rows={providers}
+            getKey={(row) => row.id}
+            columns={[
+              { key: 'name', label: 'Provider', render: (row) => <div><div className="font-medium text-ink">{row.name}</div><div className="text-xs text-muted">{row.kind}</div></div> },
+              { key: 'models', label: 'Models', render: (row) => <span className="font-mono text-xs text-slate-600">{row.models}</span> },
+              { key: 'capabilities', label: 'Capabilities', render: (row) => row.capabilities },
+              { key: 'status', label: 'Status', render: (row) => <StatusPill tone={row.status === 'healthy' ? 'ok' : 'warn'}>{row.status}</StatusPill> },
+              { key: 'actions', label: 'Actions', align: 'right', render: (row) => <button onClick={() => setMessage(`Health check queued for ${row.name}`)} className="rounded-lg border border-line px-2 py-1 text-xs font-medium text-brand hover:bg-blue-50">Check health</button> },
+            ]}
+          />
+        </Panel>
+        <Panel title="Routing policy" description="Used by answer generation and enrichment steps.">
+          <div className="space-y-3 text-sm">
+            <div className="rounded-lg border border-line bg-blue-50/50 p-3">
+              <div className="font-medium text-ink">Answer generation</div>
+              <div className="mt-1 text-xs text-muted">Primary OpenAI-compatible · fallback local-pilot after 2 failures</div>
+            </div>
+            <div className="rounded-lg border border-line bg-blue-50/50 p-3">
+              <div className="font-medium text-ink">Embedding</div>
+              <div className="mt-1 text-xs text-muted">voyage-retrieval for production, local-pilot for air-gapped smoke tests</div>
+            </div>
+          </div>
+        </Panel>
       </div>
 
-      {isLoading ? (
-        <div className="text-gray-400 text-sm">Loading…</div>
-      ) : (
-        <>
-          {/* Registry shell */}
-          {models?.registry_shell && (
-            <div className="flex gap-3 flex-wrap">
-              {Object.entries(models.registry_shell).map(([kind, info]) => (
-                <StatusCard
-                  key={kind}
-                  label={kind}
-                  value={info.providers.length}
-                  sub={info.status}
-                  status={info.status === 'ready' ? 'ok' : info.status === 'derived' ? 'neutral' : 'warn'}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Active embedding profiles */}
-          <div>
-            <h2 className="text-sm font-semibold text-gray-700 mb-2">Active embedding profiles ({profiles.length})</h2>
-            {profiles.length === 0 ? (
-              <div className="text-sm text-gray-400">No embeddings indexed yet.</div>
-            ) : (
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 grid grid-cols-[1fr_1fr_auto_auto_auto] gap-4 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                  <div>Provider</div>
-                  <div>Model</div>
-                  <div className="text-right">Dims</div>
-                  <div className="text-right">Chunks</div>
-                  <div className="text-right">Status</div>
-                </div>
-                {profiles.map((p, i) => (
-                  <div key={i} className="px-4 py-2.5 border-b border-gray-100 last:border-0 grid grid-cols-[1fr_1fr_auto_auto_auto] gap-4 items-center">
-                    <div className="text-sm font-mono text-gray-800 truncate">{p.provider}</div>
-                    <div className="text-sm font-mono text-gray-600 truncate">{p.model}</div>
-                    <div className="text-sm text-gray-700 text-right">{p.dimensions}</div>
-                    <div className="text-sm text-gray-700 text-right">{p.chunk_count}</div>
-                    <div className="flex justify-end">
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border text-emerald-700 bg-emerald-50 border-emerald-200">
-                        {p.status}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Registered providers */}
-          {providers.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700 mb-2">Registered providers ({providers.length})</h2>
-              <div className="grid grid-cols-1 gap-3">
-                {providers.map((p) => (
-                  <div key={p.name} className="bg-white border border-gray-200 rounded-lg px-4 py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium text-gray-800">{p.name}</span>
-                          <span className="text-[10px] font-mono text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{p.kind}</span>
-                        </div>
-                        {p.description && <div className="text-xs text-gray-500 mt-0.5">{p.description}</div>}
-                      </div>
-                      <div className="flex gap-1 flex-wrap justify-end">
-                        {p.capabilities.map((cap) => (
-                          <span key={cap} className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${capBadge(cap)}`}>{cap}</span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="flex gap-4 mt-2 text-xs text-gray-500 flex-wrap">
-                      {p.default_dimensions && <span>dims: {p.default_dimensions}{p.max_dimensions ? `–${p.max_dimensions}` : ''}</span>}
-                      {p.sdk_protocol && <span className="font-mono">{p.sdk_protocol}</span>}
-                      {p.required_secrets && p.required_secrets.length > 0 && (
-                        <span className="text-amber-600">needs: {p.required_secrets.join(', ')}</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
+      {showModal && (
+        <SchemaModal
+          title="New AI provider"
+          schemas={PROVIDER_SCHEMAS}
+          submitLabel="Create provider"
+          onClose={() => setShowModal(false)}
+          onSubmit={addProvider}
+        />
       )}
-    </div>
+    </ConsolePage>
   )
 }
