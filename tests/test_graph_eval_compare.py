@@ -32,7 +32,8 @@ def _seed_golden(tmp_path: Path) -> Path:
         "  questions:\n"
         "    - query: AlphaProject BillingPolicy citations\n"
         "      expected_doc_uri: guide.md\n"
-        "      expected_citation: evidence citations\n",
+        "      expected_citation: evidence citations\n"
+        "      tags: [graph, multi-hop]\n",
         encoding="utf-8",
     )
     return golden
@@ -52,5 +53,10 @@ def test_graph_retrieval_eval_compare_workflow(tmp_path: Path) -> None:
     assert report["baseline_mode"] == "dense"
     assert [result["mode"] for result in report["results"]] == ["dense", "graph"]
     assert all(result["item_error_count"] == 0 for result in report["results"])
+    graph_result = next(result for result in report["results"] if result["mode"] == "graph")
+    assert "per_tag_delta_vs_baseline" in graph_result
+    assert report["quality_gate"]["status"] in {"pass", "warn"}
+    assert report["quality_gate"]["mode_results"][0]["mode"] == "graph"
     assert report["knowledge_graph"]["stats"]["entity_count"] >= 2
     assert "markdown_summary" in report
+    assert "Graph-Focused Per-Tag Delta" in report["markdown_summary"]

@@ -154,6 +154,7 @@ def run_demo_rc_gate(
                     _comparison_ready(comparison),
                     {
                         "winner": comparison.get("winner"),
+                        "quality_gate_status": (comparison.get("quality_gate") or {}).get("status"),
                         "result_modes": [result["mode"] for result in comparison["results"]],
                         "item_error_counts": {
                             result["mode"]: result.get("item_error_count", 0)
@@ -200,6 +201,7 @@ def run_demo_rc_gate(
                 "comparison": {
                     "winner": comparison.get("winner"),
                     "baseline_mode": comparison.get("baseline_mode"),
+                    "quality_gate": comparison.get("quality_gate"),
                     "results": comparison.get("results"),
                 },
             }

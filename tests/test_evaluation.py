@@ -261,6 +261,7 @@ def test_metrics_hit_at_k() -> None:
             mrr=1.0,
             total_results=3,
             citation_coverage=1.0,
+            tags=["graph"],
         ),
         EvaluationRunItem(
             question_index=1,
@@ -270,6 +271,7 @@ def test_metrics_hit_at_k() -> None:
             mrr=0.5,
             total_results=3,
             citation_coverage=0.5,
+            tags=["graph"],
         ),
         EvaluationRunItem(
             question_index=2,
@@ -279,6 +281,7 @@ def test_metrics_hit_at_k() -> None:
             mrr=0.2,
             total_results=3,
             citation_coverage=0.0,
+            tags=["graph"],
         ),
         EvaluationRunItem(
             question_index=3,
@@ -288,6 +291,7 @@ def test_metrics_hit_at_k() -> None:
             mrr=0.0,
             total_results=3,
             citation_coverage=0.0,
+            tags=["graph"],
         ),
     ]
     metrics = _compute_metrics(items)
@@ -301,6 +305,7 @@ def test_metrics_hit_at_k() -> None:
     assert metrics.mrr == pytest.approx(0.425, abs=0.001)
     assert metrics.mean_rank_of_expected == pytest.approx((1 + 2 + 5) / 3, abs=0.01)
     assert metrics.citation_coverage_mean == pytest.approx((1.0 + 0.5 + 0.0 + 0.0) / 4, abs=0.001)
+    assert metrics.per_tag_metrics["graph"]["hit_at_5"] == 0.75
     assert metrics.zero_result_count == 0
 
 
@@ -388,6 +393,7 @@ def test_rank_of_expected_doc_uri_match() -> None:
         expected_doc_uri="guide.md",
         expected_chunk_uri=None,
         expected_citation=None,
+        expected_relevant_citations=None,
     )
     assert rank == 2
 
@@ -401,6 +407,7 @@ def test_rank_of_expected_chunk_uri_match() -> None:
         expected_doc_uri=None,
         expected_chunk_uri="b.txt#chunk-1",
         expected_citation=None,
+        expected_relevant_citations=None,
     )
     assert rank == 2
 
@@ -414,6 +421,21 @@ def test_rank_of_expected_citation_match() -> None:
         expected_doc_uri=None,
         expected_chunk_uri=None,
         expected_citation="target citation",
+        expected_relevant_citations=None,
+    )
+    assert rank == 2
+
+
+def test_rank_of_expected_relevant_citation_match() -> None:
+    """Rank computation can use multi-citation golden targets."""
+    rank = _compute_rank_of_expected(
+        query="test",
+        top_doc_uris=["a.txt", "b.txt", "c.txt"],
+        top_texts=["nothing here", "evidence chunks prove it", "more text"],
+        expected_doc_uri=None,
+        expected_chunk_uri=None,
+        expected_citation=None,
+        expected_relevant_citations=["citation evidence", "evidence chunks"],
     )
     assert rank == 2
 
@@ -427,6 +449,7 @@ def test_rank_of_expected_no_match() -> None:
         expected_doc_uri="missing.txt",
         expected_chunk_uri=None,
         expected_citation="not here",
+        expected_relevant_citations=["also missing"],
     )
     assert rank is None
 

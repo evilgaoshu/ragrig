@@ -802,16 +802,19 @@ def _merge_graph_results(
         graph_score = graph_score_by_chunk.get(chunk_id)
         if graph_score is None:
             continue
-        combined = round((base.score * (1.0 - graph_weight)) + (graph_score * graph_weight), 6)
+        blended = (base.score * (1.0 - graph_weight)) + (graph_score * graph_weight)
+        combined = round(max(base.score, blended), 6)
         trace = dict(base.rank_stage_trace)
         stages = list(trace.get("stages", []))
         stages.append(
             {
                 "stage": "graph_expand",
+                "base_score": base.score,
                 "score": graph_score,
                 "combined_score": combined,
                 "weight": graph_weight,
                 "source": "kg_lite",
+                "policy": "boost_only",
             }
         )
         merged_by_chunk[chunk_id] = replace(

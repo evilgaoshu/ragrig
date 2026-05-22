@@ -38,9 +38,15 @@ def _compute_rank_of_expected(
     expected_doc_uri: str | None,
     expected_chunk_uri: str | None,
     expected_citation: str | None,
+    expected_relevant_citations: list[str] | None,
     top_texts: list[str],
 ) -> int | None:
     """Find the rank (1-based) of the first expected match in results."""
+    relevant_citations = [
+        citation.lower()
+        for citation in (expected_relevant_citations or [])
+        if citation and citation.strip()
+    ]
     for i, (uri, text) in enumerate(zip(top_doc_uris, top_texts, strict=False)):
         rank = i + 1
         if expected_doc_uri is not None and expected_doc_uri in uri:
@@ -49,7 +55,10 @@ def _compute_rank_of_expected(
             expected_chunk_uri in uri or uri in expected_chunk_uri
         ):
             return rank
-        if expected_citation is not None and expected_citation.lower() in text.lower():
+        text_lower = text.lower()
+        if expected_citation is not None and expected_citation.lower() in text_lower:
+            return rank
+        if relevant_citations and any(citation in text_lower for citation in relevant_citations):
             return rank
     return None
 
@@ -133,6 +142,7 @@ def _evaluate_question(
             golden.expected_doc_uri,
             golden.expected_chunk_uri,
             golden.expected_citation,
+            list(golden.expected_relevant_citations or []),
             text_previews,
         )
         hit = rank is not None and rank <= top_k
@@ -298,6 +308,15 @@ def _compute_tag_metrics(items: list[EvaluationRunItem]) -> dict[str, dict[str, 
                     1
                     for i in valid
                     if i.hit and i.rank_of_expected is not None and i.rank_of_expected <= 3
+                )
+                / n,
+                4,
+            ),
+            "hit_at_5": round(
+                sum(
+                    1
+                    for i in valid
+                    if i.hit and i.rank_of_expected is not None and i.rank_of_expected <= 5
                 )
                 / n,
                 4,
