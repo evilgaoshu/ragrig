@@ -1,0 +1,64 @@
+golden_question_set:
+  name: "demo-graph"
+  description: "External-demo gate covering single-hop facts, multi-document relationships, global synthesis, and conflict-sensitive queries."
+  version: "1.0.0"
+  questions:
+    - query: "What makes a Local Pilot answer trustworthy?"
+      expected_doc_uri: "support-faq.md"
+      expected_citation: "A trustworthy Local Pilot answer is grounded."
+      expected_answer_keywords:
+        - "grounded"
+        - "evidence"
+        - "citations"
+      tags:
+        - demo
+        - single-hop
+        - citation-trust
+
+    - query: "Which workflow steps are visible before trusting the answer?"
+      expected_doc_uri: "company-handbook.md"
+      expected_citation: "document upload, parsing, chunking, embedding, indexing, retrieval, answer grounding, and citations"
+      expected_answer_keywords:
+        - "upload"
+        - "retrieval"
+        - "citations"
+      tags:
+        - demo
+        - single-hop
+        - explainability
+
+    - query: "How do the handbook and FAQ together explain grounded citations?"
+      expected_answer_keywords:
+        - "handbook"
+        - "FAQ"
+        - "citations"
+      expected_relevant_citations:
+        - "citation evidence"
+        - "evidence chunks"
+      tags:
+        - demo
+        - multi-hop
+        - cross-doc
+        - graph
+
+    - query: "Summarize the demo's end-to-end RAG workflow."
+      expected_answer_keywords:
+        - "upload"
+        - "index"
+        - "retrieve"
+        - "grounded"
+      tags:
+        - demo
+        - global
+        - synthesis
+
+    - query: "Should missing OpenRouter keys block the local pilot demo?"
+      expected_doc_uri: "support-faq.md"
+      expected_citation: "missing keys should be non-blocking for the local pilot"
+      expected_answer_keywords:
+        - "non-blocking"
+        - "local pilot"
+      tags:
+        - demo
+        - conflict-sensitive
+        - credentials

@@ -1,5 +1,10 @@
 import { useState } from 'react'
-import { useKnowledgeBases, useKnowledgeMap } from '../api/hooks'
+import {
+  useKnowledgeBases,
+  useKnowledgeGraph,
+  useKnowledgeMap,
+  useRebuildKnowledgeGraph,
+} from '../api/hooks'
 
 type KnowledgeBase = { id: string; name: string }
 
@@ -64,6 +69,33 @@ type KnowledgeMapResult = {
   limitations?: string[]
 }
 
+type KnowledgeGraphResult = {
+  status?: string
+  stats?: {
+    entity_count?: number
+    mention_count?: number
+    relation_count?: number
+    relation_evidence_count?: number
+    claim_count?: number
+    graph_evidence_chunk_count?: number
+  }
+  entities?: Array<{
+    id: string
+    display_name: string
+    entity_type: string
+    mention_count: number
+    evidence_chunks?: Array<{ chunk_id: string; document_uri: string; text_preview: string }>
+  }>
+  relations?: Array<{
+    id: string
+    subject: string
+    predicate: string
+    object: string
+    evidence?: Array<{ chunk_id: string; document_uri: string; text_preview: string }>
+  }>
+  claims?: Array<{ id: string; claim_text: string; document_uri: string; text_preview: string }>
+}
+
 function statusChipClass(status: string | undefined) {
   if (status === 'ready') return 'text-emerald-700 bg-emerald-50 border-emerald-200'
   if (status === 'limited') return 'text-amber-700 bg-amber-50 border-amber-200'
@@ -101,6 +133,9 @@ export default function KnowledgeMap() {
 
   const { data: rawData, isLoading: mapLoading } = useKnowledgeMap(selectedKbId)
   const mapData = rawData as KnowledgeMapResult | undefined
+  const { data: rawGraphData, isLoading: graphLoading } = useKnowledgeGraph(selectedKbId)
+  const graphData = rawGraphData as KnowledgeGraphResult | undefined
+  const rebuildGraph = useRebuildKnowledgeGraph()
 
   const nodes = mapData?.nodes ?? []
   const edges = mapData?.edges ?? []
@@ -155,6 +190,16 @@ export default function KnowledgeMap() {
             {statusLabel(status)}
           </span>
         )}
+        {selectedKbId && (
+          <button
+            type="button"
+            className="ml-auto px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            disabled={rebuildGraph.isPending}
+            onClick={() => rebuildGraph.mutate({ kbId: selectedKbId })}
+          >
+            {rebuildGraph.isPending ? 'Rebuilding KG…' : 'Rebuild KG'}
+          </button>
+        )}
       </div>
 
       {/* No KB selected */}
@@ -167,6 +212,9 @@ export default function KnowledgeMap() {
       {/* Loading */}
       {selectedKbId && mapLoading && (
         <div className="text-gray-400 text-sm">Building knowledge map…</div>
+      )}
+      {selectedKbId && graphLoading && (
+        <div className="text-gray-400 text-sm">Loading KG-lite evidence…</div>
       )}
 
       {/* Empty / no understanding */}
@@ -192,6 +240,19 @@ export default function KnowledgeMap() {
               <StatCard label="Doc↔Doc Edges" value={stats.document_relationship_edges} />
               <StatCard label="Cross-doc Entities" value={stats.cross_document_entity_count} />
               <StatCard label="Isolated Docs" value={stats.isolated_document_count} />
+            </div>
+          )}
+
+          {graphData?.stats && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-gray-700">KG-lite Evidence</h2>
+              <div className="flex gap-3 flex-wrap">
+                <StatCard label="KG Entities" value={graphData.stats.entity_count} />
+                <StatCard label="Mentions" value={graphData.stats.mention_count} />
+                <StatCard label="Relations" value={graphData.stats.relation_count} />
+                <StatCard label="Claims" value={graphData.stats.claim_count} />
+                <StatCard label="Evidence Chunks" value={graphData.stats.graph_evidence_chunk_count} />
+              </div>
             </div>
           )}
 
@@ -301,6 +362,63 @@ export default function KnowledgeMap() {
                     <div className="text-sm text-gray-700 text-right">{node.mentions ?? '—'}</div>
                     <div className="text-sm text-gray-700 text-right">
                       {node.document_count ?? '—'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {graphData?.relations && graphData.relations.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700 mb-2">
+                Source-backed Relations ({graphData.relations.length})
+              </h2>
+              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 grid grid-cols-[1fr_auto_1fr_2fr] gap-4 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                  <div>Subject</div>
+                  <div>Predicate</div>
+                  <div>Object</div>
+                  <div>Evidence</div>
+                </div>
+                {graphData.relations.slice(0, 20).map((relation) => {
+                  const firstEvidence = relation.evidence?.[0]
+                  return (
+                    <div
+                      key={relation.id}
+                      className="px-4 py-2.5 border-b border-gray-100 last:border-0 grid grid-cols-[1fr_auto_1fr_2fr] gap-4 items-start"
+                    >
+                      <div className="text-sm text-gray-700 font-medium truncate">{relation.subject}</div>
+                      <div className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
+                        {relation.predicate}
+                      </div>
+                      <div className="text-sm text-gray-700 font-medium truncate">{relation.object}</div>
+                      <div>
+                        <div className="text-xs font-mono text-gray-400 truncate">
+                          {firstEvidence?.document_uri ?? '—'}
+                        </div>
+                        <div className="text-xs text-gray-600 line-clamp-2">
+                          {firstEvidence?.text_preview ?? '—'}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {graphData?.claims && graphData.claims.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700 mb-2">
+                Source-backed Claims ({graphData.claims.length})
+              </h2>
+              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                {graphData.claims.slice(0, 12).map((claim) => (
+                  <div key={claim.id} className="px-4 py-2.5 border-b border-gray-100 last:border-0">
+                    <div className="text-sm text-gray-700">{claim.claim_text}</div>
+                    <div className="text-xs font-mono text-gray-400 mt-1 truncate">
+                      {claim.document_uri}
                     </div>
                   </div>
                 ))}

@@ -18,6 +18,7 @@ GOLDEN_FILES = [
     "evaluation_golden_retrieval.yaml",
     "evaluation_golden_edge_cases.yaml",
     "evaluation_golden_multi_doc.yaml",
+    "evaluation_golden_demo_graph.yaml",
 ]
 
 
@@ -104,6 +105,13 @@ def test_multi_doc_set_covers_all_fixture_docs() -> None:
     assert "guide.md" in doc_uris
     assert "notes.txt" in doc_uris
     assert "nested/deep.md" in doc_uris
+
+
+def test_demo_graph_set_covers_demo_risk_categories() -> None:
+    """The demo gate should cover the RAG behaviors we expect to show externally."""
+    gqs = load_golden_question_set(FIXTURES_DIR / "evaluation_golden_demo_graph.yaml")
+    tags_all = {tag for q in gqs.questions for tag in q.tags}
+    assert {"single-hop", "multi-hop", "global", "conflict-sensitive", "graph"} <= tags_all
 
 
 def test_golden_default_set_has_smoke_questions() -> None:

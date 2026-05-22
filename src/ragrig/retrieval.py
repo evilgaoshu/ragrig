@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any
@@ -122,6 +122,7 @@ class RetrievalReport:
     degraded_reason: str = ""
     acl_explain: dict[str, Any] = field(default_factory=dict)
     cost_latency: dict[str, Any] = field(default_factory=dict)
+    graph_context: dict[str, Any] = field(default_factory=dict)
 
 
 def _span_kwargs(source: Any) -> dict[str, Any]:
@@ -699,6 +700,137 @@ def _fetch_all_texts(
     return [row.text for row in rows]
 
 
+def _fetch_graph_chunk_results(
+    session: Session,
+    *,
+    knowledge_base_id,
+    provider: str,
+    model: str,
+    dimensions: int,
+    graph_chunk_scores: dict[str, float],
+    principal_ids: list[str] | None = None,
+    enforce_acl: bool = True,
+    workspace_id=None,
+) -> tuple[list[RetrievalResult], _AclFilterReport | None]:
+    """Fetch graph-selected chunks as RetrievalResult objects.
+
+    Graph expansion proposes chunk IDs; this helper rehydrates them through the
+    same latest-version embedding statement used by dense retrieval so stale or
+    unindexed chunks cannot enter the final context.
+    """
+    if not graph_chunk_scores:
+        return [], None
+
+    chunk_ids: list[uuid.UUID] = []
+    score_by_chunk_id: dict[uuid.UUID, float] = {}
+    for raw_id, raw_score in graph_chunk_scores.items():
+        try:
+            chunk_id = uuid.UUID(str(raw_id))
+        except ValueError:
+            continue
+        chunk_ids.append(chunk_id)
+        score_by_chunk_id[chunk_id] = max(0.0, min(float(raw_score), 1.0))
+    if not chunk_ids:
+        return [], None
+
+    rows = session.execute(
+        _build_base_statement(
+            knowledge_base_id=knowledge_base_id,
+            provider=provider,
+            model=model,
+            dimensions=dimensions,
+            workspace_id=workspace_id,
+        ).where(Chunk.id.in_(chunk_ids))
+    ).all()
+
+    acl_filter_report: _AclFilterReport | None = None
+    if enforce_acl:
+        acl_filter_report = _filter_acl_candidates(
+            list(rows),
+            principal_ids=principal_ids,
+            metadata_getter=lambda row: row.chunk_metadata,
+        )
+        rows = acl_filter_report.results
+
+    results: list[RetrievalResult] = []
+    for row in rows:
+        graph_score = round(score_by_chunk_id.get(row.chunk_id, 0.0), 6)
+        results.append(
+            RetrievalResult(
+                document_id=row.document_id,
+                document_version_id=row.document_version_id,
+                chunk_id=row.chunk_id,
+                chunk_index=row.chunk_index,
+                document_uri=row.document_uri,
+                source_uri=row.source_uri,
+                text=row.text,
+                text_preview=row.text[:160],
+                distance=round(1.0 - graph_score, 6),
+                score=graph_score,
+                chunk_metadata=row.chunk_metadata,
+                chunk_created_at=getattr(row, "chunk_created_at", None),
+                **_span_kwargs(row),
+                rank_stage_trace={
+                    "stages": [
+                        {
+                            "stage": "graph_expand",
+                            "score": graph_score,
+                            "source": "kg_lite",
+                        }
+                    ],
+                    "final_source": "graph_expand",
+                },
+            )
+        )
+    results.sort(key=lambda result: (-result.score, result.chunk_index))
+    return results, acl_filter_report
+
+
+def _merge_graph_results(
+    base_results: list[RetrievalResult],
+    graph_results: list[RetrievalResult],
+    *,
+    graph_weight: float,
+) -> list[RetrievalResult]:
+    if not graph_results:
+        return base_results
+    graph_weight = max(0.0, min(graph_weight, 1.0))
+    merged_by_chunk: dict[uuid.UUID, RetrievalResult] = {r.chunk_id: r for r in base_results}
+    graph_score_by_chunk = {r.chunk_id: r.score for r in graph_results}
+
+    for chunk_id, base in list(merged_by_chunk.items()):
+        graph_score = graph_score_by_chunk.get(chunk_id)
+        if graph_score is None:
+            continue
+        combined = round((base.score * (1.0 - graph_weight)) + (graph_score * graph_weight), 6)
+        trace = dict(base.rank_stage_trace)
+        stages = list(trace.get("stages", []))
+        stages.append(
+            {
+                "stage": "graph_expand",
+                "score": graph_score,
+                "combined_score": combined,
+                "weight": graph_weight,
+                "source": "kg_lite",
+            }
+        )
+        merged_by_chunk[chunk_id] = replace(
+            base,
+            score=combined,
+            distance=round(1.0 - combined, 6),
+            rank_stage_trace={**trace, "stages": stages, "final_source": "graph_aware"},
+        )
+
+    for graph_result in graph_results:
+        if graph_result.chunk_id in merged_by_chunk:
+            continue
+        merged_by_chunk[graph_result.chunk_id] = graph_result
+
+    merged = list(merged_by_chunk.values())
+    merged.sort(key=lambda result: (-result.score, result.chunk_index))
+    return merged
+
+
 def _apply_time_decay(
     results: list[RetrievalResult],
     *,
@@ -940,6 +1072,8 @@ def search_knowledge_base(
     rewrite_config: "Any | None" = None,
     hyde_config: "Any | None" = None,
     include_summary_search: bool = False,
+    graph_weight: float = 0.35,
+    graph_depth: int = 1,
     workspace_id=None,
 ) -> RetrievalReport:
     """Search a knowledge base with optional hybrid/rerank modes.
@@ -949,6 +1083,10 @@ def search_knowledge_base(
     - ``hybrid``: vector + lexical fusion with configurable weights
     - ``rerank``: dense candidates reranked by a reranker provider or fake
     - ``hybrid_rerank``: hybrid fusion candidates reranked
+    - ``graph``: dense retrieval plus KG-lite entity expansion
+    - ``hybrid_graph``: dense + KG-lite expansion + lexical fusion
+    - ``graph_rerank``: dense + KG-lite expansion + rerank
+    - ``hybrid_graph_rerank``: dense + KG-lite expansion + lexical fusion + rerank
     """
     search_started = perf_counter()
     cost_latency_operations: list[dict[str, Any]] = []
@@ -1149,8 +1287,71 @@ def search_knowledge_base(
         )
     phase_latencies["dense_retrieval_ms"] = round((perf_counter() - dense_started) * 1000, 3)
 
+    graph_context: dict[str, Any] = {}
+    if mode in ("graph", "hybrid_graph", "graph_rerank", "hybrid_graph_rerank"):
+        graph_started = perf_counter()
+        try:
+            from ragrig.knowledge_graph import build_graph_retrieval_context
+
+            graph_ctx = build_graph_retrieval_context(
+                session,
+                knowledge_base_id=knowledge_base.id,
+                query=normalized_query,
+                limit=max(candidate_k, top_k),
+                graph_depth=graph_depth,
+            )
+            graph_context = graph_ctx.model_dump(mode="json")
+            graph_results, graph_acl_report = _fetch_graph_chunk_results(
+                session,
+                knowledge_base_id=knowledge_base.id,
+                provider=resolved_provider,
+                model=resolved_model,
+                dimensions=resolved_dimensions,
+                graph_chunk_scores=graph_ctx.chunk_scores,
+                principal_ids=principal_ids,
+                enforce_acl=enforce_acl,
+                workspace_id=kb_workspace_id,
+            )
+            if graph_acl_report is not None:
+                if acl_filter_report is None:
+                    acl_filter_report = graph_acl_report
+                else:
+                    acl_filter_report = _AclFilterReport(
+                        results=acl_filter_report.results,
+                        candidate_count=acl_filter_report.candidate_count
+                        + graph_acl_report.candidate_count,
+                        visible_count=acl_filter_report.visible_count
+                        + graph_acl_report.visible_count,
+                        filtered_count=acl_filter_report.filtered_count
+                        + graph_acl_report.filtered_count,
+                        reason_counts={
+                            **acl_filter_report.reason_counts,
+                            **{
+                                key: acl_filter_report.reason_counts.get(key, 0) + value
+                                for key, value in graph_acl_report.reason_counts.items()
+                            },
+                        },
+                    )
+            dense_results = _merge_graph_results(
+                dense_results,
+                graph_results,
+                graph_weight=graph_weight,
+            )
+        except Exception as exc:
+            graph_context = {
+                "degraded": True,
+                "degraded_reason": f"graph retrieval unavailable: {exc}",
+                "matched_entities": [],
+                "expanded_entities": [],
+                "relation_paths": [],
+                "chunk_scores": {},
+            }
+            degraded = True
+            degraded_reason = graph_context["degraded_reason"]
+        phase_latencies["graph_expand_ms"] = round((perf_counter() - graph_started) * 1000, 3)
+
     # ── Phase 2: Lexical fusion (hybrid / hybrid_rerank) ──────
-    if mode in ("hybrid", "hybrid_rerank"):
+    if mode in ("hybrid", "hybrid_rerank", "hybrid_graph", "hybrid_graph_rerank"):
         hybrid_started = perf_counter()
         if dense_results:
             corpus_texts = [r.text for r in dense_results]
@@ -1165,7 +1366,7 @@ def search_knowledge_base(
         phase_latencies["hybrid_fusion_ms"] = round((perf_counter() - hybrid_started) * 1000, 3)
 
     # ── Phase 3: Rerank (rerank / hybrid_rerank) ───────────────
-    if mode in ("rerank", "hybrid_rerank"):
+    if mode in ("rerank", "hybrid_rerank", "graph_rerank", "hybrid_graph_rerank"):
         if dense_results:
             # ACL filtering is already applied in Phase 1 — only authorized
             # candidates reach here, so reranker input is ACL-safe.
@@ -1337,6 +1538,7 @@ def search_knowledge_base(
         degraded_reason=degraded_reason,
         acl_explain=acl_explain,
         cost_latency=cost_latency,
+        graph_context=graph_context,
     )
 
 

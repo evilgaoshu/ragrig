@@ -76,6 +76,7 @@ export interface RetrievalReport {
   provider: string
   model: string
   total_results: number
+  graph_context?: Record<string, unknown>
   results: RetrievalResult[]
 }
 

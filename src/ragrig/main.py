@@ -46,6 +46,12 @@ from ragrig.evaluation import (
 )
 from ragrig.health import build_reranker_health, create_database_check
 from ragrig.ingestion.web_import import WebsiteImportError
+from ragrig.knowledge_graph import (
+    KnowledgeGraphBuildRequest,
+    KnowledgeGraphNotFoundError,
+    get_knowledge_graph,
+    rebuild_knowledge_graph,
+)
 from ragrig.local_pilot import (
     ModelConfigError,
     build_local_pilot_status,
@@ -207,13 +213,18 @@ class RetrievalSearchRequest(BaseModel):
     # ── Hybrid / rerank fields (backward-compatible) ──
     mode: str = Field(
         default="dense",
-        pattern=r"^(dense|hybrid|rerank|hybrid_rerank)$",
+        pattern=(
+            r"^(dense|hybrid|rerank|hybrid_rerank|graph|hybrid_graph|"
+            r"graph_rerank|hybrid_graph_rerank)$"
+        ),
     )
     lexical_weight: float = Field(default=0.3, ge=0.0, le=1.0)
     vector_weight: float = Field(default=0.7, ge=0.0, le=1.0)
     candidate_k: int = Field(default=20, ge=1, le=200)
     reranker_provider: str | None = None
     reranker_model: str | None = None
+    graph_weight: float = Field(default=0.35, ge=0.0, le=1.0)
+    graph_depth: int = Field(default=1, ge=0, le=2)
 
 
 class KnowledgeBaseCreateRequest(BaseModel):
@@ -266,6 +277,20 @@ class AnswerRequest(BaseModel):
     principal_ids: list[str] | None = None
     enforce_acl: bool = True
     stream: bool = False
+    mode: str = Field(
+        default="dense",
+        pattern=(
+            r"^(dense|hybrid|rerank|hybrid_rerank|graph|hybrid_graph|"
+            r"graph_rerank|hybrid_graph_rerank)$"
+        ),
+    )
+    lexical_weight: float = Field(default=0.3, ge=0.0, le=1.0)
+    vector_weight: float = Field(default=0.7, ge=0.0, le=1.0)
+    candidate_k: int = Field(default=20, ge=1, le=200)
+    reranker_provider: str | None = None
+    reranker_model: str | None = None
+    graph_weight: float = Field(default=0.35, ge=0.0, le=1.0)
+    graph_depth: int = Field(default=1, ge=0, le=2)
 
 
 class PermissionPreviewRequest(BaseModel):
@@ -1297,6 +1322,35 @@ def create_app(
             return JSONResponse(status_code=404, content={"error": "knowledge_base_not_found"})
         return knowledge_map_to_dict(result)
 
+    @app.get("/knowledge-bases/{kb_id}/knowledge-graph", response_model=None)
+    def knowledge_graph(
+        kb_id: str,
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            return get_knowledge_graph(session, kb_id).model_dump(mode="json")
+        except (ValueError, KnowledgeGraphNotFoundError):
+            return JSONResponse(status_code=404, content={"error": "knowledge_base_not_found"})
+
+    @app.post("/knowledge-bases/{kb_id}/knowledge-graph/rebuild", response_model=None)
+    def rebuild_knowledge_graph_endpoint(
+        kb_id: str,
+        request: KnowledgeGraphBuildRequest,
+        session: Annotated[Session, Depends(get_session)],
+        _auth: Annotated[AuthContext, Depends(require_write_auth)],
+    ) -> dict[str, Any] | JSONResponse:
+        try:
+            result = rebuild_knowledge_graph(
+                session,
+                kb_id,
+                profile_id=request.profile_id,
+                extractor_version=request.extractor_version,
+                reset=request.reset,
+            )
+        except (ValueError, KnowledgeGraphNotFoundError):
+            return JSONResponse(status_code=404, content={"error": "knowledge_base_not_found"})
+        return result.model_dump(mode="json")
+
     @app.get("/knowledge-bases/{kb_id}/understanding-runs", response_model=None)
     def understanding_runs(
         kb_id: str,
@@ -1767,6 +1821,8 @@ def create_app(
                 candidate_k=request.candidate_k,
                 reranker_provider=request.reranker_provider,
                 reranker_model=request.reranker_model,
+                graph_weight=request.graph_weight,
+                graph_depth=request.graph_depth,
             )
         except KnowledgeBaseNotFoundError as exc:
             return JSONResponse(status_code=404, content=_serialize_error(exc))
@@ -1788,6 +1844,7 @@ def create_app(
             "cost_latency": report.cost_latency,
             "total_results": report.total_results,
             "acl_explain": report.acl_explain,
+            "graph_context": report.graph_context,
             "results": [
                 {
                     "document_id": str(result.document_id),
@@ -2048,6 +2105,14 @@ def create_app(
                 vector_backend=vector_backend,
                 principal_ids=principal_ids,
                 enforce_acl=enforce_acl,
+                mode=request.mode,
+                lexical_weight=request.lexical_weight,
+                vector_weight=request.vector_weight,
+                candidate_k=request.candidate_k,
+                reranker_provider=request.reranker_provider,
+                reranker_model=request.reranker_model,
+                graph_weight=request.graph_weight,
+                graph_depth=request.graph_depth,
                 workspace_id=workspace_id,
             )
         except ModelConfigError as exc:
