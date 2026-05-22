@@ -49,6 +49,10 @@ export default function RetrievalLab() {
                 <option value="hybrid">hybrid</option>
                 <option value="rerank">rerank</option>
                 <option value="hybrid_rerank">hybrid + rerank</option>
+                <option value="graph">graph</option>
+                <option value="hybrid_graph">hybrid + graph</option>
+                <option value="graph_rerank">graph + rerank</option>
+                <option value="hybrid_graph_rerank">hybrid + graph + rerank</option>
               </select>
             </label>
           </div>
@@ -95,6 +99,16 @@ export default function RetrievalLab() {
           <div className="text-sm text-gray-500">
             {search.data.total_results} result{search.data.total_results !== 1 ? 's' : ''} · {search.data.provider} / {search.data.model || '—'}
           </div>
+          {Boolean(search.data.graph_context) && (
+            <details className="bg-white border border-gray-200 rounded-lg p-3 text-xs">
+              <summary className="cursor-pointer text-gray-500 hover:text-gray-700">
+                graph_context
+              </summary>
+              <pre className="mt-2 bg-gray-50 p-2 rounded overflow-x-auto text-gray-600">
+                {JSON.stringify(search.data.graph_context, null, 2)}
+              </pre>
+            </details>
+          )}
           {search.data.results.map((r: RetrievalResult, i: number) => (
             <div key={r.chunk_id} className="bg-white border border-gray-200 rounded-lg p-4 space-y-2">
               <div className="flex items-center justify-between gap-2">

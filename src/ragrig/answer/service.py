@@ -76,6 +76,21 @@ def _build_retrieval_trace(report: Any) -> dict[str, Any]:
         "backend": report.backend,
         "total_results": report.total_results,
         "acl_explain": report.acl_explain,
+        "graph_context": getattr(report, "graph_context", {}),
+        "result_traces": [
+            {
+                "chunk_id": str(result.chunk_id),
+                "document_uri": result.document_uri,
+                "chunk_index": result.chunk_index,
+                "score": result.score,
+                "distance": result.distance,
+                "rank_stage_trace": result.rank_stage_trace,
+                "char_start": result.char_start,
+                "char_end": result.char_end,
+                "page_number": result.page_number,
+            }
+            for result in report.results
+        ],
     }
 
 
@@ -114,6 +129,14 @@ def generate_answer(
     enforce_acl: bool = True,
     faithfulness_config: FaithfulnessConfig | None = None,
     cache_config: SemanticCacheConfig | None = None,
+    mode: str = "dense",
+    lexical_weight: float = 0.3,
+    vector_weight: float = 0.7,
+    candidate_k: int = 20,
+    reranker_provider: str | None = None,
+    reranker_model: str | None = None,
+    graph_weight: float = 0.35,
+    graph_depth: int = 1,
     workspace_id: object = None,
 ) -> AnswerReport:
     """Generate a grounded answer from an evidence-grounded retrieval.
@@ -185,6 +208,14 @@ def generate_answer(
         vector_backend=vector_backend,
         principal_ids=principal_ids,
         enforce_acl=enforce_acl,
+        mode=mode,
+        lexical_weight=lexical_weight,
+        vector_weight=vector_weight,
+        candidate_k=candidate_k,
+        reranker_provider=reranker_provider,
+        reranker_model=reranker_model,
+        graph_weight=graph_weight,
+        graph_depth=graph_depth,
         workspace_id=workspace_id,
     )
     retrieval_latency_ms = (perf_counter() - retrieval_started) * 1000

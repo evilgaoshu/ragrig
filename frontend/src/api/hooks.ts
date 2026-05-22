@@ -91,6 +91,8 @@ export function useRetrieval() {
       provider: string
       model: string | null
       mode: string
+      graph_weight?: number
+      graph_depth?: number
     }) => api.post<RetrievalReport>('/retrieval/search', body),
   })
 }
@@ -306,6 +308,9 @@ export function useAnswerGen() {
       dimensions: number | null
       principal_ids: string[]
       enforce_acl: boolean
+      mode?: string
+      graph_weight?: number
+      graph_depth?: number
     }) => api.post<Record<string, unknown>>('/retrieval/answer', body),
   })
 }
@@ -327,6 +332,30 @@ export function useKnowledgeMap(kbId: string | null) {
     queryKey: ['knowledge-map', kbId],
     queryFn: () => api.get<Record<string, unknown>>(`/knowledge-bases/${kbId}/knowledge-map`),
     enabled: !!kbId,
+  })
+}
+
+export function useKnowledgeGraph(kbId: string | null) {
+  return useQuery({
+    queryKey: ['knowledge-graph', kbId],
+    queryFn: () => api.get<Record<string, unknown>>(`/knowledge-bases/${kbId}/knowledge-graph`),
+    enabled: !!kbId,
+  })
+}
+
+export function useRebuildKnowledgeGraph() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { kbId: string; profile_id?: string; extractor_version?: string; reset?: boolean }) =>
+      api.post<Record<string, unknown>>(`/knowledge-bases/${body.kbId}/knowledge-graph/rebuild`, {
+        profile_id: body.profile_id ?? '*.understand.default',
+        extractor_version: body.extractor_version ?? 'kg-lite-v1',
+        reset: body.reset ?? true,
+      }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['knowledge-graph', variables.kbId] })
+      qc.invalidateQueries({ queryKey: ['knowledge-map', variables.kbId] })
+    },
   })
 }
 

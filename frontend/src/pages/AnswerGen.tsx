@@ -17,6 +17,7 @@ type AnswerResult = {
   provider: string
   grounding_status: string
   refusal_reason?: string
+  retrieval_trace?: Record<string, unknown>
 }
 
 const PROVIDERS = ['deterministic-local', 'openai', 'anthropic', 'ollama', 'cohere']
@@ -32,6 +33,7 @@ export default function AnswerGen() {
   const [model, setModel] = useState('')
   const [answerProvider, setAnswerProvider] = useState('openai')
   const [answerModel, setAnswerModel] = useState('gpt-4o-mini')
+  const [mode, setMode] = useState('dense')
   const [result, setResult] = useState<AnswerResult | null>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -49,6 +51,7 @@ export default function AnswerGen() {
         dimensions: null,
         principal_ids: [],
         enforce_acl: false,
+        mode,
       })
       setResult(res as AnswerResult)
     } catch {
@@ -98,6 +101,22 @@ export default function AnswerGen() {
               onChange={(e) => setTopK(Number(e.target.value))}
             />
           </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-gray-600">Retrieval mode</label>
+          <select
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
+            value={mode}
+            onChange={(e) => setMode(e.target.value)}
+          >
+            <option value="dense">dense</option>
+            <option value="hybrid">hybrid</option>
+            <option value="graph">graph</option>
+            <option value="hybrid_graph">hybrid + graph</option>
+            <option value="graph_rerank">graph + rerank</option>
+            <option value="hybrid_graph_rerank">hybrid + graph + rerank</option>
+          </select>
         </div>
 
         {/* Retrieval provider */}
@@ -217,6 +236,17 @@ export default function AnswerGen() {
                 ))}
               </div>
             </div>
+          )}
+
+          {result.retrieval_trace && (
+            <details className="bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-xs">
+              <summary className="cursor-pointer text-gray-500 hover:text-gray-700">
+                retrieval_trace
+              </summary>
+              <pre className="mt-2 bg-gray-50 p-2 rounded overflow-x-auto text-gray-600">
+                {JSON.stringify(result.retrieval_trace, null, 2)}
+              </pre>
+            </details>
           )}
         </div>
       )}
