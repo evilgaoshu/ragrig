@@ -1844,7 +1844,7 @@ def create_app(
             "cost_latency": report.cost_latency,
             "total_results": report.total_results,
             "acl_explain": report.acl_explain,
-            "graph_context": report.graph_context,
+            "graph_context": getattr(report, "graph_context", {}),
             "results": [
                 {
                     "document_id": str(result.document_id),
