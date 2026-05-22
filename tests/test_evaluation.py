@@ -18,6 +18,7 @@ import json
 import uuid
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -875,6 +876,46 @@ def test_run_evaluation_zero_results_item(tmp_path) -> None:
     # At minimum, we have items for both questions
     assert run.total_questions == 2
     assert len(run.items) == 2
+
+
+def test_run_evaluation_passes_retrieval_mode_options(tmp_path, monkeypatch) -> None:
+    golden_path = tmp_path / "golden.yaml"
+    _make_golden_yaml(
+        golden_path,
+        {
+            "golden_question_set": {
+                "name": "mode-options",
+                "questions": [{"query": "graph mode query"}],
+            }
+        },
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_search(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(results=[], total_results=0)
+
+    monkeypatch.setattr("ragrig.evaluation.engine.search_knowledge_base", _fake_search)
+    with _create_session() as session:
+        run = run_evaluation(
+            session=session,
+            golden_path=golden_path,
+            knowledge_base="fixture-local",
+            mode="hybrid_graph",
+            lexical_weight=0.2,
+            vector_weight=0.8,
+            candidate_k=11,
+            graph_weight=0.45,
+            graph_depth=2,
+        )
+
+    assert captured["mode"] == "hybrid_graph"
+    assert captured["lexical_weight"] == 0.2
+    assert captured["vector_weight"] == 0.8
+    assert captured["candidate_k"] == 11
+    assert captured["graph_weight"] == 0.45
+    assert captured["graph_depth"] == 2
+    assert run.config_snapshot["mode"] == "hybrid_graph"
 
 
 # ── Web Console Evaluation Panel Tests ────────────────────────────────────────

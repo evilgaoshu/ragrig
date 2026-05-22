@@ -1,20 +1,27 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
 import httpx
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 from ragrig.answer.service import generate_answer
-from ragrig.db.models import Base
+from ragrig.config import Settings
+from ragrig.db.models import Base, Chunk, Workspace
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.knowledge_graph import get_knowledge_graph, rebuild_knowledge_graph
 from ragrig.main import create_app
-from ragrig.repositories import get_knowledge_base_by_name
+from ragrig.repositories import (
+    get_knowledge_base_by_name,
+    get_or_create_knowledge_base,
+    set_kb_permission,
+)
 from ragrig.retrieval import search_knowledge_base
 
 pytestmark = [pytest.mark.integration]
@@ -55,7 +62,12 @@ def _index_fixture_kb(session: Session, tmp_path: Path, *, kb_name: str = "kg-fi
 
 
 def _create_file_session_factory(database_path: Path) -> Callable[[], Session]:
-    engine = create_engine(f"sqlite+pysqlite:///{database_path}", future=True)
+    engine = create_engine(
+        f"sqlite+pysqlite:///{database_path}",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        future=True,
+    )
     Base.metadata.create_all(engine)
 
     def _factory() -> Session:
@@ -111,6 +123,51 @@ def test_graph_retrieval_mode_expands_entity_evidence(
     )
 
 
+def test_graph_retrieval_context_filters_protected_acl_evidence(
+    sqlite_session: Session, tmp_path: Path
+) -> None:
+    kb_id = _index_fixture_kb(sqlite_session, tmp_path)
+    for chunk in sqlite_session.scalars(select(Chunk)).all():
+        chunk.metadata_json = {
+            "acl": {
+                "visibility": "protected",
+                "allowed_principals": ["user:alice"],
+            }
+        }
+    sqlite_session.commit()
+    rebuild_knowledge_graph(sqlite_session, kb_id)
+
+    blocked = search_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-fixture",
+        query="BillingPolicy AlphaProject relationship",
+        top_k=3,
+        mode="graph",
+        enforce_acl=True,
+        principal_ids=["user:bob"],
+    )
+
+    assert blocked.total_results == 0
+    assert blocked.graph_context.get("matched_entities") in (None, [])
+    assert blocked.graph_context.get("chunk_scores") in (None, {})
+
+    allowed = search_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-fixture",
+        query="BillingPolicy AlphaProject relationship",
+        top_k=3,
+        mode="graph",
+        enforce_acl=True,
+        principal_ids=["user:alice"],
+    )
+
+    assert allowed.total_results >= 1
+    assert allowed.graph_context["matched_entities"]
+    assert allowed.graph_context["chunk_scores"]
+    visible_chunk_ids = {str(result.chunk_id) for result in allowed.results}
+    assert set(allowed.graph_context["chunk_scores"]).issubset(visible_chunk_ids)
+
+
 def test_answer_trace_includes_rank_and_graph_explainability(
     sqlite_session: Session, tmp_path: Path
 ) -> None:
@@ -156,3 +213,99 @@ async def test_knowledge_graph_api_rebuild_and_read(tmp_path: Path) -> None:
         response = await client.get(f"/knowledge-bases/{kb_id}/knowledge-graph")
         assert response.status_code == 200
         assert response.json()["stats"]["relation_evidence_count"] >= 1
+
+
+@pytest.mark.anyio
+async def test_knowledge_graph_api_enforces_kb_rbac_and_workspace(tmp_path: Path) -> None:
+    session_factory = _create_file_session_factory(tmp_path / "kg-api-auth.db")
+    with session_factory() as session:
+        kb_id = _index_fixture_kb(session, tmp_path, kb_name="kg-api-auth-fixture")
+
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        settings=Settings(ragrig_auth_enabled=True, ragrig_open_registration=True),
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        anonymous = await client.get(f"/knowledge-bases/{kb_id}/knowledge-graph")
+        assert anonymous.status_code == 401
+
+        owner = await client.post(
+            "/auth/register",
+            json={"email": "owner@example.com", "password": "hunter2hunter2"},
+        )
+        assert owner.status_code == 201
+        owner_token = owner.json()["token"]
+        owner_headers = {"Authorization": f"Bearer {owner_token}"}
+
+        viewer = await client.post(
+            "/auth/register",
+            json={"email": "viewer@example.com", "password": "hunter2hunter2"},
+        )
+        assert viewer.status_code == 201
+        viewer_token = viewer.json()["token"]
+        viewer_headers = {"Authorization": f"Bearer {viewer_token}"}
+        viewer_me = await client.get("/auth/me", headers=viewer_headers)
+        viewer_id = viewer_me.json()["user_id"]
+
+        viewer_rebuild = await client.post(
+            f"/knowledge-bases/{kb_id}/knowledge-graph/rebuild",
+            json={"reset": True},
+            headers=viewer_headers,
+        )
+        assert viewer_rebuild.status_code == 403
+
+        owner_rebuild = await client.post(
+            f"/knowledge-bases/{kb_id}/knowledge-graph/rebuild",
+            json={"reset": True},
+            headers=owner_headers,
+        )
+        assert owner_rebuild.status_code == 200
+
+        viewer_read = await client.get(
+            f"/knowledge-bases/{kb_id}/knowledge-graph",
+            headers=viewer_headers,
+        )
+        assert viewer_read.status_code == 200
+        assert viewer_read.json()["stats"]["entity_count"] >= 3
+
+        with session_factory() as session:
+            set_kb_permission(
+                session,
+                knowledge_base_id=uuid.UUID(kb_id),
+                user_id=uuid.UUID(viewer_id),
+                role="none",
+            )
+            session.commit()
+
+        denied_read = await client.get(
+            f"/knowledge-bases/{kb_id}/knowledge-graph",
+            headers=viewer_headers,
+        )
+        assert denied_read.status_code == 403
+
+        with session_factory() as session:
+            other_workspace = Workspace(
+                id=uuid.uuid4(),
+                slug="other-workspace",
+                display_name="Other Workspace",
+                status="active",
+                metadata_json={},
+            )
+            session.add(other_workspace)
+            session.flush()
+            other_kb = get_or_create_knowledge_base(
+                session,
+                "other-kg",
+                workspace_id=other_workspace.id,
+            )
+            session.commit()
+            other_kb_id = str(other_kb.id)
+
+        cross_workspace = await client.get(
+            f"/knowledge-bases/{other_kb_id}/knowledge-graph",
+            headers=owner_headers,
+        )
+        assert cross_workspace.status_code == 404

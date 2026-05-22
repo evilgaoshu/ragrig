@@ -91,6 +91,14 @@ def _evaluate_question(
     answer_provider_name: str | None = None,
     answer_model: str | None = None,
     answer_provider_config: dict[str, Any] | None = None,
+    mode: str = "dense",
+    lexical_weight: float = 0.3,
+    vector_weight: float = 0.7,
+    candidate_k: int = 20,
+    reranker_provider: str | None = None,
+    reranker_model: str | None = None,
+    graph_weight: float = 0.35,
+    graph_depth: int = 1,
 ) -> EvaluationRunItem:
     """Run a single golden question through retrieval and compute per-item metrics."""
     start = time.perf_counter()
@@ -103,6 +111,14 @@ def _evaluate_question(
             provider=provider_override,
             model=model_override,
             dimensions=dimensions_override,
+            mode=mode,
+            lexical_weight=lexical_weight,
+            vector_weight=vector_weight,
+            candidate_k=candidate_k,
+            reranker_provider=reranker_provider,
+            reranker_model=reranker_model,
+            graph_weight=graph_weight,
+            graph_depth=graph_depth,
         )
         elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
 
@@ -174,6 +190,14 @@ def _evaluate_question(
                     answer_model=answer_model,
                     answer_provider_config=answer_provider_config,
                     dimensions=dimensions_override,
+                    mode=mode,
+                    lexical_weight=lexical_weight,
+                    vector_weight=vector_weight,
+                    candidate_k=candidate_k,
+                    reranker_provider=reranker_provider,
+                    reranker_model=reranker_model,
+                    graph_weight=graph_weight,
+                    graph_depth=graph_depth,
                 )
                 answer_status = answer_report.grounding_status
 
@@ -374,6 +398,14 @@ def run_evaluation(
     answer_provider_name: str | None = None,
     answer_model: str | None = None,
     answer_provider_config: dict[str, Any] | None = None,
+    mode: str = "dense",
+    lexical_weight: float = 0.3,
+    vector_weight: float = 0.7,
+    candidate_k: int = 20,
+    reranker_provider: str | None = None,
+    reranker_model: str | None = None,
+    graph_weight: float = 0.35,
+    graph_depth: int = 1,
 ) -> EvaluationRun:
     """Run a full evaluation against a golden question set.
 
@@ -395,6 +427,7 @@ def run_evaluation(
             each question so answer quality can be measured.
         answer_model: Optional model override for the answer provider.
         answer_provider_config: Optional config dict for the answer provider.
+        mode: Retrieval mode to evaluate, e.g. ``dense`` or ``hybrid_graph``.
 
     Returns:
         An EvaluationRun with all items and aggregated metrics.
@@ -415,6 +448,14 @@ def run_evaluation(
         answer_provider_name=answer_provider_name,
         answer_model=answer_model,
         answer_provider_config=answer_provider_config,
+        mode=mode,
+        lexical_weight=lexical_weight,
+        vector_weight=vector_weight,
+        candidate_k=candidate_k,
+        reranker_provider=reranker_provider,
+        reranker_model=reranker_model,
+        graph_weight=graph_weight,
+        graph_depth=graph_depth,
     )
 
 
@@ -433,6 +474,14 @@ def _run_evaluation_with_set(
     answer_provider_name: str | None = None,
     answer_model: str | None = None,
     answer_provider_config: dict[str, Any] | None = None,
+    mode: str = "dense",
+    lexical_weight: float = 0.3,
+    vector_weight: float = 0.7,
+    candidate_k: int = 20,
+    reranker_provider: str | None = None,
+    reranker_model: str | None = None,
+    graph_weight: float = 0.35,
+    graph_depth: int = 1,
 ) -> EvaluationRun:
     """Internal: run evaluation with an already-loaded GoldenQuestionSet."""
     run_id = run_id or str(uuid.uuid4())
@@ -461,6 +510,14 @@ def _run_evaluation_with_set(
             answer_provider_name=answer_provider_name,
             answer_model=answer_model,
             answer_provider_config=answer_provider_config,
+            mode=mode,
+            lexical_weight=lexical_weight,
+            vector_weight=vector_weight,
+            candidate_k=candidate_k,
+            reranker_provider=reranker_provider,
+            reranker_model=reranker_model,
+            graph_weight=graph_weight,
+            graph_depth=graph_depth,
         )
         items.append(item)
 
@@ -504,6 +561,14 @@ def _run_evaluation_with_set(
             "judge_provider": judge_provider_name,
             "answer_provider": answer_provider_name,
             "answer_model": answer_model,
+            "mode": mode,
+            "lexical_weight": lexical_weight,
+            "vector_weight": vector_weight,
+            "candidate_k": candidate_k,
+            "reranker_provider": reranker_provider,
+            "reranker_model": reranker_model,
+            "graph_weight": graph_weight,
+            "graph_depth": graph_depth,
         },
     )
 
