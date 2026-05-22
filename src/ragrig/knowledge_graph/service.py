@@ -739,6 +739,7 @@ def build_graph_retrieval_context(
         return GraphRetrievalContext()
 
     matched_ids = {entity.id for entity, _score in matched}
+    matched_score_by_id = {entity.id: score for entity, score in matched}
     expanded_ids: set[uuid.UUID] = set(matched_ids)
     relation_paths: list[dict[str, Any]] = []
     chunk_scores: dict[str, float] = {}
@@ -786,10 +787,14 @@ def build_graph_retrieval_context(
                 }
             )
             for evidence in evidence_rows:
+                path_score = max(
+                    matched_score_by_id.get(relation.subject_entity_id, 0.0),
+                    matched_score_by_id.get(relation.object_entity_id, 0.0),
+                )
                 _boost_chunk_score(
                     chunk_scores,
                     evidence.chunk_id,
-                    0.78 * relation.confidence,
+                    (0.72 + (0.18 * path_score)) * relation.confidence,
                 )
 
     mention_rows = list(
@@ -804,7 +809,10 @@ def build_graph_retrieval_context(
             mention for mention in mention_rows if mention.chunk_id in visible_chunk_ids
         ]
     for mention in mention_rows:
-        base = 0.95 if mention.entity_id in matched_ids else 0.65
+        if mention.entity_id in matched_ids:
+            base = 0.82 + (0.16 * matched_score_by_id.get(mention.entity_id, 0.0))
+        else:
+            base = 0.68
         _boost_chunk_score(chunk_scores, mention.chunk_id, base * mention.confidence)
 
     ranked_chunk_scores = dict(sorted(chunk_scores.items(), key=lambda item: -item[1])[:limit])

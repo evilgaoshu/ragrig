@@ -20,4 +20,5 @@ def test_demo_rc_gate_passes_with_repository_local_pilot_fixture(tmp_path: Path)
     assert report["status"] == "pass"
     assert {check["status"] for check in report["checks"]} == {"pass"}
     assert report["comparison"]["baseline_mode"] == "dense"
+    assert report["comparison"]["quality_gate"]["status"] in {"pass", "warn"}
     assert "markdown_summary" in report
