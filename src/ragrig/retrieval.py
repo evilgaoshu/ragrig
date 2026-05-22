@@ -1299,6 +1299,8 @@ def search_knowledge_base(
                 query=normalized_query,
                 limit=max(candidate_k, top_k),
                 graph_depth=graph_depth,
+                principal_ids=principal_ids,
+                enforce_acl=enforce_acl,
             )
             graph_context = graph_ctx.model_dump(mode="json")
             graph_results, graph_acl_report = _fetch_graph_chunk_results(

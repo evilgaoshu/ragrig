@@ -29,6 +29,7 @@ from ragrig.answer import (
 from ragrig.auth import ensure_default_workspace
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
+from ragrig.db.models import KnowledgeBase
 from ragrig.db.session import get_session as _get_session_default
 from ragrig.deps import (
     AuthContext,
@@ -199,6 +200,20 @@ class EvaluationRunRequest(BaseModel):
     model: str | None = None
     dimensions: int | None = Field(default=None, gt=0)
     baseline_path: str | None = None
+    mode: str = Field(
+        default="dense",
+        pattern=(
+            r"^(dense|hybrid|rerank|hybrid_rerank|graph|hybrid_graph|"
+            r"graph_rerank|hybrid_graph_rerank)$"
+        ),
+    )
+    lexical_weight: float = Field(default=0.3, ge=0.0, le=1.0)
+    vector_weight: float = Field(default=0.7, ge=0.0, le=1.0)
+    candidate_k: int = Field(default=20, ge=1, le=200)
+    reranker_provider: str | None = None
+    reranker_model: str | None = None
+    graph_weight: float = Field(default=0.35, ge=0.0, le=1.0)
+    graph_depth: int = Field(default=1, ge=0, le=2)
 
 
 class RetrievalSearchRequest(BaseModel):
@@ -655,6 +670,27 @@ def create_app(
                 content={"error": f"{minimum} role or above required for this knowledge base"},
             )
         return None
+
+    def _knowledge_base_by_id_for_workspace(
+        *,
+        session: Session,
+        kb_id: str,
+        workspace_id: uuid.UUID,
+    ) -> tuple[KnowledgeBase | None, JSONResponse | None]:
+        try:
+            knowledge_base_id = uuid.UUID(str(kb_id))
+        except ValueError:
+            return None, JSONResponse(
+                status_code=404,
+                content={"error": "knowledge_base_not_found"},
+            )
+        knowledge_base = session.get(KnowledgeBase, knowledge_base_id)
+        if knowledge_base is None or knowledge_base.workspace_id != workspace_id:
+            return None, JSONResponse(
+                status_code=404,
+                content={"error": "knowledge_base_not_found"},
+            )
+        return knowledge_base, None
 
     def _resolve_acl_context(
         *,
@@ -1315,8 +1351,26 @@ def create_app(
     def knowledge_map(
         kb_id: str,
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        auth: Annotated[AuthContext, Depends(get_auth_context)],
         profile_id: str = "*.understand.default",
     ) -> dict[str, Any] | JSONResponse:
+        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
+            session=session,
+            kb_id=kb_id,
+            workspace_id=workspace_id,
+        )
+        if kb_error is not None:
+            return kb_error
+        assert knowledge_base is not None
+        access_error = _knowledge_base_access_error(
+            session=session,
+            auth=auth,
+            knowledge_base_id=knowledge_base.id,
+            minimum="viewer",
+        )
+        if access_error is not None:
+            return access_error
         result = build_knowledge_map(session, kb_id, profile_id=profile_id)
         if result is None:
             return JSONResponse(status_code=404, content={"error": "knowledge_base_not_found"})
@@ -1326,7 +1380,25 @@ def create_app(
     def knowledge_graph(
         kb_id: str,
         session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        auth: Annotated[AuthContext, Depends(get_auth_context)],
     ) -> dict[str, Any] | JSONResponse:
+        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
+            session=session,
+            kb_id=kb_id,
+            workspace_id=workspace_id,
+        )
+        if kb_error is not None:
+            return kb_error
+        assert knowledge_base is not None
+        access_error = _knowledge_base_access_error(
+            session=session,
+            auth=auth,
+            knowledge_base_id=knowledge_base.id,
+            minimum="viewer",
+        )
+        if access_error is not None:
+            return access_error
         try:
             return get_knowledge_graph(session, kb_id).model_dump(mode="json")
         except (ValueError, KnowledgeGraphNotFoundError):
@@ -1337,8 +1409,25 @@ def create_app(
         kb_id: str,
         request: KnowledgeGraphBuildRequest,
         session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        auth: Annotated[AuthContext, Depends(require_write_auth)],
     ) -> dict[str, Any] | JSONResponse:
+        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
+            session=session,
+            kb_id=kb_id,
+            workspace_id=workspace_id,
+        )
+        if kb_error is not None:
+            return kb_error
+        assert knowledge_base is not None
+        access_error = _knowledge_base_access_error(
+            session=session,
+            auth=auth,
+            knowledge_base_id=knowledge_base.id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
         try:
             result = rebuild_knowledge_graph(
                 session,
@@ -1938,6 +2027,14 @@ def create_app(
                 model=request.model,
                 dimensions=request.dimensions,
                 baseline_path=baseline_path,
+                mode=request.mode,
+                lexical_weight=request.lexical_weight,
+                vector_weight=request.vector_weight,
+                candidate_k=request.candidate_k,
+                reranker_provider=request.reranker_provider,
+                reranker_model=request.reranker_model,
+                graph_weight=request.graph_weight,
+                graph_depth=request.graph_depth,
                 store_dir=Path("evaluation_runs"),
             )
         except Exception as exc:

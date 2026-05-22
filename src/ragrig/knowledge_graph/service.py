@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from ragrig.acl import acl_permits_chunk_metadata, normalize_principal_ids
 from ragrig.db.models import (
     Chunk,
     Document,
@@ -663,7 +664,23 @@ def build_graph_retrieval_context(
     query: str,
     limit: int = 20,
     graph_depth: int = 1,
+    principal_ids: list[str] | None = None,
+    enforce_acl: bool = True,
 ) -> GraphRetrievalContext:
+    visible_chunk_ids: set[uuid.UUID] | None = None
+    visible_entity_ids: set[uuid.UUID] | None = None
+    if enforce_acl:
+        latest_rows = _latest_chunk_rows(session, knowledge_base_id)
+        normalized_principals = normalize_principal_ids(principal_ids)
+        effective_principals = normalized_principals if normalized_principals else None
+        visible_chunk_ids = {
+            row.chunk.id
+            for row in latest_rows
+            if acl_permits_chunk_metadata(row.chunk.metadata_json, effective_principals)
+        }
+        if not visible_chunk_ids:
+            return GraphRetrievalContext()
+
     entities = list(
         session.scalars(
             select(KnowledgeGraphEntity)
@@ -677,11 +694,32 @@ def build_graph_retrieval_context(
             degraded_reason="knowledge graph has no extracted entities",
         )
 
+    if visible_chunk_ids is not None:
+        visible_mentions = list(
+            session.scalars(
+                select(KnowledgeGraphEntityMention)
+                .join(
+                    KnowledgeGraphEntity,
+                    KnowledgeGraphEntity.id == KnowledgeGraphEntityMention.entity_id,
+                )
+                .where(KnowledgeGraphEntity.knowledge_base_id == knowledge_base_id)
+            )
+        )
+        visible_entity_ids = {
+            mention.entity_id
+            for mention in visible_mentions
+            if mention.chunk_id in visible_chunk_ids
+        }
+        if not visible_entity_ids:
+            return GraphRetrievalContext()
+
     query_lc = query.casefold()
     query_terms = set(re.findall(r"[a-z0-9_/-]{3,}", query_lc))
     matched: list[tuple[KnowledgeGraphEntity, float]] = []
     corpus = [entity.canonical_name for entity in entities]
     for entity in entities:
+        if visible_entity_ids is not None and entity.id not in visible_entity_ids:
+            continue
         canonical = entity.canonical_name
         entity_terms = set(re.findall(r"[a-z0-9_/-]{3,}", canonical))
         if canonical and canonical in query_lc:
@@ -720,8 +758,6 @@ def build_graph_retrieval_context(
             )
             if not touches:
                 continue
-            expanded_ids.add(relation.subject_entity_id)
-            expanded_ids.add(relation.object_entity_id)
             evidence_rows = list(
                 session.scalars(
                     select(KnowledgeGraphRelationEvidence)
@@ -729,6 +765,14 @@ def build_graph_retrieval_context(
                     .limit(4)
                 )
             )
+            if visible_chunk_ids is not None:
+                evidence_rows = [
+                    evidence for evidence in evidence_rows if evidence.chunk_id in visible_chunk_ids
+                ]
+                if not evidence_rows:
+                    continue
+            expanded_ids.add(relation.subject_entity_id)
+            expanded_ids.add(relation.object_entity_id)
             relation_paths.append(
                 {
                     "relation_id": str(relation.id),
@@ -755,6 +799,10 @@ def build_graph_retrieval_context(
             )
         )
     )
+    if visible_chunk_ids is not None:
+        mention_rows = [
+            mention for mention in mention_rows if mention.chunk_id in visible_chunk_ids
+        ]
     for mention in mention_rows:
         base = 0.95 if mention.entity_id in matched_ids else 0.65
         _boost_chunk_score(chunk_scores, mention.chunk_id, base * mention.confidence)

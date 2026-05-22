@@ -4,7 +4,7 @@ APP_HOST_PORT ?= 8000
 RAGRIG_IMAGE ?= ragrig:local
 PILOT_BASE_URL ?= http://127.0.0.1:$(APP_HOST_PORT)
 
-.PHONY: sync frontend-build format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check required-ci-contexts-check web-check sqlite-warning-check local-pilot-preflight pilot-docker-preflight local-pilot-smoke local-pilot-console-e2e pilot-docker-build pilot-up pilot-down pilot-logs pilot-docker-smoke vercel-preview-smoke test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check google-workspace-diagnostics s3-check fileshare-check database-source-check cost-latency-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke reranker-policy-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke eval-reindex-diff eval-config-compare knowledge-map-check understanding-export-diff seed-acl-fixtures pipeline-dag-smoke ops-deploy-smoke ops-backup-smoke ops-restore-smoke ops-upgrade-smoke pilot-evidence-pack nightly-evidence-smoke
+.PHONY: sync frontend-build format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check required-ci-contexts-check web-check sqlite-warning-check local-pilot-preflight pilot-docker-preflight local-pilot-smoke local-pilot-console-e2e pilot-docker-build pilot-up pilot-down pilot-logs pilot-docker-smoke vercel-preview-smoke test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check google-workspace-diagnostics s3-check fileshare-check database-source-check cost-latency-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke reranker-policy-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke eval-reindex-diff eval-config-compare graph-eval-compare demo-rc-gate knowledge-map-check understanding-export-diff seed-acl-fixtures pipeline-dag-smoke ops-deploy-smoke ops-backup-smoke ops-restore-smoke ops-upgrade-smoke pilot-evidence-pack nightly-evidence-smoke
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -229,6 +229,16 @@ eval-config-compare:
 		$(if $(EVAL_CONFIGS),--configs $(EVAL_CONFIGS),) \
 		--output $(ARTIFACTS_DIR)/eval-config-compare.json \
 		--markdown-output $(ARTIFACTS_DIR)/eval-config-compare.md
+
+graph-eval-compare:
+	$(UV) run python -m scripts.graph_retrieval_eval_compare --pretty \
+		--output $(ARTIFACTS_DIR)/graph-eval-compare.json \
+		--markdown-output $(ARTIFACTS_DIR)/graph-eval-compare.md
+
+demo-rc-gate:
+	$(UV) run python -m scripts.demo_rc_gate --pretty \
+		--output $(ARTIFACTS_DIR)/demo-rc-gate.json \
+		--markdown-output $(ARTIFACTS_DIR)/demo-rc-gate.md
 
 knowledge-map-check:
 	$(UV) run python -m scripts.knowledge_map_check --pretty --output $(ARTIFACTS_DIR)/knowledge-map-check.json
