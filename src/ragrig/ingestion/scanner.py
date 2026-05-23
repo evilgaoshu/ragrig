@@ -6,6 +6,21 @@ from pathlib import Path
 
 DEFAULT_INCLUDE_PATTERNS = ("*.md", "*.markdown", "*.txt", "*.text")
 DEFAULT_EXCLUDE_DIRS = (".git", "__pycache__", ".venv", ".tox", "node_modules")
+BINARY_DOCUMENT_EXTENSIONS = (
+    ".docx",
+    ".pdf",
+    ".pptx",
+    ".xls",
+    ".xlsx",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".tif",
+    ".tiff",
+    ".bmp",
+    ".gif",
+    ".webp",
+)
 
 
 @dataclass(frozen=True)
@@ -62,7 +77,8 @@ def scan_paths(
         if path.stat().st_size > max_file_size_bytes:
             skipped.append(ScanSkip(path=path, reason="file_too_large"))
             continue
-        if b"\x00" in path.read_bytes()[:8192]:
+        has_nul = b"\x00" in path.read_bytes()[:8192]
+        if has_nul and path.suffix.lower() not in BINARY_DOCUMENT_EXTENSIONS:
             skipped.append(ScanSkip(path=path, reason="binary_file"))
             continue
 

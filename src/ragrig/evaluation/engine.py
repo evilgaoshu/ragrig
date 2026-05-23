@@ -132,7 +132,7 @@ def _evaluate_question(
         elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
 
         doc_uris = [r.document_uri for r in report.results]
-        text_previews = [r.text_preview for r in report.results]
+        retrieved_texts = [r.text for r in report.results]
         distances = [r.distance for r in report.results]
         scores = [r.score for r in report.results]
 
@@ -143,14 +143,14 @@ def _evaluate_question(
             golden.expected_chunk_uri,
             golden.expected_citation,
             list(golden.expected_relevant_citations or []),
-            text_previews,
+            retrieved_texts,
         )
         hit = rank is not None and rank <= top_k
 
         citation_cov = _compute_citation_coverage(
             golden.expected_citation,
             golden.expected_chunk_text,
-            text_previews,
+            retrieved_texts,
         )
 
         mrr = 1.0 / rank if rank is not None and rank > 0 else 0.0
@@ -166,11 +166,11 @@ def _evaluate_question(
         ctx_recall: float | None = None
         if expected_citations:
             ctx_precision = score_context_precision(
-                retrieved_texts=text_previews,
+                retrieved_texts=retrieved_texts,
                 expected_citations=expected_citations,
             )
             ctx_recall = score_context_recall(
-                retrieved_texts=text_previews,
+                retrieved_texts=retrieved_texts,
                 expected_citations=expected_citations,
             )
 

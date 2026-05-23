@@ -228,6 +228,40 @@ def test_ingest_local_directory_persists_parser_plugin_id_in_version_config(tmp_
     ]
 
 
+def test_ingest_local_directory_can_use_advanced_parser_with_fallback(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from docx import Document as DocxDocument
+
+    from ragrig.parsers.advanced.docling import DoclingAdapter
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    path = docs / "guide.docx"
+    doc = DocxDocument()
+    doc.add_paragraph("Docling fallback evidence")
+    doc.save(path)
+
+    monkeypatch.setattr(DoclingAdapter, "check_dependencies", lambda self: False)
+
+    with _create_session() as session:
+        report = ingest_local_directory(
+            session=session,
+            knowledge_base_name="default",
+            root_path=docs,
+            include_patterns=["*.docx"],
+            advanced_parser="docling",
+        )
+        version = session.scalar(select(DocumentVersion))
+
+    assert report.failed_count == 0
+    assert version is not None
+    assert version.parser_name == "docx"
+    assert version.parser_config_json["plugin_id"] == "parser.docx"
+    assert version.metadata_json["advanced_parser"]["fallback_used"] is True
+    assert version.metadata_json["advanced_parser"]["attempts"][0]["parser"] == ("advanced.docling")
+
+
 def test_ingest_local_directory_returns_dry_run_report(tmp_path) -> None:
     docs = tmp_path / "docs"
     docs.mkdir()

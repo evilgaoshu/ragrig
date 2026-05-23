@@ -1,5 +1,6 @@
 from ragrig.parsers.advanced import (
     AdvancedParserAdapter,
+    AdvancedParserBridge,
     AdvancedParseResult,
     AdvancedParserRunner,
     CorpusSummary,
@@ -24,6 +25,7 @@ from ragrig.parsers.xml_parser import XmlParser
 __all__ = [
     "AdvancedParseResult",
     "AdvancedParserAdapter",
+    "AdvancedParserBridge",
     "AdvancedParserRunner",
     "CorpusSummary",
     "CsvParser",

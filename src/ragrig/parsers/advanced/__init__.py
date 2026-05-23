@@ -7,9 +7,11 @@ from ragrig.parsers.advanced.models import (
     DegradedReason,
     ParserStatus,
 )
+from ragrig.parsers.advanced.parser import AdvancedParserBridge
 from ragrig.parsers.advanced.runner import AdvancedParserRunner
 
 __all__ = [
+    "AdvancedParserBridge",
     "AdvancedParseResult",
     "AdvancedParserAdapter",
     "AdvancedParserRunner",

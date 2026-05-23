@@ -109,8 +109,8 @@ def aggregate_usage(
 ) -> dict[str, Any]:
     """Return totals for the window, optionally grouped.
 
-    ``group_by`` is one of ``"operation"``, ``"model"``, ``"user"`` (any other
-    value returns only the global totals).
+    ``group_by`` is one of ``"operation"``, ``"model"``, ``"user"``,
+    ``"role"`` (any other value returns only the global totals).
     """
     stmt_filters = [UsageEvent.workspace_id == workspace_id]
     if since is not None:
@@ -137,7 +137,56 @@ def aggregate_usage(
         "avg_latency_ms": round(float(totals_row.avg_latency_ms or 0.0), 3),
     }
 
-    if group_by in ("operation", "model", "user"):
+    if group_by == "role":
+        grouped: dict[str | None, dict[str, Any]] = {}
+        rows = session.execute(
+            select(
+                UsageEvent.metadata_json,
+                UsageEvent.cost_usd,
+                UsageEvent.input_tokens,
+                UsageEvent.output_tokens,
+                UsageEvent.latency_ms,
+            ).where(*stmt_filters)
+        ).all()
+        for row in rows:
+            metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+            key = metadata.get("role")
+            group = grouped.setdefault(
+                str(key) if key is not None else None,
+                {
+                    "key": str(key) if key is not None else None,
+                    "count": 0,
+                    "cost_usd": 0.0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "latency_ms_total": 0.0,
+                },
+            )
+            group["count"] += 1
+            group["cost_usd"] += float(row.cost_usd or 0.0)
+            group["input_tokens"] += int(row.input_tokens or 0)
+            group["output_tokens"] += int(row.output_tokens or 0)
+            group["latency_ms_total"] += float(row.latency_ms or 0.0)
+        response["groups"] = [
+            {
+                "key": group["key"],
+                "count": group["count"],
+                "cost_usd": round(float(group["cost_usd"]), 8),
+                "input_tokens": int(group["input_tokens"]),
+                "output_tokens": int(group["output_tokens"]),
+                "avg_latency_ms": round(
+                    float(group["latency_ms_total"]) / group["count"],
+                    3,
+                )
+                if group["count"]
+                else 0.0,
+            }
+            for group in sorted(
+                grouped.values(),
+                key=lambda item: (-float(item["cost_usd"]), str(item["key"])),
+            )
+        ]
+    elif group_by in ("operation", "model", "user"):
         column = {
             "operation": UsageEvent.operation,
             "model": UsageEvent.model,
@@ -150,6 +199,7 @@ def aggregate_usage(
                 func.coalesce(func.sum(UsageEvent.cost_usd), 0).label("cost_usd"),
                 func.coalesce(func.sum(UsageEvent.input_tokens), 0).label("input_tokens"),
                 func.coalesce(func.sum(UsageEvent.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.avg(UsageEvent.latency_ms), 0).label("avg_latency_ms"),
             )
             .where(*stmt_filters)
             .group_by(column)
@@ -162,6 +212,7 @@ def aggregate_usage(
                 "cost_usd": round(float(row.cost_usd or 0.0), 8),
                 "input_tokens": int(row.input_tokens or 0),
                 "output_tokens": int(row.output_tokens or 0),
+                "avg_latency_ms": round(float(row.avg_latency_ms or 0.0), 3),
             }
             for row in grouped_rows
         ]

@@ -1,6 +1,7 @@
 import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -29,7 +30,7 @@ from ragrig.answer import (
 from ragrig.auth import ensure_default_workspace
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
-from ragrig.db.models import KnowledgeBase
+from ragrig.db.models import KnowledgeBase, KnowledgeGraphRelation
 from ragrig.db.session import get_session as _get_session_default
 from ragrig.deps import (
     AuthContext,
@@ -85,6 +86,7 @@ from ragrig.processing_profile import (
 from ragrig.providers.model_catalog import list_provider_models, measure_provider_latency
 from ragrig.ratelimit import RateLimiter
 from ragrig.repositories import (
+    create_audit_event,
     delete_kb_permission,
     get_knowledge_base_by_name,
     get_or_create_knowledge_base,
@@ -220,6 +222,7 @@ class RetrievalSearchRequest(BaseModel):
     knowledge_base: str
     query: str
     top_k: int = Field(default=5, ge=1, le=50)
+    role: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
     provider: str | None = None
     model: str | None = None
     dimensions: int | None = Field(default=None, gt=0)
@@ -244,6 +247,11 @@ class RetrievalSearchRequest(BaseModel):
 
 class KnowledgeBaseCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+
+
+class KnowledgeGraphRelationFeedbackRequest(BaseModel):
+    verdict: str = Field(pattern=r"^(incorrect|correct|needs_review)$")
+    note: str | None = Field(default=None, max_length=500)
 
 
 class KbPermissionRequest(BaseModel):
@@ -282,6 +290,8 @@ class AnswerRequest(BaseModel):
     knowledge_base: str
     query: str
     top_k: int = Field(default=5, ge=1, le=50)
+    role: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
+    role_model_config: dict[str, Any] | None = None
     provider: str = "deterministic-local"
     model: str | None = None
     config: dict[str, Any] | None = None
@@ -513,6 +523,68 @@ def _safe_chunk_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     if "acl" in safe:
         safe["acl"] = acl_summary_from_metadata(metadata)
     return safe
+
+
+def _summarize_relation_feedback(items: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = {"incorrect": 0, "correct": 0, "needs_review": 0}
+    for item in items:
+        verdict = item.get("verdict")
+        if verdict in counts:
+            counts[verdict] += 1
+    return {
+        "total": sum(counts.values()),
+        "incorrect": counts["incorrect"],
+        "correct": counts["correct"],
+        "needs_review": counts["needs_review"],
+        "latest_verdict": items[-1].get("verdict") if items else None,
+        "latest_at": items[-1].get("created_at") if items else None,
+    }
+
+
+def _role_model_selection(
+    role: str | None,
+    role_model_config: dict[str, Any] | None,
+) -> tuple[dict[str, Any], str | None]:
+    if not role or not role_model_config:
+        return {}, None
+    raw = role_model_config.get(role)
+    matched_role = role
+    if raw is None:
+        raw = role_model_config.get("default")
+        matched_role = "default" if raw is not None else role
+    if raw is None:
+        return {"role": role, "matched": False}, None
+    if not isinstance(raw, dict):
+        return {}, f"role_model_config entry for {matched_role!r} must be an object"
+
+    selection: dict[str, Any] = {
+        "role": role,
+        "matched": True,
+        "matched_role": matched_role,
+    }
+    string_fields = ("provider", "model", "answer_provider", "answer_model")
+    config_fields = ("config", "answer_config")
+    for field in string_fields:
+        if field in raw:
+            value = raw[field]
+            if value is not None and not isinstance(value, str):
+                return {}, f"role_model_config.{matched_role}.{field} must be a string"
+            if value is not None:
+                selection[field] = value
+    for field in config_fields:
+        if field in raw:
+            value = raw[field]
+            if value is not None and not isinstance(value, dict):
+                return {}, f"role_model_config.{matched_role}.{field} must be an object"
+            if value is not None:
+                selection[field] = value
+    return selection, None
+
+
+def _public_role_model_selection(selection: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value for key, value in selection.items() if key not in {"config", "answer_config"}
+    }
 
 
 def _plugin_validation_error_response(*, code: str, message: str) -> JSONResponse:
@@ -748,6 +820,7 @@ def create_app(
         workspace_id: uuid.UUID,
         user_id: uuid.UUID | None,
         cost_latency: dict[str, Any] | None,
+        request_metadata: dict[str, Any] | None = None,
     ) -> None:
         """Persist the operations list from a cost_latency block as UsageEvents
         and run a budget evaluation for this workspace.
@@ -765,6 +838,7 @@ def create_app(
                 workspace_id=workspace_id,
                 user_id=user_id,
                 operations=operations,
+                request_metadata=request_metadata,
             )
             evaluate_budget(session, workspace_id=workspace_id, settings=active_settings)
         except Exception:  # pragma: no cover - usage is best-effort
@@ -1440,6 +1514,77 @@ def create_app(
             return JSONResponse(status_code=404, content={"error": "knowledge_base_not_found"})
         return result.model_dump(mode="json")
 
+    @app.post(
+        "/knowledge-bases/{kb_id}/knowledge-graph/relations/{relation_id}/feedback",
+        response_model=None,
+    )
+    def submit_knowledge_graph_relation_feedback(
+        kb_id: str,
+        relation_id: str,
+        request: KnowledgeGraphRelationFeedbackRequest,
+        session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        auth: Annotated[AuthContext, Depends(require_write_auth)],
+    ) -> dict[str, Any] | JSONResponse:
+        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
+            session=session,
+            kb_id=kb_id,
+            workspace_id=workspace_id,
+        )
+        if kb_error is not None:
+            return kb_error
+        assert knowledge_base is not None
+        access_error = _knowledge_base_access_error(
+            session=session,
+            auth=auth,
+            knowledge_base_id=knowledge_base.id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
+        try:
+            relation_uuid = uuid.UUID(str(relation_id))
+        except ValueError:
+            return JSONResponse(status_code=404, content={"error": "relation_not_found"})
+        relation = session.get(KnowledgeGraphRelation, relation_uuid)
+        if relation is None or relation.knowledge_base_id != knowledge_base.id:
+            return JSONResponse(status_code=404, content={"error": "relation_not_found"})
+
+        metadata = dict(relation.metadata_json or {})
+        feedback_items = [item for item in metadata.get("feedback", []) if isinstance(item, dict)]
+        created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        actor = str(auth.user_id) if auth.user_id is not None else "anonymous"
+        entry: dict[str, Any] = {
+            "verdict": request.verdict,
+            "created_at": created_at,
+            "actor": actor,
+        }
+        if request.note and request.note.strip():
+            entry["note"] = request.note.strip()
+        feedback_items.append(entry)
+        metadata["feedback"] = feedback_items[-50:]
+        metadata["feedback_summary"] = _summarize_relation_feedback(feedback_items)
+        relation.metadata_json = metadata
+        create_audit_event(
+            session,
+            event_type="kg_relation_feedback",
+            actor=actor,
+            workspace_id=workspace_id,
+            knowledge_base_id=knowledge_base.id,
+            payload_json={
+                "relation_id": str(relation.id),
+                "verdict": request.verdict,
+                "note": request.note,
+            },
+        )
+        session.commit()
+        return {
+            "status": "recorded",
+            "relation_id": str(relation.id),
+            "feedback": entry,
+            "feedback_summary": metadata["feedback_summary"],
+        }
+
     @app.get("/knowledge-bases/{kb_id}/understanding-runs", response_model=None)
     def understanding_runs(
         kb_id: str,
@@ -1972,7 +2117,17 @@ def create_app(
         if report.degraded:
             response["degraded"] = True
             response["degraded_reason"] = report.degraded_reason
-        _record_usage_for_request(session, workspace_id, None, report.cost_latency)
+        _record_usage_for_request(
+            session,
+            workspace_id,
+            None,
+            report.cost_latency,
+            request_metadata={
+                "endpoint": "retrieval.search",
+                "role": request.role,
+                "mode": request.mode,
+            },
+        )
         return response
 
     @app.post("/permissions/preview", response_model=None)
@@ -2153,10 +2308,31 @@ def create_app(
             requested_principal_ids=request.principal_ids,
             requested_enforce_acl=request.enforce_acl,
         )
+        role_selection, role_error = _role_model_selection(request.role, request.role_model_config)
+        if role_error is not None:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": {
+                        "code": "invalid_role_model_config",
+                        "message": role_error,
+                        "details": {"role": request.role},
+                    }
+                },
+            )
+        selected_provider = role_selection.get("provider", request.provider)
+        selected_model = role_selection.get("model", request.model)
+        selected_config = role_selection.get("config", request.config)
+        selected_answer_provider = role_selection.get(
+            "answer_provider",
+            request.answer_provider,
+        )
+        selected_answer_model = role_selection.get("answer_model", request.answer_model)
+        selected_answer_config = role_selection.get("answer_config", request.answer_config)
         try:
             provider_config = None
-            if request.config is not None:
-                provider_config, missing_env = resolve_env_config(request.config)
+            if selected_config is not None:
+                provider_config, missing_env = resolve_env_config(selected_config)
                 if missing_env:
                     return JSONResponse(
                         status_code=400,
@@ -2171,8 +2347,8 @@ def create_app(
                         },
                     )
             answer_provider_config = None
-            if request.answer_config is not None:
-                answer_provider_config, missing_env = resolve_env_config(request.answer_config)
+            if selected_answer_config is not None:
+                answer_provider_config, missing_env = resolve_env_config(selected_answer_config)
                 if missing_env:
                     return JSONResponse(
                         status_code=400,
@@ -2192,11 +2368,11 @@ def create_app(
                 knowledge_base_name=request.knowledge_base,
                 query=request.query,
                 top_k=request.top_k,
-                provider=request.provider,
-                model=request.model,
+                provider=selected_provider,
+                model=selected_model,
                 provider_config=provider_config,
-                answer_provider=request.answer_provider,
-                answer_model=request.answer_model,
+                answer_provider=selected_answer_provider,
+                answer_model=selected_answer_model,
                 answer_provider_config=answer_provider_config,
                 dimensions=request.dimensions,
                 vector_backend=vector_backend,
@@ -2255,7 +2431,19 @@ def create_app(
                 },
             )
 
-        _record_usage_for_request(session, workspace_id, None, report.cost_latency)
+        public_role_selection = _public_role_model_selection(role_selection)
+        _record_usage_for_request(
+            session,
+            workspace_id,
+            None,
+            report.cost_latency,
+            request_metadata={
+                "endpoint": "retrieval.answer",
+                "role": request.role,
+                "mode": request.mode,
+                "role_model_selection": public_role_selection,
+            },
+        )
         payload = {
             "answer": report.answer,
             "citations": [
@@ -2290,6 +2478,8 @@ def create_app(
             ],
             "model": report.model,
             "provider": report.provider,
+            "role": request.role,
+            "role_model_selection": public_role_selection,
             "retrieval_trace": report.retrieval_trace,
             "grounding_status": report.grounding_status,
             "refusal_reason": report.refusal_reason,

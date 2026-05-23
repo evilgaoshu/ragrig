@@ -1407,14 +1407,24 @@
                 <select id="retrieval-mode">
                   <option value="dense" selected>dense (vector-only)</option>
                   <option value="hybrid">hybrid (vector + lexical)</option>
+                  <option value="graph">graph (KG-lite expansion)</option>
+                  <option value="hybrid_graph">hybrid_graph (hybrid + KG-lite)</option>
                   <option value="rerank">rerank (dense → reranker)</option>
                   <option value="hybrid_rerank">hybrid_rerank (hybrid → reranker)</option>
+                  <option value="graph_rerank">graph_rerank (graph → reranker)</option>
+                  <option value="hybrid_graph_rerank">hybrid_graph_rerank (hybrid graph → reranker)</option>
                 </select>
                 <div id="retrieval-hybrid-opts" style="display:none">
                   <label class="sub" for="retrieval-lexical-weight">Lexical Weight</label>
                   <input id="retrieval-lexical-weight" type="number" value="0.3" min="0" max="1" step="0.05">
                   <label class="sub" for="retrieval-vector-weight">Vector Weight</label>
                   <input id="retrieval-vector-weight" type="number" value="0.7" min="0" max="1" step="0.05">
+                </div>
+                <div id="retrieval-graph-opts" style="display:none">
+                  <label class="sub" for="retrieval-graph-weight">Graph Weight</label>
+                  <input id="retrieval-graph-weight" type="number" value="0.35" min="0" max="1" step="0.05">
+                  <label class="sub" for="retrieval-graph-depth">Graph Depth</label>
+                  <input id="retrieval-graph-depth" type="number" value="1" min="0" max="2">
                 </div>
                 <div id="retrieval-rerank-opts" style="display:none">
                   <label class="sub" for="retrieval-candidate-k">Candidate K (for rerank)</label>
@@ -1430,7 +1440,11 @@
                 <input id="retrieval-principal" type="text" placeholder="user:alice, group:engineering">
                 <label class="sub" for="retrieval-top-k">Top K</label>
                 <input id="retrieval-top-k" type="number" value="3" min="1" max="50">
-                <div class="actions"><button class="button primary" id="run-retrieval" type="button">Run Retrieval</button></div>
+                <div class="actions">
+                  <button class="button primary" id="run-retrieval" type="button">Run Retrieval</button>
+                  <button class="button" id="compare-retrieval" type="button">Compare Modes</button>
+                </div>
+                <div id="retrieval-compare-results"></div>
                 <div id="retrieval-results"></div>
               </div>
             </section>
@@ -2977,6 +2991,58 @@
             .slice(0, 3)
             .map((lim) => '<div class="sub"><span class="pill warn">limit</span> ' + escapeHtml(lim) + '</div>')
             .join('');
+          let graphHtml = '';
+          try {
+            const graph = await getJson(`/knowledge-bases/${kbItem.id}/knowledge-graph`);
+            const graphStats = graph.stats || {};
+            const graphStatusClass = graph.status === 'ready' ? 'pill' : graph.status === 'no_graph' ? 'pill warn' : 'pill neutral';
+            const entities = (graph.entities || [])
+              .slice(0, 8)
+              .map((entity) => '<span class="pill neutral">' + escapeHtml(entity.display_name) + '</span>')
+              .join(' ');
+            const relations = (graph.relations || [])
+              .slice(0, 6)
+              .map((relation) => {
+                const summary = relation.metadata && relation.metadata.feedback_summary ? relation.metadata.feedback_summary : null;
+                const feedback = summary && summary.incorrect
+                  ? '<span class="pill warn">incorrect: ' + escapeHtml(summary.incorrect) + '</span>'
+                  : '<span class="pill neutral">feedback: 0</span>';
+                return `
+                  <div class="result">
+                    <div class="name">${escapeHtml(relation.subject)} → ${escapeHtml(relation.predicate)} → ${escapeHtml(relation.object)}</div>
+                    <div class="sub">confidence ${escapeHtml(relation.confidence)} · evidence ${(relation.evidence || []).length} ${feedback}</div>
+                    <div class="actions">${relationFeedbackButton(relation.id, kbItem.id)}</div>
+                  </div>
+                `;
+              })
+              .join('');
+            const graphLimits = (graph.limitations || [])
+              .slice(0, 3)
+              .map((lim) => '<div class="sub"><span class="pill warn">limit</span> ' + escapeHtml(lim) + '</div>')
+              .join('');
+            graphHtml = `
+              <div class="card">
+                <div class="name">KG-lite Graph <span class="${graphStatusClass}">${escapeHtml(graph.status)}</span></div>
+                <div class="sub">entities: ${escapeHtml(graphStats.entity_count || 0)} · relations: ${escapeHtml(graphStats.relation_count || 0)} · claims: ${escapeHtml(graphStats.claim_count || 0)} · evidence chunks: ${escapeHtml(graphStats.graph_evidence_chunk_count || 0)}</div>
+              </div>
+              <div class="card">
+                <div class="name">Graph Entities</div>
+                <div class="sub">${entities || 'No KG-lite entities yet.'}</div>
+              </div>
+              <div class="card">
+                <div class="name">Graph Relations</div>
+                ${relations || '<div class="sub">No KG-lite relations yet.</div>'}
+              </div>
+              ${graphLimits}
+            `;
+          } catch (graphError) {
+            graphHtml = `
+              <div class="card">
+                <div class="name">KG-lite Graph <span class="pill warn">unavailable</span></div>
+                <div class="sub">${escapeHtml(graphError.message)}</div>
+              </div>
+            `;
+          }
           root.innerHTML = `
             <div class="card">
               <div class="name">${escapeHtml(kbItem.name)} <span class="${statusClass}">${escapeHtml(data.status)}</span></div>
@@ -2992,6 +3058,7 @@
               ${relationships || '<div class="sub">No shared-entity relationships yet.</div>'}
             </div>
             ${limits}
+            ${graphHtml}
           `;
         } catch (error) {
           root.innerHTML = '<div class="empty">' + escapeHtml(error.message) + '</div>';
@@ -5028,6 +5095,23 @@
         });
       }
 
+      function isHybridRetrievalMode(mode) {
+        return mode === 'hybrid' || mode === 'hybrid_rerank' || mode === 'hybrid_graph' || mode === 'hybrid_graph_rerank';
+      }
+
+      function isRerankRetrievalMode(mode) {
+        return mode === 'rerank' || mode === 'hybrid_rerank' || mode === 'graph_rerank' || mode === 'hybrid_graph_rerank';
+      }
+
+      function isGraphRetrievalMode(mode) {
+        return mode === 'graph' || mode === 'hybrid_graph' || mode === 'graph_rerank' || mode === 'hybrid_graph_rerank';
+      }
+
+      function selectedRetrievalKnowledgeBase() {
+        const selectedName = document.getElementById('retrieval-kb').value;
+        return state.knowledgeBases.find((item) => item.name === selectedName) || null;
+      }
+
       function buildRetrievalRequest() {
         const mode = document.getElementById('retrieval-mode').value;
         const req = {
@@ -5039,11 +5123,15 @@
         const principals = parsePrincipalInput(document.getElementById('retrieval-principal').value);
         req.principal_ids = principals;
         req.enforce_acl = true;
-        if (mode === 'hybrid' || mode === 'hybrid_rerank') {
+        if (isHybridRetrievalMode(mode)) {
           req.lexical_weight = Number(document.getElementById('retrieval-lexical-weight').value || 0.3);
           req.vector_weight = Number(document.getElementById('retrieval-vector-weight').value || 0.7);
         }
-        if (mode === 'rerank' || mode === 'hybrid_rerank') {
+        if (isGraphRetrievalMode(mode)) {
+          req.graph_weight = Number(document.getElementById('retrieval-graph-weight').value || 0.35);
+          req.graph_depth = Number(document.getElementById('retrieval-graph-depth').value || 1);
+        }
+        if (isRerankRetrievalMode(mode)) {
           req.candidate_k = Number(document.getElementById('retrieval-candidate-k').value || 20);
           const rrp = document.getElementById('retrieval-reranker-provider').value.trim();
           const rrm = document.getElementById('retrieval-reranker-model').value.trim();
@@ -5061,10 +5149,14 @@
           select.innerHTML = '<option value="">No knowledge bases</option>';
           select.disabled = true;
           document.getElementById('run-retrieval').disabled = true;
+          document.getElementById('compare-retrieval').disabled = true;
           document.getElementById('retrieval-results').innerHTML = empty('Retrieval is degraded until a real indexed knowledge base exists.');
           return;
         }
         select.innerHTML = state.knowledgeBases.map((item) => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`).join('');
+        select.disabled = false;
+        document.getElementById('run-retrieval').disabled = false;
+        document.getElementById('compare-retrieval').disabled = false;
       }
 
       function _renderRankStageTrace(trace) {
@@ -5085,6 +5177,11 @@
               label += ` score=${typeof s.score === 'number' ? s.score.toFixed(4) : s.score}`;
               label += ` orig_rank=${s.original_rank}→${s.new_rank}`;
             }
+          } else if (s.stage === 'graph_expand') {
+            label += ` score=${typeof s.score === 'number' ? s.score.toFixed(4) : s.score}`;
+            if (s.combined_score !== undefined) label += ` combined=${typeof s.combined_score === 'number' ? s.combined_score.toFixed(4) : s.combined_score}`;
+            if (s.weight !== undefined) label += ` weight=${escapeHtml(s.weight)}`;
+            if (s.policy) label += ` ${escapeHtml(s.policy)}`;
           }
           return `<div style="margin-left:12px;font-size:11px;opacity:0.85">${label}</div>`;
         }).join('');
@@ -5094,6 +5191,138 @@
         if (!explain) return '';
         const cls = explain.principal_context === 'missing' ? 'pill warn' : 'pill';
         return `<div class="sub" style="margin:8px 0"><span class="${cls}">ACL ${escapeHtml(explain.principal_context)}</span> candidates ${escapeHtml(explain.candidate_count)} · visible ${escapeHtml(explain.visible_count)} · filtered ${escapeHtml(explain.filtered_count)}</div>`;
+      }
+
+      function relationFeedbackButton(relationId, kbId) {
+        if (!relationId || !kbId) return '';
+        return `<button class="button" type="button" data-kg-relation-feedback="${escapeHtml(relationId)}" data-kb-id="${escapeHtml(kbId)}">Mark Incorrect</button>`;
+      }
+
+      function renderGraphContext(graphContext, kbId) {
+        if (!graphContext) return '';
+        const matched = graphContext.matched_entities || [];
+        const expanded = graphContext.expanded_entities || [];
+        const paths = graphContext.relation_paths || [];
+        const chunks = graphContext.chunk_scores || {};
+        if (!graphContext.degraded && !matched.length && !expanded.length && !paths.length) {
+          return '';
+        }
+        const degraded = graphContext.degraded
+          ? `<div class="empty" style="color:var(--warn)">Graph degraded: ${escapeHtml(graphContext.degraded_reason || 'unknown')}</div>`
+          : '';
+        const entityPills = matched.slice(0, 8).map((entity) =>
+          `<span class="pill neutral">${escapeHtml(entity.display_name)} ${entity.score !== undefined ? escapeHtml(Number(entity.score).toFixed(2)) : ''}</span>`
+        ).join(' ');
+        const expandedPills = expanded.slice(0, 8).map((entity) =>
+          `<span class="pill neutral">${escapeHtml(entity.display_name)}</span>`
+        ).join(' ');
+        const pathRows = paths.slice(0, 6).map((path) => `
+          <div class="result">
+            <div class="name">${escapeHtml(path.subject)} → ${escapeHtml(path.predicate)} → ${escapeHtml(path.object)}</div>
+            <div class="sub">evidence ${escapeHtml(path.evidence_score ?? path.confidence)} · matched endpoints ${escapeHtml(path.matched_endpoint_count ?? 0)} · chunks ${(path.evidence_chunk_ids || []).length}</div>
+            <div class="actions">${relationFeedbackButton(path.relation_id, kbId)}</div>
+          </div>
+        `).join('');
+        const chunkRows = Object.entries(chunks).slice(0, 6).map(([chunkId, score]) =>
+          `<div class="sub code">${escapeHtml(chunkId)} · graph score ${escapeHtml(score)}</div>`
+        ).join('');
+        return `
+          <div class="section-title">Graph Context</div>
+          ${degraded}
+          <div class="card">
+            <div class="name">Matched Entities</div>
+            <div class="sub">${entityPills || 'No query entities matched.'}</div>
+          </div>
+          <div class="card">
+            <div class="name">Expanded Entities</div>
+            <div class="sub">${expandedPills || 'No graph expansion.'}</div>
+          </div>
+          <div class="card">
+            <div class="name">Relation Paths</div>
+            ${pathRows || '<div class="sub">No relation paths for this query.</div>'}
+          </div>
+          <div class="card">
+            <div class="name">Boosted Chunks</div>
+            ${chunkRows || '<div class="sub">No graph chunk scores.</div>'}
+          </div>
+        `;
+      }
+
+      async function compareRetrievalModes() {
+        const root = document.getElementById('retrieval-compare-results');
+        const kbItem = selectedRetrievalKnowledgeBase();
+        if (!kbItem) {
+          root.innerHTML = empty('Select a knowledge base first.');
+          return;
+        }
+        root.innerHTML = '<div class="sub">Comparing retrieval strategies...</div>';
+        const base = {
+          knowledge_base: kbItem.name,
+          query: document.getElementById('retrieval-query').value,
+          top_k: Number(document.getElementById('retrieval-top-k').value || 3),
+          principal_ids: parsePrincipalInput(document.getElementById('retrieval-principal').value),
+          enforce_acl: true,
+          lexical_weight: Number(document.getElementById('retrieval-lexical-weight').value || 0.3),
+          vector_weight: Number(document.getElementById('retrieval-vector-weight').value || 0.7),
+          graph_weight: Number(document.getElementById('retrieval-graph-weight').value || 0.35),
+          graph_depth: Number(document.getElementById('retrieval-graph-depth').value || 1),
+        };
+        const modes = ['dense', 'graph', 'hybrid_graph'];
+        const comparisons = await Promise.all(modes.map(async (mode) => {
+          try {
+            const result = await getJson('/retrieval/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...base, mode }),
+            });
+            return { mode, result };
+          } catch (error) {
+            return { mode, error };
+          }
+        }));
+        root.innerHTML = `
+          <div class="section-title">Strategy Comparison</div>
+          ${comparisons.map((item) => {
+            if (item.error) {
+              return `<div class="card"><div class="name">${escapeHtml(item.mode)} <span class="pill error">error</span></div><div class="sub">${escapeHtml(item.error.message)}</div></div>`;
+            }
+            const result = item.result;
+            const top = (result.results || [])[0];
+            const graphPaths = ((result.graph_context || {}).relation_paths || []).length;
+            return `
+              <div class="card">
+                <div class="name">${escapeHtml(item.mode)} <span class="pill neutral">${escapeHtml(result.total_results || 0)} results</span></div>
+                <div class="sub">top: ${top ? escapeHtml(top.document_uri) + ' · score ' + escapeHtml(top.score) : 'no result'}</div>
+                <div class="sub">graph paths: ${escapeHtml(graphPaths)} · backend ${escapeHtml(result.backend || 'n/a')}</div>
+              </div>
+            `;
+          }).join('')}
+        `;
+      }
+
+      async function submitRelationFeedback(kbId, relationId, button) {
+        if (!kbId || !relationId) return;
+        const originalText = button ? button.textContent : '';
+        if (button) {
+          button.disabled = true;
+          button.textContent = 'Marking...';
+        }
+        try {
+          const result = await getJson(`/knowledge-bases/${encodeURIComponent(kbId)}/knowledge-graph/relations/${encodeURIComponent(relationId)}/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ verdict: 'incorrect' }),
+          });
+          if (button) button.textContent = 'Marked';
+          showToast('Relation feedback recorded: ' + (result.feedback_summary ? result.feedback_summary.incorrect : 1) + ' incorrect');
+          await renderKnowledgeMap();
+        } catch (error) {
+          if (button) {
+            button.disabled = false;
+            button.textContent = originalText;
+          }
+          showToast('Feedback error: ' + error.message);
+        }
       }
 
       async function runPermissionPreview() {
@@ -5128,7 +5357,10 @@
 
       async function runRetrieval() {
         const resultRoot = document.getElementById('retrieval-results');
+        const compareRoot = document.getElementById('retrieval-compare-results');
         const requestBody = buildRetrievalRequest();
+        const kbItem = selectedRetrievalKnowledgeBase();
+        if (compareRoot) compareRoot.innerHTML = '';
         resultRoot.innerHTML = '<div class="sub">Running retrieval...</div>';
         try {
           const result = await getJson('/retrieval/search', {
@@ -5137,14 +5369,19 @@
             body: JSON.stringify(requestBody),
           });
           if (!result.results || !result.results.length) {
-            resultRoot.innerHTML = renderAclExplain(result.acl_explain) + empty('Retrieval returned zero results. This is a real API response.');
+            resultRoot.innerHTML = renderAclExplain(result.acl_explain)
+              + renderGraphContext(result.graph_context, kbItem ? kbItem.id : null)
+              + empty('Retrieval returned zero results. This is a real API response.');
             return;
           }
           var degradedBanner = '';
           if (result.degraded) {
             degradedBanner = `<div class="empty" style="color:var(--warn);margin-bottom:8px">⚠ Degraded: ${escapeHtml(result.degraded_reason || 'reranker unavailable')}</div>`;
           }
-          resultRoot.innerHTML = degradedBanner + renderAclExplain(result.acl_explain) + result.results.map((item) => `
+          resultRoot.innerHTML = degradedBanner
+            + renderAclExplain(result.acl_explain)
+            + renderGraphContext(result.graph_context, kbItem ? kbItem.id : null)
+            + result.results.map((item) => `
             <div class="result">
               <div class="name">${escapeHtml(item.document_uri)}</div>
               <div class="sub">chunk ${item.chunk_index} · score ${item.score} · distance ${item.distance}</div>
@@ -5743,13 +5980,21 @@
         document.getElementById('pilot-upload-files').addEventListener('click', runPilotFileUpload);
         document.getElementById('pilot-run-answer').addEventListener('click', runPilotPlaygroundAnswer);
         document.getElementById('run-retrieval').addEventListener('click', runRetrieval);
+        document.getElementById('compare-retrieval').addEventListener('click', compareRetrievalModes);
         document.getElementById('run-permission-preview').addEventListener('click', runPermissionPreview);
         document.getElementById('retrieval-mode').addEventListener('change', function() {
           const mode = this.value;
           document.getElementById('retrieval-hybrid-opts').style.display =
-            (mode === 'hybrid' || mode === 'hybrid_rerank') ? '' : 'none';
+            isHybridRetrievalMode(mode) ? '' : 'none';
+          document.getElementById('retrieval-graph-opts').style.display =
+            isGraphRetrievalMode(mode) ? '' : 'none';
           document.getElementById('retrieval-rerank-opts').style.display =
-            (mode === 'rerank' || mode === 'hybrid_rerank') ? '' : 'none';
+            isRerankRetrievalMode(mode) ? '' : 'none';
+        });
+        document.body.addEventListener('click', (event) => {
+          const button = event.target.closest('[data-kg-relation-feedback]');
+          if (!button) return;
+          submitRelationFeedback(button.dataset.kbId, button.dataset.kgRelationFeedback, button);
         });
         document.getElementById('run-answer').addEventListener('click', runAnswer);
         document.getElementById('copy-retrieval-request').addEventListener('click', async () => {
