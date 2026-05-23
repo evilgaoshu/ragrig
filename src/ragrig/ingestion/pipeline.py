@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ragrig.db.models import DocumentVersion
 from ragrig.ingestion.scanner import scan_paths
 from ragrig.parsers import (
+    AdvancedParserBridge,
     CsvParser,
     DocxParser,
     EmailParser,
@@ -45,7 +46,7 @@ class IngestionReport:
     failed_count: int
 
 
-def _select_parser(path: Path):
+def _select_basic_parser(path: Path):
     get_plugin_registry()
     ext = path.suffix.lower()
     if ext in {".md", ".markdown"}:
@@ -75,6 +76,16 @@ def _select_parser(path: Path):
     return PlainTextParser()
 
 
+def _select_parser(path: Path, *, advanced_parser: str | None = None):
+    parser = _select_basic_parser(path)
+    if advanced_parser and path.suffix.lower() in {".pdf", ".docx", ".pptx", ".xlsx"}:
+        return AdvancedParserBridge(
+            strategy=advanced_parser,
+            fallback_parser=parser,
+        )
+    return parser
+
+
 def _parser_plugin_id(parser_name: str) -> str:
     if parser_name == "plaintext":
         return "parser.text"
@@ -90,6 +101,7 @@ def ingest_local_directory(
     exclude_patterns: list[str] | None = None,
     max_file_size_bytes: int = 10 * 1024 * 1024,
     dry_run: bool = False,
+    advanced_parser: str | None = None,
 ) -> IngestionReport:
     root_path = root_path.resolve()
     scan_result = scan_paths(
@@ -118,6 +130,7 @@ def ingest_local_directory(
             "include_patterns": include_patterns or [],
             "exclude_patterns": exclude_patterns or [],
             "max_file_size_bytes": max_file_size_bytes,
+            "advanced_parser": advanced_parser,
         },
     )
     correct_profile = resolve_profile("*", TaskType.CORRECT)
@@ -133,6 +146,7 @@ def ingest_local_directory(
             "exclude_patterns": exclude_patterns or [],
             "max_file_size_bytes": max_file_size_bytes,
             "dry_run": dry_run,
+            "advanced_parser": advanced_parser,
             "correct_profile_id": correct_profile.profile_id,
             "clean_profile_id": clean_profile.profile_id,
         },
@@ -171,7 +185,7 @@ def ingest_local_directory(
     for candidate in scan_result.discovered:
         try:
             with session.begin_nested():
-                parser = _select_parser(candidate.path)
+                parser = _select_parser(candidate.path, advanced_parser=advanced_parser)
                 parse_result = parser.parse(candidate.path)
                 document, was_created = get_or_create_document(
                     session,

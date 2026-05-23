@@ -117,6 +117,10 @@ def test_graph_retrieval_mode_expands_entity_evidence(
     assert report.graph_context["matched_entities"]
     assert report.graph_context["chunk_scores"]
     assert any(
+        path["matched_endpoint_count"] == 2 and path["evidence_score"] >= 0.8
+        for path in report.graph_context["relation_paths"]
+    )
+    assert any(
         stage["stage"] == "graph_expand"
         for result in report.results
         for stage in result.rank_stage_trace.get("stages", [])
@@ -213,6 +217,35 @@ async def test_knowledge_graph_api_rebuild_and_read(tmp_path: Path) -> None:
         response = await client.get(f"/knowledge-bases/{kb_id}/knowledge-graph")
         assert response.status_code == 200
         assert response.json()["stats"]["relation_evidence_count"] >= 1
+
+
+@pytest.mark.anyio
+async def test_knowledge_graph_relation_feedback_records_summary(tmp_path: Path) -> None:
+    session_factory = _create_file_session_factory(tmp_path / "kg-api-feedback.db")
+    with session_factory() as session:
+        kb_id = _index_fixture_kb(session, tmp_path, kb_name="kg-api-feedback-fixture")
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        rebuild = await client.post(
+            f"/knowledge-bases/{kb_id}/knowledge-graph/rebuild",
+            json={"reset": True},
+        )
+        assert rebuild.status_code == 200
+        relation_id = rebuild.json()["relations"][0]["id"]
+
+        feedback = await client.post(
+            f"/knowledge-bases/{kb_id}/knowledge-graph/relations/{relation_id}/feedback",
+            json={"verdict": "incorrect", "note": "predicate is too broad"},
+        )
+        assert feedback.status_code == 200
+        assert feedback.json()["feedback_summary"]["incorrect"] == 1
+
+        response = await client.get(f"/knowledge-bases/{kb_id}/knowledge-graph")
+        relation = next(item for item in response.json()["relations"] if item["id"] == relation_id)
+        assert relation["metadata"]["feedback_summary"]["incorrect"] == 1
 
 
 @pytest.mark.anyio

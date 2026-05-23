@@ -45,6 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show planned work without writing to DB.",
     )
+    parser.add_argument(
+        "--advanced-parser",
+        choices=["auto", "docling", "mineru"],
+        default=None,
+        help="Use an advanced parser adapter for PDF/DOCX/PPTX/XLSX with local fallback.",
+    )
     return parser
 
 
@@ -65,6 +71,7 @@ def main() -> int:
             "dry_run": True,
             "knowledge_base": args.knowledge_base,
             "root_path": str(root_path),
+            "advanced_parser": args.advanced_parser,
             "discovered": [str(item.path) for item in scan_result.discovered],
             "skipped": [
                 {"path": str(item.path), "reason": item.reason} for item in scan_result.skipped
@@ -83,6 +90,7 @@ def main() -> int:
             include_patterns=include_patterns,
             exclude_patterns=exclude_patterns,
             max_file_size_bytes=args.max_file_size_bytes,
+            advanced_parser=args.advanced_parser,
         )
 
     print(

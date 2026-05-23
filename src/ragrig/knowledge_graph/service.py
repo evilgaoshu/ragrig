@@ -42,6 +42,25 @@ from .schema import (
 DEFAULT_KG_EXTRACTOR_VERSION = "kg-lite-v1"
 _ENTITY_RE = re.compile(r"\b[A-Z][A-Za-z0-9_/-]{2,}(?:[ \t]+[A-Z][A-Za-z0-9_/-]{2,}){0,3}\b")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+_ENTITY_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "does",
+    "for",
+    "how",
+    "should",
+    "that",
+    "the",
+    "then",
+    "this",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+}
 
 
 @dataclass(frozen=True)
@@ -143,7 +162,7 @@ def _fallback_entities(text: str, *, limit: int = 12) -> list[_EntityCandidate]:
         canonical = _canonical_name(display)
         if not canonical or canonical in seen:
             continue
-        if canonical in {"the", "and", "this", "that"}:
+        if canonical in _ENTITY_STOPWORDS:
             continue
         seen.add(canonical)
         candidates.append(_EntityCandidate(display_name=display, confidence=0.55))
@@ -774,6 +793,18 @@ def build_graph_retrieval_context(
                     continue
             expanded_ids.add(relation.subject_entity_id)
             expanded_ids.add(relation.object_entity_id)
+            matched_endpoint_count = int(relation.subject_entity_id in matched_ids) + int(
+                relation.object_entity_id in matched_ids
+            )
+            path_score = max(
+                matched_score_by_id.get(relation.subject_entity_id, 0.0),
+                matched_score_by_id.get(relation.object_entity_id, 0.0),
+            )
+            evidence_score = _relation_evidence_score(
+                relation_confidence=relation.confidence,
+                path_score=path_score,
+                matched_endpoint_count=matched_endpoint_count,
+            )
             relation_paths.append(
                 {
                     "relation_id": str(relation.id),
@@ -783,18 +814,17 @@ def build_graph_retrieval_context(
                     "object_entity_id": str(relation.object_entity_id),
                     "object": relation.object_entity.display_name,
                     "confidence": relation.confidence,
+                    "matched_endpoint_count": matched_endpoint_count,
+                    "path_score": round(path_score, 6),
+                    "evidence_score": evidence_score,
                     "evidence_chunk_ids": [str(e.chunk_id) for e in evidence_rows],
                 }
             )
             for evidence in evidence_rows:
-                path_score = max(
-                    matched_score_by_id.get(relation.subject_entity_id, 0.0),
-                    matched_score_by_id.get(relation.object_entity_id, 0.0),
-                )
                 _boost_chunk_score(
                     chunk_scores,
                     evidence.chunk_id,
-                    (0.72 + (0.18 * path_score)) * relation.confidence,
+                    evidence_score,
                 )
 
     mention_rows = list(
@@ -846,3 +876,17 @@ def build_graph_retrieval_context(
 def _boost_chunk_score(scores: dict[str, float], chunk_id: uuid.UUID, score: float) -> None:
     key = str(chunk_id)
     scores[key] = round(max(scores.get(key, 0.0), min(score, 1.0)), 6)
+
+
+def _relation_evidence_score(
+    *,
+    relation_confidence: float,
+    path_score: float,
+    matched_endpoint_count: int,
+) -> float:
+    score = (0.72 + (0.18 * path_score)) * relation_confidence
+    if matched_endpoint_count >= 2:
+        score += 0.25
+    elif matched_endpoint_count == 1:
+        score += 0.08
+    return round(min(score, 1.0), 6)

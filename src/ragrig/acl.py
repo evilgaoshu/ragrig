@@ -24,6 +24,7 @@ AuditEventType = Literal[
     "retry_complete",
     "resume_start",
     "resume_complete",
+    "kg_relation_feedback",
 ]
 AclExplainReason = Literal[
     "public",

@@ -17,7 +17,9 @@ from ragrig.parsers.advanced.adapter import AdvancedParserAdapter
 from ragrig.parsers.advanced.docling import DoclingAdapter
 from ragrig.parsers.advanced.mineru import MinerUAdapter
 from ragrig.parsers.advanced.ocr import OcrFallbackHandler
+from ragrig.parsers.advanced.parser import AdvancedParserBridge
 from ragrig.parsers.advanced.unstructured import UnstructuredAdapter
+from ragrig.parsers.plaintext import PlainTextParser
 
 pytestmark = pytest.mark.unit
 
@@ -154,6 +156,67 @@ def test_mineru_adapter_parse_returns_skip_when_deps_missing(tmp_path) -> None:
     assert result.parser == "advanced.mineru"
     assert result.metadata["library"] == "magic_pdf"
     assert result.metadata["available"] is False
+
+
+def test_advanced_parser_bridge_returns_standard_parse_result(tmp_path: Path) -> None:
+    class HealthyAdapter(AdvancedParserAdapter):
+        parser_name = "advanced.fake"
+
+        def can_parse(self, path: Path) -> bool:
+            return path.suffix == ".pdf"
+
+        def check_dependencies(self) -> bool:
+            return True
+
+        def parse(self, path: Path) -> AdvancedParseResult:
+            return AdvancedParseResult(
+                format="pdf",
+                fixture_id=path.stem,
+                parser=self.parser_name,
+                status=ParserStatus.HEALTHY,
+                extracted_text="advanced parser text",
+                text_length=len("advanced parser text"),
+                table_count=1,
+                page_or_slide_count=2,
+            )
+
+    path = tmp_path / "doc.pdf"
+    path.write_bytes(b"%PDF-1.4 placeholder")
+
+    result = AdvancedParserBridge(adapters=[HealthyAdapter()]).parse(path)
+
+    assert result.parser_name == "advanced.fake"
+    assert result.mime_type == "application/pdf"
+    assert result.extracted_text == "advanced parser text"
+    assert result.metadata["parser_id"] == "parser.advanced.fake"
+    assert result.metadata["advanced_parser"]["fallback_used"] is False
+
+
+def test_advanced_parser_bridge_falls_back_when_adapter_skips(tmp_path: Path) -> None:
+    class MissingAdapter(AdvancedParserAdapter):
+        parser_name = "advanced.missing"
+
+        def can_parse(self, path: Path) -> bool:
+            return True
+
+        def check_dependencies(self) -> bool:
+            return False
+
+        def parse(self, path: Path) -> AdvancedParseResult:
+            raise AssertionError("parse should not run without dependencies")
+
+    path = tmp_path / "notes.txt"
+    path.write_text("fallback text", encoding="utf-8")
+
+    result = AdvancedParserBridge(
+        adapters=[MissingAdapter()],
+        fallback_parser=PlainTextParser(),
+    ).parse(path)
+
+    assert result.parser_name == "plaintext"
+    assert result.extracted_text == "fallback text"
+    assert result.metadata["advanced_parser"]["fallback_used"] is True
+    assert result.metadata["advanced_parser"]["attempts"][0]["parser"] == "advanced.missing"
 
 
 def test_mineru_adapter_parse_returns_failure_when_import_fails(tmp_path, monkeypatch) -> None:

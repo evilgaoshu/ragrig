@@ -357,6 +357,11 @@ def _build_quality_gate(
             "direction": "not_higher_than_baseline",
             "severity": "warn",
         },
+        {
+            "metric": "graph_focus_mrr_or_context_recall",
+            "direction": "positive_delta_on_any_graph_focus_tag",
+            "severity": "warn",
+        },
     ]
     mode_results = []
     for result in results:
@@ -371,6 +376,13 @@ def _build_quality_gate(
             failures.append("hit_at_5 below baseline")
         if isinstance(zero_delta, int | float) and zero_delta > 0:
             failures.append("zero_result_rate above baseline")
+        graph_focus_per_tag_delta = {
+            tag: (result.get("per_tag_delta_vs_baseline") or {}).get(tag)
+            for tag in GRAPH_FOCUS_TAGS
+            if tag in (result.get("per_tag_delta_vs_baseline") or {})
+        }
+        if graph_focus_per_tag_delta and not _has_graph_focus_uplift(graph_focus_per_tag_delta):
+            failures.append("no graph-focused MRR/context_recall uplift")
         mode_results.append(
             {
                 "mode": mode,
@@ -380,11 +392,7 @@ def _build_quality_gate(
                     "hit_at_5": hit_delta,
                     "zero_result_rate": zero_delta,
                 },
-                "graph_focus_per_tag_delta": {
-                    tag: (result.get("per_tag_delta_vs_baseline") or {}).get(tag)
-                    for tag in GRAPH_FOCUS_TAGS
-                    if tag in (result.get("per_tag_delta_vs_baseline") or {})
-                },
+                "graph_focus_per_tag_delta": graph_focus_per_tag_delta,
             }
         )
     return {
@@ -392,6 +400,17 @@ def _build_quality_gate(
         "rules": rules,
         "mode_results": mode_results,
     }
+
+
+def _has_graph_focus_uplift(per_tag_delta: dict[str, Any]) -> bool:
+    for values in per_tag_delta.values():
+        if not isinstance(values, dict):
+            continue
+        for metric in ("mrr", "context_recall_mean"):
+            delta = values.get(metric)
+            if isinstance(delta, int | float) and delta > 0:
+                return True
+    return False
 
 
 def _focused_tag_rows(results: list[dict[str, Any]]) -> list[dict[str, Any]]:

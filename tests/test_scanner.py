@@ -79,6 +79,19 @@ def test_scan_paths_skips_binary_content_even_with_supported_extension(tmp_path)
     ]
 
 
+def test_scan_paths_allows_binary_document_formats_when_included(tmp_path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+
+    docx = docs / "report.docx"
+    docx.write_bytes(b"PK\x03\x04\x00docx bytes")
+
+    result = scan_paths(root_path=docs, include_patterns=["*.docx"])
+
+    assert [item.path.name for item in result.discovered] == ["report.docx"]
+    assert result.skipped == []
+
+
 def test_scan_paths_rejects_missing_root_path(tmp_path) -> None:
     missing = tmp_path / "missing"
 

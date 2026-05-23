@@ -168,6 +168,28 @@ def test_aggregate_usage_totals_and_grouping(tmp_path: Path) -> None:
             keys = {g["key"] for g in grouped["groups"]}
             assert keys == {"embedding", "answer_generation"}
 
+            record_usage_events(
+                session,
+                workspace_id=ws_id,
+                user_id=None,
+                operations=[
+                    {
+                        "operation": "answer_generation",
+                        "provider": "openai",
+                        "model": "m3",
+                        "input_tokens_estimated": 30,
+                        "output_tokens_estimated": 10,
+                        "total_cost_usd_estimated": 0.20,
+                        "latency_ms": 200,
+                    },
+                ],
+                request_metadata={"role": "admin_reviewer"},
+            )
+            by_role = aggregate_usage(session, workspace_id=ws_id, group_by="role")
+            role_group = next(g for g in by_role["groups"] if g["key"] == "admin_reviewer")
+            assert role_group["cost_usd"] == 0.2
+            assert role_group["avg_latency_ms"] == 200.0
+
 
 @pytest.mark.unit
 def test_daily_timeseries_returns_buckets(tmp_path: Path) -> None:
@@ -416,15 +438,29 @@ def test_answer_request_records_usage_events(tmp_path: Path) -> None:
         client = TestClient(app)
         resp = client.post(
             "/retrieval/answer",
-            json={"knowledge_base": "kb1", "query": "What is tracked?"},
+            json={
+                "knowledge_base": "kb1",
+                "query": "What is tracked?",
+                "role": "admin_reviewer",
+                "role_model_config": {
+                    "admin_reviewer": {
+                        "answer_provider": "deterministic-local",
+                        "answer_model": "precise-answer-model",
+                    }
+                },
+            },
         )
         assert resp.status_code == 200, resp.text
+        assert resp.json()["model"] == "precise-answer-model"
+        assert resp.json()["role_model_selection"]["answer_model"] == "precise-answer-model"
 
         with sf() as session:
             rows = session.scalars(select(UsageEvent)).all()
             assert len(rows) >= 1
             usage = client.get("/usage").json()
             assert usage["event_count"] >= 1
+            by_role = client.get("/usage?group_by=role").json()
+            assert any(group["key"] == "admin_reviewer" for group in by_role["groups"])
 
 
 @pytest.mark.integration

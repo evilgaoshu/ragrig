@@ -209,13 +209,22 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "retrieval-mode" in response.text
     assert "dense (vector-only)" in response.text
     assert "hybrid (vector + lexical)" in response.text
+    assert "graph (KG-lite expansion)" in response.text
+    assert "hybrid_graph (hybrid + KG-lite)" in response.text
     assert "rerank (dense → reranker)" in response.text
     assert "hybrid_rerank (hybrid → reranker)" in response.text
+    assert "graph_rerank (graph → reranker)" in response.text
+    assert "hybrid_graph_rerank (hybrid graph → reranker)" in response.text
     assert "retrieval-lexical-weight" in response.text
     assert "retrieval-vector-weight" in response.text
+    assert "retrieval-graph-weight" in response.text
+    assert "retrieval-graph-depth" in response.text
     assert "retrieval-candidate-k" in response.text
     assert "retrieval-reranker-provider" in response.text
     assert "retrieval-reranker-model" in response.text
+    assert "compareRetrievalModes" in response.text
+    assert "Graph Context" in response.text
+    assert "Mark Incorrect" in response.text
     assert "permission-preview-panel" in response.text
     assert "Permission Preview" in response.text
     assert "runPermissionPreview" in response.text

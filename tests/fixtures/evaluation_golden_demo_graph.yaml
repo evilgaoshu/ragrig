@@ -62,3 +62,76 @@ golden_question_set:
         - demo
         - conflict-sensitive
         - credentials
+
+    - query: "How does EvidenceBridge connect CompanyHandbook and SupportFAQ for grounded citations?"
+      expected_doc_uri: "graph-playbook.md"
+      expected_citation: "handbook workflow steps and FAQ evidence chunks must be read together"
+      expected_answer_keywords:
+        - "handbook"
+        - "FAQ"
+        - "evidence chunks"
+      tags:
+        - demo
+        - graph
+        - multi-hop
+        - cross-doc
+
+    - query: "What links PipelineRun and CitationPanel for reviewers?"
+      expected_doc_uri: "graph-playbook.md"
+      expected_citation: "AtlasRunbook links PipelineRun and CitationPanel"
+      expected_answer_keywords:
+        - "AtlasRunbook"
+        - "PipelineRun"
+        - "CitationPanel"
+      tags:
+        - demo
+        - graph
+        - traceability
+
+    - query: "Which query mode should show relation paths, matched entities, and boosted chunks?"
+      expected_doc_uri: "graph-playbook.md"
+      expected_citation: "HybridGraphMode should surface relation paths, matched entities, and boosted chunks"
+      expected_answer_keywords:
+        - "HybridGraphMode"
+        - "relation paths"
+        - "boosted chunks"
+      tags:
+        - demo
+        - graph
+        - console
+
+    - query: "How should reviewers handle a wrong graph edge?"
+      expected_doc_uri: "graph-playbook.md"
+      expected_citation: "RelationFeedback lets reviewers mark a wrong edge as incorrect"
+      expected_answer_keywords:
+        - "RelationFeedback"
+        - "wrong edge"
+        - "source chunks"
+      tags:
+        - demo
+        - graph
+        - feedback
+
+    - query: "Which router separates AdminReviewer and ViewerAnalyst model choices?"
+      expected_doc_uri: "graph-playbook.md"
+      expected_citation: "RoleModelRouter assigns AdminReviewer to precise-answer models and ViewerAnalyst to economical local models"
+      expected_answer_keywords:
+        - "RoleModelRouter"
+        - "AdminReviewer"
+        - "ViewerAnalyst"
+      tags:
+        - demo
+        - role-models
+        - cost-latency
+
+    - query: "Which parser bridge uses DoclingAdapter or MinerUAdapter for OCR evidence?"
+      expected_doc_uri: "graph-playbook.md"
+      expected_citation: "ParserBridge routes scanned PDFs through DoclingAdapter or MinerUAdapter"
+      expected_answer_keywords:
+        - "ParserBridge"
+        - "DoclingAdapter"
+        - "MinerUAdapter"
+      tags:
+        - demo
+        - multimodal
+        - parser-adapter

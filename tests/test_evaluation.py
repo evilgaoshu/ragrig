@@ -941,6 +941,52 @@ def test_run_evaluation_passes_retrieval_mode_options(tmp_path, monkeypatch) -> 
     assert run.config_snapshot["mode"] == "hybrid_graph"
 
 
+def test_run_evaluation_matches_expected_citations_in_full_text(tmp_path, monkeypatch) -> None:
+    golden_path = tmp_path / "golden.yaml"
+    long_prefix = "x" * 200
+    _make_golden_yaml(
+        golden_path,
+        {
+            "golden_question_set": {
+                "name": "full-text-match",
+                "questions": [
+                    {
+                        "query": "graph evidence query",
+                        "expected_relevant_citations": ["target citation beyond preview"],
+                    }
+                ],
+            }
+        },
+    )
+
+    def _fake_search(**_kwargs):
+        return SimpleNamespace(
+            total_results=1,
+            results=[
+                SimpleNamespace(
+                    document_uri="guide.md",
+                    text_preview=long_prefix[:160],
+                    text=f"{long_prefix} target citation beyond preview",
+                    distance=0.1,
+                    score=0.9,
+                )
+            ],
+        )
+
+    monkeypatch.setattr("ragrig.evaluation.engine.search_knowledge_base", _fake_search)
+    with _create_session() as session:
+        run = run_evaluation(
+            session=session,
+            golden_path=golden_path,
+            knowledge_base="fixture-local",
+            top_k=1,
+        )
+
+    assert run.items[0].hit is True
+    assert run.items[0].rank_of_expected == 1
+    assert run.metrics.context_recall_mean == 1.0
+
+
 # ── Web Console Evaluation Panel Tests ────────────────────────────────────────
 
 
