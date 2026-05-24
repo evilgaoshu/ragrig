@@ -1,8 +1,4 @@
-"""Prometheus metrics setup.
-
-Instruments the FastAPI app with prometheus-fastapi-instrumentator.
-Call `setup_metrics(app)` during app creation when metrics are enabled.
-"""
+"""Prometheus metrics setup."""
 
 from __future__ import annotations
 
@@ -14,12 +10,9 @@ if TYPE_CHECKING:
 
 def setup_metrics(app: "FastAPI") -> None:
     """Attach Prometheus instrumentation and expose /metrics."""
-    from prometheus_fastapi_instrumentator import Instrumentator
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+    from starlette.responses import Response
 
-    Instrumentator(
-        should_group_status_codes=True,
-        should_ignore_untemplated=True,
-        should_respect_env_var=False,
-        excluded_handlers=["/metrics", "/health"],
-        body_handlers=[],
-    ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+    @app.get("/metrics", include_in_schema=False)
+    def metrics() -> Response:
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
