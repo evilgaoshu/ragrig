@@ -4576,7 +4576,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "qdrant-client", marker = "extra == 'vectorstores'", specifier = ">=1.9.0,<2.0.0" },
     { name = "qrcode", extras = ["pil"], specifier = ">=7.4.0,<9.0.0" },
-    { name = "redis", marker = "extra == 'task-queue'", specifier = ">=5.0.0,<6.0.0" },
+    { name = "redis", marker = "extra == 'task-queue'", specifier = ">=5.0.0,<8.0.0" },
     { name = "sentence-transformers", marker = "extra == 'local-ml'", specifier = ">=3.4.1,<6.0.0" },
     { name = "smbprotocol", marker = "extra == 'fileshare'", specifier = ">=1.13.0,<2.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.0,<3.0.0" },
