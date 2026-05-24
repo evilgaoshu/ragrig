@@ -1,7 +1,7 @@
 golden_question_set:
   name: "demo-graph"
-  description: "External-demo gate covering single-hop facts, multi-document relationships, global synthesis, and conflict-sensitive queries."
-  version: "1.0.0"
+  description: "External-demo gate covering single-hop facts, multi-document relationships, global synthesis, graph feedback, parser readiness, and role-model operations."
+  version: "1.1.0"
   questions:
     - query: "What makes a Local Pilot answer trustworthy?"
       expected_doc_uri: "support-faq.md"
@@ -54,9 +54,9 @@ golden_question_set:
 
     - query: "Should missing OpenRouter keys block the local pilot demo?"
       expected_doc_uri: "support-faq.md"
-      expected_citation: "missing keys should be non-blocking for the local pilot"
+      expected_citation: "missing keys should be reported as optional readiness, not a startup failure"
       expected_answer_keywords:
-        - "non-blocking"
+        - "optional"
         - "local pilot"
       tags:
         - demo
@@ -131,6 +131,68 @@ golden_question_set:
         - "ParserBridge"
         - "DoclingAdapter"
         - "MinerUAdapter"
+      tags:
+        - demo
+        - multimodal
+        - parser-adapter
+
+    - query: "What should happen to an incorrect graph relation after RelationFeedback?"
+      expected_doc_uri: "demo-architecture.md"
+      expected_citation: "A relation marked incorrect should be suppressed from graph boosting"
+      expected_answer_keywords:
+        - "suppressed"
+        - "graph boosting"
+        - "source chunks"
+      tags:
+        - demo
+        - graph
+        - feedback
+        - eval
+
+    - query: "Which board compares DenseMode, GraphMode, and HybridGraphMode?"
+      expected_doc_uri: "demo-architecture.md"
+      expected_citation: "StrategyCompareBoard runs DenseMode, GraphMode, and HybridGraphMode"
+      expected_answer_keywords:
+        - "StrategyCompareBoard"
+        - "DenseMode"
+        - "HybridGraphMode"
+      tags:
+        - demo
+        - console
+        - strategy-compare
+
+    - query: "Why did IncidentA12 need graph retrieval?"
+      expected_doc_uri: "demo-incident.md"
+      expected_citation: "HybridGraphMode linked SupportFAQ, CompanyHandbook, and EvidenceBridge"
+      expected_answer_keywords:
+        - "IncidentA12"
+        - "HybridGraphMode"
+        - "EvidenceBridge"
+      tags:
+        - demo
+        - graph
+        - multi-hop
+        - cross-doc
+
+    - query: "Where is role-specific model configuration persisted?"
+      expected_doc_uri: "role-parser-ops.md"
+      expected_citation: "RoleModelRouter persists role-specific model configuration at the knowledge-base level"
+      expected_answer_keywords:
+        - "RoleModelRouter"
+        - "knowledge-base"
+        - "role"
+      tags:
+        - demo
+        - role-models
+        - cost-latency
+
+    - query: "What does ParserCorpusGate report for advanced parser coverage?"
+      expected_doc_uri: "role-parser-ops.md"
+      expected_citation: "ParserCorpusGate reports healthy, degraded, skipped, and failed fixture counts"
+      expected_answer_keywords:
+        - "ParserCorpusGate"
+        - "healthy"
+        - "skipped"
       tags:
         - demo
         - multimodal

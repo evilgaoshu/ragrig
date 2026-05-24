@@ -112,7 +112,7 @@ def compare_graph_retrieval_modes(
             run_id=f"{run_prefix}-{mode}",
             store_dir=store_dir,
         )
-        report = build_evaluation_run_report(run, include_items=False)
+        report = build_evaluation_run_report(run, include_items=True)
         results.append(
             {
                 "name": mode,
@@ -121,6 +121,7 @@ def compare_graph_retrieval_modes(
                 "status": report["status"],
                 "item_error_count": sum(1 for item in run.items if item.error is not None),
                 "metrics": run.metrics.model_dump(mode="json"),
+                "items": _compact_items(report.get("items", [])),
                 "config_snapshot": run.config_snapshot,
             }
         )
@@ -219,6 +220,8 @@ def build_graph_eval_comparison_report(
         "workflow": workflow,
         "baseline_mode": baseline_mode,
         "winner": _pick_winner(results),
+        "graph_value_summary": _graph_value_summary(results, baseline_mode=baseline_mode),
+        "question_diffs": _question_diffs(results, baseline_mode=baseline_mode),
         "quality_gate": _build_quality_gate(results, baseline_mode=baseline_mode),
         "results": results,
     }
@@ -257,6 +260,24 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
             cells.append(f"**{formatted}**" if idx == best_idx else formatted)
         lines.append("| " + metric + " | " + " | ".join(cells) + " |")
 
+    graph_value = (report.get("graph_value_summary") or {}).get("modes") or []
+    if graph_value:
+        lines += [
+            "",
+            "## Graph Value Summary",
+            "",
+            "| Mode | Improved | Regressed | New hits | Lost hits | Graph-focus improvements |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+        for item in graph_value:
+            lines.append(
+                "| "
+                + f"{item.get('mode')} | {item.get('improved_questions', 0)} | "
+                + f"{item.get('regressed_questions', 0)} | "
+                + f"{item.get('new_hits', 0)} | {item.get('lost_hits', 0)} | "
+                + f"{item.get('graph_focus_improvements', 0)} |"
+            )
+
     quality_gate = report.get("quality_gate") or {}
     mode_results = quality_gate.get("mode_results") or []
     if mode_results:
@@ -293,6 +314,25 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
                 + f"{_format_delta(row.get('mrr'))} | "
                 + f"{_format_delta(row.get('context_recall_mean'))} |"
             )
+
+    question_diffs = report.get("question_diffs") or []
+    if question_diffs:
+        lines += [
+            "",
+            "## Question-Level Movement",
+            "",
+            "| Mode | Question | Tags | Dense rank | Mode rank | Rank Δ | Recall Δ |",
+            "|---|---|---|---:|---:|---:|---:|",
+        ]
+        for row in question_diffs[:12]:
+            lines.append(
+                "| "
+                + f"{row.get('mode')} | {str(row.get('query') or '')[:80]} | "
+                + f"{', '.join(row.get('tags') or [])} | "
+                + f"{row.get('baseline_rank') or ''} | {row.get('mode_rank') or ''} | "
+                + f"{_format_delta(row.get('rank_delta'))} | "
+                + f"{_format_delta(row.get('context_recall_delta'))} |"
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -315,6 +355,135 @@ def _metric_deltas(current: dict[str, Any], baseline: dict[str, Any]) -> dict[st
         else:
             deltas[metric] = None
     return deltas
+
+
+def _compact_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        compact.append(
+            {
+                "question_index": item.get("question_index"),
+                "query": item.get("query"),
+                "tags": item.get("tags") or [],
+                "hit": item.get("hit"),
+                "rank_of_expected": item.get("rank_of_expected"),
+                "mrr": item.get("mrr"),
+                "context_recall": item.get("context_recall"),
+                "citation_coverage": item.get("citation_coverage"),
+                "total_results": item.get("total_results"),
+                "top_doc_uri": (item.get("top_doc_uris") or [None])[0],
+                "top_score": (item.get("top_scores") or [None])[0],
+                "error": item.get("error"),
+            }
+        )
+    return compact
+
+
+def _question_diffs(
+    results: list[dict[str, Any]],
+    *,
+    baseline_mode: str,
+) -> list[dict[str, Any]]:
+    baseline = next((result for result in results if result.get("mode") == baseline_mode), None)
+    if baseline is None:
+        return []
+    baseline_by_index = {
+        item.get("question_index"): item
+        for item in baseline.get("items", [])
+        if isinstance(item, dict)
+    }
+    rows: list[dict[str, Any]] = []
+    for result in results:
+        mode = str(result.get("mode") or "")
+        if mode == baseline_mode or "graph" not in mode:
+            continue
+        for item in result.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            baseline_item = baseline_by_index.get(item.get("question_index"))
+            if not isinstance(baseline_item, dict):
+                continue
+            baseline_rank = baseline_item.get("rank_of_expected")
+            current_rank = item.get("rank_of_expected")
+            rank_delta: int | None = None
+            if isinstance(baseline_rank, int) and isinstance(current_rank, int):
+                rank_delta = baseline_rank - current_rank
+            elif baseline_rank is None and isinstance(current_rank, int):
+                rank_delta = 99
+            elif isinstance(baseline_rank, int) and current_rank is None:
+                rank_delta = -99
+            rows.append(
+                {
+                    "mode": mode,
+                    "question_index": item.get("question_index"),
+                    "query": item.get("query"),
+                    "tags": item.get("tags") or [],
+                    "baseline_hit": baseline_item.get("hit"),
+                    "mode_hit": item.get("hit"),
+                    "baseline_rank": baseline_rank,
+                    "mode_rank": current_rank,
+                    "rank_delta": rank_delta,
+                    "baseline_top_doc_uri": baseline_item.get("top_doc_uri"),
+                    "mode_top_doc_uri": item.get("top_doc_uri"),
+                    "context_recall_delta": _numeric_delta(
+                        item.get("context_recall"),
+                        baseline_item.get("context_recall"),
+                    ),
+                }
+            )
+    rows.sort(
+        key=lambda row: (
+            -int(row.get("rank_delta") or 0),
+            str(row.get("mode") or ""),
+            int(row.get("question_index") or 0),
+        )
+    )
+    return rows
+
+
+def _numeric_delta(current: Any, baseline: Any) -> float | None:
+    if isinstance(current, int | float) and isinstance(baseline, int | float):
+        return round(float(current) - float(baseline), 4)
+    return None
+
+
+def _graph_value_summary(
+    results: list[dict[str, Any]],
+    *,
+    baseline_mode: str,
+) -> dict[str, Any]:
+    diffs = _question_diffs(results, baseline_mode=baseline_mode)
+    by_mode: dict[str, dict[str, Any]] = {}
+    for row in diffs:
+        mode = str(row.get("mode") or "")
+        summary = by_mode.setdefault(
+            mode,
+            {
+                "mode": mode,
+                "improved_questions": 0,
+                "regressed_questions": 0,
+                "new_hits": 0,
+                "lost_hits": 0,
+                "graph_focus_improvements": 0,
+            },
+        )
+        rank_delta = row.get("rank_delta")
+        if isinstance(rank_delta, int | float) and rank_delta > 0:
+            summary["improved_questions"] += 1
+            if set(row.get("tags") or []) & set(GRAPH_FOCUS_TAGS):
+                summary["graph_focus_improvements"] += 1
+        elif isinstance(rank_delta, int | float) and rank_delta < 0:
+            summary["regressed_questions"] += 1
+        if not row.get("baseline_hit") and row.get("mode_hit"):
+            summary["new_hits"] += 1
+        if row.get("baseline_hit") and not row.get("mode_hit"):
+            summary["lost_hits"] += 1
+    return {
+        "baseline_mode": baseline_mode,
+        "modes": sorted(by_mode.values(), key=lambda item: item["mode"]),
+    }
 
 
 def _per_tag_metric_deltas(

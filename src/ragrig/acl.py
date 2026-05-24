@@ -25,6 +25,7 @@ AuditEventType = Literal[
     "resume_start",
     "resume_complete",
     "kg_relation_feedback",
+    "role_model_config_update",
 ]
 AclExplainReason = Literal[
     "public",

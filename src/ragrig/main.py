@@ -1,3 +1,4 @@
+import re
 import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -252,6 +253,10 @@ class KnowledgeBaseCreateRequest(BaseModel):
 class KnowledgeGraphRelationFeedbackRequest(BaseModel):
     verdict: str = Field(pattern=r"^(incorrect|correct|needs_review)$")
     note: str | None = Field(default=None, max_length=500)
+
+
+class RoleModelConfigRequest(BaseModel):
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class KbPermissionRequest(BaseModel):
@@ -579,6 +584,63 @@ def _role_model_selection(
             if value is not None:
                 selection[field] = value
     return selection, None
+
+
+def _validate_role_model_config(config: dict[str, Any]) -> str | None:
+    allowed_fields = {
+        "provider",
+        "model",
+        "config",
+        "answer_provider",
+        "answer_model",
+        "answer_config",
+    }
+    role_pattern = re.compile(r"^[A-Za-z0-9_.:-]+$")
+    for role, entry in config.items():
+        if not isinstance(role, str) or not role_pattern.fullmatch(role):
+            return f"role_model_config role {role!r} must match {role_pattern.pattern}"
+        if not isinstance(entry, dict):
+            return f"role_model_config entry for {role!r} must be an object"
+        unknown = sorted(set(entry) - allowed_fields)
+        if unknown:
+            return f"role_model_config.{role} has unsupported field(s): {', '.join(unknown)}"
+        for field in ("provider", "model", "answer_provider", "answer_model"):
+            value = entry.get(field)
+            if value is not None and not isinstance(value, str):
+                return f"role_model_config.{role}.{field} must be a string"
+        for field in ("config", "answer_config"):
+            value = entry.get(field)
+            if value is not None and not isinstance(value, dict):
+                return f"role_model_config.{role}.{field} must be an object"
+    return None
+
+
+def _kb_role_model_config(knowledge_base: KnowledgeBase | None) -> dict[str, Any] | None:
+    if knowledge_base is None:
+        return None
+    metadata = (
+        knowledge_base.metadata_json if isinstance(knowledge_base.metadata_json, dict) else {}
+    )
+    config = metadata.get("role_model_config")
+    return config if isinstance(config, dict) else None
+
+
+def _public_role_model_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    public: dict[str, Any] = {}
+    for role, entry in (config or {}).items():
+        if not isinstance(role, str) or not isinstance(entry, dict):
+            continue
+        safe = {
+            field: entry[field]
+            for field in ("provider", "model", "answer_provider", "answer_model")
+            if isinstance(entry.get(field), str)
+        }
+        if isinstance(entry.get("config"), dict):
+            safe["has_config"] = True
+        if isinstance(entry.get("answer_config"), dict):
+            safe["has_answer_config"] = True
+        public[role] = safe
+    return public
 
 
 def _public_role_model_selection(selection: dict[str, Any]) -> dict[str, Any]:
@@ -1585,6 +1647,93 @@ def create_app(
             "feedback_summary": metadata["feedback_summary"],
         }
 
+    @app.get("/knowledge-bases/{kb_id}/role-model-config", response_model=None)
+    def get_role_model_config(
+        kb_id: str,
+        session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        auth: Annotated[AuthContext, Depends(get_auth_context)],
+    ) -> dict[str, Any] | JSONResponse:
+        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
+            session=session,
+            kb_id=kb_id,
+            workspace_id=workspace_id,
+        )
+        if kb_error is not None:
+            return kb_error
+        assert knowledge_base is not None
+        access_error = _knowledge_base_access_error(
+            session=session,
+            auth=auth,
+            knowledge_base_id=knowledge_base.id,
+            minimum="viewer",
+        )
+        if access_error is not None:
+            return access_error
+        config = _kb_role_model_config(knowledge_base) or {}
+        return {
+            "knowledge_base_id": str(knowledge_base.id),
+            "knowledge_base": knowledge_base.name,
+            "config": _public_role_model_config(config),
+            "roles": sorted(str(role) for role in config),
+        }
+
+    @app.put("/knowledge-bases/{kb_id}/role-model-config", response_model=None)
+    def put_role_model_config(
+        kb_id: str,
+        request: RoleModelConfigRequest,
+        session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        auth: Annotated[AuthContext, Depends(require_write_auth)],
+    ) -> dict[str, Any] | JSONResponse:
+        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
+            session=session,
+            kb_id=kb_id,
+            workspace_id=workspace_id,
+        )
+        if kb_error is not None:
+            return kb_error
+        assert knowledge_base is not None
+        access_error = _knowledge_base_access_error(
+            session=session,
+            auth=auth,
+            knowledge_base_id=knowledge_base.id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
+        validation_error = _validate_role_model_config(request.config)
+        if validation_error is not None:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": {
+                        "code": "invalid_role_model_config",
+                        "message": validation_error,
+                    }
+                },
+            )
+        metadata = dict(knowledge_base.metadata_json or {})
+        metadata["role_model_config"] = request.config
+        knowledge_base.metadata_json = metadata
+        actor = str(auth.user_id) if auth.user_id is not None else "anonymous"
+        create_audit_event(
+            session,
+            event_type="role_model_config_update",
+            actor=actor,
+            workspace_id=workspace_id,
+            knowledge_base_id=knowledge_base.id,
+            payload_json={"roles": sorted(str(role) for role in request.config)},
+        )
+        session.commit()
+        return {
+            "status": "saved",
+            "knowledge_base_id": str(knowledge_base.id),
+            "knowledge_base": knowledge_base.name,
+            "config": _public_role_model_config(request.config),
+            "roles": sorted(str(role) for role in request.config),
+        }
+
     @app.get("/knowledge-bases/{kb_id}/understanding-runs", response_model=None)
     def understanding_runs(
         kb_id: str,
@@ -2271,6 +2420,7 @@ def create_app(
         auth: Annotated[AuthContext, Depends(get_auth_context)],
     ) -> dict[str, Any] | JSONResponse:
         rate_limiter.check_search(str(workspace_id))
+        answer_kb: KnowledgeBase | None = None
         if active_settings.ragrig_auth_enabled:
             if not request.query.strip():
                 return JSONResponse(
@@ -2303,12 +2453,25 @@ def create_app(
             )
             if access_error is not None:
                 return access_error
+            answer_kb = kb
         principal_ids, enforce_acl = _resolve_acl_context(
             auth=auth,
             requested_principal_ids=request.principal_ids,
             requested_enforce_acl=request.enforce_acl,
         )
-        role_selection, role_error = _role_model_selection(request.role, request.role_model_config)
+        if answer_kb is None:
+            answer_kb = get_knowledge_base_by_name(
+                session,
+                request.knowledge_base,
+                workspace_id=workspace_id,
+            )
+        persisted_role_config = _kb_role_model_config(answer_kb)
+        effective_role_config = (
+            request.role_model_config
+            if request.role_model_config is not None
+            else persisted_role_config
+        )
+        role_selection, role_error = _role_model_selection(request.role, effective_role_config)
         if role_error is not None:
             return JSONResponse(
                 status_code=400,
@@ -2319,6 +2482,10 @@ def create_app(
                         "details": {"role": request.role},
                     }
                 },
+            )
+        if role_selection and "source" not in role_selection:
+            role_selection["source"] = (
+                "request" if request.role_model_config is not None else "knowledge_base"
             )
         selected_provider = role_selection.get("provider", request.provider)
         selected_model = role_selection.get("model", request.model)

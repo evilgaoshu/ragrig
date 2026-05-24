@@ -29,7 +29,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
 from ragrig.config import Settings
-from ragrig.db.models import Base, Budget, UsageEvent, Workspace
+from ragrig.db.models import Base, Budget, KnowledgeBase, UsageEvent, Workspace
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
@@ -461,6 +461,54 @@ def test_answer_request_records_usage_events(tmp_path: Path) -> None:
             assert usage["event_count"] >= 1
             by_role = client.get("/usage?group_by=role").json()
             assert any(group["key"] == "admin_reviewer" for group in by_role["groups"])
+
+
+@pytest.mark.integration
+def test_role_model_config_persists_on_knowledge_base(tmp_path: Path) -> None:
+    with _engine(tmp_path) as eng:
+        _seed_kb(eng)
+
+        def sf() -> Session:
+            return Session(eng, expire_on_commit=False)
+
+        with sf() as session:
+            kb = session.scalars(select(KnowledgeBase).where(KnowledgeBase.name == "kb1")).one()
+            kb_id = str(kb.id)
+
+        settings = Settings(ragrig_auth_enabled=False)
+        app = create_app(check_database=lambda: None, session_factory=sf, settings=settings)
+        client = TestClient(app)
+        config = {
+            "admin_reviewer": {
+                "answer_provider": "deterministic-local",
+                "answer_model": "persisted-answer-model",
+            },
+            "viewer_analyst": {
+                "answer_provider": "deterministic-local",
+                "answer_model": "economy-answer-model",
+            },
+        }
+
+        saved = client.put(f"/knowledge-bases/{kb_id}/role-model-config", json={"config": config})
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["roles"] == ["admin_reviewer", "viewer_analyst"]
+        assert saved.json()["config"]["admin_reviewer"]["answer_model"] == "persisted-answer-model"
+
+        loaded = client.get(f"/knowledge-bases/{kb_id}/role-model-config")
+        assert loaded.status_code == 200
+        assert loaded.json()["config"]["viewer_analyst"]["answer_model"] == "economy-answer-model"
+
+        resp = client.post(
+            "/retrieval/answer",
+            json={
+                "knowledge_base": "kb1",
+                "query": "What is tracked?",
+                "role": "admin_reviewer",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["model"] == "persisted-answer-model"
+        assert resp.json()["role_model_selection"]["source"] == "knowledge_base"
 
 
 @pytest.mark.integration

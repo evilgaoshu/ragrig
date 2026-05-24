@@ -33,6 +33,15 @@ def _make_markdown(summary: CorpusSummary) -> str:
         f"- **Degraded**: {summary.degraded}\n"
         f"- **Skipped**: {summary.skipped}\n"
         f"- **Failed**: {summary.failed}\n\n"
+        "## Adapter Availability\n\n"
+        "| Parser | Available | Extensions |\n"
+        "|--------|-----------|------------|\n"
+        + "\n".join(
+            f"| {a.get('parser')} | {a.get('available')} "
+            f"| {', '.join(a.get('supported_extensions') or [])} |"
+            for a in summary.adapter_statuses
+        )
+        + "\n\n"
         "## Results\n\n"
         "| Fmt | Fixture ID | Parser | Status | TxtLen | Tbl | Pg | Degraded Reason |\n"
         "|-----|-----------|--------|--------|--------|-----|----|-----------------|\n"
@@ -66,6 +75,7 @@ def _make_json(summary: CorpusSummary) -> str:
             "skipped": summary.skipped,
             "failed": summary.failed,
             "status": status,
+            "adapter_statuses": summary.adapter_statuses,
             "results": [
                 {
                     "format": r.format,
@@ -106,6 +116,12 @@ def main() -> int:
     print(f"  Skipped:        {summary.skipped}")
     print(f"  Failed:         {summary.failed}")
     print(f"{'=' * 40}")
+    for adapter in summary.adapter_statuses:
+        print(
+            f"  [ADAPTER] {adapter.get('parser'):25} "
+            f"available={adapter.get('available')} "
+            f"extensions={','.join(adapter.get('supported_extensions') or [])}"
+        )
     for r in summary.results:
         print(
             f"  [{r.status.value.upper():>8}] {r.format:>4} {r.fixture_id:20} "

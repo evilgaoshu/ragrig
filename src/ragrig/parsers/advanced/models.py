@@ -62,4 +62,5 @@ class CorpusSummary:
     skipped: int
     failed: int
     results: list[AdvancedParseResult] = field(default_factory=list)
+    adapter_statuses: list[dict[str, Any]] = field(default_factory=list)
     report_path: str | None = None
