@@ -36,6 +36,15 @@ not graph rows alone.
 - `POST /knowledge-bases/{kb_id}/knowledge-graph/rebuild`
   rebuilds KG-lite rows from latest indexed chunks and fresh understanding output when available.
 
+- `POST /knowledge-bases/{kb_id}/knowledge-graph/relations/{relation_id}/feedback`
+  records correct, incorrect, or needs-review feedback on a relation edge.
+
+- `GET /knowledge-bases/{kb_id}/retrieval-preferences`
+  returns the KB-level Console retrieval mode preference.
+
+- `PUT /knowledge-bases/{kb_id}/retrieval-preferences`
+  stores the KB-level Console retrieval mode preference without changing API defaults.
+
 - `POST /retrieval/search`
   accepts these additional modes:
   - `graph`
@@ -67,6 +76,11 @@ feedback weight, feedback summary, evidence score, and diagnostics describing
 suppressed relations. This keeps graph boosts explainable during console
 strategy comparison and eval review.
 
+The Web Console exposes a Graph Explorer for entities, relations, claims, source
+evidence, and relation feedback. Retrieval Lab can load/save KB-level mode
+preferences so an external demo can keep `hybrid_graph` selected without
+changing default API behavior for other callers.
+
 ## Demo Gate
 
 The fixture `tests/fixtures/evaluation_golden_demo_graph.yaml` covers:
@@ -89,4 +103,6 @@ Required checks for this feature:
 - Knowledge map regression: `tests/test_knowledge_map.py`
 - Alembic SQL rendering: `tests/test_alembic_sql.py`
 - Local pilot/demo stability: local pilot and nightly evidence smoke tests
+- External demo runbook: `make demo-graph-console-runbook` for evidence and
+  `make demo-graph-console` to prepare the demo DB and start `/console`
 - Frontend build and lint

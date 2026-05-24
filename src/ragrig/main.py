@@ -255,6 +255,23 @@ class KnowledgeGraphRelationFeedbackRequest(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
+class RetrievalPreferenceRequest(BaseModel):
+    mode: str = Field(
+        default="dense",
+        pattern=(
+            r"^(dense|hybrid|rerank|hybrid_rerank|graph|hybrid_graph|"
+            r"graph_rerank|hybrid_graph_rerank)$"
+        ),
+    )
+    lexical_weight: float = Field(default=0.3, ge=0.0, le=1.0)
+    vector_weight: float = Field(default=0.7, ge=0.0, le=1.0)
+    candidate_k: int = Field(default=20, ge=1, le=200)
+    reranker_provider: str | None = Field(default=None, max_length=128)
+    reranker_model: str | None = Field(default=None, max_length=256)
+    graph_weight: float = Field(default=0.35, ge=0.0, le=1.0)
+    graph_depth: int = Field(default=1, ge=0, le=2)
+
+
 class RoleModelConfigRequest(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
@@ -647,6 +664,22 @@ def _public_role_model_selection(selection: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value for key, value in selection.items() if key not in {"config", "answer_config"}
     }
+
+
+def _kb_retrieval_preferences(knowledge_base: KnowledgeBase | None) -> dict[str, Any]:
+    defaults = RetrievalPreferenceRequest().model_dump(mode="json")
+    if knowledge_base is None:
+        return defaults
+    metadata = (
+        knowledge_base.metadata_json if isinstance(knowledge_base.metadata_json, dict) else {}
+    )
+    raw = metadata.get("retrieval_preferences")
+    if not isinstance(raw, dict):
+        return defaults
+    try:
+        return RetrievalPreferenceRequest(**raw).model_dump(mode="json")
+    except ValueError:
+        return defaults
 
 
 def _plugin_validation_error_response(*, code: str, message: str) -> JSONResponse:
@@ -1645,6 +1678,84 @@ def create_app(
             "relation_id": str(relation.id),
             "feedback": entry,
             "feedback_summary": metadata["feedback_summary"],
+        }
+
+    @app.get("/knowledge-bases/{kb_id}/retrieval-preferences", response_model=None)
+    def get_retrieval_preferences(
+        kb_id: str,
+        session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        auth: Annotated[AuthContext, Depends(get_auth_context)],
+    ) -> dict[str, Any] | JSONResponse:
+        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
+            session=session,
+            kb_id=kb_id,
+            workspace_id=workspace_id,
+        )
+        if kb_error is not None:
+            return kb_error
+        assert knowledge_base is not None
+        access_error = _knowledge_base_access_error(
+            session=session,
+            auth=auth,
+            knowledge_base_id=knowledge_base.id,
+            minimum="viewer",
+        )
+        if access_error is not None:
+            return access_error
+        return {
+            "knowledge_base_id": str(knowledge_base.id),
+            "knowledge_base": knowledge_base.name,
+            "preferences": _kb_retrieval_preferences(knowledge_base),
+        }
+
+    @app.put("/knowledge-bases/{kb_id}/retrieval-preferences", response_model=None)
+    def put_retrieval_preferences(
+        kb_id: str,
+        request: RetrievalPreferenceRequest,
+        session: Annotated[Session, Depends(get_session)],
+        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+        auth: Annotated[AuthContext, Depends(require_write_auth)],
+    ) -> dict[str, Any] | JSONResponse:
+        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
+            session=session,
+            kb_id=kb_id,
+            workspace_id=workspace_id,
+        )
+        if kb_error is not None:
+            return kb_error
+        assert knowledge_base is not None
+        access_error = _knowledge_base_access_error(
+            session=session,
+            auth=auth,
+            knowledge_base_id=knowledge_base.id,
+            minimum="editor",
+        )
+        if access_error is not None:
+            return access_error
+        preferences = request.model_dump(mode="json")
+        metadata = dict(knowledge_base.metadata_json or {})
+        metadata["retrieval_preferences"] = preferences
+        knowledge_base.metadata_json = metadata
+        actor = str(auth.user_id) if auth.user_id is not None else "anonymous"
+        create_audit_event(
+            session,
+            event_type="retrieval_preference_update",
+            actor=actor,
+            workspace_id=workspace_id,
+            knowledge_base_id=knowledge_base.id,
+            payload_json={
+                "mode": preferences["mode"],
+                "graph_weight": preferences["graph_weight"],
+                "graph_depth": preferences["graph_depth"],
+            },
+        )
+        session.commit()
+        return {
+            "status": "saved",
+            "knowledge_base_id": str(knowledge_base.id),
+            "knowledge_base": knowledge_base.name,
+            "preferences": preferences,
         }
 
     @app.get("/knowledge-bases/{kb_id}/role-model-config", response_model=None)

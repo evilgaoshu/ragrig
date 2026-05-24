@@ -307,6 +307,44 @@ async def test_knowledge_graph_relation_feedback_records_summary(tmp_path: Path)
 
 
 @pytest.mark.anyio
+async def test_retrieval_preferences_persist_on_knowledge_base(tmp_path: Path) -> None:
+    session_factory = _create_file_session_factory(tmp_path / "kg-api-retrieval-prefs.db")
+    with session_factory() as session:
+        kb_id = _index_fixture_kb(session, tmp_path, kb_name="kg-api-retrieval-prefs")
+
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+    payload = {
+        "mode": "hybrid_graph",
+        "lexical_weight": 0.25,
+        "vector_weight": 0.75,
+        "candidate_k": 24,
+        "graph_weight": 0.45,
+        "graph_depth": 2,
+    }
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        saved = await client.put(
+            f"/knowledge-bases/{kb_id}/retrieval-preferences",
+            json=payload,
+        )
+        assert saved.status_code == 200
+        assert saved.json()["preferences"]["mode"] == "hybrid_graph"
+
+        loaded = await client.get(f"/knowledge-bases/{kb_id}/retrieval-preferences")
+        assert loaded.status_code == 200
+        preferences = loaded.json()["preferences"]
+        assert preferences["mode"] == "hybrid_graph"
+        assert preferences["graph_weight"] == 0.45
+        assert preferences["graph_depth"] == 2
+
+    with session_factory() as session:
+        kb = get_knowledge_base_by_name(session, "kg-api-retrieval-prefs")
+        assert kb is not None
+        assert kb.metadata_json["retrieval_preferences"]["mode"] == "hybrid_graph"
+
+
+@pytest.mark.anyio
 async def test_knowledge_graph_api_enforces_kb_rbac_and_workspace(tmp_path: Path) -> None:
     session_factory = _create_file_session_factory(tmp_path / "kg-api-auth.db")
     with session_factory() as session:

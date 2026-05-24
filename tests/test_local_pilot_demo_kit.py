@@ -41,3 +41,17 @@ def test_local_pilot_demo_questions_reference_uploaded_sources() -> None:
             "support-faq.md",
         }
         assert question["expected_terms"]
+
+
+def test_graph_console_demo_runbook_is_one_command() -> None:
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+    runbook = Path("docs/operations/demo-graph-console-runbook.md").read_text(encoding="utf-8")
+    script = Path("scripts/demo_graph_console_runbook.py")
+
+    assert script.exists()
+    assert "demo-graph-console-runbook:" in makefile
+    assert "demo-graph-console:" in makefile
+    assert "scripts.demo_graph_console_runbook" in makefile
+    assert "make demo-graph-console" in runbook
+    assert "Graph Explorer" in runbook
+    assert "hybrid_graph" in runbook

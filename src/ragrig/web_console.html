@@ -949,11 +949,32 @@
         white-space: nowrap;
       }
 
+      .graph-explorer-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+        gap: 12px;
+        align-items: start;
+      }
+
+      .graph-list {
+        display: grid;
+        gap: 8px;
+        max-height: 520px;
+        overflow: auto;
+        padding-right: 2px;
+      }
+
+      .graph-evidence {
+        border-left: 3px solid var(--border);
+        padding-left: 8px;
+        margin-top: 6px;
+      }
+
       @media (max-width: 1100px) {
         .shell { grid-template-columns: 1fr; }
         .rail { display: none; }
         .status-strip, .grid { grid-template-columns: 1fr; }
-        .vector-layout, .wizard-layout, .fact-grid { grid-template-columns: 1fr; }
+        .vector-layout, .wizard-layout, .fact-grid, .graph-explorer-grid { grid-template-columns: 1fr; }
       }
 
       /* Sanitizer coverage table overflow prevention */
@@ -999,6 +1020,7 @@
         <div class="nav-item">Documents</div>
         <div class="nav-label">Inspect</div>
         <div class="nav-item">Retrieval Lab</div>
+        <div class="nav-item">Graph Explorer</div>
         <div class="nav-item">Answer Gen</div>
         <div class="nav-item">Models</div>
         <div class="nav-item">Profile Matrix</div>
@@ -1443,9 +1465,31 @@
                 <div class="actions">
                   <button class="button primary" id="run-retrieval" type="button">Run Retrieval</button>
                   <button class="button" id="compare-retrieval" type="button">Compare Modes</button>
+                  <button class="button" id="load-retrieval-preference" type="button">Load Mode Preference</button>
+                  <button class="button" id="save-retrieval-preference" type="button">Save Mode Preference</button>
                 </div>
+                <div id="retrieval-preference-status" class="sub"></div>
                 <div id="retrieval-compare-results"></div>
                 <div id="retrieval-results"></div>
+              </div>
+            </section>
+
+            <section class="panel" id="graph-explorer-panel">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">Graph Explorer</div>
+                  <div class="panel-meta">KG-lite entities · relations · evidence · feedback</div>
+                </div>
+                <div id="graph-explorer-status" class="pill neutral">Loading</div>
+              </div>
+              <div class="panel-body stack">
+                <div class="actions">
+                  <label class="sub" for="graph-kb">Knowledge base</label>
+                  <select id="graph-kb"></select>
+                  <button class="button" id="refresh-graph-explorer" type="button">Refresh Graph</button>
+                  <button class="button primary" id="rebuild-graph-explorer" type="button">Rebuild Graph</button>
+                </div>
+                <div id="graph-explorer-body"></div>
               </div>
             </section>
 
@@ -1783,6 +1827,8 @@
         answerLiveSmoke: null,
         opsDiagnostics: null,
         permissionPreview: null,
+        graphExplorer: null,
+        retrievalPreferences: {},
         localPilot: null,
         pilotFiles: [],
       };
@@ -3026,7 +3072,7 @@
                   <div class="result">
                     <div class="name">${escapeHtml(relation.subject)} → ${escapeHtml(relation.predicate)} → ${escapeHtml(relation.object)}</div>
                     <div class="sub">confidence ${escapeHtml(relation.confidence)} · evidence ${(relation.evidence || []).length} ${feedback}</div>
-                    <div class="actions">${relationFeedbackButton(relation.id, kbItem.id)}</div>
+                    <div class="actions">${relationFeedbackButtons(relation.id, kbItem.id)}</div>
                   </div>
                 `;
               })
@@ -5127,6 +5173,13 @@
         return state.knowledgeBases.find((item) => item.name === selectedName) || null;
       }
 
+      function selectedGraphKnowledgeBase() {
+        const select = document.getElementById('graph-kb');
+        if (!select) return null;
+        const selectedId = select.value;
+        return state.knowledgeBases.find((item) => item.id === selectedId) || null;
+      }
+
       function buildRetrievalRequest() {
         const mode = document.getElementById('retrieval-mode').value;
         const req = {
@@ -5156,6 +5209,71 @@
         return req;
       }
 
+      function buildRetrievalPreferencePayload() {
+        const request = buildRetrievalRequest();
+        return {
+          mode: request.mode,
+          lexical_weight: Number(document.getElementById('retrieval-lexical-weight').value || 0.3),
+          vector_weight: Number(document.getElementById('retrieval-vector-weight').value || 0.7),
+          candidate_k: Number(document.getElementById('retrieval-candidate-k').value || 20),
+          reranker_provider: document.getElementById('retrieval-reranker-provider').value.trim() || null,
+          reranker_model: document.getElementById('retrieval-reranker-model').value.trim() || null,
+          graph_weight: Number(document.getElementById('retrieval-graph-weight').value || 0.35),
+          graph_depth: Number(document.getElementById('retrieval-graph-depth').value || 1),
+        };
+      }
+
+      function applyRetrievalPreference(preferences) {
+        if (!preferences) return;
+        document.getElementById('retrieval-mode').value = preferences.mode || 'dense';
+        document.getElementById('retrieval-lexical-weight').value = preferences.lexical_weight ?? 0.3;
+        document.getElementById('retrieval-vector-weight').value = preferences.vector_weight ?? 0.7;
+        document.getElementById('retrieval-candidate-k').value = preferences.candidate_k ?? 20;
+        document.getElementById('retrieval-reranker-provider').value = preferences.reranker_provider || '';
+        document.getElementById('retrieval-reranker-model').value = preferences.reranker_model || '';
+        document.getElementById('retrieval-graph-weight').value = preferences.graph_weight ?? 0.35;
+        document.getElementById('retrieval-graph-depth').value = preferences.graph_depth ?? 1;
+        document.getElementById('retrieval-mode').dispatchEvent(new Event('change'));
+      }
+
+      async function loadRetrievalPreference() {
+        const kbItem = selectedRetrievalKnowledgeBase();
+        const status = document.getElementById('retrieval-preference-status');
+        if (!kbItem) {
+          if (status) status.textContent = 'No knowledge base selected.';
+          return;
+        }
+        try {
+          const result = await getJson(`/knowledge-bases/${encodeURIComponent(kbItem.id)}/retrieval-preferences`);
+          state.retrievalPreferences[kbItem.id] = result.preferences || {};
+          applyRetrievalPreference(result.preferences || {});
+          if (status) status.innerHTML = `Loaded mode preference for ${escapeHtml(result.knowledge_base)} · ${escapeHtml((result.preferences || {}).mode || 'dense')}`;
+        } catch (error) {
+          if (status) status.innerHTML = `<span class="pill error">load failed</span> ${escapeHtml(error.message)}`;
+        }
+      }
+
+      async function saveRetrievalPreference() {
+        const kbItem = selectedRetrievalKnowledgeBase();
+        const status = document.getElementById('retrieval-preference-status');
+        if (!kbItem) {
+          if (status) status.textContent = 'No knowledge base selected.';
+          return;
+        }
+        const preferences = buildRetrievalPreferencePayload();
+        try {
+          const result = await getJson(`/knowledge-bases/${encodeURIComponent(kbItem.id)}/retrieval-preferences`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(preferences),
+          });
+          state.retrievalPreferences[kbItem.id] = result.preferences || preferences;
+          if (status) status.innerHTML = `Saved mode preference for ${escapeHtml(result.knowledge_base)} · ${escapeHtml((result.preferences || preferences).mode)}`;
+        } catch (error) {
+          if (status) status.innerHTML = `<span class="pill error">save failed</span> ${escapeHtml(error.message)}`;
+        }
+      }
+
       function renderRetrievalControls() {
         const select = document.getElementById('retrieval-kb');
         const backendMeta = document.getElementById('retrieval-backend-meta');
@@ -5172,6 +5290,27 @@
         select.disabled = false;
         document.getElementById('run-retrieval').disabled = false;
         document.getElementById('compare-retrieval').disabled = false;
+      }
+
+      function renderGraphExplorerControls() {
+        const select = document.getElementById('graph-kb');
+        const status = document.getElementById('graph-explorer-status');
+        const body = document.getElementById('graph-explorer-body');
+        if (!select || !status || !body) return;
+        if (!state.knowledgeBases.length) {
+          select.innerHTML = '<option value="">No knowledge bases</option>';
+          select.disabled = true;
+          document.getElementById('refresh-graph-explorer').disabled = true;
+          document.getElementById('rebuild-graph-explorer').disabled = true;
+          status.className = 'pill warn';
+          status.textContent = 'No KB';
+          body.innerHTML = empty('Graph Explorer needs an indexed knowledge base.');
+          return;
+        }
+        select.innerHTML = state.knowledgeBases.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+        select.disabled = false;
+        document.getElementById('refresh-graph-explorer').disabled = false;
+        document.getElementById('rebuild-graph-explorer').disabled = false;
       }
 
       function _renderRankStageTrace(trace) {
@@ -5208,9 +5347,29 @@
         return `<div class="sub" style="margin:8px 0"><span class="${cls}">ACL ${escapeHtml(explain.principal_context)}</span> candidates ${escapeHtml(explain.candidate_count)} · visible ${escapeHtml(explain.visible_count)} · filtered ${escapeHtml(explain.filtered_count)}</div>`;
       }
 
-      function relationFeedbackButton(relationId, kbId) {
+      function relationFeedbackButton(relationId, kbId, verdict, label) {
         if (!relationId || !kbId) return '';
-        return `<button class="button" type="button" data-kg-relation-feedback="${escapeHtml(relationId)}" data-kb-id="${escapeHtml(kbId)}">Mark Incorrect</button>`;
+        const safeVerdict = verdict || 'incorrect';
+        const safeLabel = label || 'Mark Incorrect';
+        return `<button class="button" type="button" data-kg-relation-feedback="${escapeHtml(relationId)}" data-kb-id="${escapeHtml(kbId)}" data-feedback-verdict="${escapeHtml(safeVerdict)}">${escapeHtml(safeLabel)}</button>`;
+      }
+
+      function relationFeedbackButtons(relationId, kbId) {
+        if (!relationId || !kbId) return '';
+        return [
+          relationFeedbackButton(relationId, kbId, 'correct', 'Mark Correct'),
+          relationFeedbackButton(relationId, kbId, 'needs_review', 'Needs Review'),
+          relationFeedbackButton(relationId, kbId, 'incorrect', 'Mark Incorrect'),
+        ].join('');
+      }
+
+      function feedbackSummaryPills(summary) {
+        const data = summary || {};
+        return [
+          '<span class="pill neutral">correct: ' + escapeHtml(data.correct || 0) + '</span>',
+          '<span class="pill neutral">review: ' + escapeHtml(data.needs_review || 0) + '</span>',
+          '<span class="' + ((data.incorrect || 0) > 0 ? 'pill warn' : 'pill neutral') + '">incorrect: ' + escapeHtml(data.incorrect || 0) + '</span>',
+        ].join(' ');
       }
 
       function renderGraphContext(graphContext, kbId) {
@@ -5234,8 +5393,9 @@
         const pathRows = paths.slice(0, 6).map((path) => `
           <div class="result">
             <div class="name">${escapeHtml(path.subject)} → ${escapeHtml(path.predicate)} → ${escapeHtml(path.object)}</div>
-            <div class="sub">evidence ${escapeHtml(path.evidence_score ?? path.confidence)} · matched endpoints ${escapeHtml(path.matched_endpoint_count ?? 0)} · chunks ${(path.evidence_chunk_ids || []).length}</div>
-            <div class="actions">${relationFeedbackButton(path.relation_id, kbId)}</div>
+            <div class="sub">evidence ${escapeHtml(path.evidence_score ?? path.confidence)} · matched endpoints ${escapeHtml(path.matched_endpoint_count ?? 0)} · chunks ${(path.evidence_chunk_ids || []).length} · ${escapeHtml(path.feedback_reason || 'no feedback')}</div>
+            <div class="sub">${feedbackSummaryPills(path.feedback_summary)}</div>
+            <div class="actions">${relationFeedbackButtons(path.relation_id, kbId)}</div>
           </div>
         `).join('');
         const chunkRows = Object.entries(chunks).slice(0, 6).map(([chunkId, score]) =>
@@ -5261,6 +5421,136 @@
             ${chunkRows || '<div class="sub">No graph chunk scores.</div>'}
           </div>
         `;
+      }
+
+      function renderGraphExplorer() {
+        const status = document.getElementById('graph-explorer-status');
+        const root = document.getElementById('graph-explorer-body');
+        const graph = state.graphExplorer && state.graphExplorer.graph;
+        const kbItem = selectedGraphKnowledgeBase();
+        if (!root || !status) return;
+        if (!graph) {
+          status.className = 'pill neutral';
+          status.textContent = 'Not loaded';
+          root.innerHTML = empty('No graph loaded.');
+          return;
+        }
+        const stats = graph.stats || {};
+        status.className = graph.status === 'ready' ? 'pill' : graph.status === 'no_graph' ? 'pill warn' : 'pill neutral';
+        status.textContent = graph.status || 'unknown';
+        const entityRows = (graph.entities || []).slice(0, 24).map((entity) => {
+          const aliases = ((entity.metadata || {}).aliases || []).slice(0, 4).map((alias) => '<span class="pill neutral">' + escapeHtml(alias) + '</span>').join(' ');
+          const evidence = (entity.evidence_chunks || []).slice(0, 2).map((item) =>
+            '<div class="graph-evidence sub">' + escapeHtml(item.document_uri) + ' · ' + escapeHtml(item.text_preview || item.mention_text || '') + '</div>'
+          ).join('');
+          return `
+            <div class="result">
+              <div class="name">${escapeHtml(entity.display_name)} <span class="pill neutral">${escapeHtml(entity.entity_type)}</span></div>
+              <div class="sub">mentions ${escapeHtml(entity.mention_count || 0)} · confidence ${escapeHtml(entity.confidence)}</div>
+              <div class="sub">${aliases}</div>
+              ${evidence}
+            </div>
+          `;
+        }).join('');
+        const relationRows = (graph.relations || []).slice(0, 30).map((relation) => {
+          const summary = relation.metadata && relation.metadata.feedback_summary ? relation.metadata.feedback_summary : {};
+          const evidence = (relation.evidence || []).slice(0, 2).map((item) =>
+            '<div class="graph-evidence sub">' + escapeHtml(item.document_uri) + ' · ' + escapeHtml(item.text_preview || item.evidence_text || '') + '</div>'
+          ).join('');
+          return `
+            <div class="result">
+              <div class="name">${escapeHtml(relation.subject)} → ${escapeHtml(relation.predicate)} → ${escapeHtml(relation.object)}</div>
+              <div class="sub">confidence ${escapeHtml(relation.confidence)} · evidence ${(relation.evidence || []).length}</div>
+              <div class="sub">${feedbackSummaryPills(summary)}</div>
+              ${evidence}
+              <div class="actions">${relationFeedbackButtons(relation.id, kbItem ? kbItem.id : null)}</div>
+            </div>
+          `;
+        }).join('');
+        const claimRows = (graph.claims || []).slice(0, 8).map((claim) =>
+          '<div class="result"><div class="name">' + escapeHtml(claim.claim_text) + '</div><div class="sub">' + escapeHtml(claim.document_uri) + ' · confidence ' + escapeHtml(claim.confidence) + '</div></div>'
+        ).join('');
+        const limits = (graph.limitations || []).slice(0, 4).map((lim) =>
+          '<div class="sub"><span class="pill warn">limit</span> ' + escapeHtml(lim) + '</div>'
+        ).join('');
+        root.innerHTML = `
+          <div class="facts">
+            <div class="card"><div class="fact-label">Entities</div><div class="fact-value">${escapeHtml(stats.entity_count || 0)}</div></div>
+            <div class="card"><div class="fact-label">Relations</div><div class="fact-value">${escapeHtml(stats.relation_count || 0)}</div></div>
+            <div class="card"><div class="fact-label">Claims</div><div class="fact-value">${escapeHtml(stats.claim_count || 0)}</div></div>
+            <div class="card"><div class="fact-label">Evidence Chunks</div><div class="fact-value">${escapeHtml(stats.graph_evidence_chunk_count || 0)}</div></div>
+          </div>
+          ${limits}
+          <div class="graph-explorer-grid">
+            <div class="card">
+              <div class="name">Entities</div>
+              <div class="graph-list">${entityRows || '<div class="sub">No KG-lite entities yet.</div>'}</div>
+            </div>
+            <div class="card">
+              <div class="name">Relations</div>
+              <div class="graph-list">${relationRows || '<div class="sub">No KG-lite relations yet.</div>'}</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="name">Claims</div>
+            <div class="graph-list">${claimRows || '<div class="sub">No KG-lite claims yet.</div>'}</div>
+          </div>
+        `;
+      }
+
+      async function loadGraphExplorer() {
+        const kbItem = selectedGraphKnowledgeBase();
+        const status = document.getElementById('graph-explorer-status');
+        const root = document.getElementById('graph-explorer-body');
+        if (!kbItem) {
+          if (root) root.innerHTML = empty('Select a knowledge base first.');
+          return;
+        }
+        if (status) {
+          status.className = 'pill neutral';
+          status.textContent = 'Loading';
+        }
+        try {
+          const graph = await getJson(`/knowledge-bases/${encodeURIComponent(kbItem.id)}/knowledge-graph`);
+          state.graphExplorer = { knowledge_base_id: kbItem.id, graph };
+          renderGraphExplorer();
+        } catch (error) {
+          if (status) {
+            status.className = 'pill error';
+            status.textContent = 'Error';
+          }
+          if (root) root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
+      }
+
+      async function rebuildGraphExplorer() {
+        const kbItem = selectedGraphKnowledgeBase();
+        const status = document.getElementById('graph-explorer-status');
+        const root = document.getElementById('graph-explorer-body');
+        if (!kbItem) {
+          if (root) root.innerHTML = empty('Select a knowledge base first.');
+          return;
+        }
+        if (status) {
+          status.className = 'pill neutral';
+          status.textContent = 'Rebuilding';
+        }
+        try {
+          const graph = await getJson(`/knowledge-bases/${encodeURIComponent(kbItem.id)}/knowledge-graph/rebuild`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reset: true }),
+          });
+          state.graphExplorer = { knowledge_base_id: kbItem.id, graph };
+          renderGraphExplorer();
+          await renderKnowledgeMap();
+        } catch (error) {
+          if (status) {
+            status.className = 'pill error';
+            status.textContent = 'Error';
+          }
+          if (root) root.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+        }
       }
 
       async function compareRetrievalModes() {
@@ -5323,6 +5613,7 @@
                 <div class="name">${escapeHtml(item.mode)} <span class="pill neutral">${escapeHtml(result.total_results || 0)} results</span></div>
                 <div class="sub">matched entities ${escapeHtml(matchedEntities)} · relation paths ${escapeHtml(graphPaths)} · suppressed ${escapeHtml(suppressedRelations)} · backend ${escapeHtml(result.backend || 'n/a')}</div>
                 ${pathLine}
+                <div class="actions"><button class="button" type="button" data-apply-retrieval-mode="${escapeHtml(item.mode)}">Apply Mode</button></div>
                 <div class="sub" style="margin-top:8px;">Top Hits</div>
                 ${hitRows || '<div class="sub">No hits returned.</div>'}
               </div>
@@ -5331,22 +5622,32 @@
         `;
       }
 
-      async function submitRelationFeedback(kbId, relationId, button) {
+      async function submitRelationFeedback(kbId, relationId, button, verdict) {
         if (!kbId || !relationId) return;
         const originalText = button ? button.textContent : '';
+        const selectedVerdict = verdict || 'incorrect';
         if (button) {
           button.disabled = true;
-          button.textContent = 'Marking...';
+          button.textContent = 'Recording...';
         }
         try {
           const result = await getJson(`/knowledge-bases/${encodeURIComponent(kbId)}/knowledge-graph/relations/${encodeURIComponent(relationId)}/feedback`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ verdict: 'incorrect' }),
+            body: JSON.stringify({ verdict: selectedVerdict }),
           });
-          if (button) button.textContent = 'Marked';
-          showToast('Relation feedback recorded: ' + (result.feedback_summary ? result.feedback_summary.incorrect : 1) + ' incorrect');
+          if (button) button.textContent = 'Recorded';
+          showToast('Relation feedback recorded: ' + selectedVerdict);
           await renderKnowledgeMap();
+          await loadGraphExplorer();
+          const retrievalRoot = document.getElementById('retrieval-results');
+          if (retrievalRoot && retrievalRoot.innerHTML.trim()) {
+            await runRetrieval();
+          }
+          const compareRoot = document.getElementById('retrieval-compare-results');
+          if (compareRoot && compareRoot.innerHTML.trim()) {
+            await compareRetrievalModes();
+          }
         } catch (error) {
           if (button) {
             button.disabled = false;
@@ -6037,6 +6338,9 @@
           renderHealthPanel();
           renderVectorPanel();
           renderRetrievalControls();
+          renderGraphExplorerControls();
+          await loadRetrievalPreference();
+          await loadGraphExplorer();
           await loadEvaluation();
           renderEvaluation();
           renderAnswerControls();
@@ -6069,6 +6373,12 @@
         document.getElementById('pilot-run-answer').addEventListener('click', runPilotPlaygroundAnswer);
         document.getElementById('run-retrieval').addEventListener('click', runRetrieval);
         document.getElementById('compare-retrieval').addEventListener('click', compareRetrievalModes);
+        document.getElementById('load-retrieval-preference').addEventListener('click', loadRetrievalPreference);
+        document.getElementById('save-retrieval-preference').addEventListener('click', saveRetrievalPreference);
+        document.getElementById('retrieval-kb').addEventListener('change', loadRetrievalPreference);
+        document.getElementById('refresh-graph-explorer').addEventListener('click', loadGraphExplorer);
+        document.getElementById('rebuild-graph-explorer').addEventListener('click', rebuildGraphExplorer);
+        document.getElementById('graph-kb').addEventListener('change', loadGraphExplorer);
         document.getElementById('run-permission-preview').addEventListener('click', runPermissionPreview);
         document.getElementById('retrieval-mode').addEventListener('change', function() {
           const mode = this.value;
@@ -6081,8 +6391,15 @@
         });
         document.body.addEventListener('click', (event) => {
           const button = event.target.closest('[data-kg-relation-feedback]');
-          if (!button) return;
-          submitRelationFeedback(button.dataset.kbId, button.dataset.kgRelationFeedback, button);
+          if (button) {
+            submitRelationFeedback(button.dataset.kbId, button.dataset.kgRelationFeedback, button, button.dataset.feedbackVerdict);
+            return;
+          }
+          const modeButton = event.target.closest('[data-apply-retrieval-mode]');
+          if (modeButton) {
+            document.getElementById('retrieval-mode').value = modeButton.dataset.applyRetrievalMode;
+            document.getElementById('retrieval-mode').dispatchEvent(new Event('change'));
+          }
         });
         document.getElementById('run-answer').addEventListener('click', runAnswer);
         document.getElementById('load-role-config').addEventListener('click', loadRoleModelConfig);
