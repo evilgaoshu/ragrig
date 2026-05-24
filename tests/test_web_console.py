@@ -224,6 +224,18 @@ async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
     assert "retrieval-reranker-model" in response.text
     assert "compareRetrievalModes" in response.text
     assert "Graph Context" in response.text
+    assert "Graph Explorer" in response.text
+    assert "graph-explorer-panel" in response.text
+    assert "refresh-graph-explorer" in response.text
+    assert "rebuild-graph-explorer" in response.text
+    assert "Load Mode Preference" in response.text
+    assert "Save Mode Preference" in response.text
+    assert "retrieval-preference-status" in response.text
+    assert "loadRetrievalPreference" in response.text
+    assert "saveRetrievalPreference" in response.text
+    assert "retrieval-preferences" in response.text
+    assert "Mark Correct" in response.text
+    assert "Needs Review" in response.text
     assert "Mark Incorrect" in response.text
     assert "permission-preview-panel" in response.text
     assert "Permission Preview" in response.text
