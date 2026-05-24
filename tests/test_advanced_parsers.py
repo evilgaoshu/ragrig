@@ -889,6 +889,8 @@ def test_corpus_check_script_output_matches_runner(tmp_path) -> None:
     assert data["degraded"] == summary.degraded
     assert data["skipped"] == summary.skipped
     assert data["failed"] == summary.failed
+    assert "adapter_statuses" in data
+    assert "Adapter Availability" in md_str
     assert "| pdf" in md_str
 
 

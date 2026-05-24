@@ -42,6 +42,7 @@ from .schema import (
 DEFAULT_KG_EXTRACTOR_VERSION = "kg-lite-v1"
 _ENTITY_RE = re.compile(r"\b[A-Z][A-Za-z0-9_/-]{2,}(?:[ \t]+[A-Z][A-Za-z0-9_/-]{2,}){0,3}\b")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _ENTITY_STOPWORDS = {
     "a",
     "an",
@@ -60,6 +61,13 @@ _ENTITY_STOPWORDS = {
     "which",
     "who",
     "why",
+}
+_RELATION_PREDICATE_WEIGHTS = {
+    "co_mentions": 1.0,
+    "depends_on": 1.0,
+    "references": 0.96,
+    "routes_to": 0.95,
+    "assigns": 0.9,
 }
 
 
@@ -84,7 +92,36 @@ class KnowledgeGraphNotFoundError(ValueError):
 
 
 def _canonical_name(value: str) -> str:
-    return " ".join(value.strip().casefold().split())
+    spaced = _CAMEL_RE.sub(" ", value.strip())
+    normalized = re.sub(r"[_/-]+", " ", spaced.casefold())
+    normalized = re.sub(r"[^a-z0-9 ]+", " ", normalized)
+    return " ".join(normalized.split())
+
+
+def _compact_alias(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def _entity_aliases(display_name: str) -> list[str]:
+    canonical = _canonical_name(display_name)
+    aliases = {
+        canonical,
+        " ".join(display_name.strip().casefold().split()),
+        _compact_alias(display_name),
+    }
+    parts = [part for part in canonical.split() if part]
+    if len(parts) >= 2:
+        acronym = "".join(part[0] for part in parts)
+        if len(acronym) >= 3:
+            aliases.add(acronym)
+        aliases.add("".join(parts))
+    return sorted(alias for alias in aliases if alias)
+
+
+def _merge_aliases(existing: list[str] | None, new_aliases: list[str]) -> list[str]:
+    merged = {alias for alias in (existing or []) if isinstance(alias, str) and alias}
+    merged.update(new_aliases)
+    return sorted(merged)
 
 
 def _preview(text: str, limit: int = 220) -> str:
@@ -271,7 +308,10 @@ def rebuild_knowledge_graph(
             canonical = _canonical_name(candidate.display_name)
             if not canonical:
                 continue
-            entity = entity_by_key.get(canonical)
+            aliases = _entity_aliases(candidate.display_name)
+            entity = next(
+                (entity_by_key[alias] for alias in aliases if alias in entity_by_key), None
+            )
             if entity is None:
                 entity = KnowledgeGraphEntity(
                     knowledge_base_id=kb.id,
@@ -282,16 +322,26 @@ def rebuild_knowledge_graph(
                     description=candidate.description,
                     confidence=candidate.confidence,
                     extractor_version=extractor_version,
-                    metadata_json={"sources": [candidate.source], "profile_id": profile_id},
+                    metadata_json={
+                        "sources": [candidate.source],
+                        "profile_id": profile_id,
+                        "aliases": aliases,
+                    },
                 )
                 session.add(entity)
                 session.flush()
-                entity_by_key[canonical] = entity
             else:
                 entity.confidence = max(entity.confidence, candidate.confidence)
-                sources = set(entity.metadata_json.get("sources", []))
+                metadata = dict(entity.metadata_json or {})
+                sources = set(metadata.get("sources", []))
                 sources.add(candidate.source)
-                entity.metadata_json = {**entity.metadata_json, "sources": sorted(sources)}
+                entity.metadata_json = {
+                    **metadata,
+                    "sources": sorted(sources),
+                    "aliases": _merge_aliases(metadata.get("aliases"), aliases),
+                }
+            for alias in aliases:
+                entity_by_key[alias] = entity
 
             for row in version_rows:
                 for start, end, mention_text in _find_mentions(
@@ -734,21 +784,33 @@ def build_graph_retrieval_context(
 
     query_lc = query.casefold()
     query_terms = set(re.findall(r"[a-z0-9_/-]{3,}", query_lc))
+    query_compact = _compact_alias(query)
     matched: list[tuple[KnowledgeGraphEntity, float]] = []
-    corpus = [entity.canonical_name for entity in entities]
+    corpus = [
+        alias
+        for entity in entities
+        for alias in _merge_aliases(
+            (entity.metadata_json or {}).get("aliases"),
+            _entity_aliases(entity.display_name),
+        )
+    ]
     for entity in entities:
         if visible_entity_ids is not None and entity.id not in visible_entity_ids:
             continue
         canonical = entity.canonical_name
+        aliases = _merge_aliases(
+            (entity.metadata_json or {}).get("aliases"),
+            _entity_aliases(entity.display_name),
+        )
         entity_terms = set(re.findall(r"[a-z0-9_/-]{3,}", canonical))
-        if canonical and canonical in query_lc:
+        if any(alias and (alias in query_lc or alias in query_compact) for alias in aliases):
             matched.append((entity, 1.0))
             continue
         overlap = len(query_terms & entity_terms)
         if overlap:
             matched.append((entity, min(0.95, 0.55 + overlap * 0.15)))
             continue
-        lexical = token_overlap_score(canonical, query, corpus)
+        lexical = max((token_overlap_score(alias, query, corpus) for alias in aliases), default=0.0)
         if lexical >= 0.45:
             matched.append((entity, min(0.8, lexical)))
 
@@ -762,6 +824,7 @@ def build_graph_retrieval_context(
     expanded_ids: set[uuid.UUID] = set(matched_ids)
     relation_paths: list[dict[str, Any]] = []
     chunk_scores: dict[str, float] = {}
+    suppressed_relations: list[dict[str, Any]] = []
 
     relation_rows = list(
         session.scalars(
@@ -800,11 +863,30 @@ def build_graph_retrieval_context(
                 matched_score_by_id.get(relation.subject_entity_id, 0.0),
                 matched_score_by_id.get(relation.object_entity_id, 0.0),
             )
+            predicate_weight = _relation_predicate_weight(relation.predicate)
+            feedback_summary = _relation_feedback_summary(relation.metadata_json)
+            feedback_weight, feedback_reason = _relation_feedback_weight(feedback_summary)
+            if feedback_weight <= 0.0:
+                suppressed_relations.append(
+                    {
+                        "relation_id": str(relation.id),
+                        "subject": relation.subject_entity.display_name,
+                        "predicate": relation.predicate,
+                        "object": relation.object_entity.display_name,
+                        "reason": feedback_reason,
+                        "feedback_summary": feedback_summary,
+                    }
+                )
+                continue
             evidence_score = _relation_evidence_score(
                 relation_confidence=relation.confidence,
                 path_score=path_score,
                 matched_endpoint_count=matched_endpoint_count,
+                predicate_weight=predicate_weight,
+                feedback_weight=feedback_weight,
             )
+            if evidence_score <= 0.0:
+                continue
             relation_paths.append(
                 {
                     "relation_id": str(relation.id),
@@ -817,6 +899,10 @@ def build_graph_retrieval_context(
                     "matched_endpoint_count": matched_endpoint_count,
                     "path_score": round(path_score, 6),
                     "evidence_score": evidence_score,
+                    "predicate_weight": round(predicate_weight, 6),
+                    "feedback_weight": round(feedback_weight, 6),
+                    "feedback_reason": feedback_reason,
+                    "feedback_summary": feedback_summary,
                     "evidence_chunk_ids": [str(e.chunk_id) for e in evidence_rows],
                 }
             )
@@ -845,6 +931,13 @@ def build_graph_retrieval_context(
             base = 0.68
         _boost_chunk_score(chunk_scores, mention.chunk_id, base * mention.confidence)
 
+    relation_paths.sort(
+        key=lambda item: (
+            -float(item.get("evidence_score") or 0.0),
+            str(item.get("subject") or ""),
+            str(item.get("object") or ""),
+        )
+    )
     ranked_chunk_scores = dict(sorted(chunk_scores.items(), key=lambda item: -item[1])[:limit])
     entity_by_id = {entity.id: entity for entity in entities}
     return GraphRetrievalContext(
@@ -870,6 +963,12 @@ def build_graph_retrieval_context(
         ],
         relation_paths=relation_paths[:limit],
         chunk_scores=ranked_chunk_scores,
+        diagnostics={
+            "alias_matching": True,
+            "relation_feedback_aware": True,
+            "suppressed_relation_count": len(suppressed_relations),
+            "suppressed_relations": suppressed_relations[:8],
+        },
     )
 
 
@@ -878,15 +977,52 @@ def _boost_chunk_score(scores: dict[str, float], chunk_id: uuid.UUID, score: flo
     scores[key] = round(max(scores.get(key, 0.0), min(score, 1.0)), 6)
 
 
+def _relation_feedback_summary(metadata: dict[str, Any] | None) -> dict[str, int]:
+    raw = (metadata or {}).get("feedback_summary")
+    if not isinstance(raw, dict):
+        return {"incorrect": 0, "correct": 0, "needs_review": 0, "total": 0}
+    incorrect = int(raw.get("incorrect") or 0)
+    correct = int(raw.get("correct") or 0)
+    needs_review = int(raw.get("needs_review") or 0)
+    return {
+        "incorrect": max(incorrect, 0),
+        "correct": max(correct, 0),
+        "needs_review": max(needs_review, 0),
+        "total": max(int(raw.get("total") or incorrect + correct + needs_review), 0),
+    }
+
+
+def _relation_feedback_weight(summary: dict[str, int]) -> tuple[float, str]:
+    incorrect = summary.get("incorrect", 0)
+    correct = summary.get("correct", 0)
+    needs_review = summary.get("needs_review", 0)
+    if incorrect >= 1 and correct == 0:
+        return 0.0, "relation marked incorrect"
+    if incorrect > correct:
+        return 0.35, "relation disputed by feedback"
+    if needs_review and not correct:
+        return 0.7, "relation needs review"
+    if correct > incorrect:
+        return min(1.12, 1.0 + (correct * 0.04)), "relation confirmed"
+    return 1.0, "no feedback"
+
+
+def _relation_predicate_weight(predicate: str) -> float:
+    return _RELATION_PREDICATE_WEIGHTS.get(predicate, 0.55)
+
+
 def _relation_evidence_score(
     *,
     relation_confidence: float,
     path_score: float,
     matched_endpoint_count: int,
+    predicate_weight: float = 1.0,
+    feedback_weight: float = 1.0,
 ) -> float:
     score = (0.72 + (0.18 * path_score)) * relation_confidence
     if matched_endpoint_count >= 2:
         score += 0.25
     elif matched_endpoint_count == 1:
         score += 0.08
-    return round(min(score, 1.0), 6)
+    score *= predicate_weight * feedback_weight
+    return round(max(0.0, min(score, 1.0)), 6)

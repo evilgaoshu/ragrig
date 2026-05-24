@@ -55,8 +55,13 @@ def test_graph_retrieval_eval_compare_workflow(tmp_path: Path) -> None:
     assert all(result["item_error_count"] == 0 for result in report["results"])
     graph_result = next(result for result in report["results"] if result["mode"] == "graph")
     assert "per_tag_delta_vs_baseline" in graph_result
+    assert graph_result["items"][0]["query"] == "AlphaProject BillingPolicy citations"
+    assert report["graph_value_summary"]["modes"][0]["mode"] == "graph"
+    assert report["question_diffs"][0]["mode"] == "graph"
     assert report["quality_gate"]["status"] in {"pass", "warn"}
     assert report["quality_gate"]["mode_results"][0]["mode"] == "graph"
     assert report["knowledge_graph"]["stats"]["entity_count"] >= 2
     assert "markdown_summary" in report
+    assert "Graph Value Summary" in report["markdown_summary"]
+    assert "Question-Level Movement" in report["markdown_summary"]
     assert "Graph-Focused Per-Tag Delta" in report["markdown_summary"]

@@ -98,6 +98,7 @@ This roadmap reflects the current state of the project as of May 2026. Completed
 - Full evaluation comparison workflow: before/after reindex diff report.
 - Knowledge map / cross-document understanding API, Web Console panel, and deterministic smoke artifact.
 - Cost and latency tracking across pipeline and model changes.
+- GraphRAG quality hardening: alias-aware entity matching, feedback-aware relation suppression, graph-focused eval uplift summaries, and question-level rank movement reports.
 
 **Done:**
 - Authored golden question sets for domain-specific retrieval quality regression (retrieval, edge-cases, multi-doc fixture sets with 35 questions across hit/miss/lexical/semantic/adversarial tags).
@@ -123,6 +124,7 @@ This section was not in the original roadmap. It emerged to give contributors an
 - SQLite-backed local storage with ResourceWarning audit and cleanup.
 - Google Workspace pilot diagnostics parity with production contract.
 - Automated nightly evidence smoke in CI (full EVI-110 evidence workflow).
+- External-demo GraphRAG corpus covering strategy comparison, relation feedback, incident-style cross-document evidence, role-model routing, and advanced parser readiness.
 
 ---
 

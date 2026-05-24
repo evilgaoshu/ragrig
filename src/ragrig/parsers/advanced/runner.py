@@ -86,6 +86,29 @@ class AdvancedParserRunner:
                 )
         return fixtures
 
+    def adapter_statuses(self) -> list[dict[str, Any]]:
+        statuses: list[dict[str, Any]] = []
+        for adapter in self._adapters:
+            try:
+                available = bool(adapter.check_dependencies())
+                error: str | None = None
+            except Exception as exc:
+                available = False
+                error = str(exc)
+            statuses.append(
+                {
+                    "parser": adapter.parser_name,
+                    "available": available,
+                    "supported_extensions": sorted(
+                        str(ext)
+                        for ext in getattr(adapter, "SUPPORTED_EXTENSIONS", [])
+                        if isinstance(ext, str)
+                    ),
+                    **({"error": error} if error else {}),
+                }
+            )
+        return statuses
+
     def run_all(self) -> CorpusSummary:
         fixtures = self.discover_fixtures()
         results: list[AdvancedParseResult] = []
@@ -128,6 +151,7 @@ class AdvancedParserRunner:
             skipped=sum(1 for r in results if r.status == ParserStatus.SKIP),
             failed=sum(1 for r in results if r.status == ParserStatus.FAILURE),
             results=sorted(results, key=lambda r: (r.format, r.fixture_id)),
+            adapter_statuses=self.adapter_statuses(),
         )
         return summary
 
@@ -292,6 +316,7 @@ class AdvancedParserRunner:
                 }
                 for r in summary.results
             ],
+            "adapter_statuses": summary.adapter_statuses,
             "report_path": summary.report_path,
         }
         return json.dumps(data, indent=2, ensure_ascii=False)
@@ -306,6 +331,18 @@ class AdvancedParserRunner:
             f"- **Degraded**: {summary.degraded}",
             f"- **Skipped**: {summary.skipped}",
             f"- **Failed**: {summary.failed}",
+            "",
+            "## Adapter Availability",
+            "",
+            "| Parser | Available | Extensions |",
+            "|--------|-----------|------------|",
+        ]
+        for adapter in summary.adapter_statuses:
+            lines.append(
+                f"| {adapter.get('parser')} | {adapter.get('available')} "
+                f"| {', '.join(adapter.get('supported_extensions') or [])} |"
+            )
+        lines += [
             "",
             "## Results",
             "",

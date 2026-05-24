@@ -179,8 +179,8 @@ python -m scripts.advanced_parser_corpus_check \
 
 | Adapter | Parser Name | Library | Status |
 |---------|-------------|---------|--------|
-| DoclingAdapter | advanced.docling | docling | stub |
-| MinerUAdapter | advanced.mineru | magic_pdf | stub |
+| DoclingAdapter | advanced.docling | docling | optional real adapter |
+| MinerUAdapter | advanced.mineru | magic_pdf | optional real adapter |
 | UnstructuredAdapter | advanced.unstructured | unstructured | stub |
 
 Each adapter:
@@ -188,7 +188,8 @@ Each adapter:
 - Checks dependency availability via `check_dependencies()`
 - Returns `skip` with `missing_dependency` reason when library not installed
 - Returns `failure` with `parser_error` reason on parse exceptions
-- Is ready for real implementation once the respective library is added to `doc-parsers` extras
+- Is exposed through the `doc-parsers-advanced` extra when the dependency is
+  safe to install in the target environment
 
 ## 11. Out of Scope
 

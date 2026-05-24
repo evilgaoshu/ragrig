@@ -103,5 +103,6 @@ class GraphRetrievalContext(BaseModel):
     expanded_entities: list[dict[str, Any]] = Field(default_factory=list)
     relation_paths: list[dict[str, Any]] = Field(default_factory=list)
     chunk_scores: dict[str, float] = Field(default_factory=dict)
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
     degraded: bool = False
     degraded_reason: str = ""

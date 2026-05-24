@@ -4232,6 +4232,9 @@ async def test_console_includes_answer_generation_panel(tmp_path) -> None:
     html = response.text
     assert "Answer Generation" in html
     assert "POST /retrieval/answer" in html
+    assert "Role Model Config" in html
+    assert "Save Role Config" in html
+    assert "Top Hits" in html
     assert "answer-kb" in html
     assert "answer-query" in html
     assert "answer-top-k" in html

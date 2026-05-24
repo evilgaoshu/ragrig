@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from ragrig.answer.service import generate_answer
 from ragrig.config import Settings
-from ragrig.db.models import Base, Chunk, Workspace
+from ragrig.db.models import Base, Chunk, KnowledgeGraphRelation, Workspace
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.knowledge_graph import get_knowledge_graph, rebuild_knowledge_graph
@@ -125,6 +125,64 @@ def test_graph_retrieval_mode_expands_entity_evidence(
         for result in report.results
         for stage in result.rank_stage_trace.get("stages", [])
     )
+
+
+def test_graph_retrieval_matches_entity_aliases(sqlite_session: Session, tmp_path: Path) -> None:
+    kb_id = _index_fixture_kb(sqlite_session, tmp_path)
+    rebuild_knowledge_graph(sqlite_session, kb_id)
+
+    report = search_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-fixture",
+        query="How is the billing policy related to alpha project?",
+        top_k=3,
+        mode="graph",
+    )
+
+    matched_names = {
+        entity["display_name"] for entity in report.graph_context.get("matched_entities", [])
+    }
+    assert {"AlphaProject", "BillingPolicy"}.issubset(matched_names)
+
+
+def test_graph_retrieval_suppresses_incorrect_relation_feedback(
+    sqlite_session: Session, tmp_path: Path
+) -> None:
+    kb_id = _index_fixture_kb(sqlite_session, tmp_path)
+    rebuild_knowledge_graph(sqlite_session, kb_id)
+
+    before = search_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-fixture",
+        query="BillingPolicy AlphaProject relationship",
+        top_k=3,
+        mode="graph",
+    )
+    assert before.graph_context["relation_paths"]
+
+    for relation in sqlite_session.scalars(select(KnowledgeGraphRelation)).all():
+        relation.metadata_json = {
+            **(relation.metadata_json or {}),
+            "feedback_summary": {
+                "total": 1,
+                "incorrect": 1,
+                "correct": 0,
+                "needs_review": 0,
+            },
+        }
+    sqlite_session.commit()
+
+    after = search_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-fixture",
+        query="BillingPolicy AlphaProject relationship",
+        top_k=3,
+        mode="graph",
+    )
+
+    assert after.graph_context["relation_paths"] == []
+    assert after.graph_context["diagnostics"]["relation_feedback_aware"] is True
+    assert after.graph_context["diagnostics"]["suppressed_relation_count"] >= 1
 
 
 def test_graph_retrieval_context_filters_protected_acl_evidence(

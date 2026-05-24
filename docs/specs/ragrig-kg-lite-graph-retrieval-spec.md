@@ -52,13 +52,20 @@ not graph rows alone.
 Graph-aware retrieval performs:
 
 1. Dense retrieval as the base candidate set.
-2. KG entity linking against the query.
-3. One-hop relation expansion by default.
+2. KG entity linking against the query, including stored aliases and compact
+   CamelCase / spaced-name variants.
+3. One-hop relation expansion by default, with relation feedback suppressing
+   edges marked incorrect before chunk boosting.
 4. Chunk rehydration through the same latest-version embedding statement used by dense retrieval.
 5. ACL filtering before graph-expanded chunks reach reranking or answer generation.
 6. Score fusion with a configurable `graph_weight`.
 
 If KG-lite rows are missing, graph modes degrade without breaking dense retrieval.
+
+Relation paths in `retrieval_trace.graph_context` include predicate weight,
+feedback weight, feedback summary, evidence score, and diagnostics describing
+suppressed relations. This keeps graph boosts explainable during console
+strategy comparison and eval review.
 
 ## Demo Gate
 
