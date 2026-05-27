@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../contexts/useAuth'
 
 type Mode = 'login' | 'register'
 
 export default function Login() {
-  const { login, register } = useAuth()
+  const { user, login, register } = useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const invitationToken = searchParams.get('token') ?? undefined
@@ -16,6 +16,10 @@ export default function Login() {
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  if (user) {
+    return <Navigate to="/" replace />
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

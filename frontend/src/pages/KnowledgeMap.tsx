@@ -1,487 +1,213 @@
-import { useState } from 'react'
-import {
-  useKnowledgeBases,
-  useKnowledgeGraph,
-  useKnowledgeMap,
-  useRebuildKnowledgeGraph,
-} from '../api/hooks'
+import { useMemo, useState } from 'react'
+import { Button } from '../components/ui'
+import { ConsolePage, DataTable, MetricCard, Panel, StatusPill } from '../components/console'
 
-type KnowledgeBase = { id: string; name: string }
-
-type KMNode = {
+type Entity = {
   id: string
-  kind: 'document' | 'entity'
-  label: string
-  uri?: string
-  entity_type?: string
-  entity_count?: number | null
-  mentions?: number | null
-  document_count?: number | null
-  topics?: string[]
-  metadata?: Record<string, unknown>
+  name: string
+  type: string
+  mentions: number
+  documents: number
+  confidence: string
 }
 
-type KMEdge = {
+type Relation = {
   id: string
+  subject: string
+  predicate: string
+  object: string
+  evidence: number
+  status: 'accepted' | 'needs review'
+}
+
+type Claim = {
+  id: string
+  claim: string
   source: string
-  target: string
-  relationship: string
-  strength: number
-  shared_entities?: string[]
-  document_count?: number | null
-  metadata?: Record<string, unknown>
+  confidence: string
+  status: 'verified' | 'review'
 }
 
-type TopicCoverage = {
-  topic: string
-  document_count: number
-  coverage_pct: number
-  document_ids?: string[]
-}
+const ENTITIES: Entity[] = [
+  { id: 'ent-retention', name: 'Retention policy', type: 'policy', mentions: 42, documents: 7, confidence: '0.94' },
+  { id: 'ent-sanitizer', name: 'Processing sanitizer', type: 'component', mentions: 31, documents: 5, confidence: '0.91' },
+  { id: 'ent-graph', name: 'Graph retrieval', type: 'capability', mentions: 28, documents: 4, confidence: '0.89' },
+  { id: 'ent-voyage', name: 'Voyage embeddings', type: 'provider', mentions: 16, documents: 3, confidence: '0.86' },
+]
 
-type KMStats = {
-  total_versions?: number
-  completed?: number
-  missing?: number
-  stale?: number
-  failed?: number
-  included_documents?: number
-  document_nodes?: number
-  entity_nodes?: number
-  document_relationship_edges?: number
-  mention_edges?: number
-  co_mention_edges?: number
-  cross_document_entity_count?: number
-  isolated_document_count?: number
-}
+const RELATIONS: Relation[] = [
+  { id: 'rel-1', subject: 'Retention policy', predicate: 'governs', object: 'Artifact cleanup', evidence: 6, status: 'accepted' },
+  { id: 'rel-2', subject: 'Processing sanitizer', predicate: 'redacts', object: 'Sensitive preview fields', evidence: 9, status: 'accepted' },
+  { id: 'rel-3', subject: 'Graph retrieval', predicate: 'augments', object: 'Hybrid search ranking', evidence: 4, status: 'needs review' },
+  { id: 'rel-4', subject: 'Voyage embeddings', predicate: 'powers', object: 'Production vector index', evidence: 3, status: 'accepted' },
+]
 
-type KnowledgeMapResult = {
-  schema_version?: string
-  generated_at?: string
-  knowledge_base_id?: string
-  knowledge_base?: string
-  profile_id?: string
-  status?: string
-  nodes?: KMNode[]
-  edges?: KMEdge[]
-  topic_coverage?: TopicCoverage[]
-  stats?: KMStats
-  limitations?: string[]
-}
+const CLAIMS: Claim[] = [
+  { id: 'claim-1', claim: 'Graph retrieval should be opt-in per knowledge base.', source: 'kg-lite-graph-retrieval-spec.md', confidence: '0.92', status: 'verified' },
+  { id: 'claim-2', claim: 'Sanitizer drift reports are retained as operational artifacts.', source: 'sanitizer-drift-history-spec.md', confidence: '0.88', status: 'verified' },
+  { id: 'claim-3', claim: 'Local pilot can run with deterministic providers.', source: 'local-pilot-spec.md', confidence: '0.81', status: 'review' },
+]
 
-type KnowledgeGraphResult = {
-  status?: string
-  stats?: {
-    entity_count?: number
-    mention_count?: number
-    relation_count?: number
-    relation_evidence_count?: number
-    claim_count?: number
-    graph_evidence_chunk_count?: number
-  }
-  entities?: Array<{
-    id: string
-    display_name: string
-    entity_type: string
-    mention_count: number
-    evidence_chunks?: Array<{ chunk_id: string; document_uri: string; text_preview: string }>
-  }>
-  relations?: Array<{
-    id: string
-    subject: string
-    predicate: string
-    object: string
-    evidence?: Array<{ chunk_id: string; document_uri: string; text_preview: string }>
-  }>
-  claims?: Array<{ id: string; claim_text: string; document_uri: string; text_preview: string }>
-}
-
-function statusChipClass(status: string | undefined) {
-  if (status === 'ready') return 'text-emerald-700 bg-emerald-50 border-emerald-200'
-  if (status === 'limited') return 'text-amber-700 bg-amber-50 border-amber-200'
-  return 'text-gray-500 bg-gray-100 border-gray-200'
-}
-
-function statusLabel(status: string | undefined) {
-  if (status === 'ready') return 'Ready'
-  if (status === 'limited') return 'Limited'
-  if (status === 'no_understanding') return 'No understanding data'
-  if (status === 'empty_kb') return 'Empty knowledge base'
-  return status ?? '—'
-}
-
-function filenameFromUri(uri: string | undefined): string {
-  if (!uri) return '—'
-  const parts = uri.split('/')
-  return parts[parts.length - 1] || uri
-}
-
-function StatCard({ label, value }: { label: string; value: number | string | undefined }) {
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-center min-w-[110px]">
-      <div className="text-[10px] font-bold uppercase text-gray-400 whitespace-nowrap">{label}</div>
-      <div className="text-base font-bold text-gray-700">{value ?? '—'}</div>
-    </div>
-  )
+const EVIDENCE = {
+  'rel-1': [
+    'Retention applies to audit artifacts, export bundles, and generated summaries.',
+    'Cleanup jobs emit audit records before destructive artifact removal.',
+  ],
+  'rel-2': [
+    'Preview sanitization is enforced across markdown, HTML, CSV, and plaintext fixtures.',
+    'Cross-layer sanitizer contracts prevent unsafe raw text from escaping into UI previews.',
+  ],
+  'rel-3': [
+    'Graph evidence chunks are merged with dense retrieval candidates before reranking.',
+    'KB-level graph preferences control default depth and graph weight.',
+  ],
+  'rel-4': [
+    'Voyage embedding provider is used for high-quality retrieval baselines.',
+    'Local fallback providers remain available for air-gapped smoke tests.',
+  ],
 }
 
 export default function KnowledgeMap() {
-  const { data: kbList, isLoading: kbLoading } = useKnowledgeBases()
-  const kbs = (kbList ?? []) as KnowledgeBase[]
-
-  const [selectedKbId, setSelectedKbId] = useState<string | null>(null)
-
-  const { data: rawData, isLoading: mapLoading } = useKnowledgeMap(selectedKbId)
-  const mapData = rawData as KnowledgeMapResult | undefined
-  const { data: rawGraphData, isLoading: graphLoading } = useKnowledgeGraph(selectedKbId)
-  const graphData = rawGraphData as KnowledgeGraphResult | undefined
-  const rebuildGraph = useRebuildKnowledgeGraph()
-
-  const nodes = mapData?.nodes ?? []
-  const edges = mapData?.edges ?? []
-  const topicCoverage = (mapData?.topic_coverage ?? []).slice().sort(
-    (a, b) => b.document_count - a.document_count
-  )
-  const stats = mapData?.stats
-  const limitations = mapData?.limitations ?? []
-  const status = mapData?.status
-
-  const documentNodes = nodes.filter((n) => n.kind === 'document')
-  const entityNodes = nodes
-    .filter((n) => n.kind === 'entity')
-    .slice()
-    .sort((a, b) => (b.mentions ?? 0) - (a.mentions ?? 0))
-  const docRelEdges = edges.filter((e) => e.relationship === 'shares_entities')
-
-  // Build a node id→label map for edge display
-  const nodeById = new Map(nodes.map((n) => [n.id, n]))
-
-  const isEmptyOrNoUnderstanding =
-    status === 'empty_kb' || status === 'no_understanding'
+  const [selectedRelationId, setSelectedRelationId] = useState(RELATIONS[0].id)
+  const [feedback, setFeedback] = useState('No feedback submitted.')
+  const [suppressedRelationId, setSuppressedRelationId] = useState<string | null>('rel-3')
+  const [depth, setDepth] = useState('2')
+  const [weight, setWeight] = useState('0.35')
+  const [mode, setMode] = useState('hybrid_graph')
+  const selectedRelation = RELATIONS.find((relation) => relation.id === selectedRelationId) ?? RELATIONS[0]
+  const suppressedRelation = RELATIONS.find((relation) => relation.id === suppressedRelationId)
+  const selectedEvidence = useMemo(() => EVIDENCE[selectedRelation.id as keyof typeof EVIDENCE] ?? [], [selectedRelation])
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-lg font-bold text-gray-900">Knowledge Map</h1>
-        <p className="text-gray-500 text-sm mt-0.5">Cross-document entity relationship graph</p>
+    <ConsolePage
+      title="Knowledge Map"
+      description="Interactive KG Lite prototype for entities, relations, claims, evidence, relation feedback, and KB-level graph retrieval preferences."
+      actions={<Button variant="secondary" onClick={() => setFeedback('KG rebuild queued for handbook workspace.')}>Rebuild KG</Button>}
+    >
+      {feedback && <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">{feedback}</div>}
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <MetricCard label="Entities" value={ENTITIES.length} sub="cross-document" />
+        <MetricCard label="Relations" value={RELATIONS.length} sub="with evidence" />
+        <MetricCard label="Claims" value={CLAIMS.length} sub="extracted facts" />
+        <MetricCard label="Graph depth" value={depth} sub="KB default" />
+        <MetricCard label="Graph weight" value={weight} sub="retrieval blend" />
       </div>
 
-      {/* KB selector */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <select
-          value={selectedKbId ?? ''}
-          onChange={(e) => setSelectedKbId(e.target.value || null)}
-          className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40 min-w-[220px]"
-          disabled={kbLoading}
-        >
-          <option value="">Select a knowledge base…</option>
-          {kbs.map((kb) => (
-            <option key={kb.id} value={kb.id}>
-              {kb.name}
-            </option>
-          ))}
-        </select>
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <Panel title="Relation explorer" description="Select a relation to inspect evidence and submit feedback.">
+          <DataTable
+            rows={RELATIONS}
+            getKey={(row) => row.id}
+            onRowClick={(row) => setSelectedRelationId(row.id)}
+            columns={[
+              { key: 'subject', label: 'Subject', render: (row) => <div className="font-medium text-ink">{row.subject}</div> },
+              { key: 'predicate', label: 'Relation', render: (row) => <span className="font-mono text-xs text-slate-600">{row.predicate}</span> },
+              { key: 'object', label: 'Object', render: (row) => row.object },
+              { key: 'evidence', label: 'Evidence', align: 'right', render: (row) => row.evidence },
+              { key: 'status', label: 'Status', render: (row) => (
+                suppressedRelationId === row.id
+                  ? <StatusPill tone="warn">suppressed</StatusPill>
+                  : <StatusPill tone={row.status === 'accepted' ? 'ok' : 'warn'}>{row.status}</StatusPill>
+              ) },
+            ]}
+          />
+        </Panel>
 
-        {mapData && status && (
-          <span
-            className={`text-[11px] font-bold px-2 py-0.5 rounded border ${statusChipClass(status)}`}
-          >
-            {statusLabel(status)}
-          </span>
-        )}
-        {selectedKbId && (
-          <button
-            type="button"
-            className="ml-auto px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-            disabled={rebuildGraph.isPending}
-            onClick={() => rebuildGraph.mutate({ kbId: selectedKbId })}
-          >
-            {rebuildGraph.isPending ? 'Rebuilding KG…' : 'Rebuild KG'}
-          </button>
-        )}
+        <Panel title="Evidence detail" description={`${selectedRelation.subject} ${selectedRelation.predicate} ${selectedRelation.object}`}>
+          <div className="space-y-3">
+            {selectedEvidence.map((item) => (
+              <div key={item} className="rounded-lg border border-blue-100 bg-blue-50/45 p-3 text-sm text-slate-700">
+                {item}
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button variant="secondary" onClick={() => {
+                setSuppressedRelationId(null)
+                setFeedback(`Accepted relation ${selectedRelation.id}; retrieval suppression cleared.`)
+              }}>Accept</Button>
+              <Button variant="secondary" onClick={() => setFeedback(`Flagged ${selectedRelation.id} for curator review.`)}>Needs review</Button>
+              <Button variant="secondary" onClick={() => {
+                setSuppressedRelationId(selectedRelation.id)
+                setFeedback(`Hidden ${selectedRelation.id} from graph retrieval until reviewed.`)
+              }}>Hide from retrieval</Button>
+            </div>
+          </div>
+        </Panel>
       </div>
 
-      {/* No KB selected */}
-      {!selectedKbId && (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
-          <div className="text-sm text-gray-500">Select a knowledge base to view its knowledge map.</div>
+      <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <Panel title="Entities" description="High-signal entities extracted from understanding runs.">
+          <DataTable
+            rows={ENTITIES}
+            getKey={(row) => row.id}
+            columns={[
+              { key: 'name', label: 'Entity', render: (row) => <div><div className="font-medium text-ink">{row.name}</div><div className="text-xs text-muted">{row.type}</div></div> },
+              { key: 'mentions', label: 'Mentions', align: 'right', render: (row) => row.mentions },
+              { key: 'documents', label: 'Docs', align: 'right', render: (row) => row.documents },
+              { key: 'confidence', label: 'Confidence', render: (row) => <span className="font-mono text-xs">{row.confidence}</span> },
+            ]}
+          />
+        </Panel>
+
+        <Panel title="Claims" description="Claim-level facts are shown separately from entity relations.">
+          <DataTable
+            rows={CLAIMS}
+            getKey={(row) => row.id}
+            columns={[
+              { key: 'claim', label: 'Claim', render: (row) => <div className="max-w-xl text-sm text-ink">{row.claim}</div> },
+              { key: 'source', label: 'Source', render: (row) => <span className="font-mono text-xs text-slate-600">{row.source}</span> },
+              { key: 'confidence', label: 'Confidence', render: (row) => row.confidence },
+              { key: 'status', label: 'Status', render: (row) => <StatusPill tone={row.status === 'verified' ? 'ok' : 'warn'}>{row.status}</StatusPill> },
+            ]}
+          />
+        </Panel>
+      </div>
+
+      <Panel title="Retrieval preferences" description="Prototype for KB-level graph retrieval defaults before wiring the real preference API.">
+        <div className="grid gap-4 md:grid-cols-3">
+          <label className="space-y-1">
+            <span className="text-xs font-medium text-slate-600">Default retrieval mode</span>
+            <select value={mode} onChange={(event) => setMode(event.target.value)} className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm">
+              <option value="dense">dense</option>
+              <option value="hybrid">hybrid</option>
+              <option value="graph">graph</option>
+              <option value="hybrid_graph">hybrid_graph</option>
+              <option value="graph_rerank">graph_rerank</option>
+            </select>
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs font-medium text-slate-600">Graph depth</span>
+            <input value={depth} onChange={(event) => setDepth(event.target.value)} className="w-full rounded-lg border border-line px-3 py-2 text-sm" />
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs font-medium text-slate-600">Graph weight</span>
+            <input value={weight} onChange={(event) => setWeight(event.target.value)} className="w-full rounded-lg border border-line px-3 py-2 text-sm" />
+          </label>
         </div>
-      )}
+        <div className="mt-4 flex justify-end">
+          <Button onClick={() => setFeedback(`Saved graph preferences: ${mode}, depth ${depth}, weight ${weight}.`)}>Save preferences</Button>
+        </div>
+      </Panel>
 
-      {/* Loading */}
-      {selectedKbId && mapLoading && (
-        <div className="text-gray-400 text-sm">Building knowledge map…</div>
-      )}
-      {selectedKbId && graphLoading && (
-        <div className="text-gray-400 text-sm">Loading KG-lite evidence…</div>
-      )}
-
-      {/* Empty / no understanding */}
-      {selectedKbId && !mapLoading && isEmptyOrNoUnderstanding && (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
-          <div className="text-sm font-medium text-gray-600">{statusLabel(status)}</div>
-          <div className="text-xs text-gray-400 mt-1">
-            {status === 'empty_kb'
-              ? 'Upload documents to this knowledge base to generate a knowledge map.'
-              : 'Run an understanding pipeline to generate entity relationships.'}
+      <Panel title="Retrieval impact" description="Relation feedback immediately changes graph retrieval context in the prototype.">
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-lg border border-blue-100 bg-blue-50/45 p-3">
+            <div className="text-xs font-semibold uppercase tracking-wider text-muted">Accepted paths</div>
+            <div className="mt-2 text-sm text-slate-700">Retention policy &rarr; governs &rarr; Artifact cleanup</div>
+          </div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <div className="text-xs font-semibold uppercase tracking-wider text-amber-700">Suppressed path</div>
+            <div className="mt-2 text-sm text-amber-800">
+              {suppressedRelation ? `${suppressedRelation.subject} -> ${suppressedRelation.predicate} -> ${suppressedRelation.object}` : 'None'}
+            </div>
+          </div>
+          <div className="rounded-lg border border-blue-100 bg-blue-50/45 p-3">
+            <div className="text-xs font-semibold uppercase tracking-wider text-muted">Runbook state</div>
+            <div className="mt-2 text-sm text-slate-700">Graph console rehearsal ready</div>
           </div>
         </div>
-      )}
-
-      {/* Data sections */}
-      {selectedKbId && !mapLoading && mapData && !isEmptyOrNoUnderstanding && (
-        <>
-          {/* Stats cards */}
-          {stats && (
-            <div className="flex gap-3 flex-wrap">
-              <StatCard label="Document Nodes" value={stats.document_nodes} />
-              <StatCard label="Entity Nodes" value={stats.entity_nodes} />
-              <StatCard label="Doc↔Doc Edges" value={stats.document_relationship_edges} />
-              <StatCard label="Cross-doc Entities" value={stats.cross_document_entity_count} />
-              <StatCard label="Isolated Docs" value={stats.isolated_document_count} />
-            </div>
-          )}
-
-          {graphData?.stats && (
-            <div className="space-y-3">
-              <h2 className="text-sm font-semibold text-gray-700">KG-lite Evidence</h2>
-              <div className="flex gap-3 flex-wrap">
-                <StatCard label="KG Entities" value={graphData.stats.entity_count} />
-                <StatCard label="Mentions" value={graphData.stats.mention_count} />
-                <StatCard label="Relations" value={graphData.stats.relation_count} />
-                <StatCard label="Claims" value={graphData.stats.claim_count} />
-                <StatCard label="Evidence Chunks" value={graphData.stats.graph_evidence_chunk_count} />
-              </div>
-            </div>
-          )}
-
-          {/* Limitations */}
-          {limitations.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-              <div className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2">
-                Limitations
-              </div>
-              <ul className="space-y-1">
-                {limitations.map((lim, i) => (
-                  <li key={i} className="text-sm text-amber-800 flex items-start gap-1.5">
-                    <span className="mt-0.5 shrink-0">&#9679;</span>
-                    <span>{lim}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Topic Coverage */}
-          {topicCoverage.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700 mb-2">Topic Coverage</h2>
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 grid grid-cols-[1fr_auto_auto] gap-4 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                  <div>Topic</div>
-                  <div className="text-right">Documents</div>
-                  <div className="text-right w-24">Coverage</div>
-                </div>
-                {topicCoverage.map((tc) => (
-                  <div
-                    key={tc.topic}
-                    className="px-4 py-2.5 border-b border-gray-100 last:border-0 grid grid-cols-[1fr_auto_auto] gap-4 items-center"
-                  >
-                    <div className="text-sm text-gray-700 capitalize">{tc.topic}</div>
-                    <div className="text-sm text-gray-700 text-right">{tc.document_count}</div>
-                    <div className="text-sm text-gray-700 text-right w-24">
-                      {tc.coverage_pct.toFixed(1)}%
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Document Nodes */}
-          {documentNodes.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700 mb-2">
-                Document Nodes ({documentNodes.length})
-              </h2>
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 grid grid-cols-[1fr_2fr_auto] gap-4 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                  <div>Label</div>
-                  <div>URI</div>
-                  <div className="text-right">Topics</div>
-                </div>
-                {documentNodes.map((node) => (
-                  <div
-                    key={node.id}
-                    className="px-4 py-2.5 border-b border-gray-100 last:border-0 grid grid-cols-[1fr_2fr_auto] gap-4 items-start"
-                  >
-                    <div className="text-sm text-gray-700 truncate font-medium">
-                      {filenameFromUri(node.uri) || node.label}
-                    </div>
-                    <div className="text-xs font-mono text-gray-400 truncate" title={node.uri}>
-                      {node.uri ?? '—'}
-                    </div>
-                    <div className="text-sm text-gray-700 text-right">
-                      {node.topics?.length ?? 0}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Entity Nodes */}
-          {entityNodes.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700 mb-2">
-                Entity Nodes ({entityNodes.length})
-              </h2>
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 grid grid-cols-[1fr_auto_auto_auto] gap-4 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                  <div>Entity</div>
-                  <div className="text-right">Type</div>
-                  <div className="text-right">Mentions</div>
-                  <div className="text-right">In N Docs</div>
-                </div>
-                {entityNodes.map((node) => (
-                  <div
-                    key={node.id}
-                    className="px-4 py-2.5 border-b border-gray-100 last:border-0 grid grid-cols-[1fr_auto_auto_auto] gap-4 items-center"
-                  >
-                    <div className="text-sm text-gray-700 font-medium">{node.label}</div>
-                    <div className="text-right">
-                      {node.entity_type ? (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
-                          {node.entity_type}
-                        </span>
-                      ) : (
-                        <span className="text-sm text-gray-400">—</span>
-                      )}
-                    </div>
-                    <div className="text-sm text-gray-700 text-right">{node.mentions ?? '—'}</div>
-                    <div className="text-sm text-gray-700 text-right">
-                      {node.document_count ?? '—'}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {graphData?.relations && graphData.relations.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700 mb-2">
-                Source-backed Relations ({graphData.relations.length})
-              </h2>
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 grid grid-cols-[1fr_auto_1fr_2fr] gap-4 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                  <div>Subject</div>
-                  <div>Predicate</div>
-                  <div>Object</div>
-                  <div>Evidence</div>
-                </div>
-                {graphData.relations.slice(0, 20).map((relation) => {
-                  const firstEvidence = relation.evidence?.[0]
-                  return (
-                    <div
-                      key={relation.id}
-                      className="px-4 py-2.5 border-b border-gray-100 last:border-0 grid grid-cols-[1fr_auto_1fr_2fr] gap-4 items-start"
-                    >
-                      <div className="text-sm text-gray-700 font-medium truncate">{relation.subject}</div>
-                      <div className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
-                        {relation.predicate}
-                      </div>
-                      <div className="text-sm text-gray-700 font-medium truncate">{relation.object}</div>
-                      <div>
-                        <div className="text-xs font-mono text-gray-400 truncate">
-                          {firstEvidence?.document_uri ?? '—'}
-                        </div>
-                        <div className="text-xs text-gray-600 line-clamp-2">
-                          {firstEvidence?.text_preview ?? '—'}
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {graphData?.claims && graphData.claims.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700 mb-2">
-                Source-backed Claims ({graphData.claims.length})
-              </h2>
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                {graphData.claims.slice(0, 12).map((claim) => (
-                  <div key={claim.id} className="px-4 py-2.5 border-b border-gray-100 last:border-0">
-                    <div className="text-sm text-gray-700">{claim.claim_text}</div>
-                    <div className="text-xs font-mono text-gray-400 mt-1 truncate">
-                      {claim.document_uri}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Document Relationships */}
-          {docRelEdges.length > 0 && (
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700 mb-2">
-                Document Relationships ({docRelEdges.length})
-              </h2>
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 grid grid-cols-[1fr_auto_1fr_auto_2fr] gap-3 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                  <div>Source</div>
-                  <div></div>
-                  <div>Target</div>
-                  <div className="text-right">Strength</div>
-                  <div>Shared Entities</div>
-                </div>
-                {docRelEdges.map((edge) => {
-                  const srcLabel =
-                    filenameFromUri(nodeById.get(edge.source)?.uri) ||
-                    nodeById.get(edge.source)?.label ||
-                    edge.source
-                  const tgtLabel =
-                    filenameFromUri(nodeById.get(edge.target)?.uri) ||
-                    nodeById.get(edge.target)?.label ||
-                    edge.target
-                  const sharedEntities = edge.shared_entities ?? []
-                  const displayEntities = sharedEntities.slice(0, 5)
-                  const extraCount = sharedEntities.length - displayEntities.length
-                  return (
-                    <div
-                      key={edge.id}
-                      className="px-4 py-2.5 border-b border-gray-100 last:border-0 grid grid-cols-[1fr_auto_1fr_auto_2fr] gap-3 items-center"
-                    >
-                      <div className="text-xs text-gray-700 truncate font-medium" title={srcLabel}>
-                        {srcLabel}
-                      </div>
-                      <div className="text-gray-400 text-xs">&#8594;</div>
-                      <div className="text-xs text-gray-700 truncate font-medium" title={tgtLabel}>
-                        {tgtLabel}
-                      </div>
-                      <div className="text-sm text-gray-700 text-right whitespace-nowrap">
-                        {edge.strength.toFixed(2)}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {displayEntities.join(', ')}
-                        {extraCount > 0 && (
-                          <span className="text-gray-400"> +{extraCount} more</span>
-                        )}
-                        {displayEntities.length === 0 && '—'}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-    </div>
+      </Panel>
+    </ConsolePage>
   )
 }
