@@ -113,6 +113,22 @@ def render_markdown(report: dict[str, Any]) -> str:
         "- Saves `hybrid_graph` as the Console mode preference.",
         "- Starts the Web Console with auth disabled against the demo database.",
         "",
+        "## External Demo Checklist",
+        "",
+        "| Moment | Pass Signal |",
+        "|---|---|",
+        "| Preflight | `make demo-graph-console-runbook` returns `pass`. |",
+        "| Browser smoke | `make demo-graph-console-smoke` records graph, retrieval, "
+        "compare, and feedback evidence. |",
+        "| Opening | Graph Explorer shows entities, relations, claims, evidence, "
+        "and feedback controls. |",
+        "| Core loop | Retrieval Lab loads `hybrid_graph`, compares `dense`, `graph`, "
+        "and `hybrid_graph`, then shows graph context. |",
+        "| Feedback | Marking a bad relation increments feedback and the next graph trace "
+        "reports suppressed relations. |",
+        "| Cleanup | `make demo-graph-console-cleanup CONFIRM_DELETE=1` removes local "
+        "demo artifacts after rehearsal. |",
+        "",
         "## Checks",
         "",
         "| Check | Status |",

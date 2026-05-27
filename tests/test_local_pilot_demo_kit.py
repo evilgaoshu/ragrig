@@ -55,3 +55,50 @@ def test_graph_console_demo_runbook_is_one_command() -> None:
     assert "make demo-graph-console" in runbook
     assert "Graph Explorer" in runbook
     assert "hybrid_graph" in runbook
+    assert "One-page external demo checklist" in runbook
+    assert "make demo-graph-console-smoke" in runbook
+    assert "make demo-graph-console-cleanup CONFIRM_DELETE=1" in runbook
+
+
+def test_graph_console_demo_browser_smoke_is_registered() -> None:
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+    runner = Path("scripts/demo_graph_console_smoke.py")
+    browser_spec = Path("scripts/demo_graph_console_smoke.mjs")
+    browser_source = browser_spec.read_text(encoding="utf-8")
+
+    assert runner.exists()
+    assert browser_spec.exists()
+    assert "demo-graph-console-smoke:" in makefile
+    assert "scripts.demo_graph_console_smoke" in makefile
+    assert "Graph Explorer" in browser_source
+    assert "data-kg-relation-feedback" in browser_source
+    assert "suppressed_relation_count" in browser_source
+    assert "#compare-retrieval" in browser_source
+
+
+def test_graph_console_cleanup_is_scoped_to_demo_artifacts(tmp_path: Path) -> None:
+    from scripts.demo_graph_console_cleanup import DEMO_ARTIFACTS, run_cleanup
+
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir()
+    for relative in DEMO_ARTIFACTS:
+        path = artifacts_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("demo artifact", encoding="utf-8")
+    retained = artifacts_dir / "keep-this.md"
+    retained.write_text("not a demo artifact", encoding="utf-8")
+
+    dry_run = run_cleanup(artifacts_dir=artifacts_dir, confirm_delete=False)
+
+    assert dry_run["status"] == "dry_run"
+    assert dry_run["existing_count"] == len(DEMO_ARTIFACTS)
+    assert len(dry_run["would_delete"]) == len(DEMO_ARTIFACTS)
+    assert retained.exists()
+    assert all((artifacts_dir / relative).exists() for relative in DEMO_ARTIFACTS)
+
+    deleted = run_cleanup(artifacts_dir=artifacts_dir, confirm_delete=True)
+
+    assert deleted["status"] == "success"
+    assert deleted["deleted_count"] == len(DEMO_ARTIFACTS)
+    assert retained.exists()
+    assert not any((artifacts_dir / relative).exists() for relative in DEMO_ARTIFACTS)
