@@ -5,6 +5,8 @@ interface Props {
 }
 
 export default function Stub({ title, description, legacyAnchor }: Props) {
+  const fallbackPath = legacyAnchor ? `/${legacyAnchor}` : '/'
+
   return (
     <div className="p-6 space-y-4">
       <div>
@@ -12,24 +14,11 @@ export default function Stub({ title, description, legacyAnchor }: Props) {
         {description && <p className="text-gray-500 text-sm mt-0.5">{description}</p>}
       </div>
       <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-700">
-        This page is being migrated to React.{' '}
-        {legacyAnchor ? (
-          <>
-            Use the{' '}
-            <a href={`/console#${legacyAnchor}`} className="underline font-medium">
-              legacy console
-            </a>{' '}
-            in the meantime.
-          </>
-        ) : (
-          <>
-            Use the{' '}
-            <a href="/console" className="underline font-medium">
-              legacy console
-            </a>{' '}
-            in the meantime.
-          </>
-        )}
+        This React page is still being filled in.{' '}
+        <a href={fallbackPath} className="underline font-medium">
+          Return to the app
+        </a>
+        .
       </div>
     </div>
   )

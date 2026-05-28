@@ -165,7 +165,7 @@ function TriggerPanel({ onClose }: { onClose: () => void }) {
     return (
       <div className="text-gray-500 text-sm p-4">
         No sources configured. Add a source on the{' '}
-        <a href="/app/sources" className="text-brand hover:underline">Sources</a> page first.
+        <a href="/sources" className="text-brand hover:underline">Sources</a> page first.
       </div>
     )
   }

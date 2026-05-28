@@ -1,6 +1,6 @@
 const BASE = import.meta.env.DEV ? '' : ''
 const TOKEN_KEY = 'ragrig_token'
-const LOGIN_PATH = '/app/login'
+const LOGIN_PATH = '/login'
 
 function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)

@@ -127,7 +127,7 @@ function InviteModal({ canAssignOwner, onClose }: { canAssignOwner: boolean; onC
   const availableRoles = canAssignOwner ? ROLES : ROLES.filter((r) => r !== 'owner')
 
   const inviteLink = result?.token
-    ? `${window.location.origin}/app/login?token=${result.token}`
+    ? `${window.location.origin}/login?token=${result.token}`
     : null
 
   const handleSubmit = async (e: React.FormEvent) => {
