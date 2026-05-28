@@ -1176,19 +1176,19 @@ async def test_evaluation_report_no_secrets_in_api_response(tmp_path) -> None:
 
 @pytest.mark.anyio
 async def test_console_html_includes_evaluation_panel(tmp_path) -> None:
-    """Web Console HTML includes the Evaluation panel."""
+    """React Console route serves the Evaluation page after removing /console."""
     database_path = tmp_path / "eval-console.db"
     session_factory = _create_file_session_factory(database_path)
     app = create_app(check_database=lambda: None, session_factory=session_factory)
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
+        response = await client.get("/evaluation")
 
     assert response.status_code == 200
     html = response.text
-    assert "Evaluation" in html
-    assert "Golden Question" in html or "evaluation" in html.lower()
+    assert "RAGRig Console" in html
+    assert "/assets/" in html
 
 
 # ── Edge Cases ────────────────────────────────────────────────────────────────
