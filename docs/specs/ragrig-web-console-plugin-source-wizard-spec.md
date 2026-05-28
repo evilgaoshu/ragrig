@@ -124,7 +124,7 @@ Example failure:
 
 ## 6. Acceptance Criteria
 
-- `/console` renders a plugin/data source setup wizard.
+- `/plugins` renders plugin/data source setup metadata.
 - `/plugins` includes enough metadata for the wizard to render example config, docs links,
   required secrets, missing dependencies, status, capabilities, plugin type, family, and tier.
 - `POST /plugins/{plugin_id}/validate-config` succeeds for valid example configs from

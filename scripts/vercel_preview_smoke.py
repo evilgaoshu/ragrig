@@ -54,9 +54,9 @@ def run_smoke(base_url: str, *, timeout_seconds: float = 15.0) -> dict[str, Any]
     if health.get("status") != "healthy":
         raise VercelPreviewSmokeError(f"preview health is not healthy: {health}")
 
-    console_html = _get_text(f"{base_url}/console", timeout_seconds=timeout_seconds)
-    if "RAGRig Web Console" not in console_html or "Local Pilot" not in console_html:
-        raise VercelPreviewSmokeError("preview console does not contain the Local Pilot console")
+    console_html = _get_text(f"{base_url}/", timeout_seconds=timeout_seconds)
+    if "RAGRig" not in console_html:
+        raise VercelPreviewSmokeError("preview root does not contain the React console shell")
 
     local_pilot_status = _get_json(
         f"{base_url}/local-pilot/status",
@@ -65,7 +65,7 @@ def run_smoke(base_url: str, *, timeout_seconds: float = 15.0) -> dict[str, Any]
     return {
         "base_url": base_url,
         "health": health,
-        "console": {"contains_local_pilot": True},
+        "console": {"root_contains_ragrig": True},
         "local_pilot_status": local_pilot_status,
     }
 

@@ -32,6 +32,7 @@ export default function KnowledgeBases() {
         <form onSubmit={handleCreate} className="flex gap-2 items-start">
           <div className="flex-1">
             <input
+              id="knowledge-base-name"
               className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand"
               placeholder="knowledge-base-name"
               value={name}
@@ -40,6 +41,7 @@ export default function KnowledgeBases() {
             {error && <p className="text-red-500 text-xs mt-1">{error}</p>}
           </div>
           <button
+            id="knowledge-base-create"
             type="submit"
             disabled={create.isPending || !name.trim()}
             className="px-3 py-1.5 bg-brand text-white rounded text-sm font-medium hover:bg-brand/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"

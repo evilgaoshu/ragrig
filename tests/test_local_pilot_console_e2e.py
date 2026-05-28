@@ -16,7 +16,11 @@ def test_local_pilot_console_e2e_runner_is_registered() -> None:
     assert runner.exists()
     assert browser_spec.exists()
     assert "local-pilot-console-e2e:" in makefile
+    assert "local-pilot-console-e2e: frontend-build" in makefile
     assert "scripts.local_pilot_console_e2e" in makefile
-    assert "pilot-console-e2e-bad\\.txt" in browser_source
-    assert "data-pilot-retry-run" in browser_source
-    assert "failure_status" in browser_source
+    assert "/knowledge-bases" in browser_source
+    assert "/upload" in browser_source
+    assert "/documents" in browser_source
+    assert "/retrieval-lab" in browser_source
+    assert "/answer-gen" in browser_source
+    assert "citation_count" in browser_source

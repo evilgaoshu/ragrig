@@ -159,8 +159,8 @@ The Local Pilot does not include:
 ## User Journey
 
 1. User starts the local stack.
-2. User opens `/console`.
-3. Console shows a Local Pilot Wizard and system health.
+2. User opens `/` or the `/wizard` route.
+3. React Console shows local pilot setup and system health.
 4. User creates or selects a knowledge base.
 5. User uploads files or enters one URL, sitemap URL, or docs page list.
 6. User selects model provider:
@@ -317,7 +317,7 @@ The pilot must keep the repository's quality policy:
 ### Local startup
 
 - A fresh clone can start the default local stack with documented commands.
-- `/health` and `/console` are reachable.
+- `/health` and the React Console root `/` are reachable.
 - Postgres/pgvector is the default vector path.
 - Qdrant can be selected only when configured and healthy.
 

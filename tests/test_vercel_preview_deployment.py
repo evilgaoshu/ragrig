@@ -79,8 +79,8 @@ class _PreviewSmokeHandler(BaseHTTPRequestHandler):
         if self.path == "/local-pilot/status":
             self._write_json({"upload": {"extensions": [".md", ".txt", ".pdf", ".docx"]}})
             return
-        if self.path == "/console":
-            body = b"<html><title>RAGRig Web Console</title>Local Pilot</html>"
+        if self.path == "/":
+            body = b'<html><title>RAGRig Console</title><div id="root"></div></html>'
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.send_header("Content-Length", str(len(body)))
@@ -117,7 +117,7 @@ def test_vercel_preview_smoke_checks_preview_endpoints() -> None:
         server.server_close()
 
     assert result["health"]["status"] == "healthy"
-    assert result["console"]["contains_local_pilot"] is True
+    assert result["console"]["root_contains_ragrig"] is True
     assert result["local_pilot_status"]["upload"]["extensions"] == [
         ".md",
         ".txt",

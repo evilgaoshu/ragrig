@@ -104,5 +104,5 @@ Required checks for this feature:
 - Alembic SQL rendering: `tests/test_alembic_sql.py`
 - Local pilot/demo stability: local pilot and nightly evidence smoke tests
 - External demo runbook: `make demo-graph-console-runbook` for evidence and
-  `make demo-graph-console` to prepare the demo DB and start `/console`
+  `make demo-graph-console` to prepare the demo DB and start the React Console root `/`
 - Frontend build and lint

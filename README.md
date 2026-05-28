@@ -204,7 +204,7 @@ cp .env.example .env            # local env
 docker compose up --build -d db # just the database
 make migrate
 make db-check
-make run-web                    # http://localhost:8000/console
+make run-web                    # http://localhost:8000/
 ```
 
 Quick local smoke loop:

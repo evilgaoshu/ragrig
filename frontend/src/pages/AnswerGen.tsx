@@ -79,6 +79,7 @@ export default function AnswerGen() {
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-gray-600">Knowledge base</label>
             <select
+              id="answer-kb-select"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
               value={kbName}
               onChange={(e) => setKbName(e.target.value)}
@@ -106,6 +107,7 @@ export default function AnswerGen() {
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-gray-600">Retrieval mode</label>
           <select
+            id="answer-mode-select"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
             value={mode}
             onChange={(e) => setMode(e.target.value)}
@@ -124,6 +126,7 @@ export default function AnswerGen() {
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-gray-600">Retrieval provider</label>
             <select
+              id="answer-retrieval-provider"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
@@ -134,6 +137,7 @@ export default function AnswerGen() {
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-gray-600">Retrieval model <span className="text-gray-400">(optional)</span></label>
             <input
+              id="answer-retrieval-model"
               type="text" placeholder="default"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
               value={model}
@@ -147,6 +151,7 @@ export default function AnswerGen() {
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-gray-600">Answer provider</label>
             <select
+              id="answer-provider"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
               value={answerProvider}
               onChange={(e) => setAnswerProvider(e.target.value)}
@@ -157,6 +162,7 @@ export default function AnswerGen() {
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-gray-600">Answer model</label>
             <input
+              id="answer-model"
               type="text" placeholder="gpt-4o-mini"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
               value={answerModel}
@@ -169,6 +175,7 @@ export default function AnswerGen() {
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-gray-600">Query</label>
           <textarea
+            id="answer-query"
             rows={3}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40 resize-none"
             placeholder="Ask a question…"
@@ -185,6 +192,7 @@ export default function AnswerGen() {
         )}
 
         <button
+          id="answer-submit"
           type="submit"
           disabled={!kbName || !query || answerGen.isPending}
           className="px-4 py-2 bg-brand text-white text-sm font-medium rounded-lg hover:bg-brand/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -194,7 +202,7 @@ export default function AnswerGen() {
       </form>
 
       {result && (
-        <div className="space-y-4 border-t border-gray-200 pt-6">
+        <div id="answer-result" className="space-y-4 border-t border-gray-200 pt-6">
           {/* Answer */}
           <div>
             <div className="flex items-center gap-2 mb-2">

@@ -6,7 +6,11 @@ import type {
   Source,
   PipelineRun,
   PipelineRunItem,
+  KnowledgeGraphResult,
+  RelationFeedbackResponse,
   RetrievalReport,
+  RetrievalPreferenceResponse,
+  RetrievalPreferences,
   TaskRecord,
   UploadResult,
   SupportedFormat,
@@ -88,9 +92,17 @@ export function useRetrieval() {
       knowledge_base: string
       query: string
       top_k: number
-      provider: string
+      provider?: string | null
       model: string | null
+      dimensions?: number | null
+      principal_ids?: string[]
+      enforce_acl?: boolean
       mode: string
+      lexical_weight?: number
+      vector_weight?: number
+      candidate_k?: number
+      reranker_provider?: string | null
+      reranker_model?: string | null
       graph_weight?: number
       graph_depth?: number
     }) => api.post<RetrievalReport>('/retrieval/search', body),
@@ -338,8 +350,62 @@ export function useKnowledgeMap(kbId: string | null) {
 export function useKnowledgeGraph(kbId: string | null) {
   return useQuery({
     queryKey: ['knowledge-graph', kbId],
-    queryFn: () => api.get<Record<string, unknown>>(`/knowledge-bases/${kbId}/knowledge-graph`),
+    queryFn: () => api.get<KnowledgeGraphResult>(`/knowledge-bases/${kbId}/knowledge-graph`),
     enabled: !!kbId,
+  })
+}
+
+export function useSubmitRelationFeedback() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      kbId,
+      relationId,
+      verdict,
+      note,
+    }: {
+      kbId: string
+      relationId: string
+      verdict: 'correct' | 'incorrect' | 'needs_review'
+      note?: string
+    }) =>
+      api.post<RelationFeedbackResponse>(
+        `/knowledge-bases/${kbId}/knowledge-graph/relations/${relationId}/feedback`,
+        { verdict, note: note ?? null },
+      ),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['knowledge-graph', variables.kbId] })
+      qc.invalidateQueries({ queryKey: ['knowledge-map', variables.kbId] })
+    },
+  })
+}
+
+export function useRetrievalPreferences(kbId: string | null) {
+  return useQuery({
+    queryKey: ['retrieval-preferences', kbId],
+    queryFn: () =>
+      api.get<RetrievalPreferenceResponse>(`/knowledge-bases/${kbId}/retrieval-preferences`),
+    enabled: !!kbId,
+  })
+}
+
+export function useSaveRetrievalPreferences() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      kbId,
+      preferences,
+    }: {
+      kbId: string
+      preferences: RetrievalPreferences
+    }) =>
+      api.put<RetrievalPreferenceResponse>(
+        `/knowledge-bases/${kbId}/retrieval-preferences`,
+        preferences,
+      ),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['retrieval-preferences', variables.kbId] })
+    },
   })
 }
 

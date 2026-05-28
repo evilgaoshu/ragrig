@@ -201,7 +201,7 @@ cp .env.example .env            # 本地环境
 docker compose up --build -d db # 只拉起数据库
 make migrate
 make db-check
-make run-web                    # http://localhost:8000/console
+make run-web                    # http://localhost:8000/
 ```
 
 本地最小 smoke 路径：

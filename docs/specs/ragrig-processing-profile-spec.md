@@ -46,7 +46,7 @@ there is no:
 ### 2.2 Existing Infrastructure We Can Build On
 
 - `docs/specs/` contains 20+ spec files with a consistent naming and structure pattern
-- The Web Console (`GET /console`) serves as an HTML-based operator workbench
+- The React Console root (`GET /`) serves as the operator workbench when the frontend bundle is present
 - The plugin registry in `src/ragrig/plugins/` demonstrates contract-first, manifest-based
   registration with discoverability and readiness reporting
 - `POST /plugins/{plugin_id}/validate-config` shows a working config validation pattern
@@ -916,7 +916,7 @@ so that evaluation results can be traced back to the exact configuration that pr
 | ProcessingProfile resolution engine | Profile lookup with fallback chain | ProcessingProfile data model |
 | Default profiles for supported formats | YAML fixture with wildcard defaults | ProcessingProfile data model |
 | Profile matrix API | `GET /profiles/matrix` returning grid data | ProcessingProfile resolution engine |
-| Profile matrix Web Console view | Read-only HTML table in `/console` with LLM/deterministic indicators | Profile matrix API |
+| Profile matrix Web Console view | Read-only React view in `/profile-matrix` with LLM/deterministic indicators | Profile matrix API |
 | Browser upload API | `POST /knowledge-bases/{kb_name}/upload` | SupportedFormat API |
 | Browser upload Web Console UI | Drag-and-drop zone, file validation, upload progress | Browser upload API, SupportedFormat API |
 | Upload format validation | Server-side format check + formatted rejection messages | SupportedFormat API |

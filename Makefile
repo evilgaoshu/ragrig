@@ -95,7 +95,7 @@ pilot-docker-preflight:
 local-pilot-smoke:
 	$(UV) run python -m scripts.local_pilot_smoke --output $(ARTIFACTS_DIR)/local-pilot-smoke.json
 
-local-pilot-console-e2e:
+local-pilot-console-e2e: frontend-build
 	$(UV) run python -m scripts.local_pilot_console_e2e --output $(ARTIFACTS_DIR)/local-pilot-console-e2e.json
 
 pilot-docker-build:
