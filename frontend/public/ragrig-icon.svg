@@ -1,0 +1,61 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">RAGRig project icon</title>
+  <desc id="desc">A rounded square icon with connected source nodes, a central retrieval core, and the letters RAG.</desc>
+  <defs>
+    <linearGradient id="bg" x1="72" y1="48" x2="440" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#101828"/>
+      <stop offset="0.56" stop-color="#111827"/>
+      <stop offset="1" stop-color="#0A0F1F"/>
+    </linearGradient>
+    <linearGradient id="trace" x1="116" y1="134" x2="392" y2="350" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8"/>
+      <stop offset="0.5" stop-color="#2DD4BF"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </linearGradient>
+    <linearGradient id="core" x1="174" y1="145" x2="344" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E0F2FE"/>
+      <stop offset="0.46" stop-color="#99F6E4"/>
+      <stop offset="1" stop-color="#FDE68A"/>
+    </linearGradient>
+    <filter id="softShadow" x="34" y="34" width="444" height="444" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="10"/>
+      <feGaussianBlur stdDeviation="14"/>
+      <feComposite in2="hardAlpha" operator="out"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.02 0 0 0 0 0.03 0 0 0 0 0.08 0 0 0 0.36 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow" result="shape"/>
+    </filter>
+  </defs>
+
+  <rect x="40" y="40" width="432" height="432" rx="92" fill="url(#bg)" filter="url(#softShadow)"/>
+  <path d="M125 151H176C191.5 151 204 163.5 204 179V208" stroke="#334155" stroke-width="7" stroke-linecap="round"/>
+  <path d="M121 256H193" stroke="#334155" stroke-width="7" stroke-linecap="round"/>
+  <path d="M125 361H176C191.5 361 204 348.5 204 333V304" stroke="#334155" stroke-width="7" stroke-linecap="round"/>
+  <path d="M387 151H336C320.5 151 308 163.5 308 179V208" stroke="#334155" stroke-width="7" stroke-linecap="round"/>
+  <path d="M391 256H319" stroke="#334155" stroke-width="7" stroke-linecap="round"/>
+  <path d="M387 361H336C320.5 361 308 348.5 308 333V304" stroke="#334155" stroke-width="7" stroke-linecap="round"/>
+
+  <path d="M127 151H176C191.5 151 204 163.5 204 179V208" stroke="url(#trace)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M121 256H193" stroke="url(#trace)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M125 361H176C191.5 361 204 348.5 204 333V304" stroke="url(#trace)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M387 151H336C320.5 151 308 163.5 308 179V208" stroke="url(#trace)" stroke-width="7" stroke-linecap="round" opacity="0.78"/>
+  <path d="M391 256H319" stroke="url(#trace)" stroke-width="7" stroke-linecap="round" opacity="0.78"/>
+  <path d="M387 361H336C320.5 361 308 348.5 308 333V304" stroke="url(#trace)" stroke-width="7" stroke-linecap="round" opacity="0.78"/>
+
+  <circle cx="112" cy="151" r="21" fill="#0F172A" stroke="#38BDF8" stroke-width="7"/>
+  <circle cx="112" cy="256" r="21" fill="#0F172A" stroke="#2DD4BF" stroke-width="7"/>
+  <circle cx="112" cy="361" r="21" fill="#0F172A" stroke="#F59E0B" stroke-width="7"/>
+  <circle cx="400" cy="151" r="21" fill="#0F172A" stroke="#38BDF8" stroke-width="7"/>
+  <circle cx="400" cy="256" r="21" fill="#0F172A" stroke="#2DD4BF" stroke-width="7"/>
+  <circle cx="400" cy="361" r="21" fill="#0F172A" stroke="#F59E0B" stroke-width="7"/>
+
+  <path d="M256 126L352 181.5V292.5L256 348L160 292.5V181.5L256 126Z" fill="#0B1220" stroke="url(#core)" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M256 154L328 196V280L256 322L184 280V196L256 154Z" fill="#111827" stroke="#1F2937" stroke-width="6" stroke-linejoin="round"/>
+
+  <text x="256" y="266" text-anchor="middle" fill="#F8FAFC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="82" font-weight="900" letter-spacing="-2">RAG</text>
+
+  <path d="M158 403H354" stroke="#1F2937" stroke-width="8" stroke-linecap="round"/>
+  <path d="M180 403H332" stroke="url(#trace)" stroke-width="8" stroke-linecap="round"/>
+</svg>

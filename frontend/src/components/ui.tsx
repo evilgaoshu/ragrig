@@ -27,7 +27,7 @@ export function Button({
     'px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
   const variants = {
     primary: 'bg-brand text-white hover:bg-brand/90',
-    secondary: 'border border-gray-200 text-gray-600 hover:bg-gray-50',
+    secondary: 'border border-line bg-white text-slate-600 hover:bg-blue-50 hover:text-ink',
     ghost: 'text-brand hover:underline',
   }
   return (

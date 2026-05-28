@@ -13,16 +13,35 @@ type ProviderRow = {
   status: 'healthy' | 'needs key'
 }
 
+type RoleRoute = {
+  id: string
+  scope: string
+  role: string
+  answerModel: string
+  embeddingModel: string
+  fallback: string
+  budget: string
+}
+
 const INITIAL_PROVIDERS: ProviderRow[] = [
   { id: 'openai', name: 'openai-prod', kind: 'OpenAI-compatible', models: 'gpt-4.1-mini · text-embedding-3-small', capabilities: 'chat, embed', status: 'healthy' },
   { id: 'voyage', name: 'voyage-retrieval', kind: 'Voyage embeddings', models: 'voyage-3-large', capabilities: 'embed', status: 'healthy' },
   { id: 'ollama', name: 'local-pilot', kind: 'Ollama local', models: 'llama3.1 · nomic-embed-text', capabilities: 'chat, embed', status: 'needs key' },
 ]
 
+const INITIAL_ROLE_ROUTES: RoleRoute[] = [
+  { id: 'route-admin', scope: 'workspace / all KBs', role: 'admin', answerModel: 'gpt-4.1-mini', embeddingModel: 'voyage-3-large', fallback: 'local-pilot', budget: '$120/day' },
+  { id: 'route-editor', scope: 'kb: support-faq', role: 'editor', answerModel: 'gpt-4.1-mini', embeddingModel: 'text-embedding-3-small', fallback: 'disabled', budget: '$40/day' },
+  { id: 'route-airgap', scope: 'kb: local-pilot', role: 'viewer', answerModel: 'llama3.1', embeddingModel: 'nomic-embed-text', fallback: 'none', budget: 'local only' },
+]
+
 export default function Models() {
   const [providers, setProviders] = useState(INITIAL_PROVIDERS)
+  const [roleRoutes, setRoleRoutes] = useState(INITIAL_ROLE_ROUTES)
+  const [editingRouteId, setEditingRouteId] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
   const [message, setMessage] = useState('')
+  const editingRoute = roleRoutes.find((route) => route.id === editingRouteId)
 
   const addProvider = (payload: SchemaSubmit) => {
     setProviders((current) => [
@@ -75,6 +94,25 @@ export default function Models() {
         </Panel>
       </div>
 
+      <Panel
+        title="Role model routing"
+        description="Prototype for KB / role-specific model configuration before wiring the role-model-config API."
+        actions={<Button variant="secondary" onClick={() => setMessage('New role route form opened for workspace / selected KB.')}>New route</Button>}
+      >
+        <DataTable
+          rows={roleRoutes}
+          getKey={(row) => row.id}
+          columns={[
+            { key: 'scope', label: 'Scope', render: (row) => <div><div className="font-medium text-ink">{row.scope}</div><div className="text-xs text-muted">{row.role}</div></div> },
+            { key: 'answerModel', label: 'Answer model', render: (row) => <span className="font-mono text-xs">{row.answerModel}</span> },
+            { key: 'embeddingModel', label: 'Embedding', render: (row) => <span className="font-mono text-xs">{row.embeddingModel}</span> },
+            { key: 'fallback', label: 'Fallback', render: (row) => row.fallback },
+            { key: 'budget', label: 'Budget', render: (row) => row.budget },
+            { key: 'actions', label: 'Actions', align: 'right', render: (row) => <button onClick={() => setEditingRouteId(row.id)} className="rounded-lg border border-line px-2 py-1 text-xs font-medium text-brand hover:bg-blue-50">Edit</button> },
+          ]}
+        />
+      </Panel>
+
       {showModal && (
         <SchemaModal
           title="New AI provider"
@@ -83,6 +121,43 @@ export default function Models() {
           onClose={() => setShowModal(false)}
           onSubmit={addProvider}
         />
+      )}
+
+      {editingRoute && (
+        <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/30 px-4 py-6">
+          <form
+            className="w-full max-w-xl overflow-hidden rounded-2xl border border-line bg-white shadow-xl"
+            onSubmit={(event) => {
+              event.preventDefault()
+              setMessage(`${editingRoute.scope} model routing saved.`)
+              setEditingRouteId(null)
+            }}
+          >
+            <div className="border-b border-line bg-blue-50/70 px-5 py-4">
+              <h2 className="text-base font-semibold text-ink">Edit model route</h2>
+              <p className="mt-1 text-xs text-muted">{editingRoute.scope} · {editingRoute.role}</p>
+            </div>
+            <div className="grid gap-4 p-5 sm:grid-cols-2">
+              {(['answerModel', 'embeddingModel', 'fallback', 'budget'] as const).map((field) => (
+                <label key={field} className="space-y-1">
+                  <span className="text-xs font-medium text-slate-600">{field}</span>
+                  <input
+                    value={editingRoute[field]}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setRoleRoutes((current) => current.map((route) => route.id === editingRoute.id ? { ...route, [field]: value } : route))
+                    }}
+                    className="w-full rounded-lg border border-line px-3 py-2 text-sm"
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-line bg-slate-50 px-5 py-4">
+              <Button type="button" variant="secondary" onClick={() => setEditingRouteId(null)}>Cancel</Button>
+              <Button type="submit">Save route</Button>
+            </div>
+          </form>
+        </div>
       )}
     </ConsolePage>
   )
