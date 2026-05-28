@@ -105,6 +105,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         "make demo-graph-console",
         "```",
         "",
+        "Live talk track: `docs/operations/external-demo-script.md`.",
+        "",
         "## What This Runs",
         "",
         "- Loads `examples/local-pilot/*.md` into a disposable SQLite demo database.",
