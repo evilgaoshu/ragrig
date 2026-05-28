@@ -58,6 +58,22 @@ def test_graph_console_demo_runbook_is_one_command() -> None:
     assert "One-page external demo checklist" in runbook
     assert "make demo-graph-console-smoke" in runbook
     assert "make demo-graph-console-cleanup CONFIRM_DELETE=1" in runbook
+    assert "docs/operations/external-demo-script.md" in runbook
+
+
+def test_external_demo_script_keeps_graph_as_supporting_story() -> None:
+    script = Path("docs/operations/external-demo-script.md")
+    source = script.read_text(encoding="utf-8")
+
+    assert script.exists()
+    assert "GraphRAG is" in source
+    assert "not the main product surface" in source
+    assert "What makes a Local Pilot answer trustworthy?" in source
+    assert "Which board compares DenseMode, GraphMode, and HybridGraphMode?" in source
+    assert "What should happen to an incorrect graph relation after RelationFeedback?" in source
+    assert "Bad-Weather Playbook" in source
+    assert "Do Not Demo" in source
+    assert "make demo-graph-console-cleanup CONFIRM_DELETE=1" in source
 
 
 def test_graph_console_demo_browser_smoke_is_registered() -> None:

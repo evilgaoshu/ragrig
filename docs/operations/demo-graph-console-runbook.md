@@ -22,6 +22,9 @@ For a browser-level rehearsal without a blocking server:
 make demo-graph-console-smoke
 ```
 
+For the live talk track, fixed questions, and fallback responses, use
+`docs/operations/external-demo-script.md`.
+
 Artifacts:
 
 - `docs/operations/artifacts/demo-graph-console-runbook.json`
