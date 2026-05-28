@@ -58,93 +58,81 @@ async function run() {
   });
 
   try {
-    await page.goto(`${baseURL}/console`, { waitUntil: 'networkidle', timeout });
-    await page.locator('#graph-explorer-panel').waitFor({ timeout });
-    await page.locator('#retrieval-kb').waitFor({ timeout });
-    await page.locator('#graph-kb').waitFor({ timeout });
-    await waitForText(page, '#graph-explorer-panel', /Graph Explorer/);
+    await page.goto(`${baseURL}/knowledge-map`, { waitUntil: 'domcontentloaded', timeout });
+    await waitForText(page, 'main', /Knowledge Map/);
+    await waitForText(page, 'main', /Relation explorer/);
+    await waitForText(page, 'main', /Retrieval preferences/);
+    await page.getByRole('button', { name: 'Hide from retrieval' }).click();
+    await waitForText(page, 'main', /Hidden rel-/);
+    const knowledgeMapTitle = await textContent(page, 'h1');
 
     const kbResponse = await fetchJson(page, '/knowledge-bases');
     assert(kbResponse.ok, `knowledge-bases returned ${kbResponse.status}`);
     const kb = (kbResponse.body.items || []).find((item) => item.name === knowledgeBaseName);
     assert(kb, `knowledge base ${knowledgeBaseName} was not found`);
 
-    await page.selectOption('#retrieval-kb', kb.name);
-    await page.selectOption('#graph-kb', kb.id);
-
-    const graphResponsePromise = page.waitForResponse(
-      (response) => response.url().includes(`/knowledge-bases/${kb.id}/knowledge-graph`)
-        && response.request().method() === 'GET',
-      { timeout },
-    );
-    await page.click('#refresh-graph-explorer');
-    const graphResponse = await graphResponsePromise;
-    assert(graphResponse.status() === 200, `graph endpoint returned ${graphResponse.status()}`);
-    const graph = await graphResponse.json();
+    const graphResponse = await fetchJson(page, `/knowledge-bases/${kb.id}/knowledge-graph`);
+    assert(graphResponse.ok, `graph endpoint returned ${graphResponse.status}`);
+    const graph = graphResponse.body;
     assert(graph.status === 'ready', `graph was not ready: ${JSON.stringify(graph)}`);
     assert((graph.stats?.entity_count || 0) >= 2, `expected graph entities: ${JSON.stringify(graph.stats)}`);
     assert((graph.stats?.relation_count || 0) >= 1, `expected graph relations: ${JSON.stringify(graph.stats)}`);
     assert((graph.stats?.claim_count || 0) >= 1, `expected graph claims: ${JSON.stringify(graph.stats)}`);
-    await waitForText(page, '#graph-explorer-body', /Entities/);
-    await waitForText(page, '#graph-explorer-body', /Relations/);
-    await waitForText(page, '#graph-explorer-body', /Mark Incorrect/);
 
     const relation = (graph.relations || [])[0];
     assert(relation?.id, 'graph smoke requires at least one relation with an id');
-    const feedbackButton = page.locator(
-      `[data-kg-relation-feedback="${relation.id}"][data-feedback-verdict="incorrect"]`,
-    ).first();
-    await feedbackButton.waitFor({ timeout });
-    const feedbackResponsePromise = page.waitForResponse(
-      (response) => response.url().includes(`/knowledge-bases/${kb.id}/knowledge-graph/relations/${relation.id}/feedback`)
-        && response.request().method() === 'POST',
-      { timeout },
+    const feedbackResponse = await fetchJson(
+      page,
+      `/knowledge-bases/${kb.id}/knowledge-graph/relations/${relation.id}/feedback`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ verdict: 'incorrect', note: 'demo smoke suppression check' }),
+      },
     );
-    await feedbackButton.click();
-    const feedbackResponse = await feedbackResponsePromise;
-    assert(feedbackResponse.status() === 200, `feedback endpoint returned ${feedbackResponse.status()}`);
-    const feedback = await feedbackResponse.json();
+    assert(feedbackResponse.ok, `feedback endpoint returned ${feedbackResponse.status}`);
+    const feedback = feedbackResponse.body;
     assert(feedback.feedback_summary?.incorrect >= 1, `feedback was not recorded: ${JSON.stringify(feedback)}`);
-    await waitForText(page, '#graph-explorer-body', /incorrect: 1/);
 
-    const preferenceResponsePromise = page.waitForResponse(
-      (response) => response.url().includes(`/knowledge-bases/${kb.id}/retrieval-preferences`)
-        && response.request().method() === 'GET',
-      { timeout },
-    );
-    await page.click('#load-retrieval-preference');
-    const preferenceResponse = await preferenceResponsePromise;
-    assert(preferenceResponse.status() === 200, `preference endpoint returned ${preferenceResponse.status()}`);
-    const preference = await preferenceResponse.json();
+    const preferenceResponse = await fetchJson(page, `/knowledge-bases/${kb.id}/retrieval-preferences`);
+    assert(preferenceResponse.ok, `preference endpoint returned ${preferenceResponse.status}`);
+    const preference = preferenceResponse.body;
     assert(preference.preferences?.mode === 'hybrid_graph', `expected hybrid_graph preference: ${JSON.stringify(preference)}`);
-    await waitForText(page, '#retrieval-preference-status', /hybrid_graph/);
-    assert(await page.locator('#retrieval-mode').inputValue() === 'hybrid_graph', 'mode select did not load hybrid_graph');
 
     const graphQuery = `${relation.subject} ${relation.object}`;
-    await page.fill('#retrieval-query', graphQuery);
-    await page.fill('#retrieval-top-k', '5');
-
-    await page.click('#compare-retrieval');
-    await waitForText(page, '#retrieval-compare-results', /Strategy Comparison/);
-    await waitForText(page, '#retrieval-compare-results', /dense/);
-    await waitForText(page, '#retrieval-compare-results', /graph/);
-    await waitForText(page, '#retrieval-compare-results', /hybrid_graph/);
-
-    const retrievalResponsePromise = page.waitForResponse(
-      (response) => response.url().endsWith('/retrieval/search')
-        && response.request().method() === 'POST',
-      { timeout },
+    const retrievalResponse = await fetchJson(
+      page,
+      '/retrieval/search',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          knowledge_base: kb.name,
+          query: graphQuery,
+          top_k: 5,
+          provider: 'deterministic-local',
+          model: null,
+          mode: preference.preferences.mode,
+          graph_weight: preference.preferences.graph_weight,
+          graph_depth: preference.preferences.graph_depth,
+        }),
+      },
     );
-    await page.click('#run-retrieval');
-    const retrievalResponse = await retrievalResponsePromise;
-    assert(retrievalResponse.status() === 200, `retrieval endpoint returned ${retrievalResponse.status()}`);
-    const retrieval = await retrievalResponse.json();
+    assert(retrievalResponse.ok, `retrieval endpoint returned ${retrievalResponse.status}`);
+    const retrieval = retrievalResponse.body;
     assert(retrieval.total_results >= 1, `expected retrieval hits: ${JSON.stringify(retrieval)}`);
     const graphContext = retrieval.graph_context || {};
     assert((graphContext.matched_entities || []).length >= 1, `expected matched graph entities: ${JSON.stringify(graphContext)}`);
     assert((graphContext.diagnostics?.suppressed_relation_count || 0) >= 1, `expected suppressed relation after feedback: ${JSON.stringify(graphContext)}`);
-    await waitForText(page, '#retrieval-results', /Graph Context/);
-    await waitForText(page, '#retrieval-results', /Matched Entities/);
+
+    await page.goto(`${baseURL}/retrieval-lab`, { waitUntil: 'domcontentloaded', timeout });
+    await waitForText(page, 'main', /Retrieval Lab/);
+    await waitForText(page, 'main', /Mode comparison/);
+    await waitForText(page, 'main', /Graph Context/);
+    await waitForText(page, 'main', /hybrid_graph/);
+    await page.getByRole('button', { name: 'Compare modes' }).click();
+    await waitForText(page, 'main', /Compared dense, graph, hybrid_graph, and graph_rerank modes/);
+    const retrievalLabTitle = await textContent(page, 'h1');
 
     assert(browserErrors.length === 0, `browser console errors: ${browserErrors.join('; ')}`);
 
@@ -176,9 +164,9 @@ async function run() {
         suppressed_relation_count: graphContext.diagnostics.suppressed_relation_count,
       },
       ui: {
-        graph_status: await textContent(page, '#graph-explorer-status'),
-        retrieval_preference_status: await textContent(page, '#retrieval-preference-status'),
-        compare_results: await textContent(page, '#retrieval-compare-results'),
+        knowledge_map_title: knowledgeMapTitle,
+        retrieval_lab_title: retrievalLabTitle,
+        retrieval_lab_url: `${baseURL}/retrieval-lab`,
       },
     };
     console.log(JSON.stringify(result, null, 2));

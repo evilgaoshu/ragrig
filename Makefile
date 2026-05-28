@@ -251,7 +251,7 @@ demo-graph-console-runbook:
 		--host $(DEMO_CONSOLE_HOST) \
 		--port $(DEMO_CONSOLE_PORT)
 
-demo-graph-console-smoke:
+demo-graph-console-smoke: frontend-build
 	$(UV) run python -m scripts.demo_graph_console_smoke \
 		--output $(ARTIFACTS_DIR)/demo-graph-console-smoke.json
 
@@ -261,7 +261,7 @@ demo-graph-console-cleanup:
 		$(if $(CONFIRM_DELETE),--confirm-delete,) \
 		--stdout
 
-demo-graph-console:
+demo-graph-console: frontend-build
 	$(UV) run python -m scripts.demo_graph_console_runbook --pretty \
 		--database-path $(DEMO_GRAPH_DB) \
 		--output $(ARTIFACTS_DIR)/demo-graph-console-runbook.json \

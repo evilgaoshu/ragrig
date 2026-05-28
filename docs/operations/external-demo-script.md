@@ -17,24 +17,24 @@ make demo-graph-console
 Open:
 
 ```text
-http://127.0.0.1:8000/console
+http://127.0.0.1:8000/
 ```
 
 Expected proof points:
 
 - Browser smoke status is `passed`.
 - Runbook status is `pass`.
-- Graph Explorer shows about 55 entities, 274 relations, and 12 claims.
-- Retrieval Lab can load `hybrid_graph` from the saved mode preference.
+- Knowledge Map shows entities, relations, claims, evidence, and relation feedback controls.
+- Retrieval Lab shows `hybrid_graph` mode and the comparison board.
 - Relation feedback produces a suppressed relation on the next graph retrieval.
 
 ## Talk Track
 
 | Time | Surface | Action | Message |
 |---|---|---|---|
-| 0:00 | Console | Open the Console. | RAGRig is a local-first RAG workbench with evidence, evals, and operations visibility. |
-| 1:00 | Graph Explorer | Show entities, relations, claims, and evidence. | The graph is a retrieval trace layer. It helps explain why chunks were boosted. |
-| 2:30 | Retrieval Lab | Click Load Mode Preference. | The demo knowledge base is pinned to `hybrid_graph` without changing API defaults. |
+| 0:00 | Console | Open the Console root. | RAGRig is a local-first RAG workbench with evidence, evals, and operations visibility. |
+| 1:00 | Knowledge Map | Show entities, relations, claims, and evidence. | The graph is a retrieval trace layer. It helps explain why chunks were boosted. |
+| 2:30 | Retrieval Lab | Show the mode selector and default comparison. | The demo knowledge base is pinned to `hybrid_graph` without changing API defaults. |
 | 3:30 | Retrieval Lab | Run Compare Modes. | Dense, graph, and hybrid graph are compared side by side against the same query. |
 | 5:30 | Graph feedback | Mark one relation as incorrect. | Reviewers can correct bad graph edges without treating the graph as unquestioned truth. |
 | 6:30 | Retrieval Lab | Rerun retrieval. | The next graph trace reports suppressed relations, so feedback changes ranking behavior. |
@@ -58,7 +58,7 @@ into unsupported product claims.
 | Browser smoke fails before the call. | Run `make demo-graph-console-runbook` and use the generated markdown/JSON evidence. Do not live-debug browser dependencies on the call. |
 | Graph mode does not beat dense for one query. | Say the graph is an explainability and feedback layer, and the eval compares strategy behavior instead of promising every query improves. |
 | Answer provider is unavailable. | Use retrieval results and citations. The demo is valid without cloud keys. |
-| Feedback buttons are not visible. | Refresh Graph Explorer, then select the `local-pilot-demo-rc` knowledge base. |
+| Feedback buttons are not visible. | Open Knowledge Map, then use the relation feedback controls in Evidence detail. |
 | The question drifts to production knowledge graph scope. | Re-anchor: KG-lite is source-backed retrieval support; Neo4j, community detection, and LLM entity resolution are later phases. |
 
 ## Do Not Demo

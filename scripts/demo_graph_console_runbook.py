@@ -64,7 +64,7 @@ def _sqlite_url(database_path: Path) -> str:
 
 def _console_url(host: str, port: int) -> str:
     display_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
-    return f"http://{display_host}:{port}/console"
+    return f"http://{display_host}:{port}/"
 
 
 def _persist_retrieval_preferences(
@@ -96,6 +96,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Status: `{report.get('status', 'unknown')}`",
         f"- Generated at: `{report.get('generated_at', 'unknown')}`",
         f"- Console URL: `{console.get('url', 'unknown')}`",
+        f"- Knowledge Map URL: `{console.get('knowledge_map_url', 'unknown')}`",
+        f"- Retrieval Lab URL: `{console.get('retrieval_lab_url', 'unknown')}`",
         f"- Knowledge base: `{console.get('knowledge_base', 'unknown')}`",
         f"- Database: `{console.get('database_path', 'unknown')}`",
         "",
@@ -113,7 +115,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "- Builds KG-lite entity/relation rows.",
         "- Runs dense/graph/hybrid_graph eval comparison.",
         "- Saves `hybrid_graph` as the Console mode preference.",
-        "- Starts the Web Console with auth disabled against the demo database.",
+        "- Starts the React Console with auth disabled against the demo database.",
         "",
         "## External Demo Checklist",
         "",
@@ -122,9 +124,9 @@ def render_markdown(report: dict[str, Any]) -> str:
         "| Preflight | `make demo-graph-console-runbook` returns `pass`. |",
         "| Browser smoke | `make demo-graph-console-smoke` records graph, retrieval, "
         "compare, and feedback evidence. |",
-        "| Opening | Graph Explorer shows entities, relations, claims, evidence, "
+        "| Opening | Knowledge Map shows entities, relations, claims, evidence, "
         "and feedback controls. |",
-        "| Core loop | Retrieval Lab loads `hybrid_graph`, compares `dense`, `graph`, "
+        "| Core loop | Retrieval Lab shows `hybrid_graph`, compares `dense`, `graph`, "
         "and `hybrid_graph`, then shows graph context. |",
         "| Feedback | Marking a bad relation increments feedback and the next graph trace "
         "reports suppressed relations. |",
@@ -190,6 +192,8 @@ def run_demo_graph_console_runbook(
         "status": gate["status"],
         "console": {
             "url": _console_url(host, port),
+            "knowledge_map_url": f"{_console_url(host, port)}knowledge-map",
+            "retrieval_lab_url": f"{_console_url(host, port)}retrieval-lab",
             "knowledge_base": knowledge_base,
             "database_path": _display(database_path),
             "database_url": _sqlite_url(database_path),

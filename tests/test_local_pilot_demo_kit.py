@@ -53,7 +53,7 @@ def test_graph_console_demo_runbook_is_one_command() -> None:
     assert "demo-graph-console:" in makefile
     assert "scripts.demo_graph_console_runbook" in makefile
     assert "make demo-graph-console" in runbook
-    assert "Graph Explorer" in runbook
+    assert "Knowledge Map" in runbook
     assert "hybrid_graph" in runbook
     assert "One-page external demo checklist" in runbook
     assert "make demo-graph-console-smoke" in runbook
@@ -85,11 +85,13 @@ def test_graph_console_demo_browser_smoke_is_registered() -> None:
     assert runner.exists()
     assert browser_spec.exists()
     assert "demo-graph-console-smoke:" in makefile
+    assert "demo-graph-console-smoke: frontend-build" in makefile
     assert "scripts.demo_graph_console_smoke" in makefile
-    assert "Graph Explorer" in browser_source
-    assert "data-kg-relation-feedback" in browser_source
+    assert "/knowledge-map" in browser_source
+    assert "/retrieval-lab" in browser_source
+    assert "Relation explorer" in browser_source
     assert "suppressed_relation_count" in browser_source
-    assert "#compare-retrieval" in browser_source
+    assert "Compare modes" in browser_source
 
 
 def test_graph_console_cleanup_is_scoped_to_demo_artifacts(tmp_path: Path) -> None:
