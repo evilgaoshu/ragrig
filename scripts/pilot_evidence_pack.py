@@ -35,8 +35,8 @@ EVIDENCE_REQUIREMENTS = (
         "command": "make pilot-up && make pilot-docker-smoke",
         "artifact": "pilot-docker-smoke.json",
         "go_rule": (
-            "Dockerized app and Postgres/pgvector stack serve health, console, "
-            "Local Pilot status, and deterministic answer smoke."
+            "Dockerized app and Postgres/pgvector stack serve health, the React app shell, "
+            "Local Pilot status, deterministic answer smoke, and a removed legacy console."
         ),
     },
     {

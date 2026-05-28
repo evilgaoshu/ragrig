@@ -66,6 +66,20 @@ def _get_text(url: str, *, timeout_seconds: float) -> str:
     return body
 
 
+def _get_status(url: str, *, timeout_seconds: float) -> int:
+    try:
+        status, _content_type, _body = _read_response(
+            Request(url, headers={"Accept": "text/html"}),
+            timeout_seconds=timeout_seconds,
+        )
+        return status
+    except PilotDockerSmokeError as exc:
+        message = str(exc)
+        if " returned 404:" in message:
+            return 404
+        raise
+
+
 def _wait_for_health(
     base_url: str,
     *,
@@ -98,9 +112,12 @@ def run_smoke(
         timeout_seconds=timeout_seconds,
         interval_seconds=interval_seconds,
     )
-    console_html = _get_text(f"{base_url}/console", timeout_seconds=10.0)
-    if "RAGRig Web Console" not in console_html or "Local Pilot" not in console_html:
-        raise PilotDockerSmokeError("console response does not contain the Local Pilot console")
+    app_html = _get_text(f"{base_url}/", timeout_seconds=10.0)
+    if "RAGRig" not in app_html:
+        raise PilotDockerSmokeError("root response does not contain the React app shell")
+    legacy_console_status = _get_status(f"{base_url}/console", timeout_seconds=10.0)
+    if legacy_console_status != 404:
+        raise PilotDockerSmokeError("legacy console route should return 404")
 
     status = _get_json(f"{base_url}/local-pilot/status", timeout_seconds=10.0)
     extensions = status.get("upload", {}).get("extensions", [])
@@ -123,7 +140,8 @@ def run_smoke(
     return {
         "base_url": base_url,
         "health": health,
-        "console": {"contains_local_pilot": True},
+        "app_shell": {"contains_ragrig": True},
+        "legacy_console": {"status_code": legacy_console_status},
         "local_pilot_status": status,
         "answer_smoke": answer_smoke,
     }
