@@ -119,7 +119,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <aside className="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-line bg-white/90">
         <div className="px-4 pb-3 pt-4">
           <div className="flex items-center gap-3">
-            <img src="ragrig-icon.svg" alt="" className="h-9 w-9 rounded-lg" />
+            <img src="/ragrig-icon.svg" alt="" className="h-9 w-9 rounded-lg" />
             <div>
               <div className="text-[15px] font-bold text-ink">RAGRig</div>
               <div className="text-[11px] text-muted">Traceable RAG console</div>

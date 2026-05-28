@@ -6,12 +6,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, File, Header, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import (
     FileResponse,
-    HTMLResponse,
     JSONResponse,
-    RedirectResponse,
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
@@ -176,7 +174,6 @@ from ragrig.web_console import (
     list_sources,
     list_supported_formats,
     list_understanding_runs,
-    load_console_html,
     resume_pipeline_dag,
     retry_pipeline_run,
     retry_pipeline_run_item,
@@ -965,10 +962,6 @@ def create_app(
             "reranker": build_reranker_health(active_settings),
             "version": __version__,
         }
-
-    @app.get("/console", response_class=HTMLResponse)
-    def console() -> HTMLResponse:
-        return HTMLResponse(load_console_html())
 
     @app.get("/system/status", response_model=None)
     def system_status(
@@ -3657,16 +3650,18 @@ def create_app(
     # ── React SPA ──────────────────────────────────────────────────────────────
     _dist = Path(__file__).parent / "static" / "dist"
     if _dist.exists():
-        app.mount("/app/assets", StaticFiles(directory=_dist / "assets"), name="react-assets")
+        app.mount("/assets", StaticFiles(directory=_dist / "assets"), name="react-assets")
 
-        @app.get("/app", include_in_schema=False)
-        @app.get("/app/{path:path}", include_in_schema=False)
-        def react_app(_path: str = "") -> FileResponse:
-            return FileResponse(_dist / "index.html")
+        @app.get("/ragrig-icon.svg", include_in_schema=False)
+        def react_icon() -> FileResponse:
+            return FileResponse(_dist / "ragrig-icon.svg")
 
         @app.get("/", include_in_schema=False)
-        def root_redirect() -> RedirectResponse:
-            return RedirectResponse(url="/app", status_code=302)
+        @app.get("/{path:path}", include_in_schema=False)
+        def react_app(path: str = "") -> FileResponse:
+            if path == "console" or path == "app" or path.startswith("app/"):
+                raise HTTPException(status_code=404, detail="Not Found")
+            return FileResponse(_dist / "index.html")
 
     return app
 

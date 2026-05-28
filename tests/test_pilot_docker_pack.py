@@ -90,11 +90,11 @@ class _PilotSmokeHandler(BaseHTTPRequestHandler):
                 }
             )
             return
-        if self.path == "/console":
+        if self.path == "/":
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
-            self.wfile.write(b"<html><title>RAGRig Web Console</title>Local Pilot</html>")
+            self.wfile.write(b"<html><title>RAGRig Console</title></html>")
             return
         self.send_error(404)
 
@@ -141,7 +141,8 @@ def test_pilot_docker_smoke_checks_expected_endpoints() -> None:
         server.server_close()
 
     assert result["health"]["status"] == "healthy"
-    assert result["console"]["contains_local_pilot"] is True
+    assert result["app_shell"]["contains_ragrig"] is True
+    assert result["legacy_console"]["status_code"] == 404
     assert result["local_pilot_status"]["upload"]["extensions"] == [
         ".md",
         ".txt",

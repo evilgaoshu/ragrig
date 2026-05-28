@@ -56,10 +56,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false
     const checkSession = async () => {
-      if (!token) {
-        if (!cancelled) setIsLoading(false)
-        return
-      }
       try {
         const me = await apiGet<AuthUser>('/auth/me', token)
         if (!cancelled) setUser(me)

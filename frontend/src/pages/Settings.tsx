@@ -296,7 +296,7 @@ export default function Settings() {
         <div className="grid grid-cols-2 gap-3">
           {[
             { label: 'API documentation', href: '/docs', desc: 'OpenAPI / Swagger UI' },
-            { label: 'Legacy console', href: '/console', desc: 'HTML web console' },
+            { label: 'React app', href: '/', desc: 'Operator console' },
           ].map((link) => (
             <a
               key={link.href}

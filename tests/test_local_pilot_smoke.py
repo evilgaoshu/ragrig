@@ -7,7 +7,7 @@ def test_local_pilot_smoke_covers_upload_retrieval_and_answer(tmp_path) -> None:
     result = run_smoke(tmp_path / "local-pilot-smoke.db")
 
     assert result["health"]["status"] == "healthy"
-    assert result["console"]["contains_local_pilot"] is True
+    assert result["legacy_console"]["status_code"] == 404
     assert result["model_health"]["status"] == "healthy"
     assert result["answer_smoke"]["status"] == "healthy"
     assert result["upload"]["indexing"]["indexed_count"] >= 1

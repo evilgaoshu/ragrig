@@ -1,9 +1,23 @@
 import StatusCard from '../components/StatusCard'
 import { useSystemStatus, useKnowledgeBases, usePipelineRuns } from '../api/hooks'
 
-function deriveStatus(val: string | undefined): 'ok' | 'error' | 'warn' | 'neutral' {
-  if (!val) return 'neutral'
-  const v = val.toLowerCase()
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+function statusValue(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  return stringValue(recordValue(value).status)
+}
+
+function deriveStatus(val: unknown): 'ok' | 'error' | 'warn' | 'neutral' {
+  const status = statusValue(val)
+  if (!status) return 'neutral'
+  const v = status.toLowerCase()
   if (v === 'ok' || v === 'connected' || v === 'healthy') return 'ok'
   if (v === 'error' || v === 'unhealthy') return 'error'
   if (v === 'degraded') return 'warn'
@@ -14,6 +28,19 @@ export default function Overview() {
   const { data: status, isLoading } = useSystemStatus()
   const { data: kbs } = useKnowledgeBases()
   const { data: runs } = usePipelineRuns()
+  const statusRecord = recordValue(status)
+  const app = recordValue(statusRecord.app)
+  const db = recordValue(statusRecord.db)
+  const vector = recordValue(statusRecord.vector)
+  const apiStatus = statusValue(statusRecord.api) ?? statusValue(app) ?? statusValue(statusRecord.status) ?? '—'
+  const apiVersion = stringValue(statusRecord.api_version) ?? stringValue(app.version) ?? '?'
+  const dbStatus = statusValue(statusRecord.database) ?? statusValue(db) ?? '—'
+  const dbDetail = stringValue(statusRecord.database_detail) ?? stringValue(db.detail)
+  const vectorStatus = statusValue(statusRecord.vector) ?? statusValue(vector) ?? '—'
+  const vectorDetail = stringValue(statusRecord.vector_detail) ?? stringValue(recordValue(vector.plugin).reason)
+  const knowledgeBaseCount = typeof statusRecord.knowledge_bases === 'number' ? statusRecord.knowledge_bases : 0
+  const pipelineRunCount = typeof statusRecord.recent_pipeline_runs === 'number' ? statusRecord.recent_pipeline_runs : 0
+  const embeddingProfileCount = typeof statusRecord.embedding_profiles === 'number' ? statusRecord.embedding_profiles : 0
 
   if (isLoading) {
     return (
@@ -33,37 +60,37 @@ export default function Overview() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
         <StatusCard
           label="API"
-          value={status?.api ?? '—'}
-          sub={`v${status?.api_version ?? '?'}`}
-          status={deriveStatus(status?.api)}
+          value={apiStatus}
+          sub={`v${apiVersion}`}
+          status={deriveStatus(apiStatus)}
         />
         <StatusCard
           label="Database"
-          value={status?.database ?? '—'}
-          sub={status?.database_detail ?? undefined}
-          status={deriveStatus(status?.database)}
+          value={dbStatus}
+          sub={dbDetail}
+          status={deriveStatus(dbStatus)}
         />
         <StatusCard
           label="Vector Backend"
-          value={status?.vector ?? '—'}
-          sub={status?.vector_detail ?? undefined}
-          status={deriveStatus(status?.vector)}
+          value={vectorStatus}
+          sub={vectorDetail}
+          status={deriveStatus(vectorStatus)}
         />
         <StatusCard
           label="Knowledge Bases"
-          value={kbs?.length ?? status?.knowledge_bases ?? 0}
+          value={kbs?.length ?? knowledgeBaseCount}
           sub="Knowledge inventory"
           status="neutral"
         />
         <StatusCard
           label="Pipeline Runs"
-          value={runs?.length ?? status?.recent_pipeline_runs ?? 0}
+          value={runs?.length ?? pipelineRunCount}
           sub="Recent ingestion"
           status="neutral"
         />
         <StatusCard
           label="Embedding Profiles"
-          value={status?.embedding_profiles ?? 0}
+          value={embeddingProfileCount}
           sub="Real indexed profiles"
           status="neutral"
         />

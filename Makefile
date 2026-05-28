@@ -84,7 +84,7 @@ required-ci-contexts-check:
 	$(UV) run python -m scripts.check_required_ci_contexts
 
 web-check:
-	$(UV) run pytest tests/test_web_console.py tests/test_web_console_local_pilot.py tests/test_local_pilot_console_e2e.py
+	$(UV) run pytest tests/test_root_redirect.py tests/test_web_console_local_pilot.py tests/test_local_pilot_console_e2e.py
 
 local-pilot-preflight:
 	$(UV) run python -m scripts.local_pilot_preflight --mode local --output $(ARTIFACTS_DIR)/local-pilot-preflight.json

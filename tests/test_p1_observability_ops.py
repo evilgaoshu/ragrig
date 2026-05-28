@@ -99,7 +99,7 @@ def test_send_invitation_email_builds_correct_url():
         call_args = mock_smtp.sendmail.call_args
         raw_msg = call_args[0][2]
         assert "mytoken" in raw_msg
-        assert "https://app.example.com/app/login?token=mytoken" in raw_msg
+        assert "https://app.example.com/login?token=mytoken" in raw_msg
 
 
 @pytest.mark.unit

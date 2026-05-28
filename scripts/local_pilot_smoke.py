@@ -88,9 +88,9 @@ def run_smoke(database_path: Path) -> dict[str, Any]:
         )
 
         health = _json_response(client.get("/health"))
-        console = client.get("/console")
-        if console.status_code != 200 or "Local Pilot" not in console.text:
-            raise LocalPilotSmokeError("console did not render the Local Pilot surface")
+        legacy_console = client.get("/console")
+        if legacy_console.status_code != 404:
+            raise LocalPilotSmokeError("legacy console route should return 404")
 
         status = _json_response(client.get("/local-pilot/status"))
         upload_extensions = set(status["upload"]["extensions"])
@@ -188,7 +188,7 @@ def run_smoke(database_path: Path) -> dict[str, Any]:
 
         return {
             "health": health,
-            "console": {"contains_local_pilot": True},
+            "legacy_console": {"status_code": legacy_console.status_code},
             "status": status,
             "model_health": model_health,
             "answer_smoke": answer_smoke,
