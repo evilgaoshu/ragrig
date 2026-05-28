@@ -44,6 +44,14 @@ async function fetchJson(page, url, options = {}) {
   );
 }
 
+async function openRoute(page, path) {
+  await page.evaluate((targetPath) => {
+    window.history.pushState({}, '', targetPath);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, path);
+  await page.waitForTimeout(100);
+}
+
 async function run() {
   assert(baseURL, 'RAGRIG_GRAPH_CONSOLE_SMOKE_BASE_URL is required');
   assert(knowledgeBaseName, 'RAGRIG_GRAPH_CONSOLE_SMOKE_KNOWLEDGE_BASE is required');
@@ -58,12 +66,15 @@ async function run() {
   });
 
   try {
-    await page.goto(`${baseURL}/knowledge-map`, { waitUntil: 'domcontentloaded', timeout });
+    await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded', timeout });
+    await waitForText(page, 'main', /Overview|System/i);
+
+    await openRoute(page, '/knowledge-map');
     await waitForText(page, 'main', /Knowledge Map/);
-    await waitForText(page, 'main', /Relation explorer/);
-    await waitForText(page, 'main', /Retrieval preferences/);
-    await page.getByRole('button', { name: 'Hide from retrieval' }).click();
-    await waitForText(page, 'main', /Hidden rel-/);
+    await waitForText(page, 'main', /Relation Explorer/);
+    await waitForText(page, 'main', /Retrieval Preferences/);
+    await page.getByRole('button', { name: 'Hide From Retrieval' }).click();
+    await waitForText(page, 'main', /Recorded incorrect feedback/);
     const knowledgeMapTitle = await textContent(page, 'h1');
 
     const kbResponse = await fetchJson(page, '/knowledge-bases');
@@ -125,13 +136,13 @@ async function run() {
     assert((graphContext.matched_entities || []).length >= 1, `expected matched graph entities: ${JSON.stringify(graphContext)}`);
     assert((graphContext.diagnostics?.suppressed_relation_count || 0) >= 1, `expected suppressed relation after feedback: ${JSON.stringify(graphContext)}`);
 
-    await page.goto(`${baseURL}/retrieval-lab`, { waitUntil: 'domcontentloaded', timeout });
+    await openRoute(page, '/retrieval-lab');
     await waitForText(page, 'main', /Retrieval Lab/);
-    await waitForText(page, 'main', /Mode comparison/);
+    await waitForText(page, 'main', /Mode Comparison/);
     await waitForText(page, 'main', /Graph Context/);
     await waitForText(page, 'main', /hybrid_graph/);
-    await page.getByRole('button', { name: 'Compare modes' }).click();
-    await waitForText(page, 'main', /Compared dense, graph, hybrid_graph, and graph_rerank modes/);
+    await page.getByRole('button', { name: 'Compare Modes' }).click();
+    await waitForText(page, 'main', /Compared dense, graph, hybrid_graph with live retrieval responses/);
     const retrievalLabTitle = await textContent(page, 'h1');
 
     assert(browserErrors.length === 0, `browser console errors: ${browserErrors.join('; ')}`);

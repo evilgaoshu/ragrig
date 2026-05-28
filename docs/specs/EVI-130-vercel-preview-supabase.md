@@ -8,7 +8,7 @@ Web Console while using Supabase Postgres as the remote metadata database.
 ## Deployment Shape
 
 - Vercel Preview runs RAGRig through the Python function entrypoint at `api/index.py`.
-- `vercel.json` rewrites all requests to that function so `/health`, `/console`, and
+- `vercel.json` rewrites all requests to that function so `/health`, `/`, and
   API routes keep the same paths as the local Docker stack.
 - Runtime dependencies are exposed through `requirements.txt` for the Vercel Python
   builder.
@@ -74,7 +74,7 @@ After Vercel creates a Preview deployment, verify it with:
 VERCEL_PREVIEW_URL='https://your-preview-url.vercel.app' make vercel-preview-smoke
 ```
 
-The smoke checks `/health`, `/console`, and `/local-pilot/status`. It intentionally
+The smoke checks `/health`, `/`, and `/local-pilot/status`. It intentionally
 does not call model providers.
 
 ## Model Boundary
@@ -86,7 +86,7 @@ readiness checks, not deployment blockers.
 ## Acceptance Criteria
 
 - `/health` is available on a Vercel Preview URL.
-- `/console` is available on the same Preview URL.
+- The React Console root `/` is available on the same Preview URL.
 - Supabase-backed requests use `DATABASE_URL`.
 - Migration is run explicitly before relying on the Preview database.
 - Missing model credentials do not block app startup.

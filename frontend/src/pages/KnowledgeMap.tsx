@@ -1,211 +1,342 @@
 import { useMemo, useState } from 'react'
+import {
+  useKnowledgeBases,
+  useKnowledgeGraph,
+  useRebuildKnowledgeGraph,
+  useRetrievalPreferences,
+  useSaveRetrievalPreferences,
+  useSubmitRelationFeedback,
+} from '../api/hooks'
+import type { KnowledgeGraphRelation, RelationFeedbackSummary, RetrievalPreferences } from '../api/types'
 import { Button } from '../components/ui'
 import { ConsolePage, DataTable, MetricCard, Panel, StatusPill } from '../components/console'
 
-type Entity = {
-  id: string
-  name: string
-  type: string
-  mentions: number
-  documents: number
-  confidence: string
-}
-
-type Relation = {
-  id: string
-  subject: string
-  predicate: string
-  object: string
-  evidence: number
-  status: 'accepted' | 'needs review'
-}
-
-type Claim = {
-  id: string
-  claim: string
-  source: string
-  confidence: string
-  status: 'verified' | 'review'
-}
-
-const ENTITIES: Entity[] = [
-  { id: 'ent-retention', name: 'Retention policy', type: 'policy', mentions: 42, documents: 7, confidence: '0.94' },
-  { id: 'ent-sanitizer', name: 'Processing sanitizer', type: 'component', mentions: 31, documents: 5, confidence: '0.91' },
-  { id: 'ent-graph', name: 'Graph retrieval', type: 'capability', mentions: 28, documents: 4, confidence: '0.89' },
-  { id: 'ent-voyage', name: 'Voyage embeddings', type: 'provider', mentions: 16, documents: 3, confidence: '0.86' },
+const MODES = [
+  'dense',
+  'hybrid',
+  'rerank',
+  'hybrid_rerank',
+  'graph',
+  'hybrid_graph',
+  'graph_rerank',
+  'hybrid_graph_rerank',
 ]
 
-const RELATIONS: Relation[] = [
-  { id: 'rel-1', subject: 'Retention policy', predicate: 'governs', object: 'Artifact cleanup', evidence: 6, status: 'accepted' },
-  { id: 'rel-2', subject: 'Processing sanitizer', predicate: 'redacts', object: 'Sensitive preview fields', evidence: 9, status: 'accepted' },
-  { id: 'rel-3', subject: 'Graph retrieval', predicate: 'augments', object: 'Hybrid search ranking', evidence: 4, status: 'needs review' },
-  { id: 'rel-4', subject: 'Voyage embeddings', predicate: 'powers', object: 'Production vector index', evidence: 3, status: 'accepted' },
-]
+const DEFAULT_PREFERENCES: RetrievalPreferences = {
+  mode: 'hybrid_graph',
+  lexical_weight: 0.3,
+  vector_weight: 0.7,
+  candidate_k: 20,
+  reranker_provider: null,
+  reranker_model: null,
+  graph_weight: 0.35,
+  graph_depth: 1,
+}
 
-const CLAIMS: Claim[] = [
-  { id: 'claim-1', claim: 'Graph retrieval should be opt-in per knowledge base.', source: 'kg-lite-graph-retrieval-spec.md', confidence: '0.92', status: 'verified' },
-  { id: 'claim-2', claim: 'Sanitizer drift reports are retained as operational artifacts.', source: 'sanitizer-drift-history-spec.md', confidence: '0.88', status: 'verified' },
-  { id: 'claim-3', claim: 'Local pilot can run with deterministic providers.', source: 'local-pilot-spec.md', confidence: '0.81', status: 'review' },
-]
+function formatScore(value: number | null | undefined) {
+  return typeof value === 'number' ? value.toFixed(2) : '--'
+}
 
-const EVIDENCE = {
-  'rel-1': [
-    'Retention applies to audit artifacts, export bundles, and generated summaries.',
-    'Cleanup jobs emit audit records before destructive artifact removal.',
-  ],
-  'rel-2': [
-    'Preview sanitization is enforced across markdown, HTML, CSV, and plaintext fixtures.',
-    'Cross-layer sanitizer contracts prevent unsafe raw text from escaping into UI previews.',
-  ],
-  'rel-3': [
-    'Graph evidence chunks are merged with dense retrieval candidates before reranking.',
-    'KB-level graph preferences control default depth and graph weight.',
-  ],
-  'rel-4': [
-    'Voyage embedding provider is used for high-quality retrieval baselines.',
-    'Local fallback providers remain available for air-gapped smoke tests.',
-  ],
+function feedbackSummary(relation: KnowledgeGraphRelation): RelationFeedbackSummary {
+  return relation.metadata?.feedback_summary ?? {}
+}
+
+function relationStatus(relation: KnowledgeGraphRelation) {
+  const summary = feedbackSummary(relation)
+  if ((summary.incorrect ?? 0) > 0) return { label: 'suppressed', tone: 'warn' as const }
+  if ((summary.needs_review ?? 0) > 0) return { label: 'needs review', tone: 'warn' as const }
+  if ((summary.correct ?? 0) > 0) return { label: 'accepted', tone: 'ok' as const }
+  return { label: 'unreviewed', tone: 'neutral' as const }
+}
+
+function clampNumber(raw: string, fallback: number, min: number, max: number) {
+  const value = Number(raw)
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, value))
+}
+
+function graphDepth(raw: string, fallback: number) {
+  return Math.round(clampNumber(raw, fallback, 0, 2))
 }
 
 export default function KnowledgeMap() {
-  const [selectedRelationId, setSelectedRelationId] = useState(RELATIONS[0].id)
-  const [feedback, setFeedback] = useState('No feedback submitted.')
-  const [suppressedRelationId, setSuppressedRelationId] = useState<string | null>('rel-3')
-  const [depth, setDepth] = useState('2')
-  const [weight, setWeight] = useState('0.35')
-  const [mode, setMode] = useState('hybrid_graph')
-  const selectedRelation = RELATIONS.find((relation) => relation.id === selectedRelationId) ?? RELATIONS[0]
-  const suppressedRelation = RELATIONS.find((relation) => relation.id === suppressedRelationId)
-  const selectedEvidence = useMemo(() => EVIDENCE[selectedRelation.id as keyof typeof EVIDENCE] ?? [], [selectedRelation])
+  const { data: kbs } = useKnowledgeBases()
+  const [selectedKbIdOverride, setSelectedKbIdOverride] = useState('')
+  const [selectedRelationId, setSelectedRelationId] = useState('')
+  const [message, setMessage] = useState('')
+  const [depthOverride, setDepthOverride] = useState<string | null>(null)
+  const [weightOverride, setWeightOverride] = useState<string | null>(null)
+  const [modeOverride, setModeOverride] = useState<string | null>(null)
+
+  const preferredKb = useMemo(() => {
+    const items = kbs ?? []
+    return items.find((kb) => kb.name === 'local-pilot-demo-rc') ?? items[0] ?? null
+  }, [kbs])
+  const selectedKbId = selectedKbIdOverride || preferredKb?.id || ''
+  const selectedKb = useMemo(() => {
+    return (kbs ?? []).find((kb) => kb.id === selectedKbId) ?? null
+  }, [kbs, selectedKbId])
+
+  const graphQuery = useKnowledgeGraph(selectedKbId || null)
+  const preferencesQuery = useRetrievalPreferences(selectedKbId || null)
+  const rebuildGraph = useRebuildKnowledgeGraph()
+  const savePreferences = useSaveRetrievalPreferences()
+  const submitFeedback = useSubmitRelationFeedback()
+
+  const graph = graphQuery.data
+  const entities = graph?.entities ?? []
+  const relations = graph?.relations ?? []
+  const claims = graph?.claims ?? []
+  const selectedRelation = relations.find((relation) => relation.id === selectedRelationId) ?? relations[0] ?? null
+  const selectedEvidence = selectedRelation?.evidence ?? []
+  const suppressedCount = relations.filter((relation) => (feedbackSummary(relation).incorrect ?? 0) > 0).length
+  const stats = graph?.stats
+  const savedPreferences = preferencesQuery.data?.preferences
+  const mode = modeOverride ?? savedPreferences?.mode ?? DEFAULT_PREFERENCES.mode
+  const depth = depthOverride ?? String(savedPreferences?.graph_depth ?? DEFAULT_PREFERENCES.graph_depth)
+  const weight = weightOverride ?? String(savedPreferences?.graph_weight ?? DEFAULT_PREFERENCES.graph_weight)
+
+  async function handleRebuild() {
+    if (!selectedKbId) return
+    try {
+      const result = await rebuildGraph.mutateAsync({ kbId: selectedKbId })
+      setMessage(`KG rebuild completed: ${result.created ?? 0} created, ${result.skipped ?? 0} skipped.`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'KG rebuild failed.')
+    }
+  }
+
+  async function handleFeedback(verdict: 'correct' | 'incorrect' | 'needs_review') {
+    if (!selectedKbId || !selectedRelation) return
+    try {
+      const result = await submitFeedback.mutateAsync({
+        kbId: selectedKbId,
+        relationId: selectedRelation.id,
+        verdict,
+        note: `Console feedback: ${verdict}`,
+      })
+      setMessage(`Recorded ${verdict} feedback for ${result.relation_id}.`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Relation feedback failed.')
+    }
+  }
+
+  async function handleSavePreferences() {
+    if (!selectedKbId) return
+    const current = preferencesQuery.data?.preferences ?? DEFAULT_PREFERENCES
+    const preferences: RetrievalPreferences = {
+      ...current,
+      mode,
+      graph_depth: graphDepth(depth, current.graph_depth),
+      graph_weight: clampNumber(weight, current.graph_weight, 0, 1),
+    }
+    try {
+      await savePreferences.mutateAsync({ kbId: selectedKbId, preferences })
+      setModeOverride(preferences.mode)
+      setDepthOverride(String(preferences.graph_depth))
+      setWeightOverride(String(preferences.graph_weight))
+      setMessage(`Saved graph preferences for ${selectedKb?.name ?? 'knowledge base'}.`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to save retrieval preferences.')
+    }
+  }
 
   return (
     <ConsolePage
       title="Knowledge Map"
-      description="Interactive KG Lite prototype for entities, relations, claims, evidence, relation feedback, and KB-level graph retrieval preferences."
-      actions={<Button variant="secondary" onClick={() => setFeedback('KG rebuild queued for handbook workspace.')}>Rebuild KG</Button>}
+      description="KG Lite entities, relations, claims, evidence, relation feedback, and KB-level graph retrieval preferences."
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            id="knowledge-map-kb-select"
+            value={selectedKbId}
+            onChange={(event) => {
+              setSelectedKbIdOverride(event.target.value)
+              setSelectedRelationId('')
+              setModeOverride(null)
+              setDepthOverride(null)
+              setWeightOverride(null)
+            }}
+            className="h-10 rounded-lg border border-line bg-white px-3 text-sm"
+          >
+            <option value="">Select KB...</option>
+            {(kbs ?? []).map((kb) => (
+              <option key={kb.id} value={kb.id}>
+                {kb.name}
+              </option>
+            ))}
+          </select>
+          <Button variant="secondary" onClick={handleRebuild} disabled={!selectedKbId || rebuildGraph.isPending}>
+            {rebuildGraph.isPending ? 'Rebuilding...' : 'Rebuild KG'}
+          </Button>
+        </div>
+      }
     >
-      {feedback && <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">{feedback}</div>}
+      {message && <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">{message}</div>}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <MetricCard label="Entities" value={ENTITIES.length} sub="cross-document" />
-        <MetricCard label="Relations" value={RELATIONS.length} sub="with evidence" />
-        <MetricCard label="Claims" value={CLAIMS.length} sub="extracted facts" />
-        <MetricCard label="Graph depth" value={depth} sub="KB default" />
-        <MetricCard label="Graph weight" value={weight} sub="retrieval blend" />
+        <MetricCard label="Entities" value={stats?.entity_count ?? entities.length} sub="cross-document" />
+        <MetricCard label="Relations" value={stats?.relation_count ?? relations.length} sub="with evidence" />
+        <MetricCard label="Claims" value={stats?.claim_count ?? claims.length} sub="extracted facts" />
+        <MetricCard label="Evidence chunks" value={stats?.graph_evidence_chunk_count ?? 0} sub="graph retrieval" />
+        <MetricCard label="Suppressed" value={suppressedCount} sub="feedback-aware paths" tone={suppressedCount ? 'warn' : 'ok'} />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <Panel title="Relation explorer" description="Select a relation to inspect evidence and submit feedback.">
-          <DataTable
-            rows={RELATIONS}
-            getKey={(row) => row.id}
-            onRowClick={(row) => setSelectedRelationId(row.id)}
-            columns={[
-              { key: 'subject', label: 'Subject', render: (row) => <div className="font-medium text-ink">{row.subject}</div> },
-              { key: 'predicate', label: 'Relation', render: (row) => <span className="font-mono text-xs text-slate-600">{row.predicate}</span> },
-              { key: 'object', label: 'Object', render: (row) => row.object },
-              { key: 'evidence', label: 'Evidence', align: 'right', render: (row) => row.evidence },
-              { key: 'status', label: 'Status', render: (row) => (
-                suppressedRelationId === row.id
-                  ? <StatusPill tone="warn">suppressed</StatusPill>
-                  : <StatusPill tone={row.status === 'accepted' ? 'ok' : 'warn'}>{row.status}</StatusPill>
-              ) },
-            ]}
-          />
+      {!selectedKbId ? (
+        <Panel title="No knowledge base selected">
+          <div className="text-sm text-muted">Create or select a knowledge base to load graph data.</div>
         </Panel>
-
-        <Panel title="Evidence detail" description={`${selectedRelation.subject} ${selectedRelation.predicate} ${selectedRelation.object}`}>
-          <div className="space-y-3">
-            {selectedEvidence.map((item) => (
-              <div key={item} className="rounded-lg border border-blue-100 bg-blue-50/45 p-3 text-sm text-slate-700">
-                {item}
-              </div>
-            ))}
-            <div className="flex flex-wrap gap-2 pt-1">
-              <Button variant="secondary" onClick={() => {
-                setSuppressedRelationId(null)
-                setFeedback(`Accepted relation ${selectedRelation.id}; retrieval suppression cleared.`)
-              }}>Accept</Button>
-              <Button variant="secondary" onClick={() => setFeedback(`Flagged ${selectedRelation.id} for curator review.`)}>Needs review</Button>
-              <Button variant="secondary" onClick={() => {
-                setSuppressedRelationId(selectedRelation.id)
-                setFeedback(`Hidden ${selectedRelation.id} from graph retrieval until reviewed.`)
-              }}>Hide from retrieval</Button>
-            </div>
+      ) : graphQuery.isError ? (
+        <Panel title="Knowledge graph unavailable">
+          <div className="text-sm text-red-600">
+            {graphQuery.error instanceof Error ? graphQuery.error.message : 'Failed to load graph data.'}
           </div>
         </Panel>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-        <Panel title="Entities" description="High-signal entities extracted from understanding runs.">
-          <DataTable
-            rows={ENTITIES}
-            getKey={(row) => row.id}
-            columns={[
-              { key: 'name', label: 'Entity', render: (row) => <div><div className="font-medium text-ink">{row.name}</div><div className="text-xs text-muted">{row.type}</div></div> },
-              { key: 'mentions', label: 'Mentions', align: 'right', render: (row) => row.mentions },
-              { key: 'documents', label: 'Docs', align: 'right', render: (row) => row.documents },
-              { key: 'confidence', label: 'Confidence', render: (row) => <span className="font-mono text-xs">{row.confidence}</span> },
-            ]}
-          />
+      ) : !graph && graphQuery.isLoading ? (
+        <Panel title="Loading graph">
+          <div className="text-sm text-muted">Loading KG data for {selectedKb?.name ?? 'selected KB'}...</div>
         </Panel>
+      ) : (
+        <>
+          <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+            <Panel title="Relation Explorer" description={`${relations.length} relations from ${graph?.knowledge_base ?? selectedKb?.name ?? 'selected KB'}.`}>
+              {relations.length ? (
+                <DataTable
+                  rows={relations}
+                  getKey={(row) => row.id}
+                  onRowClick={(row) => setSelectedRelationId(row.id)}
+                  columns={[
+                    { key: 'subject', label: 'Subject', render: (row) => <div className="font-medium text-ink">{row.subject}</div> },
+                    { key: 'predicate', label: 'Relation', render: (row) => <span className="font-mono text-xs text-slate-600">{row.predicate}</span> },
+                    { key: 'object', label: 'Object', render: (row) => row.object },
+                    { key: 'evidence', label: 'Evidence', align: 'right', render: (row) => row.evidence.length },
+                    { key: 'confidence', label: 'Conf.', render: (row) => <span className="font-mono text-xs">{formatScore(row.confidence)}</span> },
+                    { key: 'status', label: 'Status', render: (row) => {
+                      const status = relationStatus(row)
+                      return <StatusPill tone={status.tone}>{status.label}</StatusPill>
+                    } },
+                  ]}
+                />
+              ) : (
+                <div className="text-sm text-muted">No relations have been extracted for this knowledge base.</div>
+              )}
+            </Panel>
 
-        <Panel title="Claims" description="Claim-level facts are shown separately from entity relations.">
-          <DataTable
-            rows={CLAIMS}
-            getKey={(row) => row.id}
-            columns={[
-              { key: 'claim', label: 'Claim', render: (row) => <div className="max-w-xl text-sm text-ink">{row.claim}</div> },
-              { key: 'source', label: 'Source', render: (row) => <span className="font-mono text-xs text-slate-600">{row.source}</span> },
-              { key: 'confidence', label: 'Confidence', render: (row) => row.confidence },
-              { key: 'status', label: 'Status', render: (row) => <StatusPill tone={row.status === 'verified' ? 'ok' : 'warn'}>{row.status}</StatusPill> },
-            ]}
-          />
-        </Panel>
-      </div>
+            <Panel
+              title="Evidence Detail"
+              description={
+                selectedRelation
+                  ? `${selectedRelation.subject} ${selectedRelation.predicate} ${selectedRelation.object}`
+                  : 'No relation selected'
+              }
+            >
+              {selectedRelation ? (
+                <div className="space-y-3">
+                  {selectedEvidence.length ? (
+                    selectedEvidence.map((item) => (
+                      <div key={item.id} className="rounded-lg border border-blue-100 bg-blue-50/45 p-3 text-sm text-slate-700">
+                        <div className="font-mono text-xs text-muted">{item.document_uri}</div>
+                        <div className="mt-2 leading-6">{item.text_preview || item.evidence_text}</div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-lg border border-line bg-white p-3 text-sm text-muted">No evidence chunks recorded.</div>
+                  )}
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <Button variant="secondary" onClick={() => handleFeedback('correct')} disabled={submitFeedback.isPending}>Accept</Button>
+                    <Button variant="secondary" onClick={() => handleFeedback('needs_review')} disabled={submitFeedback.isPending}>Needs Review</Button>
+                    <Button variant="secondary" onClick={() => handleFeedback('incorrect')} disabled={submitFeedback.isPending}>Hide From Retrieval</Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-muted">Select a relation to inspect evidence.</div>
+              )}
+            </Panel>
+          </div>
 
-      <Panel title="Retrieval preferences" description="Prototype for KB-level graph retrieval defaults before wiring the real preference API.">
+          <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+            <Panel title="Entities" description={`${entities.length} extracted entities.`}>
+              {entities.length ? (
+                <DataTable
+                  rows={entities}
+                  getKey={(row) => row.id}
+                  columns={[
+                    { key: 'name', label: 'Entity', render: (row) => <div><div className="font-medium text-ink">{row.display_name}</div><div className="text-xs text-muted">{row.entity_type}</div></div> },
+                    { key: 'mentions', label: 'Mentions', align: 'right', render: (row) => row.mention_count },
+                    { key: 'evidence', label: 'Evidence', align: 'right', render: (row) => row.evidence_chunks.length },
+                    { key: 'confidence', label: 'Confidence', render: (row) => <span className="font-mono text-xs">{formatScore(row.confidence)}</span> },
+                  ]}
+                />
+              ) : (
+                <div className="text-sm text-muted">No entities have been extracted for this knowledge base.</div>
+              )}
+            </Panel>
+
+            <Panel title="Claims" description={`${claims.length} claim-level facts.`}>
+              {claims.length ? (
+                <DataTable
+                  rows={claims}
+                  getKey={(row) => row.id}
+                  columns={[
+                    { key: 'claim', label: 'Claim', render: (row) => <div className="max-w-xl text-sm text-ink">{row.claim_text}</div> },
+                    { key: 'source', label: 'Source', render: (row) => <span className="font-mono text-xs text-slate-600">{row.document_uri}</span> },
+                    { key: 'confidence', label: 'Confidence', render: (row) => formatScore(row.confidence) },
+                    { key: 'preview', label: 'Evidence', render: (row) => <div className="max-w-md text-xs text-slate-600">{row.text_preview}</div> },
+                  ]}
+                />
+              ) : (
+                <div className="text-sm text-muted">No claims have been extracted for this knowledge base.</div>
+              )}
+            </Panel>
+          </div>
+        </>
+      )}
+
+      <Panel title="Retrieval Preferences" description={preferencesQuery.isFetching ? 'Loading saved preferences...' : 'KB-level graph retrieval defaults.'}>
         <div className="grid gap-4 md:grid-cols-3">
           <label className="space-y-1">
             <span className="text-xs font-medium text-slate-600">Default retrieval mode</span>
-            <select value={mode} onChange={(event) => setMode(event.target.value)} className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm">
-              <option value="dense">dense</option>
-              <option value="hybrid">hybrid</option>
-              <option value="graph">graph</option>
-              <option value="hybrid_graph">hybrid_graph</option>
-              <option value="graph_rerank">graph_rerank</option>
+            <select
+              id="knowledge-map-mode"
+              value={mode}
+              onChange={(event) => setModeOverride(event.target.value)}
+              className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm"
+            >
+              {MODES.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
             </select>
           </label>
           <label className="space-y-1">
             <span className="text-xs font-medium text-slate-600">Graph depth</span>
-            <input value={depth} onChange={(event) => setDepth(event.target.value)} className="w-full rounded-lg border border-line px-3 py-2 text-sm" />
+            <input
+              id="knowledge-map-depth"
+              type="number"
+              min={0}
+              max={2}
+              value={depth}
+              onChange={(event) => setDepthOverride(event.target.value)}
+              className="w-full rounded-lg border border-line px-3 py-2 text-sm"
+            />
           </label>
           <label className="space-y-1">
             <span className="text-xs font-medium text-slate-600">Graph weight</span>
-            <input value={weight} onChange={(event) => setWeight(event.target.value)} className="w-full rounded-lg border border-line px-3 py-2 text-sm" />
+            <input
+              id="knowledge-map-weight"
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              value={weight}
+              onChange={(event) => setWeightOverride(event.target.value)}
+              className="w-full rounded-lg border border-line px-3 py-2 text-sm"
+            />
           </label>
         </div>
         <div className="mt-4 flex justify-end">
-          <Button onClick={() => setFeedback(`Saved graph preferences: ${mode}, depth ${depth}, weight ${weight}.`)}>Save preferences</Button>
-        </div>
-      </Panel>
-
-      <Panel title="Retrieval impact" description="Relation feedback immediately changes graph retrieval context in the prototype.">
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-lg border border-blue-100 bg-blue-50/45 p-3">
-            <div className="text-xs font-semibold uppercase tracking-wider text-muted">Accepted paths</div>
-            <div className="mt-2 text-sm text-slate-700">Retention policy &rarr; governs &rarr; Artifact cleanup</div>
-          </div>
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-            <div className="text-xs font-semibold uppercase tracking-wider text-amber-700">Suppressed path</div>
-            <div className="mt-2 text-sm text-amber-800">
-              {suppressedRelation ? `${suppressedRelation.subject} -> ${suppressedRelation.predicate} -> ${suppressedRelation.object}` : 'None'}
-            </div>
-          </div>
-          <div className="rounded-lg border border-blue-100 bg-blue-50/45 p-3">
-            <div className="text-xs font-semibold uppercase tracking-wider text-muted">Runbook state</div>
-            <div className="mt-2 text-sm text-slate-700">Graph console rehearsal ready</div>
-          </div>
+          <Button onClick={handleSavePreferences} disabled={!selectedKbId || savePreferences.isPending}>
+            {savePreferences.isPending ? 'Saving...' : 'Save Preferences'}
+          </Button>
         </div>
       </Panel>
     </ConsolePage>

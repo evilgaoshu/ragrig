@@ -23,7 +23,7 @@ function TaskProgress({ taskId }: { taskId: string }) {
         : 'text-blue-600 bg-blue-50'
 
   return (
-    <div className="flex items-center gap-2 mt-2">
+    <div id="upload-task-progress" className="flex items-center gap-2 mt-2">
       {!done && (
         <svg className="animate-spin h-3.5 w-3.5 text-blue-500" viewBox="0 0 24 24" fill="none">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -43,7 +43,7 @@ function TaskProgress({ taskId }: { taskId: string }) {
 
 function FileResultPanel({ result, onReset }: { result: UploadResult; onReset: () => void }) {
   return (
-    <div className="space-y-4">
+    <div id="upload-result" className="space-y-4">
       <div className="flex items-center gap-3">
         <div className="flex gap-3">
           <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-center min-w-[80px]">
@@ -210,7 +210,7 @@ function FileTab({ kbName }: { kbName: string }) {
         onDrop={onDrop}
         onClick={() => fileInputRef.current?.click()}
       >
-        <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onInputChange} />
+        <input id="upload-file-input" ref={fileInputRef} type="file" multiple className="hidden" onChange={onInputChange} />
         <div className="text-2xl mb-2">📄</div>
         <div className="text-sm font-medium text-gray-700">Drop files here or click to browse</div>
         <div className="text-xs text-gray-400 mt-1">Markdown, PDF, plain text, and more</div>
@@ -245,6 +245,7 @@ function FileTab({ kbName }: { kbName: string }) {
       )}
 
       <button
+        id="upload-submit"
         type="submit"
         disabled={!kbName || !files.length || upload.isPending}
         className="px-4 py-2 bg-brand text-white text-sm font-medium rounded-lg hover:bg-brand/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -431,6 +432,7 @@ export default function Upload() {
           <div className="text-sm text-gray-400">Loading…</div>
         ) : (
           <select
+            id="upload-kb-select"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
             value={kbName}
             onChange={(e) => setKbName(e.target.value)}

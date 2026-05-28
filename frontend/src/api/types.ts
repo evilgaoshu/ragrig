@@ -74,10 +74,129 @@ export interface RetrievalReport {
   query: string
   top_k: number
   provider: string
-  model: string
+  model: string | null
   total_results: number
   graph_context?: Record<string, unknown>
   results: RetrievalResult[]
+}
+
+export interface KnowledgeGraphStats {
+  entity_count: number
+  mention_count: number
+  relation_count: number
+  relation_evidence_count: number
+  claim_count: number
+  source_chunk_count: number
+  document_count: number
+  graph_evidence_chunk_count: number
+}
+
+export interface KnowledgeGraphMention {
+  id: string
+  chunk_id: string
+  document_id: string
+  document_version_id: string
+  mention_text: string
+  char_start: number | null
+  char_end: number | null
+  confidence: number
+  text_preview: string
+  document_uri: string
+}
+
+export interface KnowledgeGraphEntity {
+  id: string
+  canonical_name: string
+  display_name: string
+  entity_type: string
+  description: string | null
+  confidence: number
+  extractor_version: string
+  mention_count: number
+  evidence_chunks: KnowledgeGraphMention[]
+  metadata: Record<string, unknown>
+}
+
+export interface KnowledgeGraphRelationEvidence {
+  id: string
+  chunk_id: string
+  document_id: string
+  document_version_id: string
+  evidence_text: string
+  text_preview: string
+  document_uri: string
+  confidence: number
+}
+
+export interface RelationFeedbackSummary {
+  correct?: number
+  incorrect?: number
+  needs_review?: number
+  total?: number
+}
+
+export interface KnowledgeGraphRelation {
+  id: string
+  subject_entity_id: string
+  subject: string
+  predicate: string
+  object_entity_id: string
+  object: string
+  confidence: number
+  extractor_version: string
+  evidence: KnowledgeGraphRelationEvidence[]
+  metadata: Record<string, unknown> & { feedback_summary?: RelationFeedbackSummary }
+}
+
+export interface KnowledgeGraphClaim {
+  id: string
+  claim_text: string
+  confidence: number
+  source_chunk_id: string
+  document_id: string
+  document_version_id: string
+  document_uri: string
+  text_preview: string
+  extractor_version: string
+  metadata: Record<string, unknown>
+}
+
+export interface KnowledgeGraphResult {
+  schema_version: string
+  status: string
+  knowledge_base_id: string
+  knowledge_base: string
+  generated_from: string
+  stats: KnowledgeGraphStats
+  entities: KnowledgeGraphEntity[]
+  relations: KnowledgeGraphRelation[]
+  claims: KnowledgeGraphClaim[]
+  limitations: string[]
+}
+
+export interface RetrievalPreferences {
+  mode: string
+  lexical_weight: number
+  vector_weight: number
+  candidate_k: number
+  reranker_provider: string | null
+  reranker_model: string | null
+  graph_weight: number
+  graph_depth: number
+}
+
+export interface RetrievalPreferenceResponse {
+  status?: string
+  knowledge_base_id: string
+  knowledge_base: string
+  preferences: RetrievalPreferences
+}
+
+export interface RelationFeedbackResponse {
+  status: string
+  relation_id: string
+  feedback: Record<string, unknown>
+  feedback_summary: RelationFeedbackSummary
 }
 
 export interface TaskRecord {

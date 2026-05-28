@@ -89,9 +89,9 @@ def test_graph_console_demo_browser_smoke_is_registered() -> None:
     assert "scripts.demo_graph_console_smoke" in makefile
     assert "/knowledge-map" in browser_source
     assert "/retrieval-lab" in browser_source
-    assert "Relation explorer" in browser_source
+    assert "Relation Explorer" in browser_source
     assert "suppressed_relation_count" in browser_source
-    assert "Compare modes" in browser_source
+    assert "Compare Modes" in browser_source
 
 
 def test_graph_console_cleanup_is_scoped_to_demo_artifacts(tmp_path: Path) -> None:

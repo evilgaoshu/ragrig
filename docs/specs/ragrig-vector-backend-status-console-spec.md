@@ -12,7 +12,9 @@ Expose real vector backend readiness in both `/system/status` and the lightweigh
 This spec covers:
 
 - the `/system/status.vector` response shape
-- operator-facing vector readiness rendering in `GET /console`
+- operator-facing vector readiness rendering in the console UI; the original
+  lightweight `GET /console` route is legacy and the React Console now serves
+  current views from `/`
 - safe degraded and empty states for missing optional dependencies, unreachable services, missing collections, and unavailable metadata
 - score and distance semantics text shown in the Retrieval Lab
 

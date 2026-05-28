@@ -10,7 +10,8 @@ This spec now has a shipped Phase 1 implementation in the repository.
 
 Implemented in this PR/revision:
 
-- FastAPI-served Web Console at `GET /console`
+- FastAPI-served lightweight Web Console at the legacy `GET /console` route;
+  current React Console builds serve the operator UI from `/`
 - read-only operations endpoints for health, knowledge bases, sources, pipeline runs, documents, chunks, and model shell state
 - real Retrieval Lab wiring to `POST /retrieval/search`
 - explicit empty, disabled, or degraded states where write-path or richer registry features do not exist yet
