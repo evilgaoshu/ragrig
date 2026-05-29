@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, create_engine
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
@@ -287,6 +288,63 @@ def test_pgvector_backend_search_and_delete_cover_non_empty_collection(tmp_path)
     assert hits[0].embedding_id == embedding.id
     assert hits[0].score == 1.0
     assert deleted == 1
+
+
+def test_pgvector_backend_search_uses_sql_order_by_limit_for_postgres() -> None:
+    backend = PgVectorBackend()
+    knowledge_base_id = uuid4()
+    captured: dict[str, object] = {}
+    row = types.SimpleNamespace(
+        embedding_id=uuid4(),
+        document_id=uuid4(),
+        document_version_id=uuid4(),
+        chunk_id=uuid4(),
+        chunk_index=2,
+        document_uri="fixture.txt",
+        source_uri="source://fixture",
+        text="fixture text",
+        char_start=10,
+        char_end=22,
+        page_number=3,
+        chunk_metadata={"kind": "fixture"},
+        embedding=[0.1] * 8,
+        distance=0.125,
+    )
+
+    class FakeResult:
+        def all(self):
+            return [row]
+
+    class FakeSession:
+        bind = types.SimpleNamespace(dialect=types.SimpleNamespace(name="postgresql"))
+
+        def execute(self, statement):
+            captured["statement"] = statement
+            return FakeResult()
+
+    collection = VectorCollection(
+        name="ragrig_fixture_local_deterministic_local_hash_8d_8d_abcd1234",
+        knowledge_base="fixture-local",
+        provider="deterministic-local",
+        model="hash-8d",
+        dimensions=8,
+        knowledge_base_id=knowledge_base_id,
+    )
+
+    hits = backend.search(FakeSession(), collection, query_vector=[0.1] * 8, top_k=1)
+
+    compiled = str(
+        captured["statement"].compile(  # type: ignore[union-attr]
+            dialect=postgresql.dialect(),
+        )
+    )
+    assert "<=>" in compiled
+    assert "ORDER BY" in compiled
+    assert "LIMIT" in compiled
+    assert hits[0].distance == 0.125
+    assert hits[0].score == 0.875
+    assert hits[0].metadata["char_start"] == 10
+    assert hits[0].metadata["page_number"] == 3
 
 
 def test_qdrant_backend_create_path_requires_optional_dependency_when_no_client() -> None:

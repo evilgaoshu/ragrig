@@ -107,6 +107,28 @@ def build_embedding_base_statement(
     return stmt
 
 
+def _search_result_from_row(row: Any, *, distance: float) -> VectorSearchResult:
+    rounded_distance = round(float(distance), 6)
+    return VectorSearchResult(
+        embedding_id=row.embedding_id,
+        chunk_id=row.chunk_id,
+        document_id=row.document_id,
+        document_version_id=row.document_version_id,
+        chunk_index=row.chunk_index,
+        text=row.text,
+        score=round(1.0 - rounded_distance, 6),
+        distance=rounded_distance,
+        metadata={
+            "document_uri": row.document_uri,
+            "source_uri": row.source_uri,
+            "chunk_metadata": row.chunk_metadata,
+            "char_start": getattr(row, "char_start", None),
+            "char_end": getattr(row, "char_end", None),
+            "page_number": getattr(row, "page_number", None),
+        },
+    )
+
+
 class PgVectorBackend:
     backend_name = "pgvector"
     distance_metric = "cosine"
@@ -179,6 +201,16 @@ class PgVectorBackend:
             model=collection.model,
             dimensions=collection.dimensions,
         )
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            distance_expr = Embedding.embedding.cosine_distance(query_vector)
+            ranked_statement = (
+                statement.add_columns(distance_expr.label("distance"))
+                .order_by(distance_expr.asc(), Chunk.chunk_index.asc())
+                .limit(top_k)
+            )
+            rows = session.execute(ranked_statement).all()
+            return [_search_result_from_row(row, distance=row.distance) for row in rows]
+
         rows = session.execute(statement).all()
         ranked = sorted(
             rows,
@@ -188,22 +220,9 @@ class PgVectorBackend:
             ),
         )[:top_k]
         return [
-            VectorSearchResult(
-                embedding_id=row.embedding_id,
-                chunk_id=row.chunk_id,
-                document_id=row.document_id,
-                document_version_id=row.document_version_id,
-                chunk_index=row.chunk_index,
-                text=row.text,
-                score=round(
-                    1.0 - cosine_distance(normalize_vector(row.embedding), query_vector), 6
-                ),
+            _search_result_from_row(
+                row,
                 distance=cosine_distance(normalize_vector(row.embedding), query_vector),
-                metadata={
-                    "document_uri": row.document_uri,
-                    "source_uri": row.source_uri,
-                    "chunk_metadata": row.chunk_metadata,
-                },
             )
             for row in ranked
         ]
