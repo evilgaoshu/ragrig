@@ -3,11 +3,19 @@ from datetime import datetime
 
 from sqlalchemy import DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
     pass
+
+
+@compiles(UUID, "sqlite")
+def _compile_uuid_for_sqlite(_type, _compiler, **_kwargs) -> str:
+    # SQLite gives unknown type names NUMERIC affinity, which can coerce some
+    # valid UUID hex strings into floats such as inf.
+    return "TEXT"
 
 
 class UUIDPrimaryKeyMixin:
