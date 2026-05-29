@@ -1,5 +1,5 @@
 import pytest
-from sqlalchemy import MetaData
+from sqlalchemy import MetaData, create_engine, text
 
 from ragrig.db.models import Base
 
@@ -110,3 +110,18 @@ def test_workspace_auth_phase_1_tables_match_design_contract() -> None:
     assert "token" not in invitations.c
     assert invitations.c.expires_at.nullable is False
     assert invitations.c.workspace_id.references(workspaces.c.id)
+
+
+def test_sqlite_uuid_columns_use_text_affinity() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    try:
+        Base.metadata.create_all(engine)
+        with engine.connect() as connection:
+            rows = connection.execute(text("PRAGMA table_info('kg_relation_evidence')")).mappings()
+            column_types = {row["name"]: row["type"].upper() for row in rows}
+    finally:
+        engine.dispose()
+
+    assert column_types["id"] == "TEXT"
+    assert column_types["relation_id"] == "TEXT"
+    assert column_types["chunk_id"] == "TEXT"
