@@ -15,7 +15,6 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
-from starlette.responses import Response
 
 from ragrig import __version__
 from ragrig.acl import acl_summary_from_metadata
@@ -69,18 +68,6 @@ from ragrig.plugins.sinks.cloudflare_r2.connector import export_to_cloudflare_r2
 from ragrig.plugins.sinks.gcs.connector import export_to_gcs
 from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
 from ragrig.plugins.sinks.webhook.connector import export_to_webhook
-from ragrig.processing_profile import (
-    ProfileStatus,
-    TaskType,
-    build_api_profile_list,
-    build_matrix,
-    create_override,
-    delete_override,
-    get_override,
-    list_overrides,
-    resolve_provider_availability,
-    update_override,
-)
 from ragrig.providers.model_catalog import list_provider_models, measure_provider_latency
 from ragrig.ratelimit import RateLimiter
 from ragrig.repositories import (
@@ -107,6 +94,7 @@ from ragrig.routers.conflicts import router as conflicts_router
 from ragrig.routers.conversations import router as conversations_router
 from ragrig.routers.mcp import router as mcp_router
 from ragrig.routers.openai_compat import router as openai_compat_router
+from ragrig.routers.processing_profiles import router as processing_profiles_router
 from ragrig.routers.retention import router as retention_router
 from ragrig.routers.runtime import (
     get_workspace_id,
@@ -334,48 +322,6 @@ class AnswerRequest(BaseModel):
 
 class PermissionPreviewRequest(BaseModel):
     principal_ids: list[str] | None = None
-
-
-class CreateProcessingProfileRequest(BaseModel):
-    profile_id: str
-    extension: str
-    task_type: TaskType
-    display_name: str
-    description: str
-    provider: str
-    model_id: str | None = None
-    kind: str = "deterministic"
-    tags: list[str] | None = None
-    metadata: dict[str, object] | None = None
-    created_by: str | None = None
-
-
-class PatchProcessingProfileRequest(BaseModel):
-    status: ProfileStatus | None = None
-    display_name: str | None = None
-    description: str | None = None
-    provider: str | None = None
-    model_id: str | None = None
-    kind: str | None = None
-    tags: list[str] | None = None
-    metadata: dict[str, object] | None = None
-
-
-class DiffPreviewRequest(BaseModel):
-    profile_id: str
-    status: ProfileStatus | None = None
-    display_name: str | None = None
-    description: str | None = None
-    provider: str | None = None
-    model_id: str | None = None
-    kind: str | None = None
-    tags: list[str] | None = None
-    metadata: dict[str, object] | None = None
-
-
-class RollbackRequest(BaseModel):
-    audit_id: str
-    actor: str | None = None
 
 
 class WebsiteImportRequest(BaseModel):
@@ -778,6 +724,7 @@ def create_app(
     app.include_router(retention_router)
     app.include_router(openai_compat_router)
     app.include_router(mcp_router)
+    app.include_router(processing_profiles_router)
     app.include_router(conversations_router)
     app.include_router(usage_router)
     app.include_router(source_webhooks_router)
@@ -2723,219 +2670,6 @@ def create_app(
                 media_type="text/event-stream",
             )
         return payload
-
-    @app.get("/processing-profiles", response_model=None)
-    def processing_profiles(
-        session: Annotated[Session, Depends(get_session)],
-    ) -> dict[str, list[dict[str, Any]]]:
-        return {"profiles": build_api_profile_list(session=session)}
-
-    @app.get("/processing-profiles/overrides", response_model=None)
-    def processing_profile_overrides(
-        session: Annotated[Session, Depends(get_session)],
-    ) -> dict[str, list[dict[str, Any]]]:
-        return {"overrides": [p.to_api_dict() for p in list_overrides(session=session)]}
-
-    @app.get("/processing-profiles/overrides/{profile_id}", response_model=None)
-    def processing_profile_override_detail(
-        profile_id: str,
-        session: Annotated[Session, Depends(get_session)],
-    ) -> dict[str, Any] | JSONResponse:
-        profile = get_override(profile_id, session=session)
-        if profile is None:
-            return JSONResponse(status_code=404, content={"error": "override_not_found"})
-        entry = profile.to_api_dict()
-        entry["provider_available"] = resolve_provider_availability(profile.provider)
-        return entry
-
-    @app.post("/processing-profiles", response_model=None)
-    def create_processing_profile(
-        request: CreateProcessingProfileRequest,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
-    ) -> dict[str, Any] | JSONResponse:
-        from ragrig.processing_profile.models import ProcessingKind
-
-        kind = ProcessingKind.DETERMINISTIC
-        if request.kind == "LLM-assisted":
-            kind = ProcessingKind.LLM_ASSISTED
-        try:
-            profile = create_override(
-                profile_id=request.profile_id,
-                extension=request.extension,
-                task_type=request.task_type,
-                display_name=request.display_name,
-                description=request.description,
-                provider=request.provider,
-                model_id=request.model_id,
-                kind=kind,
-                tags=request.tags,
-                metadata=request.metadata,
-                created_by=request.created_by,
-                session=session,
-            )
-            session.commit()
-        except ValueError as exc:
-            return JSONResponse(status_code=409, content={"error": str(exc)})
-        entry = profile.to_api_dict()
-        entry["provider_available"] = resolve_provider_availability(profile.provider)
-        return entry
-
-    @app.patch("/processing-profiles/overrides/{profile_id}", response_model=None)
-    def patch_processing_profile(
-        profile_id: str,
-        request: PatchProcessingProfileRequest,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
-    ) -> dict[str, Any] | JSONResponse:
-        from ragrig.processing_profile.models import ProcessingKind
-
-        if get_override(profile_id, session=session) is None:
-            return JSONResponse(status_code=404, content={"error": "override_not_found"})
-        kind = None
-        if request.kind is not None:
-            kind = (
-                ProcessingKind.LLM_ASSISTED
-                if request.kind == "LLM-assisted"
-                else ProcessingKind.DETERMINISTIC
-            )
-        try:
-            profile = update_override(
-                profile_id,
-                status=request.status,
-                display_name=request.display_name,
-                description=request.description,
-                provider=request.provider,
-                model_id=request.model_id,
-                kind=kind,
-                tags=request.tags,
-                metadata=request.metadata,
-                session=session,
-            )
-            session.commit()
-        except ValueError as exc:
-            return JSONResponse(status_code=404, content={"error": str(exc)})
-        entry = profile.to_api_dict()
-        entry["provider_available"] = resolve_provider_availability(profile.provider)
-        return entry
-
-    @app.delete("/processing-profiles/overrides/{profile_id}", response_model=None)
-    def delete_processing_profile(
-        profile_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
-    ) -> Response | JSONResponse:
-        deleted = delete_override(profile_id, session=session)
-        if not deleted:
-            return JSONResponse(status_code=404, content={"error": "override_not_found"})
-        session.commit()
-        return Response(status_code=204)
-
-    @app.get("/processing-profiles/matrix", response_model=None)
-    def processing_profiles_matrix(
-        session: Annotated[Session, Depends(get_session)],
-    ) -> dict[str, Any]:
-        return build_matrix(session=session)
-
-    @app.get("/processing-profiles/audit-log", response_model=None)
-    def processing_profile_audit_log(
-        session: Annotated[Session, Depends(get_session)],
-        limit: int = 50,
-        profile_id: str | None = None,
-        action: str | None = None,
-        provider: str | None = None,
-        task_type: str | None = None,
-    ) -> dict[str, list[dict[str, Any]]]:
-        from ragrig.repositories.processing_profile import list_audit_log as _db_audit
-
-        entries = _db_audit(
-            session,
-            limit=limit,
-            profile_id=profile_id,
-            action=action,
-            provider=provider,
-            task_type=task_type,
-        )
-        return {"entries": entries}
-
-    @app.get("/processing-profiles/audit-log/{audit_id}", response_model=None)
-    def processing_profile_audit_entry(
-        audit_id: str,
-        session: Annotated[Session, Depends(get_session)],
-    ) -> dict[str, Any] | JSONResponse:
-        from ragrig.repositories.processing_profile import get_audit_entry_by_id as _db_get_audit
-
-        entry = _db_get_audit(session, audit_id)
-        if entry is None:
-            return JSONResponse(status_code=404, content={"error": "audit_entry_not_found"})
-        return {
-            "id": str(entry.id),
-            "profile_id": entry.profile_id,
-            "action": entry.action,
-            "actor": entry.actor,
-            "timestamp": entry.timestamp.isoformat() if entry.timestamp else None,
-            "old_state": entry.old_state,
-            "new_state": entry.new_state,
-        }
-
-    @app.post("/processing-profiles/preview-diff", response_model=None)
-    def processing_profile_preview_diff(
-        request: DiffPreviewRequest,
-        session: Annotated[Session, Depends(get_session)],
-    ) -> dict[str, Any] | JSONResponse:
-        from ragrig.repositories.processing_profile import compute_diff as _db_diff
-
-        metadata_json = (
-            {str(k): v for k, v in (request.metadata or {}).items()}
-            if request.metadata is not None
-            else None
-        )
-
-        diff = _db_diff(
-            session,
-            profile_id=request.profile_id,
-            status=request.status.value if request.status else None,
-            display_name=request.display_name,
-            description=request.description,
-            provider=request.provider,
-            model_id=request.model_id,
-            kind=request.kind,
-            tags=request.tags,
-            metadata_json=metadata_json,
-        )
-        if diff is None:
-            return JSONResponse(status_code=404, content={"error": "override_not_found"})
-        return diff
-
-    @app.post("/processing-profiles/rollback", response_model=None)
-    def processing_profile_rollback(
-        request: RollbackRequest,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
-    ) -> dict[str, Any] | JSONResponse:
-        from ragrig.processing_profile import resolve_provider_availability
-        from ragrig.processing_profile.registry import _db_override_to_dataclass
-        from ragrig.repositories.processing_profile import (
-            rollback_override as _db_rollback,
-        )
-
-        try:
-            override = _db_rollback(
-                session,
-                audit_id=request.audit_id,
-                actor=request.actor,
-            )
-            session.commit()
-        except ValueError as exc:
-            msg = str(exc)
-            if "not found" in msg:
-                return JSONResponse(status_code=404, content={"error": msg})
-            return JSONResponse(status_code=409, content={"error": msg})
-
-        profile = _db_override_to_dataclass(override)
-        entry = profile.to_api_dict()
-        entry["provider_available"] = resolve_provider_availability(profile.provider)
-        return entry
 
     # ── Sink export endpoints ─────────────────────────────────────────────────
     @app.post("/knowledge-bases/{kb_name}/sink-export/agent-access", response_model=None)
