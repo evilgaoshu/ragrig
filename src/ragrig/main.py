@@ -34,7 +34,6 @@ from ragrig.db.session import get_session as _get_session_default
 from ragrig.deps import (
     AuthContext,
     get_auth_context,
-    get_workspace_id_from_auth,
     require_admin_auth,
     require_write_auth,
 )
@@ -89,9 +88,7 @@ from ragrig.repositories import (
     delete_kb_permission,
     get_knowledge_base_by_name,
     get_or_create_knowledge_base,
-    list_audit_events,
     list_kb_permissions,
-    resolve_effective_kb_role,
     set_kb_permission,
 )
 from ragrig.retrieval import (
@@ -111,7 +108,13 @@ from ragrig.routers.conversations import router as conversations_router
 from ragrig.routers.mcp import router as mcp_router
 from ragrig.routers.openai_compat import router as openai_compat_router
 from ragrig.routers.retention import router as retention_router
+from ragrig.routers.runtime import (
+    get_workspace_id,
+    knowledge_base_access_error,
+    set_runtime_state,
+)
 from ragrig.routers.source_webhooks import router as source_webhooks_router
+from ragrig.routers.sources_pipeline import router as sources_pipeline_router
 from ragrig.routers.usage import router as usage_router
 from ragrig.tasks import (
     TaskRetryError,
@@ -122,7 +125,6 @@ from ragrig.tasks import (
     get_task_payload,
     retry_task,
     run_ingestion_dag_task,
-    run_source_ingest_task,
     run_upload_pipeline,
     sanitize_filename,
     validate_and_stage_uploads,
@@ -150,12 +152,10 @@ from ragrig.web_console import (
     build_permission_preview,
     build_system_status,
     check_format,
-    dry_run_source,
     get_advanced_parser_corpus,
     get_answer_live_smoke,
     get_ops_diagnostics,
     get_pipeline_run_detail,
-    get_pipeline_run_item_detail,
     get_recent_benchmark,
     get_retrieval_benchmark_integrity,
     get_sanitizer_contract_status,
@@ -174,12 +174,7 @@ from ragrig.web_console import (
     list_sources,
     list_supported_formats,
     list_understanding_runs,
-    resume_pipeline_dag,
-    retry_pipeline_run,
-    retry_pipeline_run_item,
-    save_source_config,
     validate_plugin_config_for_wizard,
-    validate_source_config,
 )
 from ragrig.workflows import (
     IngestionDagRejected,
@@ -741,17 +736,6 @@ def create_app(
 
     setup_otel(app, active_settings)
 
-    app.include_router(auth_router)
-    app.include_router(audit_router)
-    app.include_router(conflicts_router)
-    app.include_router(retention_router)
-    app.include_router(openai_compat_router)
-    app.include_router(mcp_router)
-    app.include_router(conversations_router)
-    app.include_router(usage_router)
-    app.include_router(source_webhooks_router)
-    app.include_router(admin_router)
-
     def shutdown_task_executor() -> None:
         shutdown = getattr(active_task_executor, "shutdown", None)
         if shutdown is not None:
@@ -782,58 +766,23 @@ def create_app(
         assert default_session_factory is not None
         return default_session_factory
 
-    def get_workspace_id(
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id_from_auth)],
-    ) -> "uuid.UUID":
-        return workspace_id
+    set_runtime_state(
+        app,
+        session_factory=get_session_factory(),
+        task_executor=active_task_executor,
+    )
 
-    role_order = {"owner": 3, "admin": 2, "editor": 1, "viewer": 0, "none": -1}
-
-    def _role_meets(role: str | None, minimum: str) -> bool:
-        return role_order.get(role or "none", -1) >= role_order.get(minimum, 999)
-
-    def _knowledge_base_access_error(
-        *,
-        session: Session,
-        auth: AuthContext,
-        knowledge_base_id: uuid.UUID,
-        minimum: str,
-        allow_anonymous_reader: bool = False,
-    ) -> JSONResponse | None:
-        if not active_settings.ragrig_auth_enabled:
-            return None
-        if auth.is_anonymous:
-            if allow_anonymous_reader and minimum == "viewer":
-                return None
-            return JSONResponse(
-                status_code=401,
-                content={"error": "authentication required"},
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        if auth.user_id is None:
-            if minimum == "viewer":
-                return None
-            return JSONResponse(
-                status_code=403,
-                content={"error": f"{minimum} role or above required"},
-            )
-        if auth.role is None:
-            return JSONResponse(
-                status_code=403,
-                content={"error": f"{minimum} role or above required"},
-            )
-        role = resolve_effective_kb_role(
-            session,
-            user_id=auth.user_id,
-            knowledge_base_id=knowledge_base_id,
-            workspace_role=auth.role,
-        )
-        if not _role_meets(role, minimum):
-            return JSONResponse(
-                status_code=403,
-                content={"error": f"{minimum} role or above required for this knowledge base"},
-            )
-        return None
+    app.include_router(auth_router)
+    app.include_router(audit_router)
+    app.include_router(conflicts_router)
+    app.include_router(retention_router)
+    app.include_router(openai_compat_router)
+    app.include_router(mcp_router)
+    app.include_router(conversations_router)
+    app.include_router(usage_router)
+    app.include_router(source_webhooks_router)
+    app.include_router(sources_pipeline_router)
+    app.include_router(admin_router)
 
     def _knowledge_base_by_id_for_workspace(
         *,
@@ -880,7 +829,8 @@ def create_app(
                 status_code=404,
                 content={"error": f"knowledge base '{kb_name}' not found"},
             )
-        return _knowledge_base_access_error(
+        return knowledge_base_access_error(
+            settings=active_settings,
             session=session,
             auth=auth,
             knowledge_base_id=kb.id,
@@ -1525,7 +1475,8 @@ def create_app(
         if kb_error is not None:
             return kb_error
         assert knowledge_base is not None
-        access_error = _knowledge_base_access_error(
+        access_error = knowledge_base_access_error(
+            settings=active_settings,
             session=session,
             auth=auth,
             knowledge_base_id=knowledge_base.id,
@@ -1553,7 +1504,8 @@ def create_app(
         if kb_error is not None:
             return kb_error
         assert knowledge_base is not None
-        access_error = _knowledge_base_access_error(
+        access_error = knowledge_base_access_error(
+            settings=active_settings,
             session=session,
             auth=auth,
             knowledge_base_id=knowledge_base.id,
@@ -1582,7 +1534,8 @@ def create_app(
         if kb_error is not None:
             return kb_error
         assert knowledge_base is not None
-        access_error = _knowledge_base_access_error(
+        access_error = knowledge_base_access_error(
+            settings=active_settings,
             session=session,
             auth=auth,
             knowledge_base_id=knowledge_base.id,
@@ -1622,7 +1575,8 @@ def create_app(
         if kb_error is not None:
             return kb_error
         assert knowledge_base is not None
-        access_error = _knowledge_base_access_error(
+        access_error = knowledge_base_access_error(
+            settings=active_settings,
             session=session,
             auth=auth,
             knowledge_base_id=knowledge_base.id,
@@ -1688,7 +1642,8 @@ def create_app(
         if kb_error is not None:
             return kb_error
         assert knowledge_base is not None
-        access_error = _knowledge_base_access_error(
+        access_error = knowledge_base_access_error(
+            settings=active_settings,
             session=session,
             auth=auth,
             knowledge_base_id=knowledge_base.id,
@@ -1718,7 +1673,8 @@ def create_app(
         if kb_error is not None:
             return kb_error
         assert knowledge_base is not None
-        access_error = _knowledge_base_access_error(
+        access_error = knowledge_base_access_error(
+            settings=active_settings,
             session=session,
             auth=auth,
             knowledge_base_id=knowledge_base.id,
@@ -1766,7 +1722,8 @@ def create_app(
         if kb_error is not None:
             return kb_error
         assert knowledge_base is not None
-        access_error = _knowledge_base_access_error(
+        access_error = knowledge_base_access_error(
+            settings=active_settings,
             session=session,
             auth=auth,
             knowledge_base_id=knowledge_base.id,
@@ -1798,7 +1755,8 @@ def create_app(
         if kb_error is not None:
             return kb_error
         assert knowledge_base is not None
-        access_error = _knowledge_base_access_error(
+        access_error = knowledge_base_access_error(
+            settings=active_settings,
             session=session,
             auth=auth,
             knowledge_base_id=knowledge_base.id,
@@ -2127,7 +2085,8 @@ def create_app(
                 status_code=404,
                 content={"error": f"knowledge base '{kb_name}' not found"},
             )
-        access_error = _knowledge_base_access_error(
+        access_error = knowledge_base_access_error(
+            settings=active_settings,
             session=session,
             auth=_auth,
             knowledge_base_id=kb.id,
@@ -2167,7 +2126,8 @@ def create_app(
                 status_code=404,
                 content={"error": f"knowledge base '{kb_name}' not found"},
             )
-        access_error = _knowledge_base_access_error(
+        access_error = knowledge_base_access_error(
+            settings=active_settings,
             session=session,
             auth=_auth,
             knowledge_base_id=kb.id,
@@ -2274,7 +2234,8 @@ def create_app(
                         )
                     ),
                 )
-            access_error = _knowledge_base_access_error(
+            access_error = knowledge_base_access_error(
+                settings=active_settings,
                 session=session,
                 auth=auth,
                 knowledge_base_id=kb.id,
@@ -2548,7 +2509,8 @@ def create_app(
                         )
                     ),
                 )
-            access_error = _knowledge_base_access_error(
+            access_error = knowledge_base_access_error(
+                settings=active_settings,
                 session=session,
                 auth=auth,
                 knowledge_base_id=kb.id,
@@ -2974,307 +2936,6 @@ def create_app(
         entry = profile.to_api_dict()
         entry["provider_available"] = resolve_provider_availability(profile.provider)
         return entry
-
-    def _redact_summary(payload: dict[str, Any]) -> dict[str, Any]:
-        _forbidden = {
-            "password",
-            "api_key",
-            "token",
-            "secret",
-            "raw_secret",
-            "private_key",
-            "access_key",
-        }
-        safe: dict[str, Any] = {}
-        for key, value in payload.items():
-            k = str(key)
-            if k.lower() in _forbidden:
-                safe[k] = "[REDACTED]"
-            elif isinstance(value, dict):
-                safe[k] = _redact_summary(value)
-            elif isinstance(value, list):
-                safe[k] = [_redact_summary(i) if isinstance(i, dict) else i for i in value[:50]]
-            elif isinstance(value, str) and len(value) > 240:
-                safe[k] = value[:237] + "..."
-            else:
-                safe[k] = value
-        return safe
-
-    # ── Workflow Audit Events ────────────────────────────────────────────────
-
-    @app.get("/audit-events", response_model=None)
-    def workflow_audit_events(
-        session: Annotated[Session, Depends(get_session)],
-        limit: int = 50,
-        event_type: str | None = None,
-        run_id: str | None = None,
-        item_id: str | None = None,
-    ) -> dict[str, list[dict[str, Any]]]:
-        """List workflow audit events (source_save, dry_run, retry, resume)."""
-        events = list_audit_events(
-            session,
-            event_type=event_type,
-            limit=limit,
-            run_id=run_id,
-            item_id=item_id,
-        )
-        return {
-            "entries": [
-                {
-                    "id": str(e.id),
-                    "event_type": e.event_type,
-                    "actor": e.actor,
-                    "knowledge_base_id": str(e.knowledge_base_id) if e.knowledge_base_id else None,
-                    "run_id": str(e.run_id) if e.run_id else None,
-                    "item_id": str(e.item_id) if e.item_id else None,
-                    "occurred_at": e.occurred_at.isoformat() if e.occurred_at else None,
-                    "payload": _redact_summary(e.payload_json),
-                }
-                for e in events
-            ]
-        }
-
-    # ── Source Config Validation & Save ────────────────────────────────────
-
-    class SourceConfigValidateRequest(BaseModel):
-        plugin_id: str
-        config: dict[str, Any] = Field(default_factory=dict)
-        knowledge_base: str = "default"
-
-    class SourceConfigSaveRequest(BaseModel):
-        plugin_id: str
-        config: dict[str, Any] = Field(default_factory=dict)
-        knowledge_base: str = "default"
-        operator: str | None = None
-
-    @app.post("/sources/validate-config", response_model=None)
-    def source_validate_config(
-        request: SourceConfigValidateRequest,
-    ) -> dict[str, Any]:
-        """Validate a source configuration draft with dependency/credential checks."""
-        return validate_source_config(
-            plugin_id=request.plugin_id,
-            config=request.config,
-        )
-
-    @app.post("/sources", response_model=None)
-    def source_save_config(
-        request: SourceConfigSaveRequest,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, Any] | JSONResponse:
-        """Validate and save a source configuration."""
-        try:
-            existing_kb = get_knowledge_base_by_name(
-                session,
-                request.knowledge_base,
-                workspace_id=workspace_id,
-            )
-            if existing_kb is not None:
-                access_error = _knowledge_base_access_error(
-                    session=session,
-                    auth=_auth,
-                    knowledge_base_id=existing_kb.id,
-                    minimum="editor",
-                )
-                if access_error is not None:
-                    return access_error
-            result = save_source_config(
-                session,
-                plugin_id=request.plugin_id,
-                config=request.config,
-                knowledge_base_name=request.knowledge_base,
-                operator=request.operator,
-                workspace_id=workspace_id,
-            )
-        except Exception as exc:
-            return JSONResponse(
-                status_code=400,
-                content={"error": str(exc)},
-            )
-        return result
-
-    # ── Dry-run Ingestion ──────────────────────────────────────────────────
-
-    class SourceDryRunRequest(BaseModel):
-        plugin_id: str
-        config: dict[str, Any] = Field(default_factory=dict)
-
-    class SourceRunIngestRequest(BaseModel):
-        plugin_id: str
-        config: dict[str, Any] = Field(default_factory=dict)
-        knowledge_base: str = "default"
-        operator: str | None = None
-
-    @app.post("/sources/dry-run", response_model=None)
-    def source_dry_run(
-        request: SourceDryRunRequest,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-    ) -> dict[str, Any] | JSONResponse:
-        """Dry-run ingestion scan for a source.
-
-        Lists candidate files, skip reasons, and expected pipeline_run
-        without writing document_versions/chunks/embeddings.
-        """
-        try:
-            result = dry_run_source(
-                session,
-                plugin_id=request.plugin_id,
-                config=request.config,
-            )
-        except Exception as exc:
-            return JSONResponse(
-                status_code=400,
-                content={"error": str(exc)},
-            )
-        return result
-
-    @app.post("/sources/run-ingest", response_model=None)
-    def source_run_ingest(
-        request: SourceRunIngestRequest,
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        session: Annotated[Session, Depends(get_session)],
-    ) -> dict[str, Any] | JSONResponse:
-        """Enqueue source ingestion as a background task.
-
-        Returns immediately with a task_id. Poll GET /tasks/{task_id} for status.
-        """
-        import os
-
-        missing_refs = [
-            f"{k}: env:{v.removeprefix('env:')} not set"
-            for k, v in (request.config or {}).items()
-            if isinstance(v, str)
-            and v.startswith("env:")
-            and not os.environ.get(v.removeprefix("env:"))
-        ]
-        if missing_refs:
-            return JSONResponse(
-                status_code=400,
-                content={"error": f"unresolved env refs: {'; '.join(missing_refs)}"},
-            )
-
-        try:
-            existing_kb = get_knowledge_base_by_name(
-                session,
-                request.knowledge_base,
-                workspace_id=workspace_id,
-            )
-            if existing_kb is not None:
-                access_error = _knowledge_base_access_error(
-                    session=session,
-                    auth=_auth,
-                    knowledge_base_id=existing_kb.id,
-                    minimum="editor",
-                )
-                if access_error is not None:
-                    return access_error
-            task_id = enqueue_task(
-                session_factory=get_session_factory(),
-                task_executor=active_task_executor,
-                task_type="source_ingest",
-                payload_json={
-                    "plugin_id": request.plugin_id,
-                    "knowledge_base": request.knowledge_base,
-                    "workspace_id": str(workspace_id),
-                    "config": request.config,
-                    "operator": request.operator,
-                },
-                runner=lambda: run_source_ingest_task(
-                    session_factory=get_session_factory(),
-                    plugin_id=request.plugin_id,
-                    config=request.config,
-                    knowledge_base_name=request.knowledge_base,
-                    operator=request.operator,
-                    workspace_id=workspace_id,
-                ),
-            )
-        except Exception as exc:
-            return JSONResponse(
-                status_code=400,
-                content={"error": str(exc)},
-            )
-        return JSONResponse(status_code=202, content={"task_id": task_id, "status": "queued"})
-
-    # ── Pipeline Run Item Inspect & Retry ──────────────────────────────────
-
-    @app.get("/pipeline-run-items/{item_id}", response_model=None)
-    def pipeline_run_item_detail(
-        item_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, Any] | JSONResponse:
-        """Inspect a single pipeline run item."""
-        detail = get_pipeline_run_item_detail(session, item_id, workspace_id=workspace_id)
-        if detail is None:
-            return JSONResponse(status_code=404, content={"error": "pipeline_run_item_not_found"})
-        return detail
-
-    class RetryRequest(BaseModel):
-        operator: str | None = None
-        new_snapshot: bool = False
-
-    @app.post("/pipeline-run-items/{item_id}/retry", response_model=None)
-    def pipeline_run_item_retry(
-        item_id: str,
-        request: RetryRequest,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, Any] | JSONResponse:
-        """Retry a single failed pipeline run item.
-
-        Re-processes the failed document using the same run's config snapshot.
-        Does not modify historical run data.
-        """
-        result = retry_pipeline_run_item(
-            session,
-            item_id=item_id,
-            operator=request.operator,
-            workspace_id=workspace_id,
-        )
-        if result is None:
-            return JSONResponse(status_code=404, content={"error": "pipeline_run_item_not_found"})
-        return result
-
-    @app.post("/pipeline-runs/{run_id}/retry", response_model=None)
-    def pipeline_run_retry(
-        run_id: str,
-        request: RetryRequest,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, Any] | JSONResponse:
-        """Retry all failed items in a pipeline run.
-
-        Reuses the same config snapshot by default.
-        Set new_snapshot=True to create a new snapshot from current config.
-        """
-        result = retry_pipeline_run(
-            session,
-            run_id=run_id,
-            operator=request.operator,
-            new_snapshot=request.new_snapshot,
-            workspace_id=workspace_id,
-        )
-        if result is None:
-            return JSONResponse(status_code=404, content={"error": "pipeline_run_not_found"})
-        return result
-
-    @app.post("/pipeline-runs/{run_id}/dag-resume", response_model=None)
-    def pipeline_dag_resume(
-        run_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, Any] | JSONResponse:
-        result = resume_pipeline_dag(session, run_id=run_id, workspace_id=workspace_id)
-        if result is None:
-            return JSONResponse(status_code=404, content={"error": "ingestion_dag_not_found"})
-        return result
 
     # ── Sink export endpoints ─────────────────────────────────────────────────
     @app.post("/knowledge-bases/{kb_name}/sink-export/agent-access", response_model=None)
