@@ -1,12 +1,10 @@
-import re
 import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -25,10 +23,9 @@ from ragrig.answer import (
 from ragrig.answer import (
     ProviderUnavailableError as AnswerProviderUnavailableError,
 )
-from ragrig.auth import ensure_default_workspace
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
-from ragrig.db.models import KnowledgeBase, KnowledgeGraphRelation
+from ragrig.db.models import KnowledgeBase
 from ragrig.db.session import get_session as _get_session_default
 from ragrig.deps import (
     AuthContext,
@@ -45,11 +42,10 @@ from ragrig.evaluation import (
 )
 from ragrig.health import create_database_check
 from ragrig.ingestion.web_import import WebsiteImportError
-from ragrig.knowledge_graph import (
-    KnowledgeGraphBuildRequest,
-    KnowledgeGraphNotFoundError,
-    get_knowledge_graph,
-    rebuild_knowledge_graph,
+from ragrig.knowledge_base_config import (
+    kb_role_model_config,
+    public_role_model_selection,
+    role_model_selection,
 )
 from ragrig.local_pilot import (
     ModelConfigError,
@@ -64,14 +60,7 @@ from ragrig.plugins.sinks.gcs.connector import export_to_gcs
 from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
 from ragrig.plugins.sinks.webhook.connector import export_to_webhook
 from ragrig.ratelimit import RateLimiter
-from ragrig.repositories import (
-    create_audit_event,
-    delete_kb_permission,
-    get_knowledge_base_by_name,
-    get_or_create_knowledge_base,
-    list_kb_permissions,
-    set_kb_permission,
-)
+from ragrig.repositories import get_knowledge_base_by_name
 from ragrig.retrieval import (
     EmbeddingProfileMismatchError,
     EmptyQueryError,
@@ -87,6 +76,7 @@ from ragrig.routers.auth import router as auth_router
 from ragrig.routers.catalog_ops import router as catalog_ops_router
 from ragrig.routers.conflicts import router as conflicts_router
 from ragrig.routers.conversations import router as conversations_router
+from ragrig.routers.knowledge import router as knowledge_router
 from ragrig.routers.mcp import router as mcp_router
 from ragrig.routers.openai_compat import router as openai_compat_router
 from ragrig.routers.processing_profiles import router as processing_profiles_router
@@ -109,32 +99,8 @@ from ragrig.tasks import (
     sanitize_filename,
     validate_and_stage_uploads,
 )
-from ragrig.understanding import (
-    DocumentVersionNotFoundError,
-    ProviderUnavailableError,
-    UnderstandAllRequest,
-    UnderstandingRequest,
-    UnderstandingRunFilter,
-    build_knowledge_map,
-    compare_understanding_runs,
-    export_understanding_run,
-    export_understanding_runs,
-    generate_document_understanding,
-    get_understanding_by_version,
-    get_understanding_coverage,
-    get_understanding_runs,
-    knowledge_map_to_dict,
-    understand_all_versions,
-)
 from ragrig.vectorstore import get_vector_backend
-from ragrig.web_console import (
-    build_permission_preview,
-    get_understanding_run_detail,
-    list_document_version_chunks,
-    list_documents,
-    list_knowledge_bases,
-    list_understanding_runs,
-)
+from ragrig.web_console import build_permission_preview
 
 
 class EvaluationRunRequest(BaseModel):
@@ -186,40 +152,6 @@ class RetrievalSearchRequest(BaseModel):
     reranker_model: str | None = None
     graph_weight: float = Field(default=0.35, ge=0.0, le=1.0)
     graph_depth: int = Field(default=1, ge=0, le=2)
-
-
-class KnowledgeBaseCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-
-
-class KnowledgeGraphRelationFeedbackRequest(BaseModel):
-    verdict: str = Field(pattern=r"^(incorrect|correct|needs_review)$")
-    note: str | None = Field(default=None, max_length=500)
-
-
-class RetrievalPreferenceRequest(BaseModel):
-    mode: str = Field(
-        default="dense",
-        pattern=(
-            r"^(dense|hybrid|rerank|hybrid_rerank|graph|hybrid_graph|"
-            r"graph_rerank|hybrid_graph_rerank)$"
-        ),
-    )
-    lexical_weight: float = Field(default=0.3, ge=0.0, le=1.0)
-    vector_weight: float = Field(default=0.7, ge=0.0, le=1.0)
-    candidate_k: int = Field(default=20, ge=1, le=200)
-    reranker_provider: str | None = Field(default=None, max_length=128)
-    reranker_model: str | None = Field(default=None, max_length=256)
-    graph_weight: float = Field(default=0.35, ge=0.0, le=1.0)
-    graph_depth: int = Field(default=1, ge=0, le=2)
-
-
-class RoleModelConfigRequest(BaseModel):
-    config: dict[str, Any] = Field(default_factory=dict)
-
-
-class KbPermissionRequest(BaseModel):
-    role: str = Field(pattern=r"^(admin|editor|viewer|none)$")
 
 
 class AnswerRequest(BaseModel):
@@ -407,141 +339,6 @@ def _safe_chunk_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return safe
 
 
-def _summarize_relation_feedback(items: list[dict[str, Any]]) -> dict[str, Any]:
-    counts = {"incorrect": 0, "correct": 0, "needs_review": 0}
-    for item in items:
-        verdict = item.get("verdict")
-        if verdict in counts:
-            counts[verdict] += 1
-    return {
-        "total": sum(counts.values()),
-        "incorrect": counts["incorrect"],
-        "correct": counts["correct"],
-        "needs_review": counts["needs_review"],
-        "latest_verdict": items[-1].get("verdict") if items else None,
-        "latest_at": items[-1].get("created_at") if items else None,
-    }
-
-
-def _role_model_selection(
-    role: str | None,
-    role_model_config: dict[str, Any] | None,
-) -> tuple[dict[str, Any], str | None]:
-    if not role or not role_model_config:
-        return {}, None
-    raw = role_model_config.get(role)
-    matched_role = role
-    if raw is None:
-        raw = role_model_config.get("default")
-        matched_role = "default" if raw is not None else role
-    if raw is None:
-        return {"role": role, "matched": False}, None
-    if not isinstance(raw, dict):
-        return {}, f"role_model_config entry for {matched_role!r} must be an object"
-
-    selection: dict[str, Any] = {
-        "role": role,
-        "matched": True,
-        "matched_role": matched_role,
-    }
-    string_fields = ("provider", "model", "answer_provider", "answer_model")
-    config_fields = ("config", "answer_config")
-    for field in string_fields:
-        if field in raw:
-            value = raw[field]
-            if value is not None and not isinstance(value, str):
-                return {}, f"role_model_config.{matched_role}.{field} must be a string"
-            if value is not None:
-                selection[field] = value
-    for field in config_fields:
-        if field in raw:
-            value = raw[field]
-            if value is not None and not isinstance(value, dict):
-                return {}, f"role_model_config.{matched_role}.{field} must be an object"
-            if value is not None:
-                selection[field] = value
-    return selection, None
-
-
-def _validate_role_model_config(config: dict[str, Any]) -> str | None:
-    allowed_fields = {
-        "provider",
-        "model",
-        "config",
-        "answer_provider",
-        "answer_model",
-        "answer_config",
-    }
-    role_pattern = re.compile(r"^[A-Za-z0-9_.:-]+$")
-    for role, entry in config.items():
-        if not isinstance(role, str) or not role_pattern.fullmatch(role):
-            return f"role_model_config role {role!r} must match {role_pattern.pattern}"
-        if not isinstance(entry, dict):
-            return f"role_model_config entry for {role!r} must be an object"
-        unknown = sorted(set(entry) - allowed_fields)
-        if unknown:
-            return f"role_model_config.{role} has unsupported field(s): {', '.join(unknown)}"
-        for field in ("provider", "model", "answer_provider", "answer_model"):
-            value = entry.get(field)
-            if value is not None and not isinstance(value, str):
-                return f"role_model_config.{role}.{field} must be a string"
-        for field in ("config", "answer_config"):
-            value = entry.get(field)
-            if value is not None and not isinstance(value, dict):
-                return f"role_model_config.{role}.{field} must be an object"
-    return None
-
-
-def _kb_role_model_config(knowledge_base: KnowledgeBase | None) -> dict[str, Any] | None:
-    if knowledge_base is None:
-        return None
-    metadata = (
-        knowledge_base.metadata_json if isinstance(knowledge_base.metadata_json, dict) else {}
-    )
-    config = metadata.get("role_model_config")
-    return config if isinstance(config, dict) else None
-
-
-def _public_role_model_config(config: dict[str, Any] | None) -> dict[str, Any]:
-    public: dict[str, Any] = {}
-    for role, entry in (config or {}).items():
-        if not isinstance(role, str) or not isinstance(entry, dict):
-            continue
-        safe = {
-            field: entry[field]
-            for field in ("provider", "model", "answer_provider", "answer_model")
-            if isinstance(entry.get(field), str)
-        }
-        if isinstance(entry.get("config"), dict):
-            safe["has_config"] = True
-        if isinstance(entry.get("answer_config"), dict):
-            safe["has_answer_config"] = True
-        public[role] = safe
-    return public
-
-
-def _public_role_model_selection(selection: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value for key, value in selection.items() if key not in {"config", "answer_config"}
-    }
-
-
-def _kb_retrieval_preferences(knowledge_base: KnowledgeBase | None) -> dict[str, Any]:
-    defaults = RetrievalPreferenceRequest().model_dump(mode="json")
-    if knowledge_base is None:
-        return defaults
-    metadata = (
-        knowledge_base.metadata_json if isinstance(knowledge_base.metadata_json, dict) else {}
-    )
-    raw = metadata.get("retrieval_preferences")
-    if not isinstance(raw, dict):
-        return defaults
-    try:
-        return RetrievalPreferenceRequest(**raw).model_dump(mode="json")
-    except ValueError:
-        return defaults
-
-
 def create_runtime_settings(settings: Settings | None = None) -> Settings:
     active_settings = settings or get_settings()
     payload = active_settings.model_dump()
@@ -640,29 +437,9 @@ def create_app(
     app.include_router(conversations_router)
     app.include_router(usage_router)
     app.include_router(source_webhooks_router)
+    app.include_router(knowledge_router)
     app.include_router(sources_pipeline_router)
     app.include_router(admin_router)
-
-    def _knowledge_base_by_id_for_workspace(
-        *,
-        session: Session,
-        kb_id: str,
-        workspace_id: uuid.UUID,
-    ) -> tuple[KnowledgeBase | None, JSONResponse | None]:
-        try:
-            knowledge_base_id = uuid.UUID(str(kb_id))
-        except ValueError:
-            return None, JSONResponse(
-                status_code=404,
-                content={"error": "knowledge_base_not_found"},
-            )
-        knowledge_base = session.get(KnowledgeBase, knowledge_base_id)
-        if knowledge_base is None or knowledge_base.workspace_id != workspace_id:
-            return None, JSONResponse(
-                status_code=404,
-                content={"error": "knowledge_base_not_found"},
-            )
-        return knowledge_base, None
 
     def _resolve_acl_context(
         *,
@@ -746,731 +523,6 @@ def create_app(
             import logging
 
             logging.getLogger(__name__).exception("usage accounting failed")
-
-    @app.get("/knowledge-bases", response_model=None)
-    def knowledge_bases(
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, list[dict[str, Any]]]:
-        return {
-            "items": list_knowledge_bases(
-                session,
-                settings=active_settings,
-                workspace_id=workspace_id,
-            )
-        }
-
-    @app.post("/knowledge-bases", response_model=None)
-    def create_knowledge_base(
-        request: KnowledgeBaseCreateRequest,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-    ) -> JSONResponse:
-        name = request.name.strip()
-        if not name:
-            return JSONResponse(
-                status_code=400, content={"error": "knowledge base name is required"}
-            )
-        ensure_default_workspace(session)
-        existed = get_knowledge_base_by_name(session, name, workspace_id=workspace_id) is not None
-        kb = get_or_create_knowledge_base(session, name, workspace_id=workspace_id)
-        session.commit()
-        return JSONResponse(
-            status_code=200 if existed else 201,
-            content={"id": str(kb.id), "name": kb.name, "created": not existed},
-        )
-
-    @app.get("/knowledge-bases/{kb_name}/permissions", response_model=None)
-    def list_kb_permissions_endpoint(
-        kb_name: str,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
-    ) -> JSONResponse:
-        """List all per-KB permission overrides for a knowledge base.
-
-        Requires admin-or-above role.
-        """
-        kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
-        if kb is None:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"knowledge base '{kb_name}' not found"},
-            )
-        return JSONResponse(
-            status_code=200,
-            content={"items": list_kb_permissions(session, knowledge_base_id=kb.id)},
-        )
-
-    @app.put("/knowledge-bases/{kb_name}/permissions/{user_id}", response_model=None)
-    def set_kb_permission_endpoint(
-        kb_name: str,
-        user_id: str,
-        request: KbPermissionRequest,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
-    ) -> JSONResponse:
-        """Upsert a per-KB role override for a user.
-
-        Requires admin-or-above role.  ``role='none'`` explicitly denies access.
-        """
-        try:
-            user_uuid = uuid.UUID(user_id)
-        except ValueError:
-            return JSONResponse(status_code=400, content={"error": f"invalid user_id: {user_id!r}"})
-        kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
-        if kb is None:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"knowledge base '{kb_name}' not found"},
-            )
-        set_kb_permission(
-            session,
-            knowledge_base_id=kb.id,
-            user_id=user_uuid,
-            role=request.role,
-        )
-        session.commit()
-        return JSONResponse(
-            status_code=200,
-            content={"knowledge_base": kb_name, "user_id": user_id, "role": request.role},
-        )
-
-    @app.delete("/knowledge-bases/{kb_name}/permissions/{user_id}", response_model=None)
-    def delete_kb_permission_endpoint(
-        kb_name: str,
-        user_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        _auth: Annotated[AuthContext, Depends(require_admin_auth)],
-    ) -> JSONResponse:
-        """Remove the per-KB permission override for a user.
-
-        Requires admin-or-above role.  Returns 404 if no override existed.
-        """
-        try:
-            user_uuid = uuid.UUID(user_id)
-        except ValueError:
-            return JSONResponse(status_code=400, content={"error": f"invalid user_id: {user_id!r}"})
-        kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
-        if kb is None:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"knowledge base '{kb_name}' not found"},
-            )
-        existed = delete_kb_permission(
-            session,
-            knowledge_base_id=kb.id,
-            user_id=user_uuid,
-        )
-        if not existed:
-            return JSONResponse(
-                status_code=404,
-                content={"error": "no permission override found for this user"},
-            )
-        session.commit()
-        return JSONResponse(
-            status_code=200,
-            content={"knowledge_base": kb_name, "user_id": user_id, "deleted": True},
-        )
-
-    @app.get("/documents", response_model=None)
-    def documents(
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, list[dict[str, Any]]]:
-        return {"items": list_documents(session, workspace_id=workspace_id)}
-
-    @app.get("/understanding-runs", response_model=None)
-    def web_understanding_runs(
-        session: Annotated[Session, Depends(get_session)],
-        knowledge_base_id: str | None = None,
-        limit: int = 20,
-        provider: str | None = None,
-        model: str | None = None,
-        profile_id: str | None = None,
-        status: str | None = None,
-        started_after: str | None = None,
-        started_before: str | None = None,
-    ) -> dict[str, list[dict[str, Any]]]:
-        return {
-            "items": list_understanding_runs(
-                session,
-                knowledge_base_id=knowledge_base_id,
-                limit=limit,
-                provider=provider,
-                model=model,
-                profile_id=profile_id,
-                status=status,
-                started_after=started_after,
-                started_before=started_before,
-            ),
-        }
-
-    @app.get("/understanding-runs/{run_id}", response_model=None)
-    def web_understanding_run_detail(
-        run_id: str,
-        session: Annotated[Session, Depends(get_session)],
-    ) -> dict[str, Any] | JSONResponse:
-        detail = get_understanding_run_detail(session, run_id)
-        if detail is None:
-            return JSONResponse(status_code=404, content={"error": "understanding_run_not_found"})
-        return detail
-
-    @app.get("/understanding-runs/{run_id}/export", response_model=None)
-    def export_understanding_run_endpoint(
-        run_id: str,
-        session: Annotated[Session, Depends(get_session)],
-    ) -> dict[str, Any] | JSONResponse:
-        result = export_understanding_run(session, run_id)
-        if result is None:
-            return JSONResponse(status_code=404, content={"error": "understanding_run_not_found"})
-        return result
-
-    @app.get("/knowledge-bases/{kb_id}/understanding-runs/export", response_model=None)
-    def export_understanding_runs_endpoint(
-        kb_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        provider: str | None = None,
-        model: str | None = None,
-        profile_id: str | None = None,
-        status: str | None = None,
-        started_after: str | None = None,
-        started_before: str | None = None,
-        limit: int = 50,
-    ) -> dict[str, Any]:
-        filters = UnderstandingRunFilter(
-            provider=provider,
-            model=model,
-            profile_id=profile_id,
-            status=status,
-            started_after=started_after,
-            started_before=started_before,
-            limit=limit,
-        )
-        return export_understanding_runs(session, kb_id, filters=filters)
-
-    @app.get("/understanding-runs/{run_id}/diff", response_model=None)
-    def diff_understanding_runs_endpoint(
-        run_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        against: str,
-    ) -> dict[str, Any] | JSONResponse:
-        result = compare_understanding_runs(session, run_id, against)
-        if result is None:
-            return JSONResponse(status_code=404, content={"error": "understanding_run_not_found"})
-        return result
-
-    @app.get("/document-versions/{document_version_id}/chunks", response_model=None)
-    def document_version_chunks(
-        document_version_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, list[dict[str, Any]]]:
-        return {
-            "items": list_document_version_chunks(
-                session,
-                document_version_id,
-                workspace_id=workspace_id,
-            )
-        }
-
-    @app.post("/document-versions/{document_version_id}/understand", response_model=None)
-    def understand_document_version(
-        document_version_id: str,
-        request: UnderstandingRequest,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-    ) -> dict[str, Any] | JSONResponse:
-        try:
-            record = generate_document_understanding(
-                session,
-                document_version_id=document_version_id,
-                provider=request.provider,
-                model=request.model or "",
-                profile_id=request.profile_id,
-            )
-        except DocumentVersionNotFoundError as exc:
-            return JSONResponse(status_code=404, content={"error": exc.code, "message": str(exc)})
-        except ProviderUnavailableError as exc:
-            return JSONResponse(status_code=503, content={"error": exc.code, "message": str(exc)})
-        return {
-            "id": record.id,
-            "document_version_id": record.document_version_id,
-            "profile_id": record.profile_id,
-            "provider": record.provider,
-            "model": record.model,
-            "input_hash": record.input_hash,
-            "status": record.status,
-            "result": record.result,
-            "error": record.error,
-            "created_at": record.created_at,
-            "updated_at": record.updated_at,
-        }
-
-    @app.get("/document-versions/{document_version_id}/understanding", response_model=None)
-    def get_document_understanding(
-        document_version_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        allow_missing: bool = False,
-    ) -> dict[str, Any] | JSONResponse:
-        record = get_understanding_by_version(session, document_version_id)
-        if record is None:
-            content = {
-                "error": "understanding_not_found",
-                "message": f"No understanding result for document version '{document_version_id}'.",
-            }
-            if allow_missing:
-                return JSONResponse(status_code=200, content=content)
-            return JSONResponse(
-                status_code=404,
-                content=content,
-            )
-        return {
-            "id": record.id,
-            "document_version_id": record.document_version_id,
-            "profile_id": record.profile_id,
-            "provider": record.provider,
-            "model": record.model,
-            "input_hash": record.input_hash,
-            "status": record.status,
-            "result": record.result,
-            "error": record.error,
-            "created_at": record.created_at,
-            "updated_at": record.updated_at,
-        }
-
-    @app.post("/knowledge-bases/{kb_id}/understand-all", response_model=None)
-    def understand_all(
-        kb_id: str,
-        request: UnderstandAllRequest,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-        x_operator: Annotated[str | None, Header()] = None,
-    ) -> dict[str, Any] | JSONResponse:
-        operator = x_operator
-        try:
-            result = understand_all_versions(
-                session,
-                knowledge_base_id=kb_id,
-                provider=request.provider,
-                model=request.model,
-                profile_id=request.profile_id,
-                trigger_source="api",
-                operator=operator,
-            )
-        except ProviderUnavailableError as exc:
-            return JSONResponse(status_code=503, content={"error": exc.code, "message": str(exc)})
-
-        # Look up the most recent run for this KB to include run_id
-        import uuid as _uuid
-
-        from ragrig.db.models import UnderstandingRun
-
-        kb_uuid = _uuid.UUID(kb_id)
-        latest_run = (
-            session.query(UnderstandingRun)
-            .filter(UnderstandingRun.knowledge_base_id == kb_uuid)
-            .order_by(UnderstandingRun.started_at.desc())
-            .first()
-        )
-        return {
-            "run_id": str(latest_run.id) if latest_run else None,
-            "total": result.total,
-            "created": result.created,
-            "skipped": result.skipped,
-            "failed": result.failed,
-            "errors": [{"version_id": e.version_id, "error": e.error} for e in result.errors],
-        }
-
-    @app.get("/knowledge-bases/{kb_id}/understanding-coverage", response_model=None)
-    def understanding_coverage(
-        kb_id: str,
-        session: Annotated[Session, Depends(get_session)],
-    ) -> dict[str, Any]:
-        coverage = get_understanding_coverage(session, kb_id)
-        return {
-            "total_versions": coverage.total_versions,
-            "completed": coverage.completed,
-            "missing": coverage.missing,
-            "stale": coverage.stale,
-            "failed": coverage.failed,
-            "completeness_score": coverage.completeness_score,
-            "recent_errors": [
-                {
-                    "document_version_id": e.document_version_id,
-                    "profile_id": e.profile_id,
-                    "provider": e.provider,
-                    "error": e.error,
-                }
-                for e in coverage.recent_errors
-            ],
-        }
-
-    @app.get("/knowledge-bases/{kb_id}/knowledge-map", response_model=None)
-    def knowledge_map(
-        kb_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        auth: Annotated[AuthContext, Depends(get_auth_context)],
-        profile_id: str = "*.understand.default",
-    ) -> dict[str, Any] | JSONResponse:
-        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
-            session=session,
-            kb_id=kb_id,
-            workspace_id=workspace_id,
-        )
-        if kb_error is not None:
-            return kb_error
-        assert knowledge_base is not None
-        access_error = knowledge_base_access_error(
-            settings=active_settings,
-            session=session,
-            auth=auth,
-            knowledge_base_id=knowledge_base.id,
-            minimum="viewer",
-        )
-        if access_error is not None:
-            return access_error
-        result = build_knowledge_map(session, kb_id, profile_id=profile_id)
-        if result is None:
-            return JSONResponse(status_code=404, content={"error": "knowledge_base_not_found"})
-        return knowledge_map_to_dict(result)
-
-    @app.get("/knowledge-bases/{kb_id}/knowledge-graph", response_model=None)
-    def knowledge_graph(
-        kb_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        auth: Annotated[AuthContext, Depends(get_auth_context)],
-    ) -> dict[str, Any] | JSONResponse:
-        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
-            session=session,
-            kb_id=kb_id,
-            workspace_id=workspace_id,
-        )
-        if kb_error is not None:
-            return kb_error
-        assert knowledge_base is not None
-        access_error = knowledge_base_access_error(
-            settings=active_settings,
-            session=session,
-            auth=auth,
-            knowledge_base_id=knowledge_base.id,
-            minimum="viewer",
-        )
-        if access_error is not None:
-            return access_error
-        try:
-            return get_knowledge_graph(session, kb_id).model_dump(mode="json")
-        except (ValueError, KnowledgeGraphNotFoundError):
-            return JSONResponse(status_code=404, content={"error": "knowledge_base_not_found"})
-
-    @app.post("/knowledge-bases/{kb_id}/knowledge-graph/rebuild", response_model=None)
-    def rebuild_knowledge_graph_endpoint(
-        kb_id: str,
-        request: KnowledgeGraphBuildRequest,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        auth: Annotated[AuthContext, Depends(require_write_auth)],
-    ) -> dict[str, Any] | JSONResponse:
-        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
-            session=session,
-            kb_id=kb_id,
-            workspace_id=workspace_id,
-        )
-        if kb_error is not None:
-            return kb_error
-        assert knowledge_base is not None
-        access_error = knowledge_base_access_error(
-            settings=active_settings,
-            session=session,
-            auth=auth,
-            knowledge_base_id=knowledge_base.id,
-            minimum="editor",
-        )
-        if access_error is not None:
-            return access_error
-        try:
-            result = rebuild_knowledge_graph(
-                session,
-                kb_id,
-                profile_id=request.profile_id,
-                extractor_version=request.extractor_version,
-                reset=request.reset,
-            )
-        except (ValueError, KnowledgeGraphNotFoundError):
-            return JSONResponse(status_code=404, content={"error": "knowledge_base_not_found"})
-        return result.model_dump(mode="json")
-
-    @app.post(
-        "/knowledge-bases/{kb_id}/knowledge-graph/relations/{relation_id}/feedback",
-        response_model=None,
-    )
-    def submit_knowledge_graph_relation_feedback(
-        kb_id: str,
-        relation_id: str,
-        request: KnowledgeGraphRelationFeedbackRequest,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        auth: Annotated[AuthContext, Depends(require_write_auth)],
-    ) -> dict[str, Any] | JSONResponse:
-        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
-            session=session,
-            kb_id=kb_id,
-            workspace_id=workspace_id,
-        )
-        if kb_error is not None:
-            return kb_error
-        assert knowledge_base is not None
-        access_error = knowledge_base_access_error(
-            settings=active_settings,
-            session=session,
-            auth=auth,
-            knowledge_base_id=knowledge_base.id,
-            minimum="editor",
-        )
-        if access_error is not None:
-            return access_error
-        try:
-            relation_uuid = uuid.UUID(str(relation_id))
-        except ValueError:
-            return JSONResponse(status_code=404, content={"error": "relation_not_found"})
-        relation = session.get(KnowledgeGraphRelation, relation_uuid)
-        if relation is None or relation.knowledge_base_id != knowledge_base.id:
-            return JSONResponse(status_code=404, content={"error": "relation_not_found"})
-
-        metadata = dict(relation.metadata_json or {})
-        feedback_items = [item for item in metadata.get("feedback", []) if isinstance(item, dict)]
-        created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        actor = str(auth.user_id) if auth.user_id is not None else "anonymous"
-        entry: dict[str, Any] = {
-            "verdict": request.verdict,
-            "created_at": created_at,
-            "actor": actor,
-        }
-        if request.note and request.note.strip():
-            entry["note"] = request.note.strip()
-        feedback_items.append(entry)
-        metadata["feedback"] = feedback_items[-50:]
-        metadata["feedback_summary"] = _summarize_relation_feedback(feedback_items)
-        relation.metadata_json = metadata
-        create_audit_event(
-            session,
-            event_type="kg_relation_feedback",
-            actor=actor,
-            workspace_id=workspace_id,
-            knowledge_base_id=knowledge_base.id,
-            payload_json={
-                "relation_id": str(relation.id),
-                "verdict": request.verdict,
-                "note": request.note,
-            },
-        )
-        session.commit()
-        return {
-            "status": "recorded",
-            "relation_id": str(relation.id),
-            "feedback": entry,
-            "feedback_summary": metadata["feedback_summary"],
-        }
-
-    @app.get("/knowledge-bases/{kb_id}/retrieval-preferences", response_model=None)
-    def get_retrieval_preferences(
-        kb_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        auth: Annotated[AuthContext, Depends(get_auth_context)],
-    ) -> dict[str, Any] | JSONResponse:
-        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
-            session=session,
-            kb_id=kb_id,
-            workspace_id=workspace_id,
-        )
-        if kb_error is not None:
-            return kb_error
-        assert knowledge_base is not None
-        access_error = knowledge_base_access_error(
-            settings=active_settings,
-            session=session,
-            auth=auth,
-            knowledge_base_id=knowledge_base.id,
-            minimum="viewer",
-        )
-        if access_error is not None:
-            return access_error
-        return {
-            "knowledge_base_id": str(knowledge_base.id),
-            "knowledge_base": knowledge_base.name,
-            "preferences": _kb_retrieval_preferences(knowledge_base),
-        }
-
-    @app.put("/knowledge-bases/{kb_id}/retrieval-preferences", response_model=None)
-    def put_retrieval_preferences(
-        kb_id: str,
-        request: RetrievalPreferenceRequest,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        auth: Annotated[AuthContext, Depends(require_write_auth)],
-    ) -> dict[str, Any] | JSONResponse:
-        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
-            session=session,
-            kb_id=kb_id,
-            workspace_id=workspace_id,
-        )
-        if kb_error is not None:
-            return kb_error
-        assert knowledge_base is not None
-        access_error = knowledge_base_access_error(
-            settings=active_settings,
-            session=session,
-            auth=auth,
-            knowledge_base_id=knowledge_base.id,
-            minimum="editor",
-        )
-        if access_error is not None:
-            return access_error
-        preferences = request.model_dump(mode="json")
-        metadata = dict(knowledge_base.metadata_json or {})
-        metadata["retrieval_preferences"] = preferences
-        knowledge_base.metadata_json = metadata
-        actor = str(auth.user_id) if auth.user_id is not None else "anonymous"
-        create_audit_event(
-            session,
-            event_type="retrieval_preference_update",
-            actor=actor,
-            workspace_id=workspace_id,
-            knowledge_base_id=knowledge_base.id,
-            payload_json={
-                "mode": preferences["mode"],
-                "graph_weight": preferences["graph_weight"],
-                "graph_depth": preferences["graph_depth"],
-            },
-        )
-        session.commit()
-        return {
-            "status": "saved",
-            "knowledge_base_id": str(knowledge_base.id),
-            "knowledge_base": knowledge_base.name,
-            "preferences": preferences,
-        }
-
-    @app.get("/knowledge-bases/{kb_id}/role-model-config", response_model=None)
-    def get_role_model_config(
-        kb_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        auth: Annotated[AuthContext, Depends(get_auth_context)],
-    ) -> dict[str, Any] | JSONResponse:
-        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
-            session=session,
-            kb_id=kb_id,
-            workspace_id=workspace_id,
-        )
-        if kb_error is not None:
-            return kb_error
-        assert knowledge_base is not None
-        access_error = knowledge_base_access_error(
-            settings=active_settings,
-            session=session,
-            auth=auth,
-            knowledge_base_id=knowledge_base.id,
-            minimum="viewer",
-        )
-        if access_error is not None:
-            return access_error
-        config = _kb_role_model_config(knowledge_base) or {}
-        return {
-            "knowledge_base_id": str(knowledge_base.id),
-            "knowledge_base": knowledge_base.name,
-            "config": _public_role_model_config(config),
-            "roles": sorted(str(role) for role in config),
-        }
-
-    @app.put("/knowledge-bases/{kb_id}/role-model-config", response_model=None)
-    def put_role_model_config(
-        kb_id: str,
-        request: RoleModelConfigRequest,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-        auth: Annotated[AuthContext, Depends(require_write_auth)],
-    ) -> dict[str, Any] | JSONResponse:
-        knowledge_base, kb_error = _knowledge_base_by_id_for_workspace(
-            session=session,
-            kb_id=kb_id,
-            workspace_id=workspace_id,
-        )
-        if kb_error is not None:
-            return kb_error
-        assert knowledge_base is not None
-        access_error = knowledge_base_access_error(
-            settings=active_settings,
-            session=session,
-            auth=auth,
-            knowledge_base_id=knowledge_base.id,
-            minimum="editor",
-        )
-        if access_error is not None:
-            return access_error
-        validation_error = _validate_role_model_config(request.config)
-        if validation_error is not None:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": {
-                        "code": "invalid_role_model_config",
-                        "message": validation_error,
-                    }
-                },
-            )
-        metadata = dict(knowledge_base.metadata_json or {})
-        metadata["role_model_config"] = request.config
-        knowledge_base.metadata_json = metadata
-        actor = str(auth.user_id) if auth.user_id is not None else "anonymous"
-        create_audit_event(
-            session,
-            event_type="role_model_config_update",
-            actor=actor,
-            workspace_id=workspace_id,
-            knowledge_base_id=knowledge_base.id,
-            payload_json={"roles": sorted(str(role) for role in request.config)},
-        )
-        session.commit()
-        return {
-            "status": "saved",
-            "knowledge_base_id": str(knowledge_base.id),
-            "knowledge_base": knowledge_base.name,
-            "config": _public_role_model_config(request.config),
-            "roles": sorted(str(role) for role in request.config),
-        }
-
-    @app.get("/knowledge-bases/{kb_id}/understanding-runs", response_model=None)
-    def understanding_runs(
-        kb_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        provider: str | None = None,
-        model: str | None = None,
-        profile_id: str | None = None,
-        status: str | None = None,
-        started_after: str | None = None,
-        started_before: str | None = None,
-        limit: int = 50,
-    ) -> dict[str, Any]:
-        filters = UnderstandingRunFilter(
-            provider=provider,
-            model=model,
-            profile_id=profile_id,
-            status=status,
-            started_after=started_after,
-            started_before=started_before,
-            limit=limit,
-        )
-        runs = get_understanding_runs(session, kb_id, filters=filters)
-        return {
-            "runs": [r.model_dump() for r in runs],
-        }
 
     @app.post("/knowledge-bases/{kb_name}/website-import", response_model=None)
     def knowledge_base_website_import(
@@ -1932,13 +984,13 @@ def create_app(
                 request.knowledge_base,
                 workspace_id=workspace_id,
             )
-        persisted_role_config = _kb_role_model_config(answer_kb)
+        persisted_role_config = kb_role_model_config(answer_kb)
         effective_role_config = (
             request.role_model_config
             if request.role_model_config is not None
             else persisted_role_config
         )
-        role_selection, role_error = _role_model_selection(request.role, effective_role_config)
+        role_selection, role_error = role_model_selection(request.role, effective_role_config)
         if role_error is not None:
             return JSONResponse(
                 status_code=400,
@@ -2065,7 +1117,7 @@ def create_app(
                 },
             )
 
-        public_role_selection = _public_role_model_selection(role_selection)
+        public_role_selection = public_role_model_selection(role_selection)
         _record_usage_for_request(
             session,
             workspace_id,
