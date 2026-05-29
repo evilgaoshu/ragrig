@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -60,7 +60,6 @@ from ragrig.local_pilot import (
 )
 from ragrig.local_pilot.model_config import resolve_env_config
 from ragrig.observability import summarize_pipeline_cost_latency
-from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.plugins.sinks.agent_access.connector import export_to_agent_endpoint
 from ragrig.plugins.sinks.azure_blob.connector import export_to_azure_blob
 from ragrig.plugins.sinks.backblaze_b2.connector import export_to_backblaze_b2
@@ -68,7 +67,6 @@ from ragrig.plugins.sinks.cloudflare_r2.connector import export_to_cloudflare_r2
 from ragrig.plugins.sinks.gcs.connector import export_to_gcs
 from ragrig.plugins.sinks.object_storage.connector import export_to_object_storage
 from ragrig.plugins.sinks.webhook.connector import export_to_webhook
-from ragrig.providers.model_catalog import list_provider_models, measure_provider_latency
 from ragrig.ratelimit import RateLimiter
 from ragrig.repositories import (
     create_audit_event,
@@ -90,6 +88,7 @@ from ragrig.retrieval import (
 from ragrig.routers.admin import router as admin_router
 from ragrig.routers.audit import router as audit_router
 from ragrig.routers.auth import router as auth_router
+from ragrig.routers.catalog_ops import router as catalog_ops_router
 from ragrig.routers.conflicts import router as conflicts_router
 from ragrig.routers.conversations import router as conversations_router
 from ragrig.routers.mcp import router as mcp_router
@@ -136,42 +135,21 @@ from ragrig.understanding import (
 )
 from ragrig.vectorstore import get_vector_backend, get_vector_backend_health
 from ragrig.web_console import (
-    PluginWizardValidationError,
     build_permission_preview,
     build_system_status,
-    check_format,
-    get_advanced_parser_corpus,
-    get_answer_live_smoke,
-    get_ops_diagnostics,
     get_pipeline_run_detail,
-    get_recent_benchmark,
-    get_retrieval_benchmark_integrity,
-    get_sanitizer_contract_status,
-    get_sanitizer_coverage,
-    get_sanitizer_drift_history,
-    get_sanitizer_drift_history_summary,
-    get_understanding_export_diff,
     get_understanding_run_detail,
     list_document_version_chunks,
     list_documents,
     list_knowledge_bases,
-    list_models,
     list_pipeline_run_items,
     list_pipeline_runs,
-    list_plugins,
     list_sources,
-    list_supported_formats,
     list_understanding_runs,
-    validate_plugin_config_for_wizard,
 )
 from ragrig.workflows import (
     IngestionDagRejected,
-    WorkflowDefinition,
-    WorkflowStep,
-    WorkflowValidationError,
     create_ingestion_dag_run,
-    list_workflow_operations,
-    run_workflow,
 )
 
 
@@ -258,25 +236,6 @@ class RoleModelConfigRequest(BaseModel):
 
 class KbPermissionRequest(BaseModel):
     role: str = Field(pattern=r"^(admin|editor|viewer|none)$")
-
-
-class EnterpriseConnectorProbeRequest(BaseModel):
-    config: dict[str, Any] = Field(default_factory=dict)
-
-
-class WorkflowStepRequest(BaseModel):
-    step_id: str
-    operation: str
-    config: dict[str, Any] = Field(default_factory=dict)
-    depends_on: list[str] = Field(default_factory=list)
-    max_retries: int = Field(default=0, ge=0, le=5)
-    continue_on_error: bool = False
-
-
-class WorkflowRunRequest(BaseModel):
-    workflow_id: str
-    steps: list[WorkflowStepRequest]
-    dry_run: bool = False
 
 
 class IngestionDagRequest(BaseModel):
@@ -620,19 +579,6 @@ def _kb_retrieval_preferences(knowledge_base: KnowledgeBase | None) -> dict[str,
         return defaults
 
 
-def _plugin_validation_error_response(*, code: str, message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=400,
-        content={
-            "valid": False,
-            "error": {
-                "code": code,
-                "message": message,
-            },
-        },
-    )
-
-
 def create_runtime_settings(settings: Settings | None = None) -> Settings:
     active_settings = settings or get_settings()
     payload = active_settings.model_dump()
@@ -724,6 +670,7 @@ def create_app(
     app.include_router(retention_router)
     app.include_router(openai_compat_router)
     app.include_router(mcp_router)
+    app.include_router(catalog_ops_router)
     app.include_router(processing_profiles_router)
     app.include_router(conversations_router)
     app.include_router(usage_router)
@@ -1768,255 +1715,6 @@ def create_app(
         return {
             "runs": [r.model_dump() for r in runs],
         }
-
-    @app.get("/models", response_model=None)
-    def models(
-        session: Annotated[Session, Depends(get_session)],
-    ) -> dict[str, Any]:
-        return list_models(session)
-
-    @app.get("/models/{provider_name:path}/available-models", response_model=None)
-    def provider_available_models(provider_name: str) -> dict[str, Any]:
-        return list_provider_models(provider_name)
-
-    @app.post("/models/{provider_name:path}/speed-test", response_model=None)
-    def provider_speed_test(provider_name: str) -> dict[str, Any]:
-        return measure_provider_latency(provider_name)
-
-    @app.get("/plugins", response_model=None)
-    def plugins() -> dict[str, list[dict[str, Any]]]:
-        return {"items": list_plugins()}
-
-    @app.get("/enterprise-connectors", response_model=None)
-    def enterprise_connectors() -> dict[str, list[dict[str, object]]]:
-        return {"items": list_enterprise_connectors()}
-
-    @app.post("/enterprise-connectors/{connector_id:path}/probe", response_model=None)
-    def enterprise_connector_probe(
-        connector_id: str,
-        request: EnterpriseConnectorProbeRequest,
-    ) -> dict[str, object]:
-        return probe_enterprise_connector(connector_id, config=request.config)
-
-    @app.get("/workflows/operations", response_model=None)
-    def workflow_operations() -> dict[str, list[dict[str, object]]]:
-        return {"items": list_workflow_operations()}
-
-    @app.post("/workflows/runs", response_model=None)
-    def workflow_run(
-        request: WorkflowRunRequest,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-    ) -> dict[str, Any] | JSONResponse:
-        try:
-            definition = WorkflowDefinition(
-                workflow_id=request.workflow_id,
-                steps=[
-                    WorkflowStep(
-                        step_id=step.step_id,
-                        operation=step.operation,
-                        config=step.config,
-                        depends_on=step.depends_on,
-                        max_retries=step.max_retries,
-                        continue_on_error=step.continue_on_error,
-                    )
-                    for step in request.steps
-                ],
-            )
-            return run_workflow(
-                session=session,
-                definition=definition,
-                dry_run=request.dry_run,
-            ).as_dict()
-        except WorkflowValidationError as exc:
-            return JSONResponse(status_code=400, content={"error": str(exc)})
-
-    @app.post("/plugins/{plugin_id}/validate-config", response_model=None)
-    async def validate_plugin_config(
-        plugin_id: str,
-        request: Request,
-    ) -> dict[str, Any] | JSONResponse:
-        try:
-            payload = await request.json()
-        except Exception:
-            return _plugin_validation_error_response(
-                code="malformed_request",
-                message="request body must be valid JSON",
-            )
-        if not isinstance(payload, dict):
-            return _plugin_validation_error_response(
-                code="malformed_request",
-                message="request body must be a JSON object",
-            )
-        config = payload.get("config", {})
-        if not isinstance(config, dict):
-            return _plugin_validation_error_response(
-                code="malformed_request",
-                message="config must be a JSON object",
-            )
-        try:
-            return validate_plugin_config_for_wizard(plugin_id, config)
-        except PluginWizardValidationError as exc:
-            return _plugin_validation_error_response(code=exc.code, message=exc.message)
-
-    @app.get("/supported-formats", response_model=None)
-    def supported_formats(
-        status: str | None = None,
-    ) -> dict[str, list[dict[str, Any]]]:
-        return list_supported_formats(status=status)
-
-    @app.get("/supported-formats/check", response_model=None)
-    def supported_formats_check(
-        extension: str,
-    ) -> dict[str, Any] | JSONResponse:
-        if not extension:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "extension query parameter is required"},
-            )
-        result = check_format(extension)
-        return result
-
-    @app.get("/sanitizer-coverage", response_model=None)
-    def sanitizer_coverage() -> dict[str, Any] | None:
-        """Return the sanitizer coverage summary for Web Console display.
-
-        Reads golden snapshots from tests/goldens/ and returns a
-        structured summary with parser-level redaction counts,
-        degradation status, and golden hashes.
-
-        Never includes raw secret fragments.
-        """
-        return get_sanitizer_coverage()
-
-    @app.get("/sanitizer-drift-history", response_model=None)
-    def sanitizer_drift_history() -> dict[str, Any]:
-        """Return the sanitizer drift history for Web Console display.
-
-        Reads drift diff artifacts from docs/operations/artifacts/ and
-        returns a lightweight summary with risk level, base/head hashes,
-        changed parser count, and trend sparklines.
-
-        Never includes raw secret fragments.
-        """
-        return get_sanitizer_drift_history()
-
-    @app.get("/sanitizer-drift-history-summary", response_model=None)
-    def sanitizer_drift_history_summary() -> dict[str, Any]:
-        """Return the sanitizer drift history summary for Web Console display.
-
-        Reads the summary artifact from docs/operations/artifacts/ and
-        returns latest status, risk, parser counts, degraded reports count,
-        and summary path.
-
-        Missing/corrupt artifacts are reported as degraded/failure.
-        Never includes raw secret fragments.
-        """
-        return get_sanitizer_drift_history_summary()
-
-    @app.get("/understanding-export-diff", response_model=None)
-    def understanding_export_diff() -> dict[str, Any]:
-        """Return the latest understanding export diff for Web Console display.
-
-        Reads from the artifact at
-        docs/operations/artifacts/understanding-export-diff.json.
-
-        Returns a lightweight summary with status, baseline/current run counts,
-        added/removed/changed counts, schema compatibility, and artifact path.
-
-        Missing, corrupt, or schema-incompatible artifacts are reported as
-        degraded/failure — never as pass.
-
-        Never includes raw secret fragments.
-        """
-        return get_understanding_export_diff()
-
-    @app.get("/sanitizer-contract-status", response_model=None)
-    def sanitizer_contract_status() -> dict[str, Any]:
-        """Return the latest sanitizer contract matrix status for Web Console display.
-
-        Reads the artifact at
-        docs/operations/artifacts/sanitizer-contract-matrix.json.
-
-        Returns a lightweight summary with contract status, registered callsite
-        count, unregistered count, summary fields check, duplicate impl check,
-        and artifact path.
-
-        Missing, corrupt, or schema-incompatible artifacts are reported as
-        degraded/failure — never as pass.
-
-        Never includes raw secret fragments.
-        """
-        return get_sanitizer_contract_status()
-
-    @app.get("/retrieval/benchmark/recent", response_model=None)
-    def retrieval_benchmark_recent() -> dict[str, Any]:
-        """Return the most recent retrieval benchmark result.
-
-        Reads from the baseline artifact at
-        docs/operations/artifacts/retrieval-benchmark-baseline.json.
-
-        Never includes raw secret fragments.
-        """
-        return get_recent_benchmark()
-
-    @app.get("/retrieval/benchmark/integrity", response_model=None)
-    def retrieval_benchmark_integrity() -> dict[str, Any]:
-        """Return retrieval benchmark baseline integrity status.
-
-        Evaluates manifest freshness, hash consistency, and schema
-        compatibility.  Returns a lightweight summary safe for browser
-        rendering — never includes raw secret fragments.
-        """
-        return get_retrieval_benchmark_integrity()
-
-    @app.get("/ops/diagnostics", response_model=None)
-    def ops_diagnostics() -> dict[str, Any]:
-        """Return the latest deploy/backup/restore/upgrade summary.
-
-        Reads artifacts from docs/operations/artifacts/ and returns
-        a lightweight summary safe for browser rendering.
-
-        Missing, corrupt, or stale artifacts are reported as degraded/failure
-        — never as healthy.
-
-        Never includes plaintext DSN, token, API key, or object storage secret.
-        """
-        return get_ops_diagnostics()
-
-    @app.get("/answer/live-smoke", response_model=None)
-    def answer_live_smoke() -> dict[str, Any]:
-        """Return the latest answer live smoke diagnostics for Web Console display.
-
-        Reads the artifact at
-        docs/operations/artifacts/answer-live-smoke.json.
-
-        Returns a lightweight summary with provider, model, status, reason,
-        citation count, timing, and artifact path.
-
-        Missing, corrupt, or stale artifacts are reported as degraded/failure
-        — never as healthy.
-
-        Never includes raw secret fragments.
-        """
-        return get_answer_live_smoke()
-
-    @app.get("/advanced-parser-corpus", response_model=None)
-    def advanced_parser_corpus() -> dict[str, Any]:
-        """Return the latest advanced parser corpus status for Web Console display.
-
-        Reads the artifact at
-        docs/operations/artifacts/advanced-parser-corpus.json.
-
-        Returns a lightweight summary with total/degraded/skipped/failed counts,
-        per-fixture results, and artifact path.
-
-        Missing, corrupt, or schema-incompatible artifacts are reported as
-        degraded/failure — never as pass.
-
-        Never includes raw secret fragments.
-        """
-        return get_advanced_parser_corpus()
 
     @app.post("/knowledge-bases/{kb_name}/website-import", response_model=None)
     def knowledge_base_website_import(
