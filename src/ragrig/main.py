@@ -43,7 +43,7 @@ from ragrig.evaluation import (
     load_run_from_store,
     run_evaluation,
 )
-from ragrig.health import build_reranker_health, create_database_check
+from ragrig.health import create_database_check
 from ragrig.ingestion.web_import import WebsiteImportError
 from ragrig.knowledge_graph import (
     KnowledgeGraphBuildRequest,
@@ -53,10 +53,7 @@ from ragrig.knowledge_graph import (
 )
 from ragrig.local_pilot import (
     ModelConfigError,
-    build_local_pilot_status,
     import_website_pages,
-    model_health_check,
-    run_answer_smoke,
 )
 from ragrig.local_pilot.model_config import resolve_env_config
 from ragrig.observability import summarize_pipeline_cost_latency
@@ -102,6 +99,7 @@ from ragrig.routers.runtime import (
 )
 from ragrig.routers.source_webhooks import router as source_webhooks_router
 from ragrig.routers.sources_pipeline import router as sources_pipeline_router
+from ragrig.routers.system import router as system_router
 from ragrig.routers.usage import router as usage_router
 from ragrig.tasks import (
     TaskRetryError,
@@ -133,10 +131,9 @@ from ragrig.understanding import (
     knowledge_map_to_dict,
     understand_all_versions,
 )
-from ragrig.vectorstore import get_vector_backend, get_vector_backend_health
+from ragrig.vectorstore import get_vector_backend
 from ragrig.web_console import (
     build_permission_preview,
-    build_system_status,
     get_pipeline_run_detail,
     get_understanding_run_detail,
     list_document_version_chunks,
@@ -382,18 +379,6 @@ class GcsExportRequest(BaseModel):
     include_retrieval_artifact: bool = True
     include_markdown_summary: bool = True
     parquet_export: bool = False
-
-
-class LocalPilotAnswerSmokeRequest(BaseModel):
-    provider: str
-    model: str | None = None
-    config: dict[str, Any] | None = None
-
-
-class LocalPilotModelHealthRequest(BaseModel):
-    provider: str
-    model: str | None = None
-    config: dict[str, Any] | None = None
 
 
 def _serialize_error(exc: RetrievalError) -> dict[str, Any]:
@@ -662,6 +647,7 @@ def create_app(
         app,
         session_factory=get_session_factory(),
         task_executor=active_task_executor,
+        database_check=database_check,
     )
 
     app.include_router(auth_router)
@@ -672,6 +658,7 @@ def create_app(
     app.include_router(mcp_router)
     app.include_router(catalog_ops_router)
     app.include_router(processing_profiles_router)
+    app.include_router(system_router)
     app.include_router(conversations_router)
     app.include_router(usage_router)
     app.include_router(source_webhooks_router)
@@ -781,86 +768,6 @@ def create_app(
             import logging
 
             logging.getLogger(__name__).exception("usage accounting failed")
-
-    @app.get("/health", response_model=None)
-    def health() -> dict[str, Any] | JSONResponse:
-        try:
-            database_check()
-        except Exception as exc:  # pragma: no cover - covered via contract test
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "status": "unhealthy",
-                    "app": "ok",
-                    "db": "error",
-                    "detail": str(exc),
-                    "reranker": build_reranker_health(active_settings),
-                    "version": __version__,
-                },
-            )
-
-        return {
-            "status": "healthy",
-            "app": "ok",
-            "db": "connected",
-            "reranker": build_reranker_health(active_settings),
-            "version": __version__,
-        }
-
-    @app.get("/system/status", response_model=None)
-    def system_status(
-        session: Annotated[Session, Depends(get_session)],
-    ) -> dict[str, Any]:
-        detail: str | None = None
-        database_ok = True
-        try:
-            database_check()
-        except Exception as exc:  # pragma: no cover - exercised via route contract tests
-            detail = str(exc)
-            database_ok = False
-        return build_system_status(
-            session,
-            settings=active_settings,
-            vector_health=get_vector_backend_health(session, active_settings),
-            database_ok=database_ok,
-            database_detail=detail,
-        )
-
-    @app.get("/local-pilot/status", response_model=None)
-    def local_pilot_status() -> dict[str, Any]:
-        return build_local_pilot_status().model_dump()
-
-    @app.post("/local-pilot/answer-smoke", response_model=None)
-    def local_pilot_answer_smoke(
-        request: LocalPilotAnswerSmokeRequest,
-    ) -> dict[str, Any] | JSONResponse:
-        try:
-            return run_answer_smoke(
-                provider=request.provider,
-                model=request.model,
-                config=request.config,
-            )
-        except ModelConfigError as exc:
-            return JSONResponse(
-                status_code=400,
-                content={"error": exc.code, "message": str(exc), "field": exc.field},
-            )
-
-    @app.post("/local-pilot/model-health", response_model=None)
-    def local_pilot_model_health(
-        request: LocalPilotModelHealthRequest,
-    ) -> dict[str, Any] | JSONResponse:
-        try:
-            return model_health_check(
-                provider=request.provider,
-                model=request.model,
-                config=request.config,
-            )
-        except ModelConfigError as exc:
-            return JSONResponse(
-                status_code=400,
-                content={"error": exc.code, "message": str(exc), "field": exc.field},
-            )
 
     @app.get("/knowledge-bases", response_model=None)
     def knowledge_bases(

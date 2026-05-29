@@ -21,6 +21,7 @@ from ragrig.deps import AuthContext, get_workspace_id_from_auth
 from ragrig.repositories import resolve_effective_kb_role
 
 SessionFactory = Callable[[], Session]
+DatabaseCheck = Callable[[], None]
 
 
 def set_runtime_state(
@@ -28,9 +29,12 @@ def set_runtime_state(
     *,
     session_factory: SessionFactory,
     task_executor: Any,
+    database_check: DatabaseCheck | None = None,
 ) -> None:
     app.state.ragrig_session_factory = session_factory
     app.state.ragrig_task_executor = task_executor
+    if database_check is not None:
+        app.state.ragrig_database_check = database_check
 
 
 def get_session_factory(request: Request) -> SessionFactory:
@@ -45,6 +49,13 @@ def get_task_executor(request: Request) -> Any:
     if task_executor is None:  # pragma: no cover - indicates app wiring drift
         raise RuntimeError("RAGRig runtime task executor is not configured")
     return task_executor
+
+
+def get_database_check(request: Request) -> DatabaseCheck:
+    database_check = getattr(request.app.state, "ragrig_database_check", None)
+    if database_check is None:  # pragma: no cover - indicates app wiring drift
+        raise RuntimeError("RAGRig runtime database check is not configured")
+    return database_check
 
 
 def get_workspace_id(
