@@ -22,6 +22,11 @@ def test_dockerfile_supports_local_pilot_runtime() -> None:
     assert "RAGRIG_AUTO_MIGRATE" in dockerfile
     assert "HEALTHCHECK" in dockerfile
     assert "/health" in dockerfile
+    assert "groupadd --gid 10001 ragrig" in dockerfile
+    assert "useradd --uid 10001 --gid ragrig" in dockerfile
+    assert "UV_CACHE_DIR=/tmp/uv-cache" in dockerfile
+    assert "chown -R ragrig:ragrig /app /home/ragrig" in dockerfile
+    assert "USER ragrig" in dockerfile
     assert "uv run --no-dev uvicorn" in dockerfile
 
     entrypoint = (REPO_ROOT / "scripts" / "docker-entrypoint.sh").read_text(encoding="utf-8")

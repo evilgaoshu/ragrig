@@ -21,6 +21,9 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    HOME=/home/ragrig \
+    UV_CACHE_DIR=/tmp/uv-cache \
+    PATH="/app/.venv/bin:${PATH}" \
     APP_PORT=8000 \
     RAGRIG_AUTO_MIGRATE=0
 
@@ -28,7 +31,10 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install --no-install-recommends -y curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 ragrig \
+    && useradd --uid 10001 --gid ragrig --home-dir /home/ragrig \
+        --create-home --shell /usr/sbin/nologin ragrig
 
 COPY --from=ghcr.io/astral-sh/uv:0.7.3 /uv /uvx /bin/
 
@@ -43,12 +49,16 @@ COPY examples ./examples
 # frontend source in this commit — no committed dist drift.
 COPY --from=frontend /frontend/dist ./src/ragrig/static/dist
 
-RUN uv sync --no-dev --frozen
+RUN uv sync --no-dev --frozen \
+    && mkdir -p "$UV_CACHE_DIR" \
+    && chown -R ragrig:ragrig /app /home/ragrig "$UV_CACHE_DIR"
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 \
     CMD curl -fsS "http://127.0.0.1:${APP_PORT:-8000}/health" || exit 1
+
+USER ragrig
 
 ENTRYPOINT ["sh", "/app/scripts/docker-entrypoint.sh"]
 
