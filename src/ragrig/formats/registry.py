@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import yaml
@@ -285,10 +286,13 @@ def _status_message(fmt: SupportedFormat) -> str:
 
 
 _REGISTRY: SupportedFormatRegistry | None = None
+_REGISTRY_LOCK = Lock()
 
 
 def get_format_registry() -> SupportedFormatRegistry:
     global _REGISTRY
     if _REGISTRY is None:
-        _REGISTRY = SupportedFormatRegistry()
+        with _REGISTRY_LOCK:
+            if _REGISTRY is None:
+                _REGISTRY = SupportedFormatRegistry()
     return _REGISTRY
