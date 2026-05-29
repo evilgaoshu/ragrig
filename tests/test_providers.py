@@ -73,9 +73,11 @@ def test_provider_registry_register_get_list_and_health_check() -> None:
     )
 
     provider = registry.get("fake-embedding", dimensions=5)
+    batch = provider.embed_texts(["alpha", "beta"])
 
     assert provider.metadata.name == "fake-embedding"
     assert provider.embed_text("fixture").dimensions == 5
+    assert [result.metadata["text"] for result in batch] == ["alpha", "beta"]
     assert registry.list() == [metadata]
     assert registry.read("fake-embedding") == metadata
     assert registry.health_check_all({"fake-embedding": {"dimensions": 5}}) == {
@@ -140,6 +142,8 @@ def test_base_provider_default_methods_raise_structured_errors() -> None:
 
     with pytest.raises(ProviderError) as embed_exc:
         BaseProvider.embed_text(provider, "fixture")
+    with pytest.raises(ProviderError) as embed_batch_exc:
+        BaseProvider.embed_texts(provider, ["fixture"])
     with pytest.raises(ProviderError) as generate_exc:
         BaseProvider.generate(provider, "fixture")
     with pytest.raises(ProviderError) as chat_exc:
@@ -148,6 +152,10 @@ def test_base_provider_default_methods_raise_structured_errors() -> None:
         BaseProvider.rerank(provider, "fixture", ["doc"])
 
     assert embed_exc.value.details == {"provider": "fake-embedding", "capability": "embedding"}
+    assert embed_batch_exc.value.details == {
+        "provider": "fake-embedding",
+        "capability": "embedding",
+    }
     assert generate_exc.value.details == {"provider": "fake-embedding", "capability": "generate"}
     assert chat_exc.value.details == {"provider": "fake-embedding", "capability": "chat"}
     assert rerank_exc.value.details == {"provider": "fake-embedding", "capability": "rerank"}

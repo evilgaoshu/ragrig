@@ -83,8 +83,9 @@ class FakeOpenAICompatibleClient:
 
 
 class FakeBgeEmbedder:
-    def encode(self, text: str) -> list[float]:
-        del text
+    def encode(self, text: object) -> list[float] | list[list[float]]:
+        if isinstance(text, list):
+            return [[0.4, 0.5, 0.6] for _ in text]
         return [0.4, 0.5, 0.6]
 
 
@@ -240,11 +241,16 @@ def test_bge_embedding_and_reranker_support_fake_runtimes() -> None:
     )
 
     embedding = embedding_provider.embed_text("fixture")
+    batch_embeddings = embedding_provider.embed_texts(["alpha", "beta"])
     ranked = reranker_provider.rerank("query", ["alpha", "beta", "gamma"])
 
     assert embedding.provider == "embedding.bge"
     assert embedding.model == "BAAI/bge-small-en-v1.5"
     assert embedding.dimensions == 3
+    assert [embedding.vector for embedding in batch_embeddings] == [
+        [0.4, 0.5, 0.6],
+        [0.4, 0.5, 0.6],
+    ]
     assert ranked == [
         {"document": "alpha", "index": 0, "score": 1.0},
         {"document": "beta", "index": 1, "score": 0.75},

@@ -110,6 +110,31 @@ class BgeEmbeddingProvider(BaseProvider):
             metadata={},
         )
 
+    def embed_texts(self, texts: list[str]) -> list[EmbeddingResult]:
+        if not texts:
+            return []
+
+        runtime = self._runtime or load_bge_embedding_runtime(self.model_name)
+        vectors = [[float(value) for value in vector] for vector in runtime.encode(list(texts))]
+        if len(vectors) != len(texts):
+            raise ProviderError(
+                "Provider 'embedding.bge' returned "
+                f"{len(vectors)} embeddings for {len(texts)} inputs",
+                code="api_error",
+                retryable=False,
+                details={"provider": self.metadata.name},
+            )
+        return [
+            EmbeddingResult(
+                provider=self.metadata.name,
+                model=self.model_name,
+                dimensions=len(vector),
+                vector=vector,
+                metadata={},
+            )
+            for vector in vectors
+        ]
+
 
 @dataclass
 class BgeRerankerProvider(BaseProvider):

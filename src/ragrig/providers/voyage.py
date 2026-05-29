@@ -121,10 +121,13 @@ class VoyageEmbeddingProvider(BaseProvider):
             metrics={"provider": "embedding.voyage", "model": self.model_name},
         )
 
-    def embed_text(self, text: str) -> EmbeddingResult:
+    def embed_texts(self, texts: list[str]) -> list[EmbeddingResult]:
+        if not texts:
+            return []
+
         body: dict[str, Any] = {
             "model": self.model_name,
-            "input": [text],
+            "input": list(texts),
         }
         if self.input_type:
             body["input_type"] = self.input_type
@@ -160,8 +163,11 @@ class VoyageEmbeddingProvider(BaseProvider):
 
         data = response.json()
         try:
-            vector = [float(v) for v in data["data"][0]["embedding"]]
-        except (KeyError, IndexError, TypeError) as exc:
+            items = list(data["data"])
+            if all(isinstance(item, dict) and "index" in item for item in items):
+                items = sorted(items, key=lambda item: int(item["index"]))
+            vectors = [[float(v) for v in item["embedding"]] for item in items]
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ProviderError(
                 f"Provider 'embedding.voyage' returned unexpected response shape: {exc}",
                 code="api_error",
@@ -169,13 +175,28 @@ class VoyageEmbeddingProvider(BaseProvider):
                 details={"provider": "embedding.voyage"},
             ) from exc
 
-        return EmbeddingResult(
-            provider="embedding.voyage",
-            model=self.model_name,
-            dimensions=len(vector),
-            vector=vector,
-            metadata={"input_type": self.input_type},
-        )
+        if len(vectors) != len(texts):
+            raise ProviderError(
+                "Provider 'embedding.voyage' returned "
+                f"{len(vectors)} embeddings for {len(texts)} inputs",
+                code="api_error",
+                retryable=False,
+                details={"provider": "embedding.voyage"},
+            )
+
+        return [
+            EmbeddingResult(
+                provider="embedding.voyage",
+                model=self.model_name,
+                dimensions=len(vector),
+                vector=vector,
+                metadata={"input_type": self.input_type},
+            )
+            for vector in vectors
+        ]
+
+    def embed_text(self, text: str) -> EmbeddingResult:
+        return self.embed_texts([text])[0]
 
 
 def create_voyage_embedding_provider(**config: Any) -> VoyageEmbeddingProvider:

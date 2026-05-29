@@ -340,6 +340,65 @@ def test_replace_version_index_replaces_existing_chunks_and_embeddings(tmp_path)
     assert replacement_chunk_ids.isdisjoint(original_chunk_ids)
 
 
+def test_replace_version_index_batches_child_embeddings(tmp_path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text(
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa",
+        encoding="utf-8",
+    )
+
+    class CountingBatchProvider(DeterministicEmbeddingProvider):
+        def __init__(self) -> None:
+            super().__init__(dimensions=4)
+            self.batch_calls: list[list[str]] = []
+            self.single_calls: list[str] = []
+
+        def embed_text(self, text: str) -> EmbeddingResult:
+            self.single_calls.append(text)
+            return super().embed_text(text)
+
+        def embed_texts(self, texts: list[str]) -> list[EmbeddingResult]:
+            self.batch_calls.append(list(texts))
+            return [DeterministicEmbeddingProvider.embed_text(self, text) for text in texts]
+
+    provider = CountingBatchProvider()
+    cost_latency_operations: list[dict[str, object]] = []
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        version = session.scalars(select(DocumentVersion)).one()
+        document = version.document
+
+        created_chunks, created_embeddings = _replace_version_index(
+            session,
+            document_version=version,
+            document=document,
+            chunking_config=ChunkingConfig(chunk_size=12, chunk_overlap=1),
+            embedding_provider=provider,
+            chunk_profile_id="*.chunk.default",
+            embed_profile_id="*.embed.default",
+            cost_latency_operations=cost_latency_operations,
+        )
+        persisted_embeddings = session.scalars(select(Embedding)).all()
+
+    assert created_chunks > 1
+    assert created_embeddings == created_chunks
+    assert len(persisted_embeddings) == created_chunks
+    assert len(provider.batch_calls) == 1
+    assert len(provider.batch_calls[0]) == created_chunks
+    assert provider.single_calls == []
+    assert len(cost_latency_operations) == created_chunks
+    metadata = [operation["metadata"] for operation in cost_latency_operations]
+    assert all(isinstance(item, dict) for item in metadata)
+    assert {item["batch_size"] for item in metadata if isinstance(item, dict)} == {created_chunks}
+
+
 def test_version_already_indexed_rejects_chunks_with_different_config_hash(tmp_path) -> None:
     docs = tmp_path / "docs"
     docs.mkdir()

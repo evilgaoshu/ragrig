@@ -45,5 +45,8 @@ class DeterministicEmbeddingProvider:
             },
         )
 
+    def embed_texts(self, texts: list[str]) -> list[EmbeddingResult]:
+        return [self.embed_text(text) for text in texts]
+
 
 __all__ = ["DeterministicEmbeddingProvider", "EmbeddingResult"]
