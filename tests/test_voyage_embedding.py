@@ -28,6 +28,17 @@ def _make_mock_response(vector: list[float], status_code: int = 200):
     return mock_resp
 
 
+def _make_batch_mock_response(vectors: list[list[float]], status_code: int = 200):
+    mock_resp = MagicMock()
+    mock_resp.is_success = status_code < 400
+    mock_resp.status_code = status_code
+    mock_resp.json.return_value = {
+        "data": [{"embedding": vector, "index": index} for index, vector in enumerate(vectors)],
+        "model": "voyage-3",
+    }
+    return mock_resp
+
+
 class TestVoyageProviderMetadata:
     def test_metadata_name(self) -> None:
         assert VOYAGE_EMBEDDING_METADATA.name == "embedding.voyage"
@@ -57,6 +68,23 @@ class TestVoyageEmbedText:
         assert result.model == "voyage-3"
         assert result.dimensions == 4
         assert result.vector == [0.1, 0.2, 0.3, 0.4]
+
+    def test_embed_texts_returns_ordered_embedding_results(self) -> None:
+        mock_resp = _make_batch_mock_response([[0.1, 0.2], [0.3, 0.4]])
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
+
+        provider = create_voyage_embedding_provider(
+            model_name="voyage-3",
+            api_key="test-key",
+            client=mock_client,
+        )
+        results = provider.embed_texts(["alpha", "beta"])
+
+        call_kwargs = mock_client.post.call_args
+        body = call_kwargs[1].get("json") or call_kwargs.kwargs.get("json", {})
+        assert body["input"] == ["alpha", "beta"]
+        assert [result.vector for result in results] == [[0.1, 0.2], [0.3, 0.4]]
 
     def test_embed_text_raises_on_missing_api_key(self) -> None:
         provider = VoyageEmbeddingProvider(model_name="voyage-3")

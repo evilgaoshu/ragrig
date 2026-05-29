@@ -20,3 +20,14 @@ def test_deterministic_embedding_provider_embeds_empty_text() -> None:
     assert len(result.vector) == 4
     assert all(-1.0 <= value <= 1.0 for value in result.vector)
     assert result.metadata == {"text_hash": sha256(b"").hexdigest()}
+
+
+def test_deterministic_embedding_provider_embeds_batches_in_order() -> None:
+    provider = DeterministicEmbeddingProvider(dimensions=4)
+
+    results = provider.embed_texts(["alpha", "beta"])
+
+    assert [result.vector for result in results] == [
+        provider.embed_text("alpha").vector,
+        provider.embed_text("beta").vector,
+    ]

@@ -121,10 +121,13 @@ class CohereEmbeddingProvider(BaseProvider):
             metrics={"provider": "embedding.cohere", "model": self.model_name},
         )
 
-    def embed_text(self, text: str) -> EmbeddingResult:
+    def embed_texts(self, texts: list[str]) -> list[EmbeddingResult]:
+        if not texts:
+            return []
+
         body = {
             "model": self.model_name,
-            "texts": [text],
+            "texts": list(texts),
             "input_type": self.input_type,
             "embedding_types": ["float"],
         }
@@ -159,7 +162,7 @@ class CohereEmbeddingProvider(BaseProvider):
 
         data = response.json()
         try:
-            vector = [float(v) for v in data["embeddings"]["float"][0]]
+            vectors = [[float(v) for v in vector] for vector in data["embeddings"]["float"]]
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderError(
                 f"Provider 'embedding.cohere' returned unexpected response shape: {exc}",
@@ -168,13 +171,28 @@ class CohereEmbeddingProvider(BaseProvider):
                 details={"provider": "embedding.cohere"},
             ) from exc
 
-        return EmbeddingResult(
-            provider="embedding.cohere",
-            model=self.model_name,
-            dimensions=len(vector),
-            vector=vector,
-            metadata={"input_type": self.input_type},
-        )
+        if len(vectors) != len(texts):
+            raise ProviderError(
+                "Provider 'embedding.cohere' returned "
+                f"{len(vectors)} embeddings for {len(texts)} inputs",
+                code="api_error",
+                retryable=False,
+                details={"provider": "embedding.cohere"},
+            )
+
+        return [
+            EmbeddingResult(
+                provider="embedding.cohere",
+                model=self.model_name,
+                dimensions=len(vector),
+                vector=vector,
+                metadata={"input_type": self.input_type},
+            )
+            for vector in vectors
+        ]
+
+    def embed_text(self, text: str) -> EmbeddingResult:
+        return self.embed_texts([text])[0]
 
 
 def create_cohere_embedding_provider(**config: Any) -> CohereEmbeddingProvider:

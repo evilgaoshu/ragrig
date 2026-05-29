@@ -46,6 +46,16 @@ class IndexingReport:
     embedding_count: int
 
 
+@dataclass(frozen=True)
+class _PreparedChunkEmbedding:
+    chunk: Chunk
+    chunk_index: int
+    embedding_input: str
+
+
+EMBEDDING_BATCH_SIZE = 32
+
+
 def _embedding_provider_profile(embedding_provider: BaseProvider) -> tuple[str, str]:
     provider_name = getattr(getattr(embedding_provider, "metadata", None), "name", None)
     if provider_name is None:
@@ -97,6 +107,24 @@ def _version_already_indexed(
         )
     )
     return len(embeddings) == len(leaf_chunks)
+
+
+def _embed_texts_with_provider(
+    embedding_provider: BaseProvider, texts: list[str]
+) -> list[EmbeddingResult]:
+    if not texts:
+        return []
+
+    if getattr(type(embedding_provider), "embed_texts", None) is not None:
+        embeddings = list(embedding_provider.embed_texts(texts))
+    else:
+        embeddings = [embedding_provider.embed_text(text) for text in texts]
+
+    if len(embeddings) != len(texts):
+        raise ValueError(
+            f"embedding provider returned {len(embeddings)} embeddings for {len(texts)} inputs"
+        )
+    return embeddings
 
 
 def _replace_version_index(
@@ -177,6 +205,7 @@ def _replace_version_index(
 
     # ── Persist child / leaf chunks (embedded) ────────────────────────────────
     created_chunks: list[Chunk] = []
+    prepared_embeddings: list[_PreparedChunkEmbedding] = []
     for draft in child_drafts:
         parent_db_id = (
             parent_id_by_index.get(draft.parent_chunk_index)
@@ -212,66 +241,84 @@ def _replace_version_index(
             },
         )
         session.add(chunk)
-        session.flush()
         created_chunks.append(chunk)
-
-        started = perf_counter()
-        embedding: EmbeddingResult = embedding_provider.embed_text(embedding_input)
-        embedding_latency_ms = (perf_counter() - started) * 1000
-        cost_latency = observe_model_call(
-            operation="embedding",
-            provider=embedding.provider,
-            model=embedding.model,
-            input_text=draft.text,
-            latency_ms=embedding_latency_ms,
-            metadata={
-                "chunk_index": draft.chunk_index,
-                "document_version_id": str(document_version.id),
-            },
+        prepared_embeddings.append(
+            _PreparedChunkEmbedding(
+                chunk=chunk,
+                chunk_index=draft.chunk_index,
+                embedding_input=embedding_input,
+            )
         )
-        if cost_latency_operations is not None:
-            cost_latency_operations.append(cost_latency)
-        session.add(
-            Embedding(
-                chunk_id=chunk.id,
-                workspace_id=workspace_id,
+
+    session.flush()
+    for batch_start in range(0, len(prepared_embeddings), EMBEDDING_BATCH_SIZE):
+        batch = prepared_embeddings[batch_start : batch_start + EMBEDDING_BATCH_SIZE]
+        started = perf_counter()
+        embeddings = _embed_texts_with_provider(
+            embedding_provider,
+            [prepared.embedding_input for prepared in batch],
+        )
+        batch_latency_ms = (perf_counter() - started) * 1000
+        per_embedding_latency_ms = batch_latency_ms / len(embeddings)
+
+        for batch_index, (prepared, embedding) in enumerate(zip(batch, embeddings, strict=True)):
+            cost_latency = observe_model_call(
+                operation="embedding",
                 provider=embedding.provider,
                 model=embedding.model,
-                dimensions=embedding.dimensions,
-                embedding=embedding.vector,
-                metadata_json={
-                    **embedding.metadata,
-                    "config_hash": chunking_config.config_hash,
+                input_text=prepared.embedding_input,
+                latency_ms=per_embedding_latency_ms,
+                metadata={
+                    "batch_index": batch_index,
+                    "batch_latency_ms": round(batch_latency_ms, 3),
+                    "batch_size": len(batch),
+                    "chunk_index": prepared.chunk_index,
                     "document_version_id": str(document_version.id),
-                    "profile_id": embed_profile_id,
-                    "cost_latency": cost_latency,
                 },
             )
-        )
-        session.flush()
-
-        # Optional: near-duplicate conflict detection
-        if conflict_detection and document.knowledge_base_id is not None:
-            conflict = find_conflicting_chunk(
-                session,
-                new_vector=embedding.vector,
-                knowledge_base_id=document.knowledge_base_id,
-                new_chunk_id=chunk.id,
-                threshold=conflict_threshold,
-            )
-            if conflict is not None:
-                existing_chunk_id, similarity = conflict
-                record_conflict(
-                    session,
-                    knowledge_base_id=document.knowledge_base_id,
-                    new_chunk_id=chunk.id,
-                    existing_chunk_id=existing_chunk_id,
-                    similarity=similarity,
-                    extra_metadata={
-                        "document_uri": document.uri,
-                        "chunk_index": draft.chunk_index,
+            if cost_latency_operations is not None:
+                cost_latency_operations.append(cost_latency)
+            session.add(
+                Embedding(
+                    chunk_id=prepared.chunk.id,
+                    workspace_id=workspace_id,
+                    provider=embedding.provider,
+                    model=embedding.model,
+                    dimensions=embedding.dimensions,
+                    embedding=embedding.vector,
+                    metadata_json={
+                        **embedding.metadata,
+                        "config_hash": chunking_config.config_hash,
+                        "document_version_id": str(document_version.id),
+                        "profile_id": embed_profile_id,
+                        "cost_latency": cost_latency,
                     },
                 )
+            )
+            session.flush()
+
+            # Optional: near-duplicate conflict detection
+            if conflict_detection and document.knowledge_base_id is not None:
+                conflict = find_conflicting_chunk(
+                    session,
+                    new_vector=embedding.vector,
+                    knowledge_base_id=document.knowledge_base_id,
+                    new_chunk_id=prepared.chunk.id,
+                    threshold=conflict_threshold,
+                )
+                if conflict is not None:
+                    existing_chunk_id, similarity = conflict
+                    record_conflict(
+                        session,
+                        knowledge_base_id=document.knowledge_base_id,
+                        new_chunk_id=prepared.chunk.id,
+                        existing_chunk_id=existing_chunk_id,
+                        similarity=similarity,
+                        extra_metadata={
+                            "document_uri": document.uri,
+                            "chunk_index": prepared.chunk_index,
+                        },
+                    )
 
     # ── Optional: document-level summary + embedding ──────────────────────────
     if summary_provider is not None and source_text.strip():

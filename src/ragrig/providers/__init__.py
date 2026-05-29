@@ -81,6 +81,9 @@ class BaseProvider:
         del text
         self.raise_unsupported_capability(ProviderCapability.EMBEDDING)
 
+    def embed_texts(self, texts: list[str]) -> list[EmbeddingResult]:
+        return [self.embed_text(text) for text in texts]
+
     def generate(self, prompt: str) -> str:
         del prompt
         self.raise_unsupported_capability(ProviderCapability.GENERATE)
@@ -159,6 +162,9 @@ class DeterministicLocalProvider(BaseProvider):
 
     def embed_text(self, text: str) -> EmbeddingResult:
         return self._provider.embed_text(text)
+
+    def embed_texts(self, texts: list[str]) -> list[EmbeddingResult]:
+        return self._provider.embed_texts(texts)
 
     def health_check(self) -> ProviderHealth:
         sample = self._provider.embed_text("registry-health")
