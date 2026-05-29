@@ -56,7 +56,6 @@ from ragrig.local_pilot import (
     import_website_pages,
 )
 from ragrig.local_pilot.model_config import resolve_env_config
-from ragrig.observability import summarize_pipeline_cost_latency
 from ragrig.plugins.sinks.agent_access.connector import export_to_agent_endpoint
 from ragrig.plugins.sinks.azure_blob.connector import export_to_azure_blob
 from ragrig.plugins.sinks.backblaze_b2.connector import export_to_backblaze_b2
@@ -102,14 +101,10 @@ from ragrig.routers.sources_pipeline import router as sources_pipeline_router
 from ragrig.routers.system import router as system_router
 from ragrig.routers.usage import router as usage_router
 from ragrig.tasks import (
-    TaskRetryError,
     cleanup_staging_dir,
     create_upload_pipeline_run,
     default_task_executor,
     enqueue_task,
-    get_task_payload,
-    retry_task,
-    run_ingestion_dag_task,
     run_upload_pipeline,
     sanitize_filename,
     validate_and_stage_uploads,
@@ -134,19 +129,11 @@ from ragrig.understanding import (
 from ragrig.vectorstore import get_vector_backend
 from ragrig.web_console import (
     build_permission_preview,
-    get_pipeline_run_detail,
     get_understanding_run_detail,
     list_document_version_chunks,
     list_documents,
     list_knowledge_bases,
-    list_pipeline_run_items,
-    list_pipeline_runs,
-    list_sources,
     list_understanding_runs,
-)
-from ragrig.workflows import (
-    IngestionDagRejected,
-    create_ingestion_dag_run,
 )
 
 
@@ -233,15 +220,6 @@ class RoleModelConfigRequest(BaseModel):
 
 class KbPermissionRequest(BaseModel):
     role: str = Field(pattern=r"^(admin|editor|viewer|none)$")
-
-
-class IngestionDagRequest(BaseModel):
-    knowledge_base: str = "fixture-local"
-    root_path: str
-    include_patterns: list[str] | None = None
-    exclude_patterns: list[str] | None = None
-    max_file_size_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
-    failure_node: str | None = None
 
 
 class AnswerRequest(BaseModel):
@@ -896,135 +874,6 @@ def create_app(
         return JSONResponse(
             status_code=200,
             content={"knowledge_base": kb_name, "user_id": user_id, "deleted": True},
-        )
-
-    @app.get("/sources", response_model=None)
-    def sources(
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, list[dict[str, Any]]]:
-        return {"items": list_sources(session, workspace_id=workspace_id)}
-
-    @app.get("/pipeline-runs", response_model=None)
-    def pipeline_runs(
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, list[dict[str, Any]]]:
-        return {"items": list_pipeline_runs(session, workspace_id=workspace_id)}
-
-    @app.get("/pipeline-runs/{pipeline_run_id}", response_model=None)
-    def pipeline_run_detail(
-        pipeline_run_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, Any] | JSONResponse:
-        detail = get_pipeline_run_detail(session, pipeline_run_id, workspace_id=workspace_id)
-        if detail is None:
-            return JSONResponse(status_code=404, content={"error": "pipeline_run_not_found"})
-        return detail
-
-    @app.get("/pipeline-runs/{pipeline_run_id}/items", response_model=None)
-    def pipeline_run_items(
-        pipeline_run_id: str,
-        session: Annotated[Session, Depends(get_session)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, list[dict[str, Any]]]:
-        return {
-            "items": list_pipeline_run_items(
-                session,
-                pipeline_run_id,
-                workspace_id=workspace_id,
-            )
-        }
-
-    @app.get("/observability/cost-latency", response_model=None)
-    def cost_latency_observability(
-        session: Annotated[Session, Depends(get_session)],
-        knowledge_base: str | None = None,
-        limit: int = 20,
-    ) -> dict[str, Any]:
-        bounded_limit = max(1, min(limit, 100))
-        return summarize_pipeline_cost_latency(
-            session,
-            knowledge_base_name=knowledge_base,
-            limit=bounded_limit,
-        )
-
-    @app.get("/tasks/{task_id}", response_model=None)
-    def task_status(task_id: str, include: str | None = None) -> dict[str, Any] | JSONResponse:
-        include_values = {item.strip() for item in include.split(",")} if include else set()
-        payload = get_task_payload(
-            session_factory=get_session_factory(),
-            task_id=task_id,
-            include_pipeline_run="pipeline_run" in include_values,
-        )
-        if payload is None:
-            return JSONResponse(status_code=404, content={"error": "task_not_found"})
-        return payload
-
-    @app.post("/tasks/{task_id}/retry", response_model=None)
-    def retry_task_status(
-        task_id: str,
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-    ) -> dict[str, Any] | JSONResponse:
-        try:
-            result = retry_task(
-                session_factory=get_session_factory(),
-                task_executor=active_task_executor,
-                task_id=task_id,
-            )
-        except TaskRetryError as exc:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={
-                    "error": exc.code,
-                    "message": exc.message,
-                    "retryable": False,
-                },
-            )
-        return JSONResponse(status_code=202, content=result)
-
-    @app.post("/pipeline-dags/ingestion", response_model=None)
-    def ingestion_dag_run(
-        request: IngestionDagRequest,
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> dict[str, Any] | JSONResponse:
-        try:
-            with get_session_factory()() as session:
-                run = create_ingestion_dag_run(
-                    session,
-                    knowledge_base_name=request.knowledge_base,
-                    workspace_id=workspace_id,
-                    root_path=Path(request.root_path),
-                    include_patterns=request.include_patterns,
-                    exclude_patterns=request.exclude_patterns,
-                    max_file_size_bytes=request.max_file_size_bytes,
-                    failure_node=request.failure_node,
-                )
-                pipeline_run_id = str(run.id)
-            task_id = enqueue_task(
-                session_factory=get_session_factory(),
-                task_executor=active_task_executor,
-                task_type="pipeline_dag_ingestion",
-                payload_json={
-                    **request.model_dump(),
-                    "workspace_id": str(workspace_id),
-                    "pipeline_run_id": pipeline_run_id,
-                },
-                runner=lambda: run_ingestion_dag_task(
-                    session_factory=get_session_factory(),
-                    pipeline_run_id=pipeline_run_id,
-                ),
-            )
-        except (ValueError, IngestionDagRejected) as exc:
-            return JSONResponse(
-                status_code=400,
-                content={"status": "rejected", "degraded": True, "reason": str(exc)},
-            )
-        return JSONResponse(
-            status_code=202,
-            content={"task_id": task_id, "pipeline_run_id": pipeline_run_id},
         )
 
     @app.get("/documents", response_model=None)
