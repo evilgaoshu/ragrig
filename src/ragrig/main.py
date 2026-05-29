@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -41,16 +41,12 @@ from ragrig.evaluation import (
     run_evaluation,
 )
 from ragrig.health import create_database_check
-from ragrig.ingestion.web_import import WebsiteImportError
 from ragrig.knowledge_base_config import (
     kb_role_model_config,
     public_role_model_selection,
     role_model_selection,
 )
-from ragrig.local_pilot import (
-    ModelConfigError,
-    import_website_pages,
-)
+from ragrig.local_pilot import ModelConfigError
 from ragrig.local_pilot.model_config import resolve_env_config
 from ragrig.plugins.sinks.agent_access.connector import export_to_agent_endpoint
 from ragrig.plugins.sinks.azure_blob.connector import export_to_azure_blob
@@ -77,6 +73,7 @@ from ragrig.routers.catalog_ops import router as catalog_ops_router
 from ragrig.routers.conflicts import router as conflicts_router
 from ragrig.routers.conversations import router as conversations_router
 from ragrig.routers.knowledge import router as knowledge_router
+from ragrig.routers.knowledge_ingest import router as knowledge_ingest_router
 from ragrig.routers.mcp import router as mcp_router
 from ragrig.routers.openai_compat import router as openai_compat_router
 from ragrig.routers.processing_profiles import router as processing_profiles_router
@@ -91,13 +88,8 @@ from ragrig.routers.sources_pipeline import router as sources_pipeline_router
 from ragrig.routers.system import router as system_router
 from ragrig.routers.usage import router as usage_router
 from ragrig.tasks import (
-    cleanup_staging_dir,
-    create_upload_pipeline_run,
     default_task_executor,
-    enqueue_task,
-    run_upload_pipeline,
     sanitize_filename,
-    validate_and_stage_uploads,
 )
 from ragrig.vectorstore import get_vector_backend
 from ragrig.web_console import build_permission_preview
@@ -188,15 +180,6 @@ class AnswerRequest(BaseModel):
 
 class PermissionPreviewRequest(BaseModel):
     principal_ids: list[str] | None = None
-
-
-class WebsiteImportRequest(BaseModel):
-    urls: list[str]
-    sitemap_url: str | None = None
-    bearer_token: str | None = None
-    cookies: dict[str, str] | None = None
-    basic_auth_username: str | None = None
-    basic_auth_password: str | None = None
 
 
 class AgentAccessExportRequest(BaseModel):
@@ -423,6 +406,7 @@ def create_app(
         session_factory=get_session_factory(),
         task_executor=active_task_executor,
         database_check=database_check,
+        rate_limiter=rate_limiter,
     )
 
     app.include_router(auth_router)
@@ -438,6 +422,7 @@ def create_app(
     app.include_router(usage_router)
     app.include_router(source_webhooks_router)
     app.include_router(knowledge_router)
+    app.include_router(knowledge_ingest_router)
     app.include_router(sources_pipeline_router)
     app.include_router(admin_router)
 
@@ -523,138 +508,6 @@ def create_app(
             import logging
 
             logging.getLogger(__name__).exception("usage accounting failed")
-
-    @app.post("/knowledge-bases/{kb_name}/website-import", response_model=None)
-    def knowledge_base_website_import(
-        kb_name: str,
-        request: WebsiteImportRequest,
-        session: Annotated[Session, Depends(get_session)],
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> JSONResponse:
-        kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
-        if kb is None:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"knowledge base '{kb_name}' not found"},
-            )
-        access_error = knowledge_base_access_error(
-            settings=active_settings,
-            session=session,
-            auth=_auth,
-            knowledge_base_id=kb.id,
-            minimum="editor",
-        )
-        if access_error is not None:
-            return access_error
-
-        try:
-            result = import_website_pages(
-                session,
-                knowledge_base=kb,
-                urls=request.urls,
-                sitemap_url=request.sitemap_url,
-                bearer_token=request.bearer_token,
-                cookies=request.cookies,
-                basic_auth_username=request.basic_auth_username,
-                basic_auth_password=request.basic_auth_password,
-            )
-        except WebsiteImportError as exc:
-            return JSONResponse(status_code=400, content={"error": str(exc)})
-
-        return JSONResponse(status_code=202, content=result)
-
-    @app.post("/knowledge-bases/{kb_name}/upload", response_model=None)
-    async def knowledge_base_upload(
-        kb_name: str,
-        session: Annotated[Session, Depends(get_session)],
-        files: Annotated[list[UploadFile], File(...)],
-        _auth: Annotated[AuthContext, Depends(require_write_auth)],
-        workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
-    ) -> JSONResponse:
-        rate_limiter.check_ingest(str(workspace_id))
-        kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
-        if kb is None:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"knowledge base '{kb_name}' not found"},
-            )
-        access_error = knowledge_base_access_error(
-            settings=active_settings,
-            session=session,
-            auth=_auth,
-            knowledge_base_id=kb.id,
-            minimum="editor",
-        )
-        if access_error is not None:
-            return access_error
-
-        if not files:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "at least one file is required"},
-            )
-
-        file_payloads: list[tuple[str, bytes]] = []
-        for file in files:
-            file_payloads.append((file.filename or "unknown", await file.read()))
-
-        try:
-            accepted = validate_and_stage_uploads(files=file_payloads)
-        except ValueError as exc:
-            return JSONResponse(status_code=400, content={"error": str(exc)})
-
-        if not accepted.staged_files:
-            cleanup_staging_dir(accepted.staging_dir)
-            status_code = (
-                413 if any(r["reason"] == "file_too_large" for r in accepted.rejected) else 415
-            )
-            return JSONResponse(
-                status_code=status_code,
-                content={
-                    "accepted_files": 0,
-                    "rejected_files": len(accepted.rejected),
-                    "rejections": accepted.rejected,
-                    "warnings": accepted.warnings,
-                },
-            )
-
-        pipeline_run_id, _source_id = create_upload_pipeline_run(
-            session,
-            kb_name=kb_name,
-            staged_files=accepted.staged_files,
-            workspace_id=workspace_id,
-        )
-        task_id = enqueue_task(
-            session_factory=get_session_factory(),
-            task_executor=active_task_executor,
-            task_type="knowledge_base_upload",
-            payload_json={
-                "knowledge_base": kb_name,
-                "workspace_id": str(workspace_id),
-                "pipeline_run_id": pipeline_run_id,
-                "staged_files": accepted.staged_files,
-            },
-            runner=lambda: run_upload_pipeline(
-                session_factory=get_session_factory(),
-                kb_name=kb_name,
-                pipeline_run_id=pipeline_run_id,
-                staged_files=accepted.staged_files,
-                workspace_id=workspace_id,
-            ),
-        )
-
-        return JSONResponse(
-            status_code=202,
-            content={
-                "task_id": task_id,
-                "pipeline_run_id": pipeline_run_id,
-                "accepted_files": len(accepted.staged_files),
-                "rejected_files": len(accepted.rejected),
-                "rejections": accepted.rejected,
-                "warnings": accepted.warnings,
-            },
-        )
 
     @app.post("/retrieval/search", response_model=None)
     def retrieval_search(
