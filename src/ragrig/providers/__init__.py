@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from threading import Lock
 from typing import Any, Callable
 
 from ragrig.embeddings import DeterministicEmbeddingProvider, EmbeddingResult
@@ -197,6 +198,7 @@ DETERMINISTIC_LOCAL_METADATA = ProviderMetadata(
 
 
 _provider_registry: ProviderRegistry | None = None
+_provider_registry_lock = Lock()
 
 
 def create_provider_registry() -> ProviderRegistry:
@@ -349,7 +351,9 @@ def create_provider_registry() -> ProviderRegistry:
 def get_provider_registry() -> ProviderRegistry:
     global _provider_registry
     if _provider_registry is None:
-        _provider_registry = create_provider_registry()
+        with _provider_registry_lock:
+            if _provider_registry is None:
+                _provider_registry = create_provider_registry()
     return _provider_registry
 
 
