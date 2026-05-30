@@ -8,6 +8,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -157,7 +158,14 @@ class PlainFormatter(logging.Formatter):
         return f"{base} {json.dumps(payload, default=str, sort_keys=True)}"
 
 
-def configure_logging(*, log_format: str = "plain", level: str = "INFO") -> None:
+def configure_logging(
+    *,
+    log_format: str = "plain",
+    level: str = "INFO",
+    log_file: str | Path | None = None,
+    log_max_bytes: int = 10 * 1024 * 1024,
+    log_backup_count: int = 5,
+) -> None:
     root = logging.getLogger()
     resolved_level = getattr(logging, str(level).upper(), logging.INFO)
     root.setLevel(resolved_level)
@@ -170,6 +178,23 @@ def configure_logging(*, log_format: str = "plain", level: str = "INFO") -> None
 
     if not root.handlers:
         root.addHandler(logging.StreamHandler())
+    if log_file:
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        already_configured = any(
+            isinstance(handler, RotatingFileHandler)
+            and Path(handler.baseFilename) == log_path.resolve()
+            for handler in root.handlers
+        )
+        if not already_configured:
+            root.addHandler(
+                RotatingFileHandler(
+                    log_path,
+                    maxBytes=max(1, int(log_max_bytes)),
+                    backupCount=max(0, int(log_backup_count)),
+                    encoding="utf-8",
+                )
+            )
     for handler in root.handlers:
         handler.setLevel(resolved_level)
         handler.setFormatter(formatter)

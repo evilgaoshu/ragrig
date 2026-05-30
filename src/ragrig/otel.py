@@ -26,6 +26,9 @@ def setup_otel(app: "FastAPI", settings: "Settings") -> None:
     configure_logging(
         log_format=settings.ragrig_log_format,
         level=settings.ragrig_log_level,
+        log_file=settings.ragrig_log_file or None,
+        log_max_bytes=settings.ragrig_log_max_bytes,
+        log_backup_count=settings.ragrig_log_backup_count,
     )
     if not settings.ragrig_otel_enabled:
         return

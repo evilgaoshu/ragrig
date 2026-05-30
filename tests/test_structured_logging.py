@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -10,12 +11,15 @@ from sqlalchemy.orm import Session
 
 from ragrig.answer import generate_answer
 from ragrig.config import Settings
+from ragrig.db.models import Base
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
 from ragrig.observability import StructuredJsonFormatter, bind_log_context, log_event
-from ragrig.observability.logging import sanitize_log_fields
+from ragrig.observability.logging import configure_logging, sanitize_log_fields
+from ragrig.ratelimit import RateLimiter
 from ragrig.retrieval import search_knowledge_base
+from ragrig.services import auth as auth_service
 
 
 def _events(records) -> dict[str, list[dict]]:
@@ -90,6 +94,31 @@ def test_sanitize_log_fields_redacts_secrets_queries_and_paths() -> None:
     assert "/tmp/private/customer" not in repr(sanitized)
 
 
+def test_configure_logging_adds_rotating_file_handler(tmp_path: Path) -> None:
+    root = logging.getLogger()
+    original_handlers = root.handlers[:]
+    log_path = tmp_path / "ragrig.jsonl"
+
+    try:
+        root.handlers = []
+        configure_logging(
+            log_format="json",
+            level="INFO",
+            log_file=str(log_path),
+            log_max_bytes=4096,
+            log_backup_count=3,
+        )
+        handlers = [h for h in root.handlers if isinstance(h, RotatingFileHandler)]
+        assert len(handlers) == 1
+        handler = handlers[0]
+        assert Path(handler.baseFilename) == log_path
+        assert handler.maxBytes == 4096
+        assert handler.backupCount == 3
+        assert isinstance(handler.formatter, StructuredJsonFormatter)
+    finally:
+        root.handlers = original_handlers
+
+
 def test_request_logging_middleware_propagates_request_id(caplog, sqlite_session: Session) -> None:
     app = create_app(
         check_database=lambda: None,
@@ -110,6 +139,54 @@ def test_request_logging_middleware_propagates_request_id(caplog, sqlite_session
     assert events["api.request.start"][0]["request_id"] == "demo-req"
     assert events["api.request.completed"][0]["request_id"] == "demo-req"
     assert events["api.request.completed"][0]["status_code"] == 200
+
+
+def test_authentication_failure_emits_structured_event_without_raw_email(
+    caplog, sqlite_session: Session
+) -> None:
+    Base.metadata.create_all(sqlite_session.get_bind())
+
+    with caplog.at_level(logging.INFO):
+        try:
+            auth_service.login_password(
+                sqlite_session,
+                email="alice@example.com",
+                password="wrong-password",
+                settings=Settings(ragrig_auth_enabled=True),
+                ip="127.0.0.1",
+                user_agent="pytest",
+            )
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 401
+
+    events = _events(caplog.records)
+    assert events["auth.login.failed"][0]["reason"] == "invalid_credentials"
+    serialized_fields = "\n".join(
+        repr(getattr(record, "structured_fields", {})) for record in caplog.records
+    )
+    assert "alice@example.com" not in serialized_fields
+
+
+def test_rate_limiter_emits_structured_allow_and_exceeded_events(caplog) -> None:
+    limiter = RateLimiter(
+        Settings(
+            ragrig_rate_limit_enabled=True,
+            ragrig_rate_limit_search_rpm=1,
+            ragrig_rate_limit_burst_factor=1.0,
+        )
+    )
+
+    with caplog.at_level(logging.INFO):
+        limiter.check_search("workspace-1")
+        try:
+            limiter.check_search("workspace-1")
+        except Exception:
+            pass
+
+    events = _events(caplog.records)
+    assert events["rate_limit.allowed"][0]["operation"] == "search"
+    assert events["rate_limit.exceeded"][0]["operation"] == "search"
+    assert events["rate_limit.exceeded"][0]["retry_after_seconds"] >= 1
 
 
 def test_core_paths_emit_structured_logs_without_raw_query_or_paths(

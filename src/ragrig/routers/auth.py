@@ -1,51 +1,16 @@
 from __future__ import annotations
 
-import logging
 import uuid
-from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from ragrig.auth import (
-    DEFAULT_WORKSPACE_ID,
-    SESSION_TOKEN_PREFIX,
-    create_api_key,
-    create_invitation,
-    create_user_session,
-    ensure_default_workspace,
-    expires_in,
-    login_user,
-    register_user,
-    verify_session_token,
-)
-from ragrig.auth_ldap import LdapAuthError, authenticate_ldap
-from ragrig.auth_mfa import (
-    consume_backup_code,
-    generate_backup_codes,
-    generate_totp_secret,
-    totp_provisioning_uri,
-    totp_qr_png_b64,
-    verify_totp,
-)
-from ragrig.auth_oidc import OidcAuthError, build_authorization_url, exchange_code, generate_state
 from ragrig.config import Settings, get_settings
-from ragrig.db.models import (
-    ApiKey,
-    User,
-    UserSession,
-    Workspace,
-    WorkspaceInvitation,
-    WorkspaceMembership,
-)
 from ragrig.db.session import get_session
 from ragrig.deps import AuthContext, require_admin_auth, require_auth
-from ragrig.email import EmailDeliveryError, send_invitation_email
-
-logger = logging.getLogger(__name__)
+from ragrig.services import auth as auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -107,63 +72,21 @@ class PatchMemberRequest(BaseModel):
     role: str = Field(pattern=r"^(owner|admin|editor|viewer)$")
 
 
-def _get_token(authorization: str | None) -> str | None:
-    if not authorization:
-        return None
-    token = authorization.removeprefix("Bearer ").strip()
-    return token if token.startswith(SESSION_TOKEN_PREFIX) else None
-
-
-def _role_for(session: Session, user_id: uuid.UUID, workspace_id: uuid.UUID) -> str | None:
-    m = session.scalar(
-        select(WorkspaceMembership)
-        .where(WorkspaceMembership.user_id == user_id)
-        .where(WorkspaceMembership.workspace_id == workspace_id)
-        .where(WorkspaceMembership.status == "active")
-        .limit(1)
-    )
-    return m.role if m else None
-
-
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 def register(
     body: RegisterRequest,
     session: Annotated[Session, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AuthResponse:
-    if settings.ragrig_auth_enabled and not settings.ragrig_open_registration:
-        if not body.invitation_token:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="registration requires an invitation token",
-            )
-    try:
-        created = register_user(
+    return AuthResponse(
+        **auth_service.register_account(
             session,
             email=body.email,
             password=body.password,
             display_name=body.display_name,
-            session_days=settings.ragrig_auth_session_days,
             invitation_token=body.invitation_token,
+            settings=settings,
         )
-    except ValueError as exc:
-        status_code = (
-            status.HTTP_409_CONFLICT
-            if "already registered" in str(exc)
-            else status.HTTP_400_BAD_REQUEST
-        )
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
-
-    session.commit()
-    user = session.get(User, created.session.user_id)
-    role = _role_for(session, created.session.user_id, created.session.workspace_id)
-    return AuthResponse(
-        token=created.token,
-        user_id=str(created.session.user_id),
-        email=user.email or "",
-        display_name=user.display_name,
-        workspace_id=str(created.session.workspace_id),
-        role=role,
     )
 
 
@@ -176,54 +99,15 @@ def login(
 ) -> AuthResponse:
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
-    created = login_user(
-        session,
-        email=body.email,
-        password=body.password,
-        session_days=settings.ragrig_auth_session_days,
-        ip=ip,
-        user_agent=ua,
-    )
-    if created is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid credentials",
-        )
-    user = session.get(User, created.session.user_id)
-
-    # If MFA is enrolled, revoke the full-scope session and issue a pending one
-    if user is not None and user.mfa_enabled:
-        created.session.revoked_at = datetime.now(UTC)
-        session.add(created.session)
-        pending = create_user_session(
+    return AuthResponse(
+        **auth_service.login_password(
             session,
-            workspace_id=created.session.workspace_id,
-            user_id=created.session.user_id,
-            expires_at=expires_in(minutes=10),
-            scopes=["mfa:pending"],
+            email=body.email,
+            password=body.password,
+            settings=settings,
             ip=ip,
             user_agent=ua,
         )
-        session.commit()
-        return AuthResponse(
-            token=pending.token,
-            user_id=str(user.id),
-            email=user.email or "",
-            display_name=user.display_name,
-            workspace_id=str(pending.session.workspace_id),
-            role=None,
-            mfa_required=True,
-        )
-
-    session.commit()
-    role = _role_for(session, created.session.user_id, created.session.workspace_id)
-    return AuthResponse(
-        token=created.token,
-        user_id=str(created.session.user_id),
-        email=user.email or "" if user else "",
-        display_name=user.display_name if user else None,
-        workspace_id=str(created.session.workspace_id),
-        role=role,
     )
 
 
@@ -232,15 +116,7 @@ def logout(
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
     session: Annotated[Session, Depends(get_session)] = None,  # type: ignore[assignment]
 ) -> None:
-    token = _get_token(authorization)
-    if not token:
-        return
-    user_session = verify_session_token(session, token)
-    if user_session is None:
-        return
-    user_session.revoked_at = datetime.now(UTC)
-    session.add(user_session)
-    session.commit()
+    auth_service.logout_session(session, authorization)
 
 
 @router.get("/me", response_model=MeResponse)
@@ -249,33 +125,8 @@ def me(
     session: Annotated[Session, Depends(get_session)] = None,  # type: ignore[assignment]
     settings: Annotated[Settings, Depends(get_settings)] = None,  # type: ignore[assignment]
 ) -> MeResponse:
-    token = _get_token(authorization)
-    if not token:
-        if not settings.ragrig_auth_enabled:
-            return MeResponse(
-                user_id="anonymous",
-                email=None,
-                display_name="Anonymous",
-                workspace_id=str(DEFAULT_WORKSPACE_ID),
-                role="owner",
-            )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not authenticated")
-
-    user_session = verify_session_token(session, token)
-    if user_session is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid or expired token"
-        )
-
-    session.commit()
-    user = session.get(User, user_session.user_id)
-    role = _role_for(session, user_session.user_id, user_session.workspace_id)
     return MeResponse(
-        user_id=str(user_session.user_id),
-        email=user.email if user else None,
-        display_name=user.display_name if user else None,
-        workspace_id=str(user_session.workspace_id),
-        role=role,
+        **auth_service.current_user(session, authorization=authorization, settings=settings)
     )
 
 
@@ -288,24 +139,7 @@ def list_members(
     auth: Annotated[AuthContext, Depends(require_auth)],
 ) -> list[MemberResponse]:
     """List all active members in the caller's workspace."""
-    rows = session.scalars(
-        select(WorkspaceMembership)
-        .where(WorkspaceMembership.workspace_id == auth.workspace_id)
-        .where(WorkspaceMembership.status == "active")
-    ).all()
-    result = []
-    for m in rows:
-        user = session.get(User, m.user_id)
-        result.append(
-            MemberResponse(
-                user_id=str(m.user_id),
-                email=user.email if user else None,
-                display_name=user.display_name if user else None,
-                role=m.role,
-                status=m.status,
-            )
-        )
-    return result
+    return [MemberResponse(**item) for item in auth_service.list_members(session, auth)]
 
 
 @router.patch(
@@ -319,33 +153,13 @@ def update_member_role(
     auth: Annotated[AuthContext, Depends(require_admin_auth)],
 ) -> MemberResponse:
     """Change a workspace member's role. Requires admin or owner."""
-    m = session.scalar(
-        select(WorkspaceMembership)
-        .where(WorkspaceMembership.workspace_id == auth.workspace_id)
-        .where(WorkspaceMembership.user_id == target_user_id)
-        .where(WorkspaceMembership.status == "active")
-    )
-    if m is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="member not found")
-
-    # Prevent non-owners from promoting to owner
-    if body.role == "owner" and auth.role != "owner":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="only owners can assign the owner role",
-        )
-
-    m.role = body.role
-    session.add(m)
-    session.commit()
-
-    user = session.get(User, m.user_id)
     return MemberResponse(
-        user_id=str(m.user_id),
-        email=user.email if user else None,
-        display_name=user.display_name if user else None,
-        role=m.role,
-        status=m.status,
+        **auth_service.update_member_role(
+            session,
+            auth,
+            target_user_id=target_user_id,
+            role=body.role,
+        )
     )
 
 
@@ -359,25 +173,7 @@ def remove_member(
     auth: Annotated[AuthContext, Depends(require_admin_auth)],
 ) -> None:
     """Remove a workspace member. Requires admin or owner."""
-    m = session.scalar(
-        select(WorkspaceMembership)
-        .where(WorkspaceMembership.workspace_id == auth.workspace_id)
-        .where(WorkspaceMembership.user_id == target_user_id)
-        .where(WorkspaceMembership.status == "active")
-    )
-    if m is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="member not found")
-
-    # Prevent removing yourself
-    if auth.user_id is not None and auth.user_id == target_user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="cannot remove yourself from the workspace",
-        )
-
-    m.status = "deleted"
-    session.add(m)
-    session.commit()
+    auth_service.remove_member(session, auth, target_user_id=target_user_id)
 
 
 # ── Workspace invitations ─────────────────────────────────────────────────────
@@ -392,48 +188,18 @@ def create_workspace_invitation(
     body: InvitationRequest,
     session: Annotated[Session, Depends(get_session)],
     auth: Annotated[AuthContext, Depends(require_admin_auth)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> InvitationResponse:
     """Create an invitation link. Requires admin or owner."""
-    if body.role == "owner" and auth.role != "owner":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="only owners can invite with owner role",
-        )
-    user_id = auth.user_id if auth.user_id else None
-    created = create_invitation(
-        session,
-        workspace_id=auth.workspace_id,
-        created_by_user_id=user_id,
-        email=body.email,
-        role=body.role,
-        days=body.days,
-    )
-    session.commit()
-
-    if created.invitation.email and created.token:
-        _settings = get_settings()
-        ws = session.get(Workspace, auth.workspace_id)
-        inviter = session.get(User, auth.user_id) if auth.user_id else None
-        try:
-            send_invitation_email(
-                _settings,
-                to_email=created.invitation.email,
-                workspace_name=ws.display_name if ws else str(auth.workspace_id),
-                inviter_name=inviter.display_name if inviter else None,
-                role=created.invitation.role,
-                token=created.token,
-                expires_days=body.days,
-            )
-        except EmailDeliveryError as exc:
-            logger.warning("invitation email delivery failed: %s", exc)
-
     return InvitationResponse(
-        id=str(created.invitation.id),
-        email=created.invitation.email,
-        role=created.invitation.role,
-        status=created.invitation.status,
-        expires_at=created.invitation.expires_at.isoformat(),
-        token=created.token,
+        **auth_service.create_workspace_invitation(
+            session,
+            auth,
+            email=body.email,
+            role=body.role,
+            days=body.days,
+            settings=settings,
+        )
     )
 
 
@@ -443,21 +209,9 @@ def list_workspace_invitations(
     auth: Annotated[AuthContext, Depends(require_admin_auth)],
 ) -> list[InvitationResponse]:
     """List pending invitations for this workspace. Requires admin or owner."""
-    rows = session.scalars(
-        select(WorkspaceInvitation)
-        .where(WorkspaceInvitation.workspace_id == auth.workspace_id)
-        .where(WorkspaceInvitation.status == "pending")
-        .order_by(WorkspaceInvitation.created_at.desc())
-    ).all()
     return [
-        InvitationResponse(
-            id=str(inv.id),
-            email=inv.email,
-            role=inv.role,
-            status=inv.status,
-            expires_at=inv.expires_at.isoformat(),
-        )
-        for inv in rows
+        InvitationResponse(**item)
+        for item in auth_service.list_workspace_invitations(session, auth)
     ]
 
 
@@ -471,20 +225,7 @@ def revoke_workspace_invitation(
     auth: Annotated[AuthContext, Depends(require_admin_auth)],
 ) -> None:
     """Revoke a pending invitation. Requires admin or owner."""
-    inv = session.scalar(
-        select(WorkspaceInvitation)
-        .where(WorkspaceInvitation.id == invitation_id)
-        .where(WorkspaceInvitation.workspace_id == auth.workspace_id)
-    )
-    if inv is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invitation not found")
-    if inv.status != "pending":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="invitation is not pending"
-        )
-    inv.status = "revoked"
-    session.add(inv)
-    session.commit()
+    auth_service.revoke_workspace_invitation(session, auth, invitation_id=invitation_id)
 
 
 # ── LDAP login ────────────────────────────────────────────────────────────────
@@ -506,91 +247,17 @@ def login_ldap(
     Creates a local user record on first login; subsequent logins update
     the display_name from the directory.
     """
-    if not settings.ragrig_ldap_enabled:
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="LDAP not enabled")
-    try:
-        info = authenticate_ldap(body.login, body.password, settings)
-    except LdapAuthError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
-
-    normalized_email = info.email.strip().lower()
-    provider_key = "ldap"
-
-    user = session.scalar(select(User).where(User.email == normalized_email).limit(1))
-    if user is None:
-        user = User(
-            email=normalized_email,
-            display_name=info.display_name,
-            password_hash=None,
-            status="active",
-            external_auth_provider=provider_key,
-            external_auth_uid=info.uid,
-        )
-        session.add(user)
-        session.flush()
-        workspace = ensure_default_workspace(session)
-        membership = session.scalar(
-            select(WorkspaceMembership)
-            .where(WorkspaceMembership.workspace_id == workspace.id)
-            .where(WorkspaceMembership.user_id == user.id)
-            .limit(1)
-        )
-        if membership is None:
-            is_first = (
-                session.scalar(
-                    select(WorkspaceMembership)
-                    .where(WorkspaceMembership.workspace_id == workspace.id)
-                    .limit(1)
-                )
-                is None
-            )
-            role = "owner" if is_first else settings.ragrig_ldap_default_role
-            session.add(
-                WorkspaceMembership(
-                    workspace_id=workspace.id,
-                    user_id=user.id,
-                    role=role,
-                    status="active",
-                )
-            )
-            session.flush()
-    else:
-        user.display_name = info.display_name
-        session.add(user)
-        session.flush()
-
-    membership = session.scalar(
-        select(WorkspaceMembership)
-        .where(WorkspaceMembership.user_id == user.id)
-        .where(WorkspaceMembership.status == "active")
-        .limit(1)
-    )
-    workspace_id = membership.workspace_id if membership else DEFAULT_WORKSPACE_ID
-    role = membership.role if membership else None
-
-    created = create_user_session(
-        session,
-        workspace_id=workspace_id,
-        user_id=user.id,
-        expires_at=expires_in(days=settings.ragrig_auth_session_days),
-        scopes=["*"],
-    )
-    session.commit()
     return AuthResponse(
-        token=created.token,
-        user_id=str(user.id),
-        email=user.email or "",
-        display_name=user.display_name,
-        workspace_id=str(workspace_id),
-        role=role,
+        **auth_service.login_ldap_user(
+            session,
+            login=body.login,
+            password=body.password,
+            settings=settings,
+        )
     )
 
 
 # ── OIDC login ────────────────────────────────────────────────────────────────
-
-# In-memory state store for OIDC CSRF protection.
-# Production deployments should use a Redis-backed store or signed cookies.
-_oidc_states: dict[str, str] = {}
 
 
 class OidcAuthorizeResponse(BaseModel):
@@ -603,15 +270,7 @@ def oidc_authorize(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> OidcAuthorizeResponse:
     """Return the IdP authorization URL. Redirect the browser there to start OIDC flow."""
-    if not settings.ragrig_oidc_enabled:
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="OIDC not enabled")
-    state = generate_state()
-    try:
-        url = build_authorization_url(settings, state)
-    except OidcAuthError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    _oidc_states[state] = state
-    return OidcAuthorizeResponse(authorization_url=url, state=state)
+    return OidcAuthorizeResponse(**auth_service.oidc_authorization(settings))
 
 
 @router.get("/oidc/callback", response_model=AuthResponse)
@@ -622,82 +281,13 @@ def oidc_callback(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AuthResponse:
     """Handle the IdP callback: exchange code, upsert user, return session token."""
-    if not settings.ragrig_oidc_enabled:
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="OIDC not enabled")
-    if state not in _oidc_states:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="invalid or expired state"
-        )
-    _oidc_states.pop(state, None)
-
-    try:
-        info = exchange_code(settings, code)
-    except OidcAuthError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
-
-    normalized_email = info.email.strip().lower()
-    user = session.scalar(select(User).where(User.email == normalized_email).limit(1))
-    if user is None:
-        user = User(
-            email=normalized_email,
-            display_name=info.display_name,
-            password_hash=None,
-            status="active",
-            external_auth_provider=info.provider,
-            external_auth_uid=info.uid,
-        )
-        session.add(user)
-        session.flush()
-        workspace = ensure_default_workspace(session)
-        is_first = (
-            session.scalar(
-                select(WorkspaceMembership)
-                .where(WorkspaceMembership.workspace_id == workspace.id)
-                .limit(1)
-            )
-            is None
-        )
-        role = "owner" if is_first else settings.ragrig_oidc_default_role
-        session.add(
-            WorkspaceMembership(
-                workspace_id=workspace.id,
-                user_id=user.id,
-                role=role,
-                status="active",
-            )
-        )
-        session.flush()
-    else:
-        user.display_name = info.display_name
-        user.external_auth_provider = info.provider
-        user.external_auth_uid = info.uid
-        session.add(user)
-        session.flush()
-
-    membership = session.scalar(
-        select(WorkspaceMembership)
-        .where(WorkspaceMembership.user_id == user.id)
-        .where(WorkspaceMembership.status == "active")
-        .limit(1)
-    )
-    workspace_id = membership.workspace_id if membership else DEFAULT_WORKSPACE_ID
-    role = membership.role if membership else None
-
-    created = create_user_session(
-        session,
-        workspace_id=workspace_id,
-        user_id=user.id,
-        expires_at=expires_in(days=settings.ragrig_auth_session_days),
-        scopes=["*"],
-    )
-    session.commit()
     return AuthResponse(
-        token=created.token,
-        user_id=str(user.id),
-        email=user.email or "",
-        display_name=user.display_name,
-        workspace_id=str(workspace_id),
-        role=role,
+        **auth_service.oidc_callback(
+            session,
+            code=code,
+            state=state,
+            settings=settings,
+        )
     )
 
 
@@ -731,24 +321,7 @@ def mfa_setup(
     Returns the provisioning URI, a QR code PNG (base64), and single-use
     backup codes. Call POST /auth/mfa/confirm with a valid code to activate.
     """
-    if auth.user_id is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API keys cannot use MFA")
-    user = session.get(User, auth.user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
-
-    secret = generate_totp_secret()
-    plain_codes, hashed_codes = generate_backup_codes(settings.ragrig_mfa_backup_code_count)
-    uri = totp_provisioning_uri(secret, user.email or str(user.id), settings)
-    qr_b64 = totp_qr_png_b64(uri)
-
-    # Store secret (not yet activated — mfa_enabled remains False until confirmed)
-    user.totp_secret = secret
-    user.totp_backup_codes = hashed_codes
-    session.add(user)
-    session.commit()
-
-    return MfaSetupResponse(provisioning_uri=uri, qr_png_b64=qr_b64, backup_codes=plain_codes)
+    return MfaSetupResponse(**auth_service.setup_mfa(session, auth, settings))
 
 
 @router.post("/mfa/confirm", response_model=MfaStatusResponse)
@@ -758,19 +331,7 @@ def mfa_confirm(
     session: Annotated[Session, Depends(get_session)],
 ) -> MfaStatusResponse:
     """Activate MFA by verifying the first TOTP code from the authenticator app."""
-    if auth.user_id is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API keys cannot use MFA")
-    user = session.get(User, auth.user_id)
-    if user is None or not user.totp_secret:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="MFA setup not initiated"
-        )
-    if not verify_totp(user.totp_secret, body.code):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid TOTP code")
-    user.mfa_enabled = True
-    session.add(user)
-    session.commit()
-    return MfaStatusResponse(mfa_enabled=True)
+    return MfaStatusResponse(**auth_service.confirm_mfa(session, auth, code=body.code))
 
 
 @router.post("/mfa/disable", response_model=MfaStatusResponse)
@@ -780,23 +341,7 @@ def mfa_disable(
     session: Annotated[Session, Depends(get_session)],
 ) -> MfaStatusResponse:
     """Disable MFA after verifying the current TOTP code or a backup code."""
-    if auth.user_id is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API keys cannot use MFA")
-    user = session.get(User, auth.user_id)
-    if user is None or not user.mfa_enabled or not user.totp_secret:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled")
-    if not verify_totp(user.totp_secret, body.code):
-        remaining = consume_backup_code(body.code, list(user.totp_backup_codes))
-        if remaining is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid code")
-        user.totp_backup_codes = remaining
-
-    user.mfa_enabled = False
-    user.totp_secret = None
-    user.totp_backup_codes = []
-    session.add(user)
-    session.commit()
-    return MfaStatusResponse(mfa_enabled=False)
+    return MfaStatusResponse(**auth_service.disable_mfa(session, auth, code=body.code))
 
 
 class MfaChallengeRequest(BaseModel):
@@ -820,46 +365,13 @@ def mfa_challenge(
     The temporary token is issued with scopes=["mfa:pending"] and is not
     valid for any other endpoint.
     """
-    user_session = verify_session_token(session, body.session_token)
-    if user_session is None or "mfa:pending" not in user_session.scopes:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid or expired MFA challenge token",
-        )
-
-    user = session.get(User, user_session.user_id)
-    if user is None or not user.mfa_enabled or not user.totp_secret:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA not configured")
-
-    valid = verify_totp(user.totp_secret, body.code)
-    if not valid:
-        remaining = consume_backup_code(body.code, list(user.totp_backup_codes))
-        if remaining is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid MFA code")
-        user.totp_backup_codes = remaining
-        session.add(user)
-
-    # Revoke the temporary token and issue a full-scope token
-    user_session.revoked_at = datetime.now(UTC)
-    session.add(user_session)
-
-    created = create_user_session(
-        session,
-        workspace_id=user_session.workspace_id,
-        user_id=user.id,
-        expires_at=expires_in(days=settings.ragrig_auth_session_days),
-        scopes=["*"],
-    )
-    session.commit()
-
-    role = _role_for(session, user.id, created.session.workspace_id)
     return AuthResponse(
-        token=created.token,
-        user_id=str(user.id),
-        email=user.email or "",
-        display_name=user.display_name,
-        workspace_id=str(created.session.workspace_id),
-        role=role,
+        **auth_service.complete_mfa_challenge(
+            session,
+            session_token=body.session_token,
+            code=body.code,
+            settings=settings,
+        )
     )
 
 
@@ -877,18 +389,7 @@ def delete_own_account(
     - Removes workspace memberships.
     - Anonymises and soft-deletes the user record (email cleared, status=deleted).
     """
-    token = _get_token(authorization)
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication required"
-        )
-    user_session = verify_session_token(session, token)
-    if user_session is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid or expired token"
-        )
-    _erase_user(session, user_session.user_id)
-    session.commit()
+    auth_service.delete_own_account(session, authorization)
 
 
 @router.delete(
@@ -901,21 +402,7 @@ def erase_workspace_member(
     auth: Annotated[AuthContext, Depends(require_admin_auth)],
 ) -> None:
     """Hard-delete a user: anonymise all PII and revoke access. Requires owner."""
-    if auth.role != "owner":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="only owners can erase user accounts",
-        )
-    if auth.user_id is not None and auth.user_id == target_user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="use DELETE /auth/users/me to erase your own account",
-        )
-    user = session.get(User, target_user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
-    _erase_user(session, target_user_id)
-    session.commit()
+    auth_service.erase_workspace_member(session, auth, target_user_id=target_user_id)
 
 
 # ── API key management ────────────────────────────────────────────────────────
@@ -942,19 +429,6 @@ class CreateApiKeyRequest(BaseModel):
     expires_days: int | None = Field(default=None, ge=1, le=3650)
 
 
-def _api_key_to_response(key: ApiKey) -> ApiKeyResponse:
-    return ApiKeyResponse(
-        id=str(key.id),
-        name=key.name,
-        prefix=key.prefix,
-        scopes=key.scopes,
-        created_at=key.created_at.isoformat(),
-        last_used_at=key.last_used_at.isoformat() if key.last_used_at else None,
-        expires_at=key.expires_at.isoformat() if key.expires_at else None,
-        revoked_at=key.revoked_at.isoformat() if key.revoked_at else None,
-    )
-
-
 @router.post("/api-keys", response_model=CreatedApiKeyResponse, status_code=status.HTTP_201_CREATED)
 def create_workspace_api_key(
     body: CreateApiKeyRequest,
@@ -962,20 +436,15 @@ def create_workspace_api_key(
     auth: Annotated[AuthContext, Depends(require_admin_auth)],
 ) -> CreatedApiKeyResponse:
     """Create a new API key for the workspace. Requires admin or owner."""
-    expires_at = None
-    if body.expires_days is not None:
-        expires_at = datetime.now(UTC) + timedelta(days=body.expires_days)
-    created = create_api_key(
-        session,
-        workspace_id=auth.workspace_id,
-        name=body.name,
-        created_by_user_id=auth.user_id,
-        scopes=body.scopes,
-        expires_at=expires_at,
+    return CreatedApiKeyResponse(
+        **auth_service.create_workspace_api_key(
+            session,
+            auth,
+            name=body.name,
+            scopes=body.scopes,
+            expires_days=body.expires_days,
+        )
     )
-    session.commit()
-    resp = _api_key_to_response(created.api_key)
-    return CreatedApiKeyResponse(**resp.model_dump(), token=created.token)
 
 
 @router.get("/api-keys", response_model=list[ApiKeyResponse])
@@ -985,12 +454,14 @@ def list_workspace_api_keys(
     include_revoked: bool = False,
 ) -> list[ApiKeyResponse]:
     """List API keys for the workspace. Requires admin or owner."""
-    q = select(ApiKey).where(ApiKey.workspace_id == auth.workspace_id)
-    if not include_revoked:
-        q = q.where(ApiKey.revoked_at.is_(None))
-    q = q.order_by(ApiKey.created_at.desc())
-    keys = session.scalars(q).all()
-    return [_api_key_to_response(k) for k in keys]
+    return [
+        ApiKeyResponse(**item)
+        for item in auth_service.list_workspace_api_keys(
+            session,
+            auth,
+            include_revoked=include_revoked,
+        )
+    ]
 
 
 @router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1000,52 +471,9 @@ def revoke_workspace_api_key(
     auth: Annotated[AuthContext, Depends(require_admin_auth)],
 ) -> None:
     """Revoke an API key. Requires admin or owner."""
-    key = session.scalar(
-        select(ApiKey).where(ApiKey.id == key_id).where(ApiKey.workspace_id == auth.workspace_id)
-    )
-    if key is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="api key not found")
-    if key.revoked_at is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="api key already revoked")
-    key.revoked_at = datetime.now(UTC)
-    session.add(key)
-    session.commit()
+    auth_service.revoke_workspace_api_key(session, auth, key_id=key_id)
 
 
 def _erase_user(session: Session, user_id: uuid.UUID) -> None:
     """Anonymise and hard-delete all personal data for *user_id*."""
-    # Revoke all sessions
-    for s in session.scalars(
-        select(UserSession)
-        .where(UserSession.user_id == user_id)
-        .where(UserSession.revoked_at.is_(None))
-    ):
-        s.revoked_at = datetime.now(UTC)
-        session.add(s)
-
-    # Revoke all API keys
-    for k in session.scalars(
-        select(ApiKey)
-        .where(ApiKey.created_by_user_id == user_id)
-        .where(ApiKey.revoked_at.is_(None))
-    ):
-        k.revoked_at = datetime.now(UTC)
-        session.add(k)
-
-    # Remove workspace memberships
-    session.execute(delete(WorkspaceMembership).where(WorkspaceMembership.user_id == user_id))
-
-    # Anonymise and soft-delete the user record
-    user = session.get(User, user_id)
-    if user is not None:
-        user.email = None
-        user.display_name = None
-        user.password_hash = None
-        user.external_auth_uid = None
-        user.totp_secret = None
-        user.totp_backup_codes = []
-        user.mfa_enabled = False
-        user.status = "deleted"
-        session.add(user)
-
-    session.flush()
+    auth_service.erase_user(session, user_id)

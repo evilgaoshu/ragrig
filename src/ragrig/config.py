@@ -184,6 +184,18 @@ class Settings(BaseSettings):
         default="INFO",
         description="Root logging level, e.g. DEBUG, INFO, WARNING, ERROR.",
     )
+    ragrig_log_file: str = Field(
+        default="",
+        description="Optional file path for rotating application logs. Empty disables file logs.",
+    )
+    ragrig_log_max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        description="Maximum bytes per rotating log file before rollover.",
+    )
+    ragrig_log_backup_count: int = Field(
+        default=5,
+        description="Number of rotated log files to keep when RAGRIG_LOG_FILE is set.",
+    )
 
     # ── Async task queue (ARQ / Redis) ────────────────────────────────────────
     ragrig_task_backend: str = Field(
