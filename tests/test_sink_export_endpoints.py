@@ -57,7 +57,7 @@ async def test_agent_access_export_endpoint_returns_chunk_counts(
             failed_batches=0,
         )
 
-    monkeypatch.setattr("ragrig.main.export_to_agent_endpoint", fake_export)
+    monkeypatch.setattr("ragrig.routers.sink_exports.export_to_agent_endpoint", fake_export)
 
     app = create_app(check_database=lambda: None, session_factory=session_factory)
     transport = httpx.ASGITransport(app=app)
@@ -102,7 +102,7 @@ async def test_agent_access_export_dry_run(
             failed_batches=0,
         )
 
-    monkeypatch.setattr("ragrig.main.export_to_agent_endpoint", fake_export)
+    monkeypatch.setattr("ragrig.routers.sink_exports.export_to_agent_endpoint", fake_export)
 
     app = create_app(check_database=lambda: None, session_factory=session_factory)
     transport = httpx.ASGITransport(app=app)
@@ -133,7 +133,7 @@ async def test_agent_access_export_returns_404_for_missing_kb(
     def fail_export(session, *, knowledge_base_name, **_kwargs):
         raise ValueError(f"Knowledge base '{knowledge_base_name}' not found")
 
-    monkeypatch.setattr("ragrig.main.export_to_agent_endpoint", fail_export)
+    monkeypatch.setattr("ragrig.routers.sink_exports.export_to_agent_endpoint", fail_export)
 
     app = create_app(check_database=lambda: None, session_factory=session_factory)
     transport = httpx.ASGITransport(app=app)
@@ -178,7 +178,7 @@ async def test_webhook_export_endpoint_returns_chunk_counts(
             failed_batches=0,
         )
 
-    monkeypatch.setattr("ragrig.main.export_to_webhook", fake_export)
+    monkeypatch.setattr("ragrig.routers.sink_exports.export_to_webhook", fake_export)
 
     app = create_app(check_database=lambda: None, session_factory=session_factory)
     transport = httpx.ASGITransport(app=app)
@@ -213,7 +213,7 @@ async def test_webhook_export_invalid_format_returns_400(
     def fail_export(session, *, knowledge_base_name, format, **_kwargs):
         raise ValueError(f"format must be 'ndjson' or 'json'; got {format!r}")
 
-    monkeypatch.setattr("ragrig.main.export_to_webhook", fail_export)
+    monkeypatch.setattr("ragrig.routers.sink_exports.export_to_webhook", fail_export)
 
     app = create_app(check_database=lambda: None, session_factory=session_factory)
     transport = httpx.ASGITransport(app=app)
@@ -241,7 +241,7 @@ async def test_webhook_export_returns_404_for_missing_kb(
     def fail_export(session, *, knowledge_base_name, **_kwargs):
         raise ValueError(f"Knowledge base '{knowledge_base_name}' not found")
 
-    monkeypatch.setattr("ragrig.main.export_to_webhook", fail_export)
+    monkeypatch.setattr("ragrig.routers.sink_exports.export_to_webhook", fail_export)
 
     app = create_app(check_database=lambda: None, session_factory=session_factory)
     transport = httpx.ASGITransport(app=app)
@@ -280,7 +280,7 @@ async def test_webhook_export_dry_run(
             failed_batches=0,
         )
 
-    monkeypatch.setattr("ragrig.main.export_to_webhook", fake_export)
+    monkeypatch.setattr("ragrig.routers.sink_exports.export_to_webhook", fake_export)
 
     app = create_app(check_database=lambda: None, session_factory=session_factory)
     transport = httpx.ASGITransport(app=app)

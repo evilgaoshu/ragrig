@@ -149,3 +149,11 @@ def test_core_modules_do_not_import_optional_sdks_at_top_level() -> None:
             offenders[str(path.relative_to(REPO_ROOT))] = roots
 
     assert offenders == {}
+
+
+def test_fastapi_entrypoint_uses_routers_and_services_layers() -> None:
+    main_source = (REPO_ROOT / "src/ragrig/main.py").read_text(encoding="utf-8")
+
+    assert "@app." not in main_source
+    assert (REPO_ROOT / "src/ragrig/api").is_dir()
+    assert (REPO_ROOT / "src/ragrig/services").is_dir()

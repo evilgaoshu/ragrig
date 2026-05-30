@@ -192,7 +192,11 @@ class TestScanWebPages:
 
     def test_fetches_single_page(self) -> None:
         client = _mock_client({"https://example.com/": (200, SIMPLE_HTML, "text/html")})
-        result = scan_web_pages({"urls": ["https://example.com/"]}, env={}, _client=client)
+        result = scan_web_pages(
+            {"urls": ["https://example.com/"], "allow_private_network": True},
+            env={},
+            _client=client,
+        )
         assert len(result.fetched) == 1
         assert result.fetched[0].url == "https://example.com/"
         assert result.fetched[0].title == "Test Page"
@@ -202,7 +206,11 @@ class TestScanWebPages:
         client = _mock_client(
             {"https://example.com/file.pdf": (200, b"%PDF".decode(), "application/pdf")}
         )
-        result = scan_web_pages({"urls": ["https://example.com/file.pdf"]}, env={}, _client=client)
+        result = scan_web_pages(
+            {"urls": ["https://example.com/file.pdf"], "allow_private_network": True},
+            env={},
+            _client=client,
+        )
         assert result.fetched == []
         assert len(result.skipped) == 1
 
@@ -216,7 +224,11 @@ class TestScanWebPages:
 
     def test_http_error_is_not_indexed(self) -> None:
         client = _mock_client({"https://example.com/missing": (404, SIMPLE_HTML, "text/html")})
-        result = scan_web_pages({"urls": ["https://example.com/missing"]}, env={}, _client=client)
+        result = scan_web_pages(
+            {"urls": ["https://example.com/missing"], "allow_private_network": True},
+            env={},
+            _client=client,
+        )
         assert result.fetched == []
         assert result.failed == [("https://example.com/missing", "http_404")]
 
@@ -234,6 +246,7 @@ class TestScanWebPages:
                     "https://example.com/3",
                 ],
                 "page_size": 2,
+                "allow_private_network": True,
             },
             env={},
             _client=client,
@@ -267,7 +280,11 @@ class TestScanWebPages:
 
     def test_content_hash_populated(self) -> None:
         client = _mock_client()
-        result = scan_web_pages({"urls": ["https://example.com/"]}, env={}, _client=client)
+        result = scan_web_pages(
+            {"urls": ["https://example.com/"], "allow_private_network": True},
+            env={},
+            _client=client,
+        )
         assert result.fetched[0].content_hash
         assert len(result.fetched[0].content_hash) == 64  # sha256 hex
 
@@ -281,6 +298,7 @@ class TestScanWebPages:
                     "https://example.com/c",
                 ],
                 "page_size": 1,
+                "allow_private_network": True,
             },
             env={},
             _client=client,
