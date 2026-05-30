@@ -1475,18 +1475,32 @@ def search_knowledge_base(
         for sq in sub_queries[1:]:
             try:
                 sq_embedding = embedding_provider.embed_text(sq)
-                sq_results, _ = _search_with_python_distance(
-                    session,
-                    knowledge_base_id=knowledge_base.id,
-                    provider=resolved_provider,
-                    model=resolved_model,
-                    dimensions=resolved_dimensions,
-                    query_vector=sq_embedding.vector,
-                    top_k=candidate_k,
-                    principal_ids=principal_ids,
-                    enforce_acl=enforce_acl,
-                    workspace_id=kb_workspace_id,
-                )
+                if session.bind is not None and session.bind.dialect.name == "postgresql":
+                    sq_results = _search_with_sql_distance(
+                        session,
+                        knowledge_base_id=knowledge_base.id,
+                        provider=resolved_provider,
+                        model=resolved_model,
+                        dimensions=resolved_dimensions,
+                        query_vector=sq_embedding.vector,
+                        top_k=candidate_k,
+                        principal_ids=principal_ids,
+                        enforce_acl=enforce_acl,
+                        workspace_id=kb_workspace_id,
+                    )
+                else:
+                    sq_results, _ = _search_with_python_distance(
+                        session,
+                        knowledge_base_id=knowledge_base.id,
+                        provider=resolved_provider,
+                        model=resolved_model,
+                        dimensions=resolved_dimensions,
+                        query_vector=sq_embedding.vector,
+                        top_k=candidate_k,
+                        principal_ids=principal_ids,
+                        enforce_acl=enforce_acl,
+                        workspace_id=kb_workspace_id,
+                    )
                 sq_results = _enrich_with_acl_explain(sq_results, principal_ids, enforce_acl)
                 all_result_lists.append(sq_results)
             except Exception:

@@ -15,6 +15,8 @@ Config:
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import threading
 import time
 from collections import deque
@@ -22,8 +24,12 @@ from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, status
 
+from ragrig.observability import log_event
+
 if TYPE_CHECKING:
     from ragrig.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class _SlidingWindow:
@@ -69,28 +75,60 @@ class RateLimiter:
                 store[key] = _SlidingWindow(rpm, self._burst)
             return store[key]
 
-    def check_search(self, key: str) -> None:
-        """Raise HTTP 429 if the search/answer rate is exceeded for *key*."""
+    def _check(
+        self,
+        *,
+        operation: str,
+        key: str,
+        store: dict[str, _SlidingWindow],
+        rpm: int,
+    ) -> None:
         if not self._enabled:
             return
-        window = self._get_window(self._search_windows, key, self._search_rpm)
+        window = self._get_window(store, key, rpm)
         allowed, retry_after = window.allow()
-        if not allowed:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"search rate limit exceeded — retry in {retry_after}s",
-                headers={"Retry-After": str(retry_after)},
+        key_sha256 = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        if allowed:
+            log_event(
+                logger,
+                logging.INFO,
+                "rate_limit.allowed",
+                operation=operation,
+                key_sha256=key_sha256,
+                rpm=rpm,
+                limit=window._limit,
             )
+            return
+        log_event(
+            logger,
+            logging.WARNING,
+            "rate_limit.exceeded",
+            operation=operation,
+            key_sha256=key_sha256,
+            rpm=rpm,
+            limit=window._limit,
+            retry_after_seconds=retry_after,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"{operation} rate limit exceeded — retry in {retry_after}s",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    def check_search(self, key: str) -> None:
+        """Raise HTTP 429 if the search/answer rate is exceeded for *key*."""
+        self._check(
+            operation="search",
+            key=key,
+            store=self._search_windows,
+            rpm=self._search_rpm,
+        )
 
     def check_ingest(self, key: str) -> None:
         """Raise HTTP 429 if the ingest rate is exceeded for *key*."""
-        if not self._enabled:
-            return
-        window = self._get_window(self._ingest_windows, key, self._ingest_rpm)
-        allowed, retry_after = window.allow()
-        if not allowed:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"ingest rate limit exceeded — retry in {retry_after}s",
-                headers={"Retry-After": str(retry_after)},
-            )
+        self._check(
+            operation="ingest",
+            key=key,
+            store=self._ingest_windows,
+            rpm=self._ingest_rpm,
+        )

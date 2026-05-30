@@ -332,6 +332,55 @@ def test_search_knowledge_base_uses_sql_distance_for_postgresql_bind(tmp_path, m
     assert calls == [("deterministic-local", 3)]
 
 
+def test_search_knowledge_base_uses_sql_distance_for_postgresql_subquery_fanout(
+    tmp_path, monkeypatch
+) -> None:
+    docs = _seed_documents(tmp_path, {"guide.txt": "postgres fanout target"})
+    rewrite_config = type("RewriteConfigStub", (), {"provider_name": None})()
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+        original_name = session.bind.dialect.name
+        monkeypatch.setattr(session.bind.dialect, "name", "postgresql")
+        calls: list[int] = []
+
+        def fake_rewrite_query(_query, *, config, provider):
+            assert config is rewrite_config
+            assert provider is None
+            return ["postgres fanout target", "postgres fanout secondary"]
+
+        def fake_sql_distance(_session, **kwargs):
+            calls.append(kwargs["top_k"])
+            return []
+
+        def fail_python_distance(_session, **kwargs):
+            raise AssertionError("postgresql sub-query fan-out must not load all rows in Python")
+
+        monkeypatch.setattr("ragrig.retrieval_rewriter.rewrite_query", fake_rewrite_query)
+        monkeypatch.setattr("ragrig.retrieval._search_with_sql_distance", fake_sql_distance)
+        monkeypatch.setattr("ragrig.retrieval._search_with_python_distance", fail_python_distance)
+
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="postgres fanout target? and secondary?",
+            top_k=3,
+            candidate_k=7,
+            rewrite_config=rewrite_config,
+        )
+
+        monkeypatch.setattr(session.bind.dialect, "name", original_name)
+
+    assert report.total_results == 0
+    assert calls == [3, 7]
+
+
 def test_search_with_sql_distance_returns_ranked_results(tmp_path, monkeypatch) -> None:
     del tmp_path
 
