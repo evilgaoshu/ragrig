@@ -177,8 +177,12 @@ class Settings(BaseSettings):
         description="Service name reported to the OTel collector.",
     )
     ragrig_log_format: str = Field(
-        default="text",
-        description="Log format: 'text' (human-readable) or 'json' (structured, for log aggregators).",  # noqa: E501
+        default="plain",
+        description="Log format: 'plain'/'text' (human-readable) or 'json' (structured).",
+    )
+    ragrig_log_level: str = Field(
+        default="INFO",
+        description="Root logging level, e.g. DEBUG, INFO, WARNING, ERROR.",
     )
 
     # ── Async task queue (ARQ / Redis) ────────────────────────────────────────

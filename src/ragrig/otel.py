@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from ragrig.observability.logging import configure_logging
+
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
@@ -19,51 +21,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _JsonFormatter(logging.Formatter):
-    """Emit each log record as a single JSON line with OTel correlation fields."""
-
-    def format(self, record: logging.LogRecord) -> str:
-        import json
-        from datetime import UTC, datetime
-
-        payload: dict = {
-            "timestamp": datetime.now(UTC).isoformat(),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": self.formatMessage(record),
-        }
-        # Inject active span context when available
-        try:
-            from opentelemetry import trace
-
-            span = trace.get_current_span()
-            ctx = span.get_span_context()
-            if ctx and ctx.is_valid:
-                payload["trace_id"] = format(ctx.trace_id, "032x")
-                payload["span_id"] = format(ctx.span_id, "016x")
-        except Exception:
-            pass
-        if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
-        return json.dumps(payload, default=str)
-
-
-def _configure_json_logging() -> None:
-    formatter = _JsonFormatter()
-    root = logging.getLogger()
-    for handler in root.handlers:
-        handler.setFormatter(formatter)
-    if not root.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(formatter)
-        root.addHandler(handler)
-
-
 def setup_otel(app: "FastAPI", settings: "Settings") -> None:
     """Configure OpenTelemetry tracing + optional JSON structured logging."""
+    configure_logging(
+        log_format=settings.ragrig_log_format,
+        level=settings.ragrig_log_level,
+    )
     if not settings.ragrig_otel_enabled:
-        if settings.ragrig_log_format == "json":
-            _configure_json_logging()
         return
 
     try:
@@ -88,9 +52,6 @@ def setup_otel(app: "FastAPI", settings: "Settings") -> None:
 
     FastAPIInstrumentor.instrument_app(app)
     SQLAlchemyInstrumentor().instrument(enable_commenter=False)
-
-    if settings.ragrig_log_format == "json":
-        _configure_json_logging()
 
     logger.info(
         "OpenTelemetry tracing enabled (endpoint=%s, service=%s)",

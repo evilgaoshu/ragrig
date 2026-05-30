@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import uuid
 from dataclasses import dataclass, field, replace
@@ -26,7 +27,12 @@ from ragrig.db.models import (
     KnowledgeBase,
 )
 from ragrig.lexical import token_overlap_score
-from ragrig.observability import aggregate_cost_latency, observe_model_call
+from ragrig.observability import (
+    aggregate_cost_latency,
+    log_event,
+    observe_model_call,
+    safe_query_fields,
+)
 from ragrig.providers import get_provider_registry
 from ragrig.repositories import get_knowledge_base_by_name
 from ragrig.repositories.audit import create_audit_event
@@ -52,6 +58,8 @@ from ragrig.vectorstore.pgvector import (
 from ragrig.vectorstore.pgvector import (
     normalize_vector as _normalize_vector,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RetrievalError(ValueError):
@@ -1096,6 +1104,15 @@ def search_knowledge_base(
     phase_latencies: dict[str, float] = {}
 
     if top_k <= 0:
+        log_event(
+            logger,
+            logging.WARNING,
+            "retrieval.search.failed",
+            knowledge_base=knowledge_base_name,
+            top_k=top_k,
+            mode=mode,
+            error="top_k must be greater than zero",
+        )
         raise InvalidTopKError(
             "top_k must be greater than zero",
             details={"top_k": top_k},
@@ -1103,10 +1120,35 @@ def search_knowledge_base(
 
     normalized_query = query.strip()
     if not normalized_query:
+        log_event(
+            logger,
+            logging.WARNING,
+            "retrieval.search.failed",
+            knowledge_base=knowledge_base_name,
+            top_k=top_k,
+            mode=mode,
+            query_length=len(query),
+            error="query must not be empty",
+        )
         raise EmptyQueryError(
             "Query must not be empty",
             details={"query": query},
         )
+    query_log_fields = safe_query_fields(normalized_query)
+    log_event(
+        logger,
+        logging.INFO,
+        "retrieval.search.start",
+        knowledge_base=knowledge_base_name,
+        top_k=top_k,
+        mode=mode,
+        candidate_k=candidate_k,
+        provider=provider,
+        model=model,
+        dimensions=dimensions,
+        enforce_acl=enforce_acl,
+        **query_log_fields,
+    )
 
     # ── Optional query rewriting / sub-question decomposition ──
     sub_queries: list[str] = [normalized_query]
@@ -1130,6 +1172,16 @@ def search_knowledge_base(
         workspace_id=workspace_id,
     )
     if knowledge_base is None:
+        log_event(
+            logger,
+            logging.ERROR,
+            "retrieval.search.failed",
+            knowledge_base=knowledge_base_name,
+            top_k=top_k,
+            mode=mode,
+            error="knowledge base not found",
+            **query_log_fields,
+        )
         raise KnowledgeBaseNotFoundError(
             f"Knowledge base '{knowledge_base_name}' was not found",
             details={"knowledge_base": knowledge_base_name},
@@ -1150,7 +1202,23 @@ def search_knowledge_base(
     embed_started = perf_counter()
     # Embed the primary (first) query; sub-query merging happens after retrieval
     primary_query = sub_queries[0]
-    query_embedding = embedding_provider.embed_text(primary_query)
+    try:
+        query_embedding = embedding_provider.embed_text(primary_query)
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "retrieval.search.failed",
+            knowledge_base=knowledge_base_name,
+            knowledge_base_id=str(knowledge_base.id),
+            top_k=top_k,
+            mode=mode,
+            provider=resolved_provider,
+            model=resolved_model,
+            error=str(exc),
+            **query_log_fields,
+        )
+        raise
     phase_latencies["query_embedding_ms"] = round((perf_counter() - embed_started) * 1000, 3)
     cost_latency_operations.append(
         observe_model_call(
@@ -1526,6 +1594,24 @@ def search_knowledge_base(
         "phase_latencies_ms": phase_latencies,
         "operations": cost_latency_operations,
     }
+    log_event(
+        logger,
+        logging.INFO,
+        "retrieval.search.completed",
+        knowledge_base=knowledge_base_name,
+        knowledge_base_id=str(knowledge_base.id),
+        top_k=top_k,
+        mode=mode,
+        provider=resolved_provider,
+        model=resolved_model,
+        dimensions=resolved_dimensions,
+        backend=backend_name,
+        total_results=len(final_results),
+        degraded=degraded,
+        degraded_reason=degraded_reason,
+        duration_ms=round(total_latency_ms, 3),
+        **query_log_fields,
+    )
 
     return RetrievalReport(
         knowledge_base=knowledge_base_name,
