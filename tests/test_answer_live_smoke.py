@@ -285,20 +285,7 @@ class TestAnswerLiveSmoke:
     @pytest.fixture
     def session(self, tmp_path):
         """Create an in-memory SQLite session with a seeded fixture KB."""
-        from pgvector.sqlalchemy import Vector
-        from sqlalchemy import JSON
-        from sqlalchemy.dialects.postgresql import JSONB
-        from sqlalchemy.ext.compiler import compiles
-
         from ragrig.db.models import Base
-
-        @compiles(JSONB, "sqlite")
-        def _compile_jsonb(_type, compiler, **kw):
-            return compiler.process(JSON(), **kw)
-
-        @compiles(Vector, "sqlite")
-        def _compile_vector(_type, compiler, **kw):
-            return compiler.process(JSON(), **kw)
 
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
         Base.metadata.create_all(engine)

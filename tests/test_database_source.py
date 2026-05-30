@@ -5,10 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, create_engine, func, select
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from ragrig.db.models import Base, Document, DocumentVersion, PipelineRun, Source
@@ -22,18 +19,8 @@ from ragrig.web_console import dry_run_source, save_source_config, validate_sour
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-@compiles(Vector, "sqlite")
-def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
 @contextmanager
-def _create_session(tmp_path: Path) -> Iterator[Session]:
+def _create_file_session(tmp_path: Path) -> Iterator[Session]:
     engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'database-source.db'}", future=True)
     Base.metadata.create_all(engine)
     with Session(engine, expire_on_commit=False) as session:
@@ -105,7 +92,7 @@ def test_database_source_ingest_creates_documents_and_versions(tmp_path: Path) -
     ]
     client = FakeDatabaseClient({"accounts": rows})
 
-    with _create_session(tmp_path) as session:
+    with _create_file_session(tmp_path) as session:
         report = ingest_database_source(
             session=session,
             knowledge_base_name="kb",
@@ -145,7 +132,7 @@ def test_database_source_ingest_skips_unchanged_rows(tmp_path: Path) -> None:
         {"accounts": [{"id": 101, "name": "Acme", "notes": "Same", "tier": "enterprise"}]}
     )
 
-    with _create_session(tmp_path) as session:
+    with _create_file_session(tmp_path) as session:
         first = ingest_database_source(
             session=session,
             knowledge_base_name="kb",
@@ -183,7 +170,7 @@ def test_database_source_supports_mysql_read_path_with_fake_client(tmp_path: Pat
         }
     )
 
-    with _create_session(tmp_path) as session:
+    with _create_file_session(tmp_path) as session:
         report = ingest_database_source(
             session=session,
             knowledge_base_name="kb",
@@ -206,7 +193,7 @@ def test_database_source_sanitizes_query_errors(tmp_path: Path) -> None:
         def close(self) -> None:
             return None
 
-    with _create_session(tmp_path) as session:
+    with _create_file_session(tmp_path) as session:
         with pytest.raises(DatabaseQueryError) as excinfo:
             ingest_database_source(
                 session=session,
@@ -229,7 +216,7 @@ def test_database_dry_run_does_not_write_documents(tmp_path: Path) -> None:
         {"accounts": [{"id": 101, "name": "Acme", "notes": "Dry run", "tier": "enterprise"}]}
     )
 
-    with _create_session(tmp_path) as session:
+    with _create_file_session(tmp_path) as session:
         result = dry_run_source(
             session,
             plugin_id="source.database",
@@ -249,7 +236,7 @@ def test_database_dry_run_does_not_write_documents(tmp_path: Path) -> None:
 
 
 def test_save_database_source_config_creates_source_record(tmp_path: Path) -> None:
-    with _create_session(tmp_path) as session:
+    with _create_file_session(tmp_path) as session:
         result = save_source_config(
             session,
             plugin_id="source.database",

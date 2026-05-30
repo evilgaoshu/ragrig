@@ -5,17 +5,13 @@ import types
 from uuid import uuid4
 
 import pytest
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, create_engine
+from conftest import _create_session
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
 from ragrig.auth import DEFAULT_WORKSPACE_ID
 from ragrig.config import Settings
 from ragrig.db.models import (
-    Base,
     Chunk,
     Document,
     DocumentVersion,
@@ -37,22 +33,6 @@ from ragrig.vectorstore.pgvector import PgVectorBackend
 from ragrig.vectorstore.qdrant import QdrantBackend, QdrantCollectionConfigError
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
-
-
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-@compiles(Vector, "sqlite")
-def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-def _create_session() -> Session:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-    Base.metadata.create_all(engine)
-    return Session(engine, expire_on_commit=False)
 
 
 def test_build_vector_collection_is_deterministic_and_bounded() -> None:

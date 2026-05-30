@@ -1,39 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, create_engine, select
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session
+from conftest import _create_session
+from sqlalchemy import select
 
-from ragrig.db.models import Base, Document, DocumentVersion, PipelineRun, PipelineRunItem
+from ragrig.db.models import Document, DocumentVersion, PipelineRun, PipelineRunItem
 from ragrig.ingestion.pipeline import _select_parser, ingest_local_directory
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
-
-
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-@compiles(Vector, "sqlite")
-def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-@contextmanager
-def _create_session() -> Iterator[Session]:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-    Base.metadata.create_all(engine)
-    with Session(engine, expire_on_commit=False) as session:
-        yield session
-    engine.dispose()
 
 
 def test_ingest_local_directory_creates_documents_versions_and_run_items(tmp_path) -> None:

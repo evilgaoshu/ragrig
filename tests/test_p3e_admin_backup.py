@@ -10,10 +10,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from ragrig.backup import dump_workspace, restore_workspace
@@ -27,16 +24,6 @@ from ragrig.db.models import (
     Workspace,
 )
 from ragrig.main import create_app
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_sqlite(element, compiler, **kw):  # type: ignore[no-untyped-def]
-    return compiler.process(JSON(), **kw)
-
-
-@compiles(Vector, "sqlite")
-def _vector_sqlite(element, compiler, **kw):  # type: ignore[no-untyped-def]
-    return compiler.process(JSON(), **kw)
 
 
 @contextmanager

@@ -22,10 +22,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, create_engine, select, update
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
 
 from ragrig.config import Settings
@@ -40,16 +37,6 @@ from ragrig.usage import (
     evaluate_budget,
     record_usage_events,
 )
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_sqlite(element, compiler, **kw):  # type: ignore[no-untyped-def]
-    return compiler.process(JSON(), **kw)
-
-
-@compiles(Vector, "sqlite")
-def _vector_sqlite(element, compiler, **kw):  # type: ignore[no-untyped-def]
-    return compiler.process(JSON(), **kw)
 
 
 @contextmanager

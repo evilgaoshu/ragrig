@@ -218,6 +218,45 @@ def test_owner_can_create_knowledge_base(auth_client):
     assert resp.status_code in (200, 201)
 
 
+def test_api_key_with_write_scope_can_create_knowledge_base(auth_client):
+    """API keys with kb:write scope should pass write-route auth."""
+    owner_token = _register(auth_client, "owner_api_key@example.com")
+    key_resp = auth_client.post(
+        "/auth/api-keys",
+        json={"name": "writer", "scopes": ["kb:write"]},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert key_resp.status_code == 201
+    api_key = key_resp.json()["token"]
+
+    resp = auth_client.post(
+        "/knowledge-bases",
+        json={"name": "api-key-kb"},
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+
+    assert resp.status_code == 201
+
+
+def test_api_key_without_write_scope_cannot_create_knowledge_base(auth_client):
+    owner_token = _register(auth_client, "owner_readonly_api_key@example.com")
+    key_resp = auth_client.post(
+        "/auth/api-keys",
+        json={"name": "reader", "scopes": ["kb:read"]},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert key_resp.status_code == 201
+    api_key = key_resp.json()["token"]
+
+    resp = auth_client.post(
+        "/knowledge-bases",
+        json={"name": "readonly-key-kb"},
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+
+    assert resp.status_code == 403
+
+
 def test_auth_disabled_allows_write_without_token(noauth_client):
     """When auth is disabled, write routes are open to all."""
     resp = noauth_client.post("/knowledge-bases", json={"name": "open-kb"})

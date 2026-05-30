@@ -56,6 +56,11 @@ class AuthContext:
             return False
         return _ROLE_ORDER.get(self.role, -1) >= _ROLE_ORDER.get(minimum, 999)
 
+    def has_scope(self, *accepted_scopes: str) -> bool:
+        """Return True when the identity has any accepted API scope."""
+        scopes = set(self.scopes)
+        return "*" in scopes or any(scope in scopes for scope in accepted_scopes)
+
 
 def _lookup_role(
     session: Session,
@@ -180,7 +185,8 @@ def require_write_auth(
             detail="authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if not auth.has_role("editor"):
+    scope_allows_write = auth.role is None and auth.has_scope("kb:write", "workspace:write")
+    if not auth.has_role("editor") and not scope_allows_write:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="editor role or above required",
@@ -205,7 +211,8 @@ def require_admin_auth(
             detail="authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if not auth.has_role("admin"):
+    scope_allows_admin = auth.role is None and auth.has_scope("workspace:admin")
+    if not auth.has_role("admin") and not scope_allows_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="admin role or above required",

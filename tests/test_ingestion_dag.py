@@ -4,10 +4,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from ragrig.db.models import Base, DocumentVersion, Embedding, PipelineRun
@@ -18,16 +15,6 @@ from ragrig.workflows.ingestion_dag import (
     resume_ingestion_dag,
     run_ingestion_dag,
 )
-
-
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-@compiles(Vector, "sqlite")
-def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
 
 
 def _session(tmp_path: Path) -> Session:
