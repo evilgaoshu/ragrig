@@ -71,25 +71,28 @@ def build_embedding_base_statement(
     model: str,
     dimensions: int,
     workspace_id=None,
+    include_embedding: bool = True,
 ) -> Select[Any]:
     latest_versions = latest_version_subquery(knowledge_base_id)
+    columns = [
+        Embedding.id.label("embedding_id"),
+        Document.id.label("document_id"),
+        DocumentVersion.id.label("document_version_id"),
+        Chunk.id.label("chunk_id"),
+        Chunk.chunk_index.label("chunk_index"),
+        Document.uri.label("document_uri"),
+        Source.uri.label("source_uri"),
+        Chunk.text.label("text"),
+        Chunk.char_start.label("char_start"),
+        Chunk.char_end.label("char_end"),
+        Chunk.page_number.label("page_number"),
+        Chunk.metadata_json.label("chunk_metadata"),
+        Chunk.created_at.label("chunk_created_at"),
+    ]
+    if include_embedding:
+        columns.append(Embedding.embedding.label("embedding"))
     stmt = (
-        select(
-            Embedding.id.label("embedding_id"),
-            Document.id.label("document_id"),
-            DocumentVersion.id.label("document_version_id"),
-            Chunk.id.label("chunk_id"),
-            Chunk.chunk_index.label("chunk_index"),
-            Document.uri.label("document_uri"),
-            Source.uri.label("source_uri"),
-            Chunk.text.label("text"),
-            Chunk.char_start.label("char_start"),
-            Chunk.char_end.label("char_end"),
-            Chunk.page_number.label("page_number"),
-            Chunk.metadata_json.label("chunk_metadata"),
-            Chunk.created_at.label("chunk_created_at"),
-            Embedding.embedding.label("embedding"),
-        )
+        select(*columns)
         .join(Chunk, Chunk.id == Embedding.chunk_id)
         .join(DocumentVersion, DocumentVersion.id == Chunk.document_version_id)
         .join(Document, Document.id == DocumentVersion.document_id)
@@ -200,6 +203,9 @@ class PgVectorBackend:
             provider=collection.provider,
             model=collection.model,
             dimensions=collection.dimensions,
+            include_embedding=not (
+                session.bind is not None and session.bind.dialect.name == "postgresql"
+            ),
         )
         if session.bind is not None and session.bind.dialect.name == "postgresql":
             distance_expr = Embedding.embedding.cosine_distance(query_vector)

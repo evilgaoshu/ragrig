@@ -307,7 +307,6 @@ def test_pgvector_backend_search_uses_sql_order_by_limit_for_postgres() -> None:
         char_end=22,
         page_number=3,
         chunk_metadata={"kind": "fixture"},
-        embedding=[0.1] * 8,
         distance=0.125,
     )
 
@@ -341,6 +340,7 @@ def test_pgvector_backend_search_uses_sql_order_by_limit_for_postgres() -> None:
     assert "<=>" in compiled
     assert "ORDER BY" in compiled
     assert "LIMIT" in compiled
+    assert "embeddings.embedding AS embedding" not in compiled
     assert hits[0].distance == 0.125
     assert hits[0].score == 0.875
     assert hits[0].metadata["char_start"] == 10
