@@ -20,18 +20,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import StaticPool, create_engine, event, select, update
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
 
 from ragrig.config import Settings
 
 # ── SQLite compat ─────────────────────────────────────────────────────────────
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_sqlite(element, compiler, **kw):  # type: ignore[no-untyped-def]
-    return "TEXT"
 
 
 def _make_engine():

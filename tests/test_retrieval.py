@@ -4,10 +4,8 @@ from collections.abc import Callable
 
 import httpx
 import pytest
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, create_engine, select
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
+from conftest import _create_session
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from ragrig.acl import AclMetadata, Principal
@@ -30,32 +28,6 @@ from ragrig.retrieval import (
 from ragrig.vectorstore.base import VectorCollection, VectorSearchResult
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
-
-
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-@compiles(Vector, "sqlite")
-def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-def _create_session() -> Session:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-    Base.metadata.create_all(engine)
-    session = Session(engine, expire_on_commit=False)
-    original_close = session.close
-
-    def close() -> None:
-        try:
-            original_close()
-        finally:
-            engine.dispose()
-
-    session.close = close
-    return session
 
 
 def _seed_documents(tmp_path, files: dict[str, str]):

@@ -6,10 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, create_engine, select
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from ragrig.answer import generate_answer
@@ -24,18 +21,8 @@ from scripts.cost_latency_check import run_cost_latency_check
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-@compiles(Vector, "sqlite")
-def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
 @contextmanager
-def _create_session(tmp_path: Path) -> Iterator[Session]:
+def _create_file_session(tmp_path: Path) -> Iterator[Session]:
     engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'cost-latency.db'}", future=True)
     Base.metadata.create_all(engine)
     with Session(engine, expire_on_commit=False) as session:
@@ -74,7 +61,7 @@ def test_estimate_model_usage_uses_deterministic_zero_cost_rate() -> None:
 
 
 def test_indexing_persists_cost_latency_summary(tmp_path: Path) -> None:
-    with _create_session(tmp_path) as session:
+    with _create_file_session(tmp_path) as session:
         _seed_indexed_kb(session, tmp_path)
 
         run = session.scalar(select(PipelineRun).where(PipelineRun.run_type == "chunk_embedding"))
@@ -89,7 +76,7 @@ def test_indexing_persists_cost_latency_summary(tmp_path: Path) -> None:
 
 
 def test_retrieval_and_answer_reports_cost_latency(tmp_path: Path) -> None:
-    with _create_session(tmp_path) as session:
+    with _create_file_session(tmp_path) as session:
         _seed_indexed_kb(session, tmp_path)
 
         retrieval = search_knowledge_base(

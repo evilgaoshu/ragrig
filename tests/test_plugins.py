@@ -5,10 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from ragrig.main import create_app
@@ -28,16 +25,6 @@ from ragrig.providers.cloud import CLOUD_MODEL_METADATA
 pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-@compiles(Vector, "sqlite")
-def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
 
 
 def _create_file_session_factory(database_path: Path) -> Callable[[], Session]:

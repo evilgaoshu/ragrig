@@ -147,7 +147,11 @@ def _replace_version_index(
     conflict_threshold: float = 0.92,
     summary_provider: "BaseProvider | None" = None,
     contextual_provider: "BaseProvider | None" = None,
+    embedding_batch_size: int = EMBEDDING_BATCH_SIZE,
 ) -> tuple[int, int]:
+    if embedding_batch_size <= 0:
+        raise ValueError("embedding_batch_size must be greater than zero")
+
     existing_chunk_ids = list(
         session.scalars(select(Chunk.id).where(Chunk.document_version_id == document_version.id))
     )
@@ -254,8 +258,8 @@ def _replace_version_index(
         )
 
     session.flush()
-    for batch_start in range(0, len(prepared_embeddings), EMBEDDING_BATCH_SIZE):
-        batch = prepared_embeddings[batch_start : batch_start + EMBEDDING_BATCH_SIZE]
+    for batch_start in range(0, len(prepared_embeddings), embedding_batch_size):
+        batch = prepared_embeddings[batch_start : batch_start + embedding_batch_size]
         started = perf_counter()
         embeddings = _embed_texts_with_provider(
             embedding_provider,
@@ -440,11 +444,15 @@ def index_knowledge_base(
     chunk_size: int = 500,
     chunk_overlap: int = 50,
     embedding_dimensions: int = 8,
+    embedding_batch_size: int = EMBEDDING_BATCH_SIZE,
     vector_backend: VectorBackend | None = None,
     force_reindex: bool = False,
     pii_redaction: bool = False,
     workspace_id: object = None,
 ) -> IndexingReport:
+    if embedding_batch_size <= 0:
+        raise ValueError("embedding_batch_size must be greater than zero")
+
     run_started = perf_counter()
     get_plugin_registry()
     knowledge_base = get_knowledge_base_by_name(
@@ -473,6 +481,7 @@ def index_knowledge_base(
         config_snapshot_json={
             **chunking_config.as_metadata(),
             "embedding_dimensions": embedding_dimensions,
+            "embedding_batch_size": embedding_batch_size,
             "embedding_model": model_name,
             "embedding_provider": provider_name,
             "chunk_profile_id": chunk_profile.profile_id,
@@ -493,6 +502,7 @@ def index_knowledge_base(
         embedding_provider=provider_name,
         embedding_model=model_name,
         embedding_dimensions=embedding_dimensions,
+        embedding_batch_size=embedding_batch_size,
         force_reindex=force_reindex,
     )
 
@@ -580,6 +590,7 @@ def index_knowledge_base(
                     cost_latency_operations=document_cost_latency_operations,
                     workspace_id=knowledge_base.workspace_id,
                     pii_redaction=pii_redaction,
+                    embedding_batch_size=embedding_batch_size,
                 )
                 run_cost_latency_operations.extend(document_cost_latency_operations)
                 chunk_count += created_chunks

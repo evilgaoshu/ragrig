@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
-
 import pytest
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, create_engine, select
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
+from conftest import _create_session
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from ragrig.chunkers import ChunkingConfig, chunk_text
@@ -24,25 +19,6 @@ from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.vectorstore.base import VectorCollection, VectorCollectionStatus, VectorEmbeddingRecord
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
-
-
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-@compiles(Vector, "sqlite")
-def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-@contextmanager
-def _create_session() -> Iterator[Session]:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-    Base.metadata.create_all(engine)
-    with Session(engine, expire_on_commit=False) as session:
-        yield session
-    engine.dispose()
 
 
 def test_chunk_text_splits_text_with_overlap_and_metadata() -> None:
@@ -397,6 +373,61 @@ def test_replace_version_index_batches_child_embeddings(tmp_path) -> None:
     metadata = [operation["metadata"] for operation in cost_latency_operations]
     assert all(isinstance(item, dict) for item in metadata)
     assert {item["batch_size"] for item in metadata if isinstance(item, dict)} == {created_chunks}
+
+
+def test_index_knowledge_base_respects_embedding_batch_size(tmp_path, monkeypatch) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text(
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu",
+        encoding="utf-8",
+    )
+
+    class CountingBatchProvider(DeterministicEmbeddingProvider):
+        def __init__(self) -> None:
+            super().__init__(dimensions=4)
+            self.batch_calls: list[list[str]] = []
+
+        def embed_texts(self, texts: list[str]) -> list[EmbeddingResult]:
+            self.batch_calls.append(list(texts))
+            return [DeterministicEmbeddingProvider.embed_text(self, text) for text in texts]
+
+    provider = CountingBatchProvider()
+
+    class FakeRegistry:
+        def get(self, name: str, **config):
+            assert name == "deterministic-local"
+            assert config == {"dimensions": 4}
+            return provider
+
+    monkeypatch.setattr("ragrig.indexing.pipeline.get_provider_registry", lambda: FakeRegistry())
+
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+
+        report = index_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            chunk_size=6,
+            chunk_overlap=0,
+            embedding_dimensions=4,
+            embedding_batch_size=2,
+        )
+        run = session.scalars(
+            select(PipelineRun).where(PipelineRun.run_type == "chunk_embedding")
+        ).one()
+
+    batch_sizes = [len(batch) for batch in provider.batch_calls]
+    assert report.embedding_count > 2
+    assert sum(batch_sizes) == report.embedding_count
+    assert batch_sizes[:-1]
+    assert all(size == 2 for size in batch_sizes[:-1])
+    assert 1 <= batch_sizes[-1] <= 2
+    assert run.config_snapshot_json["embedding_batch_size"] == 2
 
 
 def test_version_already_indexed_rejects_chunks_with_different_config_hash(tmp_path) -> None:

@@ -12,10 +12,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, create_engine, select, text
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
@@ -35,16 +32,6 @@ from ragrig.main import create_app
 from ragrig.repositories import create_task_record, list_audit_events
 
 pytestmark = [pytest.mark.smoke, pytest.mark.slow]
-
-
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
-
-
-@compiles(Vector, "sqlite")
-def _compile_vector_for_sqlite(_type, compiler, **kwargs) -> str:
-    return compiler.process(JSON(), **kwargs)
 
 
 def _create_file_session_factory(database_path) -> Callable[[], Session]:

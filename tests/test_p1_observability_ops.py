@@ -1238,13 +1238,7 @@ def test_run_ingestion_dag_task_rewraps_rejected_dag():
 def test_enqueue_task_fires_failure_webhook():
     """When a task raises, notify_task_failure is called."""
     from sqlalchemy import StaticPool, create_engine, event
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.ext.compiler import compiles
     from sqlalchemy.orm import sessionmaker
-
-    @compiles(JSONB, "sqlite")
-    def _jsonb_sqlite(element, compiler, **kw):  # type: ignore[no-untyped-def]
-        return "TEXT"
 
     from ragrig.db.models import Base
     from ragrig.tasks import SynchronousTaskExecutor, enqueue_task

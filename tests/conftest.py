@@ -55,6 +55,22 @@ def _dispose_sqlite_engines() -> None:
     gc.collect()
 
 
+def _create_session() -> Session:
+    engine = sqlalchemy.create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    session = Session(engine, expire_on_commit=False)
+    original_close = session.close
+
+    def close() -> None:
+        try:
+            original_close()
+        finally:
+            engine.dispose()
+
+    session.close = close
+    return session
+
+
 @pytest.fixture(autouse=True)
 def _cleanup_sqlite_engines() -> Iterator[None]:
     yield
@@ -65,8 +81,5 @@ def _cleanup_sqlite_engines() -> Iterator[None]:
 
 @pytest.fixture
 def sqlite_session() -> Iterator[Session]:
-    engine = sqlalchemy.create_engine("sqlite+pysqlite:///:memory:", future=True)
-    Base.metadata.create_all(engine)
-    with Session(engine, expire_on_commit=False) as session:
+    with _create_session() as session:
         yield session
-    engine.dispose()
