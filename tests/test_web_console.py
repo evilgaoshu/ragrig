@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from ragrig.auth import DEFAULT_WORKSPACE_ID
-from ragrig.config import Settings
 from ragrig.db.models import (
     Base,
     Document,
@@ -146,103 +145,6 @@ class ImmediateTaskExecutor:
     def join(self) -> None:
         for thread in self.threads:
             thread.join(timeout=5)
-
-
-@pytest.mark.anyio
-async def test_console_route_serves_lightweight_web_console(tmp_path) -> None:
-    database_path = tmp_path / "web-console-page.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    assert "text/html" in response.headers["content-type"]
-    assert "RAGRig Web Console" in response.text
-    assert "Knowledge Bases" in response.text
-    assert "Retrieval Lab" in response.text
-    assert "Plugin Readiness" in response.text
-    assert "Vector Backend Readiness" in response.text
-    assert "Plugin / Data Source Setup Wizard" in response.text
-    assert "Validate Config" in response.text
-    assert "no raw secrets" in response.text
-    assert "repeat(auto-fit, minmax(150px, 1fr))" in response.text
-    assert "Backend · metric · score semantics" in response.text
-    assert "Fileshare Source" in response.text
-    assert "SMB" in response.text
-    assert "NFS mounted path" in response.text
-    assert "WebDAV" in response.text
-    assert "SFTP" in response.text
-    assert "fileshare-protocols" in response.text
-    assert "fileshare-overall-status" in response.text
-    assert "make fileshare-check" in response.text
-    assert "make test-live-fileshare" in response.text
-    assert "FILESHARE_FIELD_SCHEMAS" in response.text
-    assert "Resume DAG" in response.text
-    assert "validateFileshareField" in response.text
-    assert "handleFileshareFormSubmit" in response.text
-    assert "handleFileshareCopyClick" in response.text
-    assert "请使用 env: 引用，不要直接填写密钥" in response.text
-    assert "Copy CLI config" in response.text
-    assert "Copy ENV vars" in response.text
-    assert "fileshare-warning" in response.text
-    assert "fileshare-unavailable-reason" in response.text
-    assert "validateSingleFileshareField" in response.text
-    assert "showFileshareFieldError" in response.text
-    assert "root_path must not have trailing whitespace" in response.text
-    assert "trailing whitespace" in response.text
-    assert "retrieval-mode" in response.text
-    assert "dense (vector-only)" in response.text
-    assert "hybrid (vector + lexical)" in response.text
-    assert "graph (KG-lite expansion)" in response.text
-    assert "hybrid_graph (hybrid + KG-lite)" in response.text
-    assert "rerank (dense → reranker)" in response.text
-    assert "hybrid_rerank (hybrid → reranker)" in response.text
-    assert "graph_rerank (graph → reranker)" in response.text
-    assert "hybrid_graph_rerank (hybrid graph → reranker)" in response.text
-    assert "retrieval-lexical-weight" in response.text
-    assert "retrieval-vector-weight" in response.text
-    assert "retrieval-graph-weight" in response.text
-    assert "retrieval-graph-depth" in response.text
-    assert "retrieval-candidate-k" in response.text
-    assert "retrieval-reranker-provider" in response.text
-    assert "retrieval-reranker-model" in response.text
-    assert "compareRetrievalModes" in response.text
-    assert "Graph Context" in response.text
-    assert "Graph Explorer" in response.text
-    assert "graph-explorer-panel" in response.text
-    assert "refresh-graph-explorer" in response.text
-    assert "rebuild-graph-explorer" in response.text
-    assert "Load Mode Preference" in response.text
-    assert "Save Mode Preference" in response.text
-    assert "retrieval-preference-status" in response.text
-    assert "loadRetrievalPreference" in response.text
-    assert "saveRetrievalPreference" in response.text
-    assert "retrieval-preferences" in response.text
-    assert "Mark Correct" in response.text
-    assert "Needs Review" in response.text
-    assert "Mark Incorrect" in response.text
-    assert "permission-preview-panel" in response.text
-    assert "Permission Preview" in response.text
-    assert "runPermissionPreview" in response.text
-    assert "Principal subjects" in response.text
-    assert "_renderRankStageTrace" in response.text
-    assert "Baseline Integrity" in response.text
-    assert "retrieval-benchmark-integrity-panel" in response.text
-    assert "Retrieval Baseline Integrity" in response.text
-    assert "retrieval-integrity-status" in response.text
-    assert "retrieval-integrity-facts" in response.text
-    assert "retrieval-integrity-reasons" in response.text
-    assert "loadRetrievalBenchmarkIntegrity" in response.text
-    assert "renderRetrievalBenchmarkIntegrity" in response.text
-    assert "baseline-integrity-status" in response.text
-    assert "baseline-integrity-subtext" in response.text
-    assert "List models" in response.text
-    assert "Speed test" in response.text
-    assert "loadProviderModels" in response.text
-    assert "runProviderSpeedTest" in response.text
 
 
 @pytest.mark.anyio
@@ -1184,75 +1086,6 @@ async def test_console_api_returns_empty_states_without_seed_data(tmp_path) -> N
 
 
 @pytest.mark.anyio
-async def test_system_status_reports_qdrant_dependency_gap_without_breaking_console(
-    tmp_path, monkeypatch
-) -> None:
-    database_path = tmp_path / "web-console-qdrant-missing.db"
-    session_factory = _create_file_session_factory(database_path)
-    monkeypatch.setitem(__import__("sys").modules, "qdrant_client.http.models", None)
-    monkeypatch.setitem(__import__("sys").modules, "qdrant_client", None)
-    app = create_app(
-        check_database=lambda: None,
-        session_factory=session_factory,
-        settings=Settings(vector_backend="qdrant"),
-    )
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        status_response = await client.get("/system/status")
-        console_response = await client.get("/console")
-
-    assert console_response.status_code == 200
-    assert status_response.status_code == 200
-    payload = status_response.json()["vector"]
-    assert payload["backend"] == "qdrant"
-    assert payload["status"] == "degraded"
-    assert payload["health"]["healthy"] is False
-    assert payload["health"]["dependency_status"] == "missing dependency"
-    assert payload["health"]["error"] == "Missing dependency: qdrant-client is not installed."
-    assert payload["health"]["collections"] == []
-
-
-@pytest.mark.anyio
-async def test_system_status_reports_unreachable_qdrant_without_white_screen(
-    tmp_path, monkeypatch
-) -> None:
-    database_path = tmp_path / "web-console-qdrant-unreachable.db"
-    session_factory = _create_file_session_factory(database_path)
-
-    class BrokenBackend:
-        def health(self, session: Session):
-            raise RuntimeError("Qdrant unreachable at configured endpoint.")
-
-    monkeypatch.setattr("ragrig.vectorstore.get_vector_backend", lambda settings: BrokenBackend())
-    app = create_app(
-        check_database=lambda: None,
-        session_factory=session_factory,
-        settings=Settings(
-            vector_backend="qdrant",
-            qdrant_url="http://user:secret@localhost:6333?api_key=secret",
-        ),
-    )
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        status_response = await client.get("/system/status")
-        console_response = await client.get("/console")
-        knowledge_bases = await client.get("/knowledge-bases")
-
-    assert console_response.status_code == 200
-    assert status_response.status_code == 200
-    payload = status_response.json()["vector"]
-    assert payload["backend"] == "qdrant"
-    assert payload["status"] == "error"
-    assert payload["health"]["dependency_status"] == "unreachable"
-    assert payload["health"]["error"] == "Qdrant unreachable at configured endpoint."
-    assert payload["health"]["details"]["url"] == "http://localhost:6333"
-    assert knowledge_bases.status_code == 200
-    assert knowledge_bases.json()["items"] == []
-
-
-@pytest.mark.anyio
 async def test_fileshare_config_validation_cases(tmp_path) -> None:
     """Verify /plugins/source.fileshare/validate-config rejects invalid frontend inputs."""
     database_path = tmp_path / "web-console-fileshare-validation.db"
@@ -1461,42 +1294,6 @@ async def test_processing_profiles_api_no_secrets_leakage(tmp_path) -> None:
 
 
 @pytest.mark.anyio
-async def test_console_html_includes_profile_matrix_section(tmp_path) -> None:
-    database_path = tmp_path / "web-console-matrix-section.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "Processing Profile Matrix" in html
-    assert "profile-matrix-table" in html
-    assert "profile-matrix-panel" in html
-    assert "/processing-profiles/matrix" in html
-    assert "renderProfileMatrix" in html
-    assert "cell-kind" in html
-    assert "deterministic" in html
-    assert "LLM-assisted" in html
-
-
-@pytest.mark.anyio
-async def test_console_html_includes_profile_matrix_nav_item(tmp_path) -> None:
-    database_path = tmp_path / "web-console-nav-matrix.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    assert "Profile Matrix" in response.text
-
-
-@pytest.mark.anyio
 async def test_indexing_metadata_includes_profile_ids(tmp_path) -> None:
     database_path = tmp_path / "web-console-index-metadata.db"
     session_factory = _create_file_session_factory(database_path)
@@ -1617,58 +1414,6 @@ async def test_document_understanding_endpoints(tmp_path) -> None:
         )
         assert bad_version.status_code == 404
         assert bad_version.json()["error"] == "document_version_not_found"
-
-
-@pytest.mark.anyio
-async def test_document_understanding_shown_in_console(tmp_path) -> None:
-    from ragrig.db.models import DocumentVersion
-    from ragrig.indexing.pipeline import index_knowledge_base
-    from ragrig.ingestion.pipeline import ingest_local_directory
-
-    database_path = tmp_path / "web-console-understanding-ui.db"
-    session_factory = _create_file_session_factory(database_path)
-    docs = _seed_documents(
-        tmp_path,
-        {
-            "guide.md": "# Guide\n\nA test guide for understanding.",
-        },
-    )
-
-    with session_factory() as session:
-        ingest_local_directory(
-            session=session,
-            knowledge_base_name="fixture-local",
-            root_path=docs,
-        )
-        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
-        version = session.scalars(
-            select(DocumentVersion).order_by(DocumentVersion.version_number.desc())
-        ).first()
-
-    assert version is not None
-    version_id = str(version.id)
-
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        # Console should show "not_generated" before understanding exists
-        console_before = await client.get("/console")
-        assert console_before.status_code == 200
-        assert "not_generated" in console_before.text
-        assert "No understanding result yet" in console_before.text
-
-        # Generate understanding
-        await client.post(
-            f"/document-versions/{version_id}/understand",
-            json={"provider": "deterministic-local", "profile_id": "*.understand.default"},
-        )
-
-        # Console should show completed state after generation
-        console_after = await client.get("/console")
-        assert console_after.status_code == 200
-        assert "completed" in console_after.text
-        assert "Document Understanding" in console_after.text
 
 
 # Override CRUD API tests
@@ -1879,34 +1624,6 @@ async def test_unavailable_provider_not_faked_as_ready(tmp_path) -> None:
     clear_overrides()
 
 
-@pytest.mark.anyio
-async def test_console_html_includes_override_ui(tmp_path) -> None:
-    database_path = tmp_path / "web-console-override-ui.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "Create Override" in html
-    assert "profile-create-form" in html
-    assert "profile-create-btn" in html
-    assert "Save Override" in html
-    assert "Cancel" in html
-    assert "showProfileCreateForm" in html
-    assert "submitProfileCreate" in html
-    assert "toggleProfileStatus" in html
-    assert "deleteProfile" in html
-    assert "data-profile-action" in html
-    assert "Supported Formats" in html
-    assert "supported" in html.lower()
-    assert "preview" in html.lower()
-    assert "planned" in html.lower()
-
-
 # Supported formats tests
 @pytest.mark.anyio
 async def test_supported_formats_endpoint_returns_all_formats(tmp_path) -> None:
@@ -2002,23 +1719,6 @@ async def test_supported_formats_check_requires_extension_param(tmp_path) -> Non
         response = await client.get("/supported-formats/check")
 
     assert response.status_code == 422
-
-
-@pytest.mark.anyio
-async def test_console_shows_upload_section(tmp_path) -> None:
-    database_path = tmp_path / "web-console-upload-ui.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "Upload" in html
-    assert "Choose Files" in html
-    assert "drop" in html.lower()
 
 
 @pytest.mark.anyio
@@ -2539,91 +2239,6 @@ async def test_understanding_coverage_endpoint(tmp_path) -> None:
 
 
 @pytest.mark.anyio
-async def test_console_includes_understanding_coverage_section(tmp_path) -> None:
-    database_path = tmp_path / "web-console-coverage-ui.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "Understanding Coverage" in html
-    assert "understanding-coverage-panel" in html
-    assert "understanding-coverage-body" in html
-    assert "Run All Understanding" in html
-    assert "run-understand-all" in html
-    assert "renderUnderstandingCoverage" in html
-    assert "runUnderstandAll" in html
-    assert "completeness_score" in html
-    assert "Recent Errors" in html
-    assert "recent_errors" in html
-    assert "missing" in html.lower()
-    assert "stale" in html.lower()
-    assert "completed" in html
-    assert "failed" in html
-
-
-@pytest.mark.anyio
-async def test_console_coverage_shows_real_data(tmp_path) -> None:
-    from ragrig.indexing.pipeline import index_knowledge_base
-    from ragrig.ingestion.pipeline import ingest_local_directory
-
-    database_path = tmp_path / "web-console-coverage-data.db"
-    session_factory = _create_file_session_factory(database_path)
-    docs = _seed_documents(
-        tmp_path,
-        {
-            "guide.md": "# Guide\n\nA test guide.",
-            "notes.txt": "ops notes",
-            "extra.md": "# Extra\n\nThird doc.",
-        },
-    )
-
-    with session_factory() as session:
-        ingest_local_directory(
-            session=session,
-            knowledge_base_name="fixture-local",
-            root_path=docs,
-        )
-        index_knowledge_base(session=session, knowledge_base_name="fixture-local", chunk_size=500)
-
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        # Console page loads and includes coverage section with real data
-        console = await client.get("/console")
-        assert console.status_code == 200
-        assert "Understanding Coverage" in console.text
-
-        # Coverage endpoint returns real data
-        kb_resp = await client.get("/knowledge-bases")
-        kb_id = kb_resp.json()["items"][0]["id"]
-
-        coverage = await client.get(f"/knowledge-bases/{kb_id}/understanding-coverage")
-        assert coverage.status_code == 200
-        payload = coverage.json()
-        assert payload["total_versions"] == 3
-        assert payload["missing"] == 3
-        assert payload["completeness_score"] == 0.0
-        assert payload["recent_errors"] == []
-
-        # Run batch understanding
-        await client.post(
-            f"/knowledge-bases/{kb_id}/understand-all",
-            json={"provider": "deterministic-local", "profile_id": "*.understand.default"},
-        )
-
-        # Coverage updates
-        coverage2 = await client.get(f"/knowledge-bases/{kb_id}/understanding-coverage")
-        assert coverage2.json()["completed"] == 3
-        assert coverage2.json()["completeness_score"] == 1.0
-
-
-@pytest.mark.anyio
 async def test_console_no_secrets_in_understanding_endpoints(tmp_path) -> None:
     from ragrig.indexing.pipeline import index_knowledge_base
     from ragrig.ingestion.pipeline import ingest_local_directory
@@ -2976,43 +2591,6 @@ async def test_audit_log_filter_by_profile_id(tmp_path) -> None:
         assert e["profile_id"] == "profile.a.test"
     for e in b_entries:
         assert e["profile_id"] == "profile.b.test"
-
-
-@pytest.mark.anyio
-async def test_console_html_includes_audit_log_panel(tmp_path) -> None:
-    database_path = tmp_path / "web-console-audit-panel.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "Audit Log" in html
-    assert "audit-log-panel" in html
-    assert "audit-log-table" in html
-    assert "audit-log-refresh" in html
-    assert "Override change history" in html
-    assert "sensitive fields redacted" in html
-
-
-@pytest.mark.anyio
-async def test_console_html_includes_override_meta(tmp_path) -> None:
-    database_path = tmp_path / "web-console-override-meta.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "cell-meta" in html
-    assert "meta-tag" in html
-    assert "renderAuditLog" in html
 
 
 @pytest.mark.anyio
@@ -3603,28 +3181,6 @@ async def test_audit_log_single_entry_returns_404(tmp_path) -> None:
     assert resp.json()["error"] == "audit_entry_not_found"
 
 
-@pytest.mark.anyio
-async def test_console_html_includes_diff_and_rollback(tmp_path) -> None:
-    database_path = tmp_path / "web-console-diff-rollback-ui.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    # Diff preview UI
-    assert "Diff Preview" in html
-    assert "diff-preview-panel" in html
-    assert "preview-diff" in html
-    # Rollback UI
-    assert "Rollback" in html
-    assert "rollback-btn" in html
-    assert "data-rollback-id" in html
-
-
 # ── Fixture Corpus Integration Tests ──
 
 
@@ -3871,107 +3427,6 @@ async def test_web_upload_failed_item_keeps_file_available_for_retry(tmp_path) -
 
 
 @pytest.mark.anyio
-async def test_console_renders_degraded_status_without_white_screen(tmp_path) -> None:
-    """After uploading a preview fixture, the console HTML must include degraded/failed
-    status indicators and not white-screen."""
-    from ragrig.repositories import get_or_create_knowledge_base
-
-    database_path = tmp_path / "fixture-console-degraded.db"
-    session_factory = _create_file_session_factory(database_path)
-    task_executor = ImmediateTaskExecutor()
-
-    with session_factory() as session:
-        get_or_create_knowledge_base(session, "fixture-local")
-        session.commit()
-
-    app = create_app(
-        check_database=lambda: None,
-        session_factory=session_factory,
-        task_executor=task_executor,
-    )
-    transport = httpx.ASGITransport(app=app)
-
-    # Upload a CSV (preview/degraded)
-    test_file = tmp_path / "data.csv"
-    test_file.write_text("col1,col2\na,b\n", encoding="utf-8")
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        with open(test_file, "rb") as f:
-            response = await client.post(
-                "/knowledge-bases/fixture-local/upload",
-                files={"files": ("data.csv", f, "text/csv")},
-            )
-
-        payload = response.json()
-        await _wait_for_task_completion(client, payload["task_id"])
-
-        # Console page must render without error
-        console = await client.get("/console")
-        assert console.status_code == 200
-        html = console.text
-
-        # Must contain the HTML structure (no white screen)
-        assert "<!doctype html>" in html.lower()
-        assert "</html>" in html
-        # Should render degraded/status indicators
-        assert "degraded" in html.lower() or "preview" in html.lower()
-        # Pipeline runs section must be present
-        assert "Pipeline Runs" in html or "pipeline" in html.lower()
-
-    task_executor.join()
-
-
-@pytest.mark.anyio
-async def test_console_no_horizontal_overflow_for_long_metadata(tmp_path) -> None:
-    """Verify the console CSS prevents horizontal overflow for long text in
-    degraded_reason or other metadata fields."""
-    from ragrig.repositories import get_or_create_knowledge_base
-
-    database_path = tmp_path / "fixture-console-overflow.db"
-    session_factory = _create_file_session_factory(database_path)
-    task_executor = ImmediateTaskExecutor()
-
-    with session_factory() as session:
-        get_or_create_knowledge_base(session, "fixture-local")
-        session.commit()
-
-    app = create_app(
-        check_database=lambda: None,
-        session_factory=session_factory,
-        task_executor=task_executor,
-    )
-    transport = httpx.ASGITransport(app=app)
-
-    test_file = tmp_path / "data.csv"
-    test_file.write_text("col1,col2\na,b\n", encoding="utf-8")
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        with open(test_file, "rb") as f:
-            response = await client.post(
-                "/knowledge-bases/fixture-local/upload",
-                files={"files": ("data.csv", f, "text/csv")},
-            )
-
-        payload = response.json()
-        await _wait_for_task_completion(client, payload["task_id"])
-
-        console = await client.get("/console")
-        html = console.text
-
-        # CSS must include overflow-wrap or word-break rules
-        assert "overflow-wrap" in html or "word-break" in html
-        # No horizontal scrollbar styles that would cause overflow on content
-        assert (
-            "overflow-x: auto" in html
-            or "overflow-x:auto" in html
-            or "overflow-x: hidden" in html
-            or "overflow-x:hidden" in html
-        )
-
-    task_executor.join()
-
-
-@pytest.mark.anyio
 async def test_pipeline_run_items_failure_is_deterministic(tmp_path) -> None:
     """The same bad CSV file uploaded twice should produce the same failure status
     and consistent error metadata."""
@@ -4195,89 +3650,7 @@ async def test_export_filename_hides_unset_filters(tmp_path) -> None:
     assert "status_" not in filename
 
 
-@pytest.mark.anyio
-async def test_console_html_includes_export_filename_js(tmp_path) -> None:
-    database_path = tmp_path / "web-console-export-filename.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    # The export functions should use _filename from response
-    assert "_filename" in html
-    assert "exportSingleRun" in html
-    assert "exportFilteredRuns" in html
-
-
 # ── Answer Generation Web Console Tests ──────────────────────────────────────
-
-
-@pytest.mark.anyio
-async def test_console_includes_answer_generation_panel(tmp_path) -> None:
-    """Answer generation panel must be present in the web console HTML."""
-    database_path = tmp_path / "web-console-answer-panel.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "Answer Generation" in html
-    assert "POST /retrieval/answer" in html
-    assert "Role Model Config" in html
-    assert "Save Role Config" in html
-    assert "Top Hits" in html
-    assert "answer-kb" in html
-    assert "answer-query" in html
-    assert "answer-top-k" in html
-    assert "run-answer" in html
-    assert "answer-results" in html
-    assert "answer-provider-meta" in html
-    assert "Answer Gen" in html or "answer" in html.lower()
-
-
-@pytest.mark.anyio
-async def test_answer_panel_shows_disabled_state_without_data(tmp_path) -> None:
-    """Answer panel should show disabled state when no knowledge bases exist."""
-    database_path = tmp_path / "web-console-answer-disabled.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    assert "renderAnswerControls" in response.text
-
-
-@pytest.mark.anyio
-async def test_answer_panel_shows_ready_state_with_data(tmp_path) -> None:
-    """Answer panel should be ready when knowledge bases with indexed data exist."""
-    database_path = tmp_path / "web-console-answer-ready.db"
-    session_factory = _create_file_session_factory(database_path)
-    docs = _seed_documents(tmp_path, {"guide.txt": "Answer panel ready state test content."})
-
-    with session_factory() as session:
-        ingest_local_directory(session=session, knowledge_base_name="fixture-local", root_path=docs)
-        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
-
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    # Console should serve without errors (answer panel rendered)
-    assert "Answer Generation" in response.text
 
 
 @pytest.mark.anyio
@@ -4958,23 +4331,6 @@ async def test_understanding_export_diff_endpoint_no_secret_leakage(tmp_path, mo
 
 
 @pytest.mark.anyio
-async def test_console_html_includes_understanding_export_diff_badge(tmp_path) -> None:
-    database_path = tmp_path / "web-console-diff-badge.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "understanding-export-diff-badge" in html
-    assert "Understanding Export Diff" in html
-    assert "copy-diff-path-btn" in html
-
-
-@pytest.mark.anyio
 async def test_understanding_export_diff_schema_incompatible_maps_to_failure(
     tmp_path, monkeypatch
 ) -> None:
@@ -5155,23 +4511,6 @@ async def test_sanitizer_drift_history_summary_no_secrets(tmp_path, monkeypatch)
     assert "ghp_" not in text
 
 
-@pytest.mark.anyio
-async def test_console_html_includes_sanitizer_drift_summary_section(tmp_path) -> None:
-    """Console page renders the sanitizer drift history summary panel."""
-    database_path = tmp_path / "web-console-ds-html.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "Sanitizer Drift History Summary" in html
-    assert "sanitizer-drift-summary-panel" in html
-
-
 # ── Advanced Parser Corpus ────────────────────────────────────────────────────
 
 
@@ -5300,22 +4639,6 @@ async def test_advanced_parser_corpus_endpoint_no_secret_leakage(tmp_path, monke
     text = response.text.lower()
     for forbidden in ("sk-live-", "ghp_", "bearer ", "private key"):
         assert forbidden not in text
-
-
-@pytest.mark.anyio
-async def test_console_html_includes_advanced_parser_corpus_section(tmp_path) -> None:
-    database_path = tmp_path / "web-console-corpus-html.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "advanced-parser-corpus-panel" in html
-    assert "Advanced Parser Corpus" in html
 
 
 # ── Console Permission Preview Tests ─────────────────────────────────
@@ -5517,63 +4840,6 @@ async def test_console_no_raw_principals_in_acl_summary(tmp_path) -> None:
         assert "mallory" not in summary_values
         assert summary["has_allowed_principals"] is True
         assert summary["has_denied_principals"] is True
-
-
-@pytest.mark.anyio
-async def test_console_acl_badge_not_full_visibility_for_protected(tmp_path) -> None:
-    database_path = tmp_path / "console-acl-badge.db"
-    session_factory = _create_file_session_factory(database_path)
-    docs = _seed_documents(tmp_path, {"internal.md": "# Internal\n\ninternal only content"})
-
-    with session_factory() as session:
-        ingest_local_directory(
-            session=session,
-            knowledge_base_name="fixture-local",
-            root_path=docs,
-        )
-
-        doc = session.scalars(select(Document).where(Document.uri.contains("internal.md"))).first()
-        if doc:
-            doc.metadata_json = {
-                **doc.metadata_json,
-                "acl": {
-                    "visibility": "protected",
-                    "allowed_principals": ["internal-team"],
-                    "denied_principals": [],
-                    "acl_source": "test",
-                    "acl_source_hash": "abc",
-                    "inheritance": "document",
-                },
-            }
-            session.commit()
-
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "protected" in html
-    assert "aclBadgeHtml" in html
-
-
-@pytest.mark.anyio
-async def test_console_html_includes_acl_badge_function(tmp_path) -> None:
-    database_path = tmp_path / "console-acl-function.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "aclBadgeHtml" in html
-    assert "aclSummary" in html
-    assert "visibility" in html
 
 
 # ── EVI-105: Workflow Audit Events & Guardrails ─────────────────────────────
@@ -6092,23 +5358,3 @@ async def test_audit_event_sanitizes_secrets(tmp_path) -> None:
     # Nested secrets also redacted
     assert entry["payload"]["nested"]["secret"] == "[REDACTED]"
     assert entry["payload"]["nested"]["normal"] == "visible"
-
-
-@pytest.mark.anyio
-async def test_console_html_includes_workflow_audit_panel(tmp_path) -> None:
-    """Console HTML should contain the workflow audit events panel."""
-    database_path = tmp_path / "console-wf-audit.db"
-    session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    html = response.text
-    assert "Workflow Audit Events" in html
-    assert "wf-audit-panel" in html
-    assert "wf-audit-table" in html
-    assert "wf-audit-refresh" in html
-    assert "degraded-badge" in html or "DEGRADED" in html

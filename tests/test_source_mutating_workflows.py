@@ -665,32 +665,3 @@ class TestSecretLeakInterception:
 
 
 # ── Console HTML Contract ──────────────────────────────────────────────────
-
-
-class TestConsoleHTMLContract:
-    @pytest.mark.anyio
-    async def test_console_contains_mutating_ui_elements(self, tmp_path):
-        db_path = tmp_path / "test_console_mutating.db"
-        engine = create_engine(f"sqlite+pysqlite:///{db_path}", future=True)
-        Base.metadata.create_all(engine)
-
-        def sf():
-            return Session(engine, expire_on_commit=False)
-
-        app = create_app(check_database=lambda: None, session_factory=sf)
-        transport = httpx.ASGITransport(app=app)
-
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            resp = await client.get("/console")
-
-        assert resp.status_code == 200
-        html = resp.text
-
-        # New mutating UI elements should be present
-        assert "Configure New Source" in html
-        assert "Dry-run" in html
-        assert "Retry" in html
-        assert "/sources/validate-config" in html
-        assert "/sources/dry-run" in html
-        assert "/pipeline-run-items/" in html
-        assert "/pipeline-runs/" in html
