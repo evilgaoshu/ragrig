@@ -1,10 +1,12 @@
+import logging
 import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -48,6 +50,7 @@ from ragrig.knowledge_base_config import (
 )
 from ragrig.local_pilot import ModelConfigError
 from ragrig.local_pilot.model_config import resolve_env_config
+from ragrig.observability import bind_log_context, log_event
 from ragrig.plugins.sinks.agent_access.connector import export_to_agent_endpoint
 from ragrig.plugins.sinks.azure_blob.connector import export_to_azure_blob
 from ragrig.plugins.sinks.backblaze_b2.connector import export_to_backblaze_b2
@@ -93,6 +96,8 @@ from ragrig.tasks import (
 )
 from ragrig.vectorstore import get_vector_backend
 from ragrig.web_console import build_permission_preview
+
+logger = logging.getLogger(__name__)
 
 
 class EvaluationRunRequest(BaseModel):
@@ -370,6 +375,44 @@ def create_app(
     from ragrig.otel import setup_otel
 
     setup_otel(app, active_settings)
+
+    @app.middleware("http")
+    async def structured_request_logging(request: Request, call_next):
+        request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+        started = perf_counter()
+        with bind_log_context(request_id=request_id):
+            log_event(
+                logger,
+                logging.INFO,
+                "api.request.start",
+                method=request.method,
+                route=request.url.path,
+            )
+            try:
+                response = await call_next(request)
+            except Exception as exc:
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "api.request.failed",
+                    method=request.method,
+                    route=request.url.path,
+                    duration_ms=round((perf_counter() - started) * 1000, 3),
+                    error=str(exc),
+                    exc_info=True,
+                )
+                raise
+            response.headers["X-Request-ID"] = request_id
+            log_event(
+                logger,
+                logging.INFO,
+                "api.request.completed",
+                method=request.method,
+                route=request.url.path,
+                status_code=response.status_code,
+                duration_ms=round((perf_counter() - started) * 1000, 3),
+            )
+            return response
 
     def shutdown_task_executor() -> None:
         shutdown = getattr(active_task_executor, "shutdown", None)

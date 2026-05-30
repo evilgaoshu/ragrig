@@ -11,6 +11,7 @@ The core pipeline:
 
 from __future__ import annotations
 
+import logging
 from time import perf_counter
 from typing import Any
 
@@ -27,7 +28,12 @@ from ragrig.answer.schema import (
     NoEvidenceError,
     ProviderUnavailableError,
 )
-from ragrig.observability import aggregate_cost_latency, observe_model_call
+from ragrig.observability import (
+    aggregate_cost_latency,
+    log_event,
+    observe_model_call,
+    safe_query_fields,
+)
 from ragrig.retrieval import (
     search_knowledge_base,
 )
@@ -38,6 +44,8 @@ from ragrig.semantic_cache import (
     store_cache,
 )
 from ragrig.vectorstore.base import VectorBackend
+
+logger = logging.getLogger(__name__)
 
 
 def _build_citations(evidence: list[EvidenceChunk]) -> list[Citation]:
@@ -153,6 +161,22 @@ def generate_answer(
         ProviderUnavailableError: Answer provider could not generate
     """
     answer_started = perf_counter()
+    normalized_query = query.strip()
+    query_log_fields = safe_query_fields(normalized_query)
+    log_event(
+        logger,
+        logging.INFO,
+        "answer.generate.start",
+        knowledge_base=knowledge_base_name,
+        top_k=top_k,
+        retrieval_provider=provider,
+        retrieval_model=model,
+        answer_provider=answer_provider or provider,
+        answer_model=answer_model if answer_model is not None else model,
+        mode=mode,
+        enforce_acl=enforce_acl,
+        **query_log_fields,
+    )
 
     # 0. Semantic cache lookup
     if cache_config is not None:
@@ -178,6 +202,21 @@ def generate_answer(
             )
             if cache_hit_result is not None:
                 increment_hit_count(session, cache_hit_result.entry_id)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "answer.generate.completed",
+                    knowledge_base=knowledge_base_name,
+                    top_k=top_k,
+                    provider=provider,
+                    model=model or "",
+                    grounding_status="grounded",
+                    cache_hit=True,
+                    total_results=0,
+                    citation_count=0,
+                    duration_ms=round((perf_counter() - answer_started) * 1000, 3),
+                    **query_log_fields,
+                )
                 return AnswerReport(
                     answer=cache_hit_result.answer_text,
                     citations=[],
@@ -222,6 +261,19 @@ def generate_answer(
 
     # 2. No evidence → refuse
     if retrieval_report.total_results == 0:
+        log_event(
+            logger,
+            logging.WARNING,
+            "answer.generate.failed",
+            knowledge_base=knowledge_base_name,
+            top_k=top_k,
+            provider=provider,
+            model=model,
+            reason="no_evidence",
+            retrieval_results=0,
+            duration_ms=round((perf_counter() - answer_started) * 1000, 3),
+            **query_log_fields,
+        )
         raise NoEvidenceError(knowledge_base=knowledge_base_name, query=query)
 
     # 3. Build evidence chunks with stable citation IDs
@@ -266,6 +318,20 @@ def generate_answer(
         )
     except Exception as exc:
         reason = _sanitize_error_message(exc)
+        log_event(
+            logger,
+            logging.ERROR,
+            "answer.generate.failed",
+            knowledge_base=knowledge_base_name,
+            top_k=top_k,
+            provider=resolved_answer_provider,
+            model=resolved_answer_model or retrieval_report.model,
+            reason="provider_unavailable",
+            error=reason,
+            retrieval_results=retrieval_report.total_results,
+            duration_ms=round((perf_counter() - answer_started) * 1000, 3),
+            **query_log_fields,
+        )
         raise ProviderUnavailableError(
             provider=resolved_answer_provider,
             reason=reason,
@@ -378,6 +444,22 @@ def generate_answer(
         },
         "operations": cost_latency_operations,
     }
+    log_event(
+        logger,
+        logging.INFO,
+        "answer.generate.completed",
+        knowledge_base=knowledge_base_name,
+        top_k=top_k,
+        provider=resolved_answer_provider,
+        model=resolved_answer_model or retrieval_report.model,
+        grounding_status=grounding_status,
+        cache_hit=False,
+        total_results=retrieval_report.total_results,
+        citation_count=len(citations),
+        evidence_count=len(evidence),
+        duration_ms=round((perf_counter() - answer_started) * 1000, 3),
+        **query_log_fields,
+    )
 
     return AnswerReport(
         answer=answer_text,

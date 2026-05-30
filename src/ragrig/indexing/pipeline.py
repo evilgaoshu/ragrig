@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import perf_counter
@@ -18,7 +19,7 @@ from ragrig.indexing.llm_steps import (
     generate_chunk_description,
     generate_document_summary,
 )
-from ragrig.observability import aggregate_cost_latency, observe_model_call
+from ragrig.observability import aggregate_cost_latency, log_event, observe_model_call
 from ragrig.pii import redact as pii_redact
 from ragrig.plugins import get_plugin_registry
 from ragrig.processing_profile import ProcessingProfile, TaskType, resolve_profile
@@ -34,6 +35,8 @@ from ragrig.vectorstore.base import VectorBackend, VectorEmbeddingRecord
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -319,6 +322,21 @@ def _replace_version_index(
                             "chunk_index": prepared.chunk_index,
                         },
                     )
+        log_event(
+            logger,
+            logging.INFO,
+            "index.embedding_batch.completed",
+            document_id=str(document.id),
+            document_version_id=str(document_version.id),
+            knowledge_base_id=(
+                str(document.knowledge_base_id) if document.knowledge_base_id is not None else None
+            ),
+            provider=embeddings[0].provider,
+            model=embeddings[0].model,
+            batch_size=len(batch),
+            batch_start=batch_start,
+            duration_ms=round(batch_latency_ms, 3),
+        )
 
     # ── Optional: document-level summary + embedding ──────────────────────────
     if summary_provider is not None and source_text.strip():
@@ -462,6 +480,21 @@ def index_knowledge_base(
             "force_reindex": force_reindex,
         },
     )
+    log_event(
+        logger,
+        logging.INFO,
+        "index.knowledge_base.start",
+        pipeline_run_id=str(run.id),
+        knowledge_base=knowledge_base_name,
+        knowledge_base_id=str(knowledge_base.id),
+        workspace_id=str(knowledge_base.workspace_id),
+        chunk_size=chunk_size,
+        chunk_overlap=effective_overlap,
+        embedding_provider=provider_name,
+        embedding_model=model_name,
+        embedding_dimensions=embedding_dimensions,
+        force_reindex=force_reindex,
+    )
 
     indexed_count = 0
     skipped_count = 0
@@ -487,6 +520,18 @@ def index_knowledge_base(
                             "version_number": version.version_number,
                         },
                     )
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "index.document",
+                        pipeline_run_id=str(run.id),
+                        knowledge_base=knowledge_base_name,
+                        document_id=str(document.id),
+                        document_version_id=str(version.id),
+                        status="skipped",
+                        skip_reason="empty_extracted_text",
+                        version_number=version.version_number,
+                    )
                     skipped_count += 1
                     continue
 
@@ -507,6 +552,18 @@ def index_knowledge_base(
                             "skip_reason": "already_indexed",
                             "version_number": version.version_number,
                         },
+                    )
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "index.document",
+                        pipeline_run_id=str(run.id),
+                        knowledge_base=knowledge_base_name,
+                        document_id=str(document.id),
+                        document_version_id=str(version.id),
+                        status="skipped",
+                        skip_reason="already_indexed",
+                        version_number=version.version_number,
                     )
                     skipped_count += 1
                     continue
@@ -553,6 +610,20 @@ def index_knowledge_base(
                         "version_number": version.version_number,
                     },
                 )
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "index.document",
+                    pipeline_run_id=str(run.id),
+                    knowledge_base=knowledge_base_name,
+                    document_id=str(document.id),
+                    document_version_id=str(version.id),
+                    document_uri=document.uri,
+                    status="success",
+                    chunk_count=created_chunks,
+                    embedding_count=created_embeddings,
+                    version_number=version.version_number,
+                )
         except Exception as exc:
             failed_count += 1
             create_pipeline_run_item(
@@ -565,6 +636,19 @@ def index_knowledge_base(
                     "document_version_id": str(version.id),
                     "version_number": version.version_number,
                 },
+            )
+            log_event(
+                logger,
+                logging.ERROR,
+                "index.document",
+                pipeline_run_id=str(run.id),
+                knowledge_base=knowledge_base_name,
+                document_id=str(document.id),
+                document_version_id=str(version.id),
+                document_uri=document.uri,
+                status="failed",
+                error=str(exc),
+                version_number=version.version_number,
             )
 
     run.total_items = len(versions)
@@ -583,6 +667,20 @@ def index_knowledge_base(
         },
     }
     session.commit()
+    log_event(
+        logger,
+        logging.INFO,
+        "index.knowledge_base.completed",
+        pipeline_run_id=str(run.id),
+        knowledge_base=knowledge_base_name,
+        status=run.status,
+        indexed_count=indexed_count,
+        skipped_count=skipped_count,
+        failed_count=failed_count,
+        chunk_count=chunk_count,
+        embedding_count=embedding_count,
+        duration_ms=round((perf_counter() - run_started) * 1000, 3),
+    )
 
     return IndexingReport(
         pipeline_run_id=run.id,

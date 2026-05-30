@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 
 from sqlalchemy.orm import Session
 
 from ragrig.db.models import DocumentVersion
 from ragrig.ingestion.scanner import scan_paths
+from ragrig.observability import log_event
 from ragrig.parsers import (
     AdvancedParserBridge,
     CsvParser,
@@ -35,6 +38,8 @@ from ragrig.repositories import (
     get_or_create_knowledge_base,
     get_or_create_source,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -112,6 +117,15 @@ def ingest_local_directory(
     )
 
     if dry_run:
+        log_event(
+            logger,
+            logging.INFO,
+            "ingest.local.dry_run",
+            knowledge_base=knowledge_base_name,
+            root_path=str(root_path),
+            discovered_count=len(scan_result.discovered),
+            skipped_count=len(scan_result.skipped),
+        )
         return IngestionReport(
             pipeline_run_id="dry-run",
             created_documents=0,
@@ -151,6 +165,20 @@ def ingest_local_directory(
             "clean_profile_id": clean_profile.profile_id,
         },
     )
+    ingest_started = perf_counter()
+    log_event(
+        logger,
+        logging.INFO,
+        "ingest.local.start",
+        pipeline_run_id=str(run.id),
+        knowledge_base=knowledge_base_name,
+        knowledge_base_id=str(knowledge_base.id),
+        source_id=str(source.id),
+        root_path=str(root_path),
+        discovered_count=len(scan_result.discovered),
+        skipped_count=len(scan_result.skipped),
+        advanced_parser=advanced_parser,
+    )
 
     created_documents = 0
     created_versions = 0
@@ -179,6 +207,17 @@ def ingest_local_directory(
             document_id=document.id,
             status="skipped",
             metadata_json={"file_name": skipped.path.name, "skip_reason": skipped.reason},
+        )
+        log_event(
+            logger,
+            logging.INFO,
+            "ingest.local.document",
+            pipeline_run_id=str(run.id),
+            knowledge_base=knowledge_base_name,
+            document_id=str(document.id),
+            file_path=str(skipped.path),
+            status="skipped",
+            skip_reason=skipped.reason,
         )
         skipped_count += 1
 
@@ -215,6 +254,17 @@ def ingest_local_directory(
                             "skip_reason": "unchanged",
                         },
                     )
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "ingest.local.document",
+                        pipeline_run_id=str(run.id),
+                        knowledge_base=knowledge_base_name,
+                        document_id=str(document.id),
+                        file_path=str(candidate.path),
+                        status="skipped",
+                        skip_reason="unchanged",
+                    )
                     skipped_count += 1
                     continue
 
@@ -241,6 +291,19 @@ def ingest_local_directory(
                         "version_number": version.version_number,
                     },
                 )
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "ingest.local.document",
+                    pipeline_run_id=str(run.id),
+                    knowledge_base=knowledge_base_name,
+                    document_id=str(document.id),
+                    document_version_id=str(version.id),
+                    file_path=str(candidate.path),
+                    parser=parse_result.parser_name,
+                    status="success",
+                    version_number=version.version_number,
+                )
         except Exception as exc:
             failed_count += 1
             document = get_document_by_uri(
@@ -266,6 +329,17 @@ def ingest_local_directory(
                 error_message=str(exc),
                 metadata_json={"file_name": candidate.path.name},
             )
+            log_event(
+                logger,
+                logging.WARNING,
+                "ingest.local.document",
+                pipeline_run_id=str(run.id),
+                knowledge_base=knowledge_base_name,
+                document_id=str(document.id),
+                file_path=str(candidate.path),
+                status="failed",
+                error=str(exc),
+            )
 
     run.total_items = len(scan_result.discovered) + len(scan_result.skipped)
     run.success_count = created_versions
@@ -273,6 +347,19 @@ def ingest_local_directory(
     run.status = "completed_with_failures" if failed_count else "completed"
     run.finished_at = datetime.now(timezone.utc)
     session.commit()
+    log_event(
+        logger,
+        logging.INFO,
+        "ingest.local.completed",
+        pipeline_run_id=str(run.id),
+        knowledge_base=knowledge_base_name,
+        status=run.status,
+        created_documents=created_documents,
+        created_versions=created_versions,
+        skipped_count=skipped_count,
+        failed_count=failed_count,
+        duration_ms=round((perf_counter() - ingest_started) * 1000, 3),
+    )
 
     return IngestionReport(
         pipeline_run_id=run.id,
