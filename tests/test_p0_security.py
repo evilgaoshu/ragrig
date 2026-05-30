@@ -500,7 +500,7 @@ def test_retrieval_search_uses_token_principals_not_request_body(
     engine,
     monkeypatch,
 ) -> None:
-    import ragrig.main as main_module
+    import ragrig.routers.retrieval_api as retrieval_router_module
     from ragrig.config import Settings
     from ragrig.main import create_app
     from ragrig.repositories import get_or_create_knowledge_base
@@ -548,7 +548,11 @@ def test_retrieval_search_uses_token_principals_not_request_body(
             degraded_reason="",
         )
 
-    monkeypatch.setattr(main_module, "search_knowledge_base", fake_search_knowledge_base)
+    monkeypatch.setattr(
+        retrieval_router_module,
+        "search_knowledge_base",
+        fake_search_knowledge_base,
+    )
 
     resp = local_client.post(
         "/retrieval/search",

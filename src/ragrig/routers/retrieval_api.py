@@ -1,0 +1,456 @@
+from __future__ import annotations
+
+import uuid
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse, StreamingResponse
+from sqlalchemy.orm import Session
+
+from ragrig.answer import NoEvidenceError, generate_answer
+from ragrig.answer import ProviderUnavailableError as AnswerProviderUnavailableError
+from ragrig.api.schemas import AnswerRequest, PermissionPreviewRequest, RetrievalSearchRequest
+from ragrig.config import Settings, get_settings
+from ragrig.db.models import KnowledgeBase
+from ragrig.db.session import get_session
+from ragrig.deps import AuthContext, get_auth_context
+from ragrig.knowledge_base_config import (
+    kb_role_model_config,
+    public_role_model_selection,
+    role_model_selection,
+)
+from ragrig.local_pilot import ModelConfigError
+from ragrig.local_pilot.model_config import resolve_env_config
+from ragrig.repositories import get_knowledge_base_by_name
+from ragrig.retrieval import (
+    EmbeddingProfileMismatchError,
+    EmptyQueryError,
+    InvalidTopKError,
+    KnowledgeBaseNotFoundError,
+    RerankerUnavailableError,
+    search_knowledge_base,
+)
+from ragrig.routers.runtime import (
+    get_rate_limiter,
+    get_workspace_id,
+    knowledge_base_access_error,
+)
+from ragrig.services.common import (
+    record_usage_for_request,
+    resolve_acl_context,
+    resolve_vector_backend,
+    serialize_error,
+)
+from ragrig.services.retrieval_api import answer_sse_stream, safe_chunk_metadata
+from ragrig.web_console import build_permission_preview
+
+router = APIRouter(tags=["retrieval"])
+
+
+@router.post("/retrieval/search", response_model=None)
+def retrieval_search(
+    request: RetrievalSearchRequest,
+    session: Annotated[Session, Depends(get_session)],
+    workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    rate_limiter: Annotated[Any, Depends(get_rate_limiter)],
+) -> dict[str, Any] | JSONResponse:
+    rate_limiter.check_search(str(workspace_id))
+    if settings.ragrig_auth_enabled:
+        if not request.query.strip():
+            return JSONResponse(
+                status_code=400,
+                content=serialize_error(
+                    EmptyQueryError("Query must not be empty", details={"query": request.query})
+                ),
+            )
+        kb = get_knowledge_base_by_name(
+            session,
+            request.knowledge_base,
+            workspace_id=workspace_id,
+        )
+        if kb is None:
+            return JSONResponse(
+                status_code=404,
+                content=serialize_error(
+                    KnowledgeBaseNotFoundError(
+                        f"Knowledge base '{request.knowledge_base}' was not found",
+                        details={"knowledge_base": request.knowledge_base},
+                    )
+                ),
+            )
+        access_error = knowledge_base_access_error(
+            settings=settings,
+            session=session,
+            auth=auth,
+            knowledge_base_id=kb.id,
+            minimum="viewer",
+            allow_anonymous_reader=True,
+        )
+        if access_error is not None:
+            return access_error
+    principal_ids, enforce_acl = resolve_acl_context(
+        settings=settings,
+        auth=auth,
+        requested_principal_ids=request.principal_ids,
+        requested_enforce_acl=request.enforce_acl,
+    )
+    try:
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name=request.knowledge_base,
+            query=request.query,
+            top_k=request.top_k,
+            provider=request.provider,
+            model=request.model,
+            dimensions=request.dimensions,
+            vector_backend=resolve_vector_backend(settings),
+            principal_ids=principal_ids,
+            enforce_acl=enforce_acl,
+            workspace_id=workspace_id,
+            mode=request.mode,
+            lexical_weight=request.lexical_weight,
+            vector_weight=request.vector_weight,
+            candidate_k=request.candidate_k,
+            reranker_provider=request.reranker_provider,
+            reranker_model=request.reranker_model,
+            graph_weight=request.graph_weight,
+            graph_depth=request.graph_depth,
+        )
+    except KnowledgeBaseNotFoundError as exc:
+        return JSONResponse(status_code=404, content=serialize_error(exc))
+    except (EmptyQueryError, EmbeddingProfileMismatchError, InvalidTopKError) as exc:
+        return JSONResponse(status_code=400, content=serialize_error(exc))
+    except RerankerUnavailableError as exc:
+        return JSONResponse(status_code=503, content=serialize_error(exc))
+
+    response: dict[str, Any] = {
+        "knowledge_base": report.knowledge_base,
+        "query": report.query,
+        "top_k": report.top_k,
+        "provider": report.provider,
+        "model": report.model,
+        "dimensions": report.dimensions,
+        "distance_metric": report.distance_metric,
+        "backend": report.backend,
+        "backend_metadata": report.backend_metadata,
+        "cost_latency": report.cost_latency,
+        "total_results": report.total_results,
+        "acl_explain": report.acl_explain,
+        "graph_context": getattr(report, "graph_context", {}),
+        "results": [
+            {
+                "document_id": str(result.document_id),
+                "document_version_id": str(result.document_version_id),
+                "chunk_id": str(result.chunk_id),
+                "chunk_index": result.chunk_index,
+                "document_uri": result.document_uri,
+                "source_uri": result.source_uri,
+                "text": result.text,
+                "text_preview": result.text_preview,
+                "distance": result.distance,
+                "score": result.score,
+                "chunk_metadata": safe_chunk_metadata(result.chunk_metadata),
+                "rank_stage_trace": result.rank_stage_trace,
+                "acl_explain": {
+                    "chunk_id": result.acl_explain.chunk_id,
+                    "visibility": result.acl_explain.visibility,
+                    "permitted": result.acl_explain.permitted,
+                    "reason": result.acl_explain.reason,
+                }
+                if result.acl_explain is not None
+                else None,
+            }
+            for result in report.results
+        ],
+    }
+    if report.results:
+        reasons: dict[str, int] = {}
+        for result in report.results:
+            if result.acl_explain is not None:
+                reasons[result.acl_explain.reason] = reasons.get(result.acl_explain.reason, 0) + 1
+        response["acl_explain_summary"] = {
+            "total_chunks": len(report.results),
+            "reasons": reasons,
+        }
+    if report.degraded:
+        response["degraded"] = True
+        response["degraded_reason"] = report.degraded_reason
+    record_usage_for_request(
+        session,
+        workspace_id,
+        None,
+        report.cost_latency,
+        request_metadata={
+            "endpoint": "retrieval.search",
+            "role": request.role,
+            "mode": request.mode,
+        },
+        settings=settings,
+    )
+    return response
+
+
+@router.post("/permissions/preview", response_model=None)
+def permission_preview(
+    request: PermissionPreviewRequest,
+    session: Annotated[Session, Depends(get_session)],
+    workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+) -> dict[str, Any]:
+    return build_permission_preview(
+        session,
+        principal_ids=request.principal_ids,
+        workspace_id=workspace_id,
+    )
+
+
+@router.post("/retrieval/answer", response_model=None)
+def retrieval_answer(
+    request: AnswerRequest,
+    session: Annotated[Session, Depends(get_session)],
+    workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    rate_limiter: Annotated[Any, Depends(get_rate_limiter)],
+) -> dict[str, Any] | JSONResponse:
+    rate_limiter.check_search(str(workspace_id))
+    answer_kb: KnowledgeBase | None = None
+    if settings.ragrig_auth_enabled:
+        if not request.query.strip():
+            return JSONResponse(
+                status_code=400,
+                content=serialize_error(
+                    EmptyQueryError("Query must not be empty", details={"query": request.query})
+                ),
+            )
+        kb = get_knowledge_base_by_name(
+            session,
+            request.knowledge_base,
+            workspace_id=workspace_id,
+        )
+        if kb is None:
+            return JSONResponse(
+                status_code=404,
+                content=serialize_error(
+                    KnowledgeBaseNotFoundError(
+                        f"Knowledge base '{request.knowledge_base}' was not found",
+                        details={"knowledge_base": request.knowledge_base},
+                    )
+                ),
+            )
+        access_error = knowledge_base_access_error(
+            settings=settings,
+            session=session,
+            auth=auth,
+            knowledge_base_id=kb.id,
+            minimum="viewer",
+            allow_anonymous_reader=True,
+        )
+        if access_error is not None:
+            return access_error
+        answer_kb = kb
+    principal_ids, enforce_acl = resolve_acl_context(
+        settings=settings,
+        auth=auth,
+        requested_principal_ids=request.principal_ids,
+        requested_enforce_acl=request.enforce_acl,
+    )
+    if answer_kb is None:
+        answer_kb = get_knowledge_base_by_name(
+            session,
+            request.knowledge_base,
+            workspace_id=workspace_id,
+        )
+    persisted_role_config = kb_role_model_config(answer_kb)
+    effective_role_config = (
+        request.role_model_config
+        if request.role_model_config is not None
+        else persisted_role_config
+    )
+    role_selection, role_error = role_model_selection(request.role, effective_role_config)
+    if role_error is not None:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "invalid_role_model_config",
+                    "message": role_error,
+                    "details": {"role": request.role},
+                }
+            },
+        )
+    if role_selection and "source" not in role_selection:
+        role_selection["source"] = (
+            "request" if request.role_model_config is not None else "knowledge_base"
+        )
+    selected_provider = role_selection.get("provider", request.provider)
+    selected_model = role_selection.get("model", request.model)
+    selected_config = role_selection.get("config", request.config)
+    selected_answer_provider = role_selection.get(
+        "answer_provider",
+        request.answer_provider,
+    )
+    selected_answer_model = role_selection.get("answer_model", request.answer_model)
+    selected_answer_config = role_selection.get("answer_config", request.answer_config)
+    try:
+        provider_config = None
+        if selected_config is not None:
+            provider_config, missing_env = resolve_env_config(selected_config)
+            if missing_env:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": {
+                            "code": "missing_model_credentials",
+                            "message": (
+                                "Missing environment variable(s): " + ", ".join(missing_env)
+                            ),
+                            "details": {"missing_credentials": missing_env},
+                        }
+                    },
+                )
+        answer_provider_config = None
+        if selected_answer_config is not None:
+            answer_provider_config, missing_env = resolve_env_config(selected_answer_config)
+            if missing_env:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": {
+                            "code": "missing_model_credentials",
+                            "message": (
+                                "Missing environment variable(s): " + ", ".join(missing_env)
+                            ),
+                            "details": {"missing_credentials": missing_env},
+                        }
+                    },
+                )
+        report = generate_answer(
+            session=session,
+            knowledge_base_name=request.knowledge_base,
+            query=request.query,
+            top_k=request.top_k,
+            provider=selected_provider,
+            model=selected_model,
+            provider_config=provider_config,
+            answer_provider=selected_answer_provider,
+            answer_model=selected_answer_model,
+            answer_provider_config=answer_provider_config,
+            dimensions=request.dimensions,
+            vector_backend=resolve_vector_backend(settings),
+            principal_ids=principal_ids,
+            enforce_acl=enforce_acl,
+            mode=request.mode,
+            lexical_weight=request.lexical_weight,
+            vector_weight=request.vector_weight,
+            candidate_k=request.candidate_k,
+            reranker_provider=request.reranker_provider,
+            reranker_model=request.reranker_model,
+            graph_weight=request.graph_weight,
+            graph_depth=request.graph_depth,
+            workspace_id=workspace_id,
+        )
+    except ModelConfigError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": exc.code,
+                    "message": str(exc),
+                    "details": {"field": exc.field},
+                }
+            },
+        )
+    except NoEvidenceError as exc:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "answer": "",
+                "citations": [],
+                "evidence_chunks": [],
+                "model": exc.details.get("model", ""),
+                "provider": exc.details.get("provider", ""),
+                "retrieval_trace": exc.details,
+                "grounding_status": "refused",
+                "refusal_reason": str(exc),
+            },
+        )
+    except KnowledgeBaseNotFoundError as exc:
+        return JSONResponse(status_code=404, content=serialize_error(exc))
+    except (EmptyQueryError, EmbeddingProfileMismatchError, InvalidTopKError) as exc:
+        return JSONResponse(status_code=400, content=serialize_error(exc))
+    except RerankerUnavailableError as exc:
+        return JSONResponse(status_code=503, content=serialize_error(exc))
+    except AnswerProviderUnavailableError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": exc.code,
+                    "message": str(exc),
+                    "details": exc.details,
+                }
+            },
+        )
+
+    public_role_selection = public_role_model_selection(role_selection)
+    record_usage_for_request(
+        session,
+        workspace_id,
+        None,
+        report.cost_latency,
+        request_metadata={
+            "endpoint": "retrieval.answer",
+            "role": request.role,
+            "mode": request.mode,
+            "role_model_selection": public_role_selection,
+        },
+        settings=settings,
+    )
+    payload = {
+        "answer": report.answer,
+        "citations": [
+            {
+                "citation_id": citation.citation_id,
+                "document_uri": citation.document_uri,
+                "chunk_id": citation.chunk_id,
+                "chunk_index": citation.chunk_index,
+                "text_preview": citation.text_preview,
+                "score": citation.score,
+                "char_start": citation.char_start,
+                "char_end": citation.char_end,
+                "page_number": citation.page_number,
+                "metadata_summary": citation.metadata_summary,
+            }
+            for citation in report.citations
+        ],
+        "evidence_chunks": [
+            {
+                "citation_id": chunk.citation_id,
+                "document_uri": chunk.document_uri,
+                "chunk_id": chunk.chunk_id,
+                "chunk_index": chunk.chunk_index,
+                "text": chunk.text,
+                "score": chunk.score,
+                "distance": chunk.distance,
+                "char_start": chunk.char_start,
+                "char_end": chunk.char_end,
+                "page_number": chunk.page_number,
+            }
+            for chunk in report.evidence_chunks
+        ],
+        "model": report.model,
+        "provider": report.provider,
+        "role": request.role,
+        "role_model_selection": public_role_selection,
+        "retrieval_trace": report.retrieval_trace,
+        "grounding_status": report.grounding_status,
+        "refusal_reason": report.refusal_reason,
+    }
+    if request.stream:
+        return StreamingResponse(
+            answer_sse_stream(payload),
+            media_type="text/event-stream",
+        )
+    return payload

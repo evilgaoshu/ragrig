@@ -4438,7 +4438,7 @@ async def test_answer_api_passes_env_resolved_provider_config(
         )
 
     monkeypatch.setenv("RAGRIG_TEST_MODEL_KEY", "resolved-test-secret")
-    monkeypatch.setattr("ragrig.main.generate_answer", fake_generate_answer)
+    monkeypatch.setattr("ragrig.routers.retrieval_api.generate_answer", fake_generate_answer)
 
     database_path = tmp_path / "web-console-answer-config.db"
     session_factory = _create_file_session_factory(database_path)
@@ -4511,7 +4511,7 @@ async def test_answer_api_supports_separate_answer_provider_config(
         )
 
     monkeypatch.setenv("RAGRIG_TEST_GEMINI_KEY", "resolved-gemini-secret")
-    monkeypatch.setattr("ragrig.main.generate_answer", fake_generate_answer)
+    monkeypatch.setattr("ragrig.routers.retrieval_api.generate_answer", fake_generate_answer)
 
     database_path = tmp_path / "web-console-answer-provider-config.db"
     session_factory = _create_file_session_factory(database_path)
