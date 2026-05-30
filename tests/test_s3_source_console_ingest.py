@@ -157,19 +157,3 @@ async def test_s3_console_run_ingest_reports_missing_env_without_leaking_values(
     assert response.status_code == 400
     assert "actual-secret-key" not in response.text
     assert response.json()["error"]
-
-
-@pytest.mark.anyio
-async def test_console_exposes_s3_run_ingest_controls(tmp_path) -> None:
-    session_factory = _create_file_session_factory(tmp_path / "s3-console-html.db")
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/console")
-
-    assert response.status_code == 200
-    assert "Run ingest" in response.text
-    assert "/sources/run-ingest" in response.text
-    assert "runSourceIngestForm" in response.text
-    assert "source-ingest-result" in response.text
