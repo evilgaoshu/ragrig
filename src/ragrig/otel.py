@@ -9,6 +9,7 @@ injects trace_id/span_id correlation fields into every log record.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from ragrig.observability.logging import configure_logging
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def setup_otel(app: "FastAPI", settings: "Settings") -> None:
+def setup_otel(app: "FastAPI", settings: "Settings") -> Callable[[], None]:
     """Configure OpenTelemetry tracing + optional JSON structured logging."""
     configure_logging(
         log_format=settings.ragrig_log_format,
@@ -31,7 +32,7 @@ def setup_otel(app: "FastAPI", settings: "Settings") -> None:
         log_backup_count=settings.ragrig_log_backup_count,
     )
     if not settings.ragrig_otel_enabled:
-        return
+        return _noop_shutdown
 
     try:
         from opentelemetry import trace
@@ -43,7 +44,7 @@ def setup_otel(app: "FastAPI", settings: "Settings") -> None:
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
     except ImportError as exc:
         logger.warning("OpenTelemetry packages not installed, tracing disabled: %s", exc)
-        return
+        return _noop_shutdown
 
     resource = Resource.create({SERVICE_NAME: settings.ragrig_otel_service_name})
     provider = TracerProvider(resource=resource)
@@ -61,3 +62,27 @@ def setup_otel(app: "FastAPI", settings: "Settings") -> None:
         settings.ragrig_otel_endpoint,
         settings.ragrig_otel_service_name,
     )
+    return _otel_shutdown(provider)
+
+
+def _noop_shutdown() -> None:
+    return None
+
+
+def _otel_shutdown(provider: object) -> Callable[[], None]:
+    def shutdown() -> None:
+        force_flush = getattr(provider, "force_flush", None)
+        if callable(force_flush):
+            try:
+                force_flush(timeout_millis=5000)
+            except Exception as exc:  # pragma: no cover - defensive cleanup path
+                logger.warning("OpenTelemetry force_flush failed during shutdown: %s", exc)
+
+        close = getattr(provider, "shutdown", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as exc:  # pragma: no cover - defensive cleanup path
+                logger.warning("OpenTelemetry shutdown failed: %s", exc)
+
+    return shutdown

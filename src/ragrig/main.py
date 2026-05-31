@@ -71,10 +71,12 @@ def create_app(
 ) -> FastAPI:
     active_settings = settings or get_settings()
     database_check = check_database or create_database_check(active_settings)
+    default_engine = None
     default_session_factory = None
     if session_factory is None:
+        default_engine = create_db_engine(active_settings)
         default_session_factory = sessionmaker(
-            bind=create_db_engine(active_settings),
+            bind=default_engine,
             autoflush=False,
             autocommit=False,
             expire_on_commit=False,
@@ -82,6 +84,11 @@ def create_app(
 
     active_task_executor = task_executor or default_task_executor()
     rate_limiter = RateLimiter(active_settings)
+
+    def noop_otel_shutdown() -> None:
+        return None
+
+    otel_shutdown: Callable[[], None] = noop_otel_shutdown
 
     def shutdown_task_executor() -> None:
         shutdown = getattr(active_task_executor, "shutdown", None)
@@ -94,6 +101,9 @@ def create_app(
             yield
         finally:
             shutdown_task_executor()
+            if default_engine is not None:
+                default_engine.dispose()
+            otel_shutdown()
 
     app = FastAPI(title="RAGRig", version=__version__, lifespan=lifespan)
 
@@ -104,7 +114,7 @@ def create_app(
 
     from ragrig.otel import setup_otel
 
-    setup_otel(app, active_settings)
+    otel_shutdown = setup_otel(app, active_settings)
     configure_cors(app, active_settings)
     configure_service_exception_handlers(app)
     configure_structured_request_logging(app, logger)

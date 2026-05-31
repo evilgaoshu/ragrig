@@ -35,6 +35,32 @@ QDRANT_GRPC_PORT=6334
 
 Bring it up with `docker compose --profile qdrant up -d qdrant`.
 
+## Production hardening
+
+Production mode rejects the local development auth pepper. Set an environment-
+specific secret before running with `APP_ENV=production`:
+
+```
+APP_ENV=production
+RAGRIG_AUTH_SECRET_PEPPER=replace-with-a-long-random-secret
+```
+
+The default compose file adds `restart: unless-stopped` to services and applies
+resource limits to the primary app and database containers. Override these
+defaults in `.env` when the host capacity differs:
+
+```
+RAGRIG_APP_MEM_LIMIT=2g
+RAGRIG_APP_CPUS=2.0
+RAGRIG_DB_MEM_LIMIT=2g
+RAGRIG_DB_CPUS=2.0
+```
+
+Health probes are split by purpose:
+- `/health/live` checks only that the API process is alive.
+- `/health/ready` checks database and task backend readiness.
+- `/health` is kept as a readiness-compatible alias for existing deployments.
+
 ## Production observability
 
 Prometheus metrics are enabled by default and exposed at `/metrics`.
@@ -76,6 +102,15 @@ RAGRIG_LOG_BACKUP_COUNT=5
 application creates the parent directory and rotates the file according to
 `RAGRIG_LOG_MAX_BYTES` and `RAGRIG_LOG_BACKUP_COUNT`.
 
+PostgreSQL SQLAlchemy pool sizing is configurable and ignored for SQLite test
+URLs:
+
+```
+RAGRIG_DB_POOL_SIZE=10
+RAGRIG_DB_MAX_OVERFLOW=20
+RAGRIG_DB_POOL_RECYCLE=1800
+```
+
 ## ARQ / Redis task queue
 
 The default task backend is the in-process threadpool. Redis is only required
@@ -87,7 +122,7 @@ RAGRIG_REDIS_URL=redis://redis:6379
 RAGRIG_TASK_QUEUE_MAX_JOBS=10
 ```
 
-When the ARQ backend is active, `/health` pings Redis and reports
+When the ARQ backend is active, `/health/ready` and `/health` ping Redis and report
 `redis.status="connected"` or returns HTTP 503 with `redis.status="error"`.
 With the default threadpool backend, Redis health is reported as `skipped`.
 

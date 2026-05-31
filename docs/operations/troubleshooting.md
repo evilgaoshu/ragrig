@@ -5,20 +5,24 @@ retrieval, indexing, task-queue, and database issues.
 
 ## First Checks
 
-1. Check `/health`.
+1. Check `/health/live` for process liveness.
+   - `status=alive` means the API process can answer requests.
+   - This endpoint deliberately does not check the database, Redis, or model
+     dependencies.
+2. Check `/health/ready` or the compatibility alias `/health`.
    - `status=healthy` means the API process, database check, reranker policy,
-     and task backend health are acceptable.
+     and task backend readiness are acceptable.
    - `db=error` means the app cannot complete `SELECT 1` against the configured
      database URL.
    - `redis.status=skipped` is expected when `RAGRIG_TASK_BACKEND=threadpool`.
    - `redis.status=error` with `RAGRIG_TASK_BACKEND=arq` means Redis or the ARQ
      dependency is unavailable and the response is HTTP 503.
-2. Check `/metrics`.
+3. Check `/metrics`.
    - HTTP latency and status metrics confirm whether failures are route-local
      or process-wide.
    - Retrieval metrics show hit, zero-result, degraded, and error counts.
    - DB pool metrics show connection pressure and invalidation events.
-3. Check logs by request ID.
+4. Check logs by request ID.
    - Every API response includes `X-Request-ID`.
    - JSON logs include request context plus OpenTelemetry trace/span IDs when
      tracing is enabled.
@@ -46,8 +50,9 @@ Metrics:
 Actions:
 - If checked-out connections stay near pool size, inspect slow API routes and
   long indexing tasks.
-- If overflow rises steadily, increase database pool capacity only after
-  confirming PostgreSQL can accept the extra connections.
+- If overflow rises steadily, tune `RAGRIG_DB_POOL_SIZE`,
+  `RAGRIG_DB_MAX_OVERFLOW`, and `RAGRIG_DB_POOL_RECYCLE` only after confirming
+  PostgreSQL can accept the extra connections.
 - If invalidations rise, inspect database restarts, network interruptions, and
   connection lifetime settings.
 

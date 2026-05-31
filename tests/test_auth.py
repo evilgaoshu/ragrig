@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from ragrig.auth import (
+    _DEFAULT_LOCAL_PEPPER,
+    _hash_secret,
     create_api_key,
     create_user_session,
     ensure_default_workspace,
@@ -25,6 +27,28 @@ def test_default_workspace_bootstrap_is_idempotent(sqlite_session) -> None:
     assert first.id == second.id
     assert second.slug == "default"
     assert second.display_name == "Default Workspace"
+
+
+def test_default_auth_pepper_is_rejected_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("RAGRIG_AUTH_SECRET_PEPPER", raising=False)
+
+    with pytest.raises(RuntimeError, match="RAGRIG_AUTH_SECRET_PEPPER"):
+        _hash_secret("secret")
+
+    with pytest.raises(RuntimeError, match="RAGRIG_AUTH_SECRET_PEPPER"):
+        _hash_secret("secret", pepper=_DEFAULT_LOCAL_PEPPER)
+
+    monkeypatch.setenv("RAGRIG_AUTH_SECRET_PEPPER", "")
+    with pytest.raises(RuntimeError, match="RAGRIG_AUTH_SECRET_PEPPER"):
+        _hash_secret("secret")
+
+
+def test_custom_auth_pepper_is_allowed_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("RAGRIG_AUTH_SECRET_PEPPER", "prod-test-pepper")
+
+    assert _hash_secret("secret").startswith("hmac-sha256:")
 
 
 def test_api_key_create_and_verify_stores_hash_only(sqlite_session) -> None:

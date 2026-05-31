@@ -16,6 +16,18 @@ class Settings(BaseSettings):
         default="postgresql://ragrig:ragrig_dev@localhost:5432/ragrig",
         description="PostgreSQL connection string for RAGRig.",
     )
+    ragrig_db_pool_size: int = Field(
+        default=10,
+        description="SQLAlchemy PostgreSQL connection pool size.",
+    )
+    ragrig_db_max_overflow: int = Field(
+        default=20,
+        description="Maximum overflow connections above the PostgreSQL pool size.",
+    )
+    ragrig_db_pool_recycle: int = Field(
+        default=1800,
+        description="Seconds before PostgreSQL pooled connections are recycled.",
+    )
     vector_backend: str = Field(default="pgvector", description="Vector backend name.")
     qdrant_url: str = Field(
         default="http://localhost:6333",
