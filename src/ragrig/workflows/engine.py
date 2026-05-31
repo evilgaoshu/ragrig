@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from time import perf_counter
-from typing import Any
+from time import perf_counter, sleep
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,8 @@ class WorkflowStep:
     config: dict[str, Any] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)
     max_retries: int = 0
+    retry_backoff_seconds: float = 0.0
+    retry_backoff_multiplier: float = 2.0
     continue_on_error: bool = False
 
 
@@ -89,36 +91,43 @@ def list_workflow_operations() -> list[dict[str, object]]:
             "description": "Validate and dispatch an enterprise source connector.",
             "connector_ids": sorted(ENTERPRISE_CONNECTORS),
             "dry_run_supported": True,
+            "retry_backoff_supported": True,
         },
         {
             "operation": "ingest.local",
             "description": "Ingest local Markdown/Text files into a knowledge base.",
             "dry_run_supported": True,
+            "retry_backoff_supported": True,
         },
         {
             "operation": "ingest.fileshare",
             "description": "Ingest enterprise fileshare sources through source.fileshare.",
             "dry_run_supported": True,
+            "retry_backoff_supported": True,
         },
         {
             "operation": "ingest.s3",
             "description": "Ingest S3-compatible object storage through source.s3.",
             "dry_run_supported": False,
+            "retry_backoff_supported": True,
         },
         {
             "operation": "ingest.database",
             "description": "Ingest PostgreSQL/MySQL read-only query rows through source.database.",
             "dry_run_supported": False,
+            "retry_backoff_supported": True,
         },
         {
             "operation": "index.knowledge_base",
             "description": "Chunk and embed latest document versions for a knowledge base.",
             "dry_run_supported": True,
+            "retry_backoff_supported": True,
         },
         {
             "operation": "noop",
             "description": "No-op step for dependency graph validation.",
             "dry_run_supported": True,
+            "retry_backoff_supported": True,
         },
     ]
 
@@ -128,6 +137,7 @@ def run_workflow(
     session: Session,
     definition: WorkflowDefinition,
     dry_run: bool = False,
+    retry_sleep: Callable[[float], None] = sleep,
 ) -> WorkflowRunReport:
     steps = _topological_steps(definition.steps)
     for step in steps:
@@ -170,7 +180,7 @@ def run_workflow(
             )
             continue
 
-        result = _run_step(session=session, step=step)
+        result = _run_step(session=session, step=step, retry_sleep=retry_sleep)
         results.append(result)
         if result.status != "success":
             failed_steps.add(step.step_id)
@@ -187,7 +197,12 @@ def run_workflow(
     )
 
 
-def _run_step(*, session: Session, step: WorkflowStep) -> WorkflowStepResult:
+def _run_step(
+    *,
+    session: Session,
+    step: WorkflowStep,
+    retry_sleep: Callable[[float], None],
+) -> WorkflowStepResult:
     runner = _RUNNERS[step.operation]
     attempts = 0
     started = perf_counter()
@@ -207,6 +222,10 @@ def _run_step(*, session: Session, step: WorkflowStep) -> WorkflowStepResult:
             )
         except Exception as exc:  # pragma: no cover - exercised through failure paths
             last_error = exc
+            if attempt < step.max_retries:
+                delay = _retry_delay_seconds(step, attempt)
+                if delay > 0:
+                    retry_sleep(delay)
     return WorkflowStepResult(
         step_id=step.step_id,
         operation=step.operation,
@@ -316,6 +335,12 @@ def _topological_steps(steps: list[WorkflowStep]) -> list[WorkflowStep]:
     for step in steps:
         if not step.step_id:
             raise WorkflowValidationError("step_id is required")
+        if step.max_retries < 0:
+            raise WorkflowValidationError("max_retries must be non-negative")
+        if step.retry_backoff_seconds < 0:
+            raise WorkflowValidationError("retry_backoff_seconds must be non-negative")
+        if step.retry_backoff_multiplier < 1:
+            raise WorkflowValidationError("retry_backoff_multiplier must be at least 1")
         if step.step_id in by_id:
             raise WorkflowValidationError(f"duplicate step_id: {step.step_id}")
         by_id[step.step_id] = step
@@ -391,6 +416,10 @@ def _optional_string_list(value: object) -> list[str] | None:
 
 def _report_output(report: object) -> dict[str, Any]:
     return {key: value for key, value in report.__dict__.items() if key != "pipeline_run_id"}
+
+
+def _retry_delay_seconds(step: WorkflowStep, retry_index: int) -> float:
+    return step.retry_backoff_seconds * (step.retry_backoff_multiplier**retry_index)
 
 
 _RUNNERS = {

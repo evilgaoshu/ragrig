@@ -19,7 +19,15 @@ from ragrig.indexing.llm_steps import (
     generate_chunk_description,
     generate_document_summary,
 )
-from ragrig.observability import aggregate_cost_latency, log_event, observe_model_call
+from ragrig.observability import (
+    aggregate_cost_latency,
+    hash_attribute,
+    log_event,
+    observe_model_call,
+    set_span_attributes,
+    start_span,
+    trace_function,
+)
 from ragrig.pii import redact as pii_redact
 from ragrig.plugins import get_plugin_registry
 from ragrig.processing_profile import ProcessingProfile, TaskType, resolve_profile
@@ -37,6 +45,30 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _indexing_span_attributes(*_args, **kwargs) -> dict[str, object]:
+    return {
+        "ragrig.operation": "indexing.knowledge_base",
+        "ragrig.knowledge_base_hash": hash_attribute(
+            kwargs.get("knowledge_base_name"), prefix="kb"
+        ),
+        "ragrig.workspace_hash": hash_attribute(kwargs.get("workspace_id"), prefix="ws"),
+        "index.chunk_size": int(kwargs.get("chunk_size", 500) or 500),
+        "index.chunk_overlap": int(kwargs.get("chunk_overlap", 50) or 50),
+        "embedding.dimensions": int(kwargs.get("embedding_dimensions", 8) or 8),
+        "index.force_reindex": bool(kwargs.get("force_reindex", False)),
+    }
+
+
+def _indexing_result_span_attributes(report: "IndexingReport") -> dict[str, object]:
+    return {
+        "index.indexed_count": report.indexed_count,
+        "index.skipped_count": report.skipped_count,
+        "index.failed_count": report.failed_count,
+        "index.chunk_count": report.chunk_count,
+        "index.embedding_count": report.embedding_count,
+    }
 
 
 @dataclass(frozen=True)
@@ -187,10 +219,27 @@ def _replace_version_index(
     }
 
     # ── Determine parent-child vs flat chunking ───────────────────────────────
-    if chunking_config.parent_chunk_size is not None:
-        parent_drafts, child_drafts = chunk_text_hierarchical(source_text, chunking_config)
-    else:
-        parent_drafts, child_drafts = [], chunk_text(source_text, chunking_config)
+    with start_span(
+        "ragrig.indexing.chunk",
+        **{
+            "ragrig.document_version_hash": hash_attribute(document_version.id, prefix="dv"),
+            "ragrig.workspace_hash": hash_attribute(workspace_id, prefix="ws"),
+            "index.chunk_size": chunking_config.chunk_size,
+            "index.chunk_overlap": chunking_config.chunk_overlap,
+            "index.parent_child": chunking_config.parent_chunk_size is not None,
+        },
+    ) as chunk_span:
+        if chunking_config.parent_chunk_size is not None:
+            parent_drafts, child_drafts = chunk_text_hierarchical(source_text, chunking_config)
+        else:
+            parent_drafts, child_drafts = [], chunk_text(source_text, chunking_config)
+        set_span_attributes(
+            chunk_span,
+            **{
+                "index.parent_chunk_count": len(parent_drafts),
+                "index.child_chunk_count": len(child_drafts),
+            },
+        )
 
     # ── Persist parent chunks (no embedding) ─────────────────────────────────
     # Parent chunks use negative chunk_index (-(i+1)) to avoid collisions with
@@ -261,10 +310,30 @@ def _replace_version_index(
     for batch_start in range(0, len(prepared_embeddings), embedding_batch_size):
         batch = prepared_embeddings[batch_start : batch_start + embedding_batch_size]
         started = perf_counter()
-        embeddings = _embed_texts_with_provider(
-            embedding_provider,
-            [prepared.embedding_input for prepared in batch],
-        )
+        with start_span(
+            "ragrig.indexing.embed",
+            **{
+                "ragrig.document_version_hash": hash_attribute(document_version.id, prefix="dv"),
+                "ragrig.workspace_hash": hash_attribute(workspace_id, prefix="ws"),
+                "embedding.provider": getattr(embedding_provider, "provider_name", "unknown"),
+                "embedding.batch_size": len(batch),
+                "embedding.batch_start": batch_start,
+            },
+        ) as embed_span:
+            embeddings = _embed_texts_with_provider(
+                embedding_provider,
+                [prepared.embedding_input for prepared in batch],
+            )
+            if embeddings:
+                set_span_attributes(
+                    embed_span,
+                    **{
+                        "embedding.provider": embeddings[0].provider,
+                        "embedding.model": embeddings[0].model,
+                        "embedding.dimensions": embeddings[0].dimensions,
+                        "embedding.count": len(embeddings),
+                    },
+                )
         batch_latency_ms = (perf_counter() - started) * 1000
         per_embedding_latency_ms = batch_latency_ms / len(embeddings)
 
@@ -433,10 +502,23 @@ def _mirror_version_index(
         )
         for embedding, chunk, version, document in chunk_records
     ]
-    vector_backend.upsert_embeddings(session, collection, records)
+    with start_span(
+        "ragrig.indexing.upsert",
+        backend=getattr(vector_backend, "backend_name", "unknown"),
+        record_count=len(records),
+        **{
+            "ragrig.knowledge_base_hash": hash_attribute(knowledge_base_id, prefix="kb"),
+        },
+    ):
+        vector_backend.upsert_embeddings(session, collection, records)
     return len(records)
 
 
+@trace_function(
+    "ragrig.indexing.knowledge_base",
+    attributes=_indexing_span_attributes,
+    result_attributes=_indexing_result_span_attributes,
+)
 def index_knowledge_base(
     session: Session,
     *,

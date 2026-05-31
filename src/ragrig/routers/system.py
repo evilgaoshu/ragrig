@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from ragrig import __version__
 from ragrig.config import Settings, get_settings
 from ragrig.db.session import get_session
-from ragrig.health import build_reranker_health
+from ragrig.health import build_redis_health, build_reranker_health
 from ragrig.local_pilot import (
     ModelConfigError,
     build_local_pilot_status,
@@ -44,6 +44,7 @@ def health(
     settings: Annotated[Settings, Depends(get_settings)],
     database_check: Annotated[Callable[[], None], Depends(get_database_check)],
 ) -> dict[str, Any] | JSONResponse:
+    redis_health = build_redis_health(settings)
     try:
         database_check()
     except Exception as exc:  # pragma: no cover - covered via contract test
@@ -54,6 +55,21 @@ def health(
                 "app": "ok",
                 "db": "error",
                 "detail": str(exc),
+                "redis": redis_health,
+                "reranker": build_reranker_health(settings),
+                "version": __version__,
+            },
+        )
+
+    if redis_health["status"] == "error":
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "app": "ok",
+                "db": "connected",
+                "detail": "redis unavailable",
+                "redis": redis_health,
                 "reranker": build_reranker_health(settings),
                 "version": __version__,
             },
@@ -63,6 +79,7 @@ def health(
         "status": "healthy",
         "app": "ok",
         "db": "connected",
+        "redis": redis_health,
         "reranker": build_reranker_health(settings),
         "version": __version__,
     }

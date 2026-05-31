@@ -52,6 +52,8 @@ class WorkflowStepRequest(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
     depends_on: list[str] = Field(default_factory=list)
     max_retries: int = Field(default=0, ge=0, le=5)
+    retry_backoff_seconds: float = Field(default=0.0, ge=0, le=60)
+    retry_backoff_multiplier: float = Field(default=2.0, ge=1, le=10)
     continue_on_error: bool = False
 
 
@@ -130,6 +132,8 @@ def workflow_run(
                     config=step.config,
                     depends_on=step.depends_on,
                     max_retries=step.max_retries,
+                    retry_backoff_seconds=step.retry_backoff_seconds,
+                    retry_backoff_multiplier=step.retry_backoff_multiplier,
                     continue_on_error=step.continue_on_error,
                 )
                 for step in request.steps

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import weakref
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -103,6 +104,44 @@ MODEL_OPERATION_LATENCY_BY_WORKSPACE = Histogram(
     buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
 )
 
+DB_POOL_SIZE = Gauge(
+    "ragrig_db_pool_size",
+    "Configured SQLAlchemy database connection pool size.",
+)
+
+DB_POOL_CHECKED_IN = Gauge(
+    "ragrig_db_pool_checked_in",
+    "SQLAlchemy database connections currently checked in to the pool.",
+)
+
+DB_POOL_CHECKED_OUT = Gauge(
+    "ragrig_db_pool_checked_out",
+    "SQLAlchemy database connections currently checked out from the pool.",
+)
+
+DB_POOL_OVERFLOW = Gauge(
+    "ragrig_db_pool_overflow",
+    "SQLAlchemy database connection pool overflow count.",
+)
+
+DB_POOL_CHECKOUTS = Counter(
+    "ragrig_db_pool_checkouts_total",
+    "Total SQLAlchemy database connection pool checkout events.",
+)
+
+DB_POOL_CHECKINS = Counter(
+    "ragrig_db_pool_checkins_total",
+    "Total SQLAlchemy database connection pool checkin events.",
+)
+
+DB_POOL_INVALIDATIONS = Counter(
+    "ragrig_db_pool_invalidations_total",
+    "Total SQLAlchemy database connection pool invalidation events.",
+)
+
+_INSTRUMENTED_POOLS: weakref.WeakSet[object] = weakref.WeakSet()
+_INSTRUMENTED_POOL_IDS: set[int] = set()
+
 
 def setup_metrics(app: "FastAPI") -> None:
     """Attach Prometheus instrumentation and expose /metrics."""
@@ -138,6 +177,48 @@ def setup_metrics(app: "FastAPI") -> None:
     @app.get("/metrics", include_in_schema=False)
     def metrics() -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+def setup_db_pool_metrics(engine: object) -> None:
+    """Attach low-cardinality Prometheus instrumentation to an engine pool."""
+    pool = getattr(engine, "pool", None)
+    if pool is None:
+        return
+    if _pool_instrumented(pool):
+        return
+    _mark_pool_instrumented(pool)
+
+    try:
+        from sqlalchemy import event
+    except Exception:
+        return
+
+    def checkout(_dbapi_connection, _connection_record, _connection_proxy) -> None:
+        DB_POOL_CHECKOUTS.inc()
+        observe_db_pool_state(engine)
+
+    def checkin(_dbapi_connection, _connection_record) -> None:
+        DB_POOL_CHECKINS.inc()
+        observe_db_pool_state(engine)
+
+    def invalidate(_dbapi_connection, _connection_record, _exception) -> None:
+        DB_POOL_INVALIDATIONS.inc()
+        observe_db_pool_state(engine)
+
+    event.listen(pool, "checkout", checkout)
+    event.listen(pool, "checkin", checkin)
+    event.listen(pool, "invalidate", invalidate)
+    observe_db_pool_state(engine)
+
+
+def observe_db_pool_state(engine: object) -> None:
+    pool = getattr(engine, "pool", None)
+    if pool is None:
+        return
+    _set_pool_gauge(DB_POOL_SIZE, _pool_value(pool, "size"))
+    _set_pool_gauge(DB_POOL_CHECKED_IN, _pool_value(pool, "checkedin"))
+    _set_pool_gauge(DB_POOL_CHECKED_OUT, _pool_value(pool, "checkedout"))
+    _set_pool_gauge(DB_POOL_OVERFLOW, _pool_value(pool, "overflow"))
 
 
 def observe_retrieval_report(
@@ -234,3 +315,32 @@ def _workspace_label(value: object | None) -> str | None:
         return None
     digest = hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
     return f"ws_{digest}"
+
+
+def _pool_value(pool: object, method_name: str) -> float | None:
+    method = getattr(pool, method_name, None)
+    if not callable(method):
+        return None
+    try:
+        return float(method())
+    except Exception:
+        return None
+
+
+def _set_pool_gauge(gauge: Gauge, value: float | None) -> None:
+    if value is not None:
+        gauge.set(value)
+
+
+def _pool_instrumented(pool: object) -> bool:
+    try:
+        return pool in _INSTRUMENTED_POOLS
+    except TypeError:
+        return id(pool) in _INSTRUMENTED_POOL_IDS
+
+
+def _mark_pool_instrumented(pool: object) -> None:
+    try:
+        _INSTRUMENTED_POOLS.add(pool)
+    except TypeError:
+        _INSTRUMENTED_POOL_IDS.add(id(pool))

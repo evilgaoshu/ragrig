@@ -16,6 +16,13 @@ from ragrig.observability.logging import (
     sanitize_log_fields,
     sanitize_log_value,
 )
+from ragrig.observability.tracing import (
+    hash_attribute,
+    record_span_exception,
+    set_span_attributes,
+    start_span,
+    trace_function,
+)
 
 __all__ = [
     "TRACKING_SCHEMA_VERSION",
@@ -28,8 +35,13 @@ __all__ = [
     "log_event",
     "observe_model_call",
     "pipeline_run_duration_ms",
+    "hash_attribute",
+    "record_span_exception",
     "safe_query_fields",
     "sanitize_log_fields",
     "sanitize_log_value",
+    "set_span_attributes",
+    "start_span",
     "summarize_pipeline_cost_latency",
+    "trace_function",
 ]
