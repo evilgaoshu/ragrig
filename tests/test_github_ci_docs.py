@@ -44,6 +44,7 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "make test-fast" in workflow
     assert "make coverage" in workflow
     assert "make web-check" in workflow
+    assert "npm audit --audit-level=high" in workflow
     assert "make migrate" in workflow
     assert "make db-check" in workflow
     assert "tests/test_pgvector_postgres_ci.py" in workflow
@@ -98,6 +99,49 @@ def test_docker_compose_uses_existing_qdrant_image_tag() -> None:
     compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
     assert "image: qdrant/qdrant:v1.14.1" in compose
+
+
+def test_production_observability_docs_and_compose_defaults_are_wired() -> None:
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    env_example = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+    optional_services = (REPO_ROOT / "docs" / "operations" / "optional-services.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "RAGRIG_METRICS_ENABLED: ${RAGRIG_METRICS_ENABLED:-true}" in compose
+    assert "RAGRIG_LOG_FILE: ${RAGRIG_LOG_FILE:-}" in compose
+    assert "- ragrig_logs:/app/logs" in compose
+    assert "ragrig_logs:" in compose
+    assert "# RAGRIG_LOG_FILE=/app/logs/ragrig.jsonl" in env_example
+    assert "Prometheus metrics are enabled by default" in optional_services
+    assert "RAGRIG_LOG_BACKUP_COUNT=5" in optional_services
+
+
+def test_contributing_documents_branch_commit_and_frontend_audit_policy() -> None:
+    contributing = (REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+
+    assert "## Branch Strategy" in contributing
+    assert "feature/<short-topic>" in contributing
+    assert "## Commit Messages" in contributing
+    assert "npm audit --audit-level=high" in contributing
+
+
+def test_architecture_decision_records_cover_current_core_choices() -> None:
+    adr_dir = REPO_ROOT / "docs" / "adr"
+
+    assert (adr_dir / "README.md").exists()
+    assert (adr_dir / "template.md").exists()
+
+    records = {
+        "0001-vector-backend-strategy.md": ("pgvector", "Qdrant"),
+        "0002-database-test-strategy.md": ("SQLite", "PostgreSQL"),
+        "0003-application-boundary.md": ("FastAPI monolith", "microservices"),
+    }
+    for filename, expected_terms in records.items():
+        content = (adr_dir / filename).read_text(encoding="utf-8")
+        assert "Status: Accepted" in content
+        for term in expected_terms:
+            assert term in content
 
 
 def test_pytest_configuration_does_not_reintroduce_sqlite_resourcewarning_filter() -> None:

@@ -607,8 +607,10 @@ async def test_retrieval_search_api_returns_contract_payload(tmp_path) -> None:
                 "top_k": 1,
             },
         )
+        metrics_response = await client.get("/metrics")
 
     assert response.status_code == 200
+    assert metrics_response.status_code == 200
     resp_json = response.json()
     assert resp_json["knowledge_base"] == "fixture-local"
     assert resp_json["query"] == "retrieval api contract"
@@ -634,6 +636,13 @@ async def test_retrieval_search_api_returns_contract_payload(tmp_path) -> None:
     assert "stages" in r["rank_stage_trace"]
     assert r["rank_stage_trace"]["stages"][0]["stage"] == "vector"
     assert "degraded" not in resp_json
+    metrics_payload = metrics_response.text
+    assert "ragrig_retrieval_requests_total" in metrics_payload
+    assert 'endpoint="retrieval.search"' in metrics_payload
+    assert 'mode="dense"' in metrics_payload
+    assert 'backend="pgvector"' in metrics_payload
+    assert 'status="hit"' in metrics_payload
+    assert "ragrig_model_operation_tokens_estimated_total" in metrics_payload
 
 
 @pytest.mark.anyio
