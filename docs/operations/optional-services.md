@@ -42,12 +42,18 @@ Application-level metrics include HTTP request latency/status, retrieval
 hit/zero/degraded counts, retrieval result counts, and estimated model
 operation token/cost/latency totals.
 
+Workspace-hash business metrics are available as a separate optional series.
+Keep them disabled unless the Prometheus cardinality is acceptable for your
+deployment. When enabled, RAGRig emits `*_by_workspace` metrics with
+`workspace="ws_<sha256-prefix>"` labels instead of raw workspace IDs.
+
 File logs are deliberately opt-in. In containers, stdout/stderr remains the
 portable default because most orchestrators own log collection and rotation. If
 you want compose-managed rotating log files, copy this block into `.env`:
 
 ```
 RAGRIG_METRICS_ENABLED=true
+RAGRIG_METRICS_WORKSPACE_LABELS_ENABLED=false
 RAGRIG_LOG_FORMAT=json
 RAGRIG_LOG_LEVEL=INFO
 RAGRIG_LOG_FILE=/app/logs/ragrig.jsonl

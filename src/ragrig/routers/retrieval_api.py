@@ -48,9 +48,20 @@ from ragrig.web_console import build_permission_preview
 router = APIRouter(tags=["retrieval"])
 
 
-def _record_retrieval_error(settings: Settings, *, endpoint: str, mode: str) -> None:
+def _record_retrieval_error(
+    settings: Settings,
+    *,
+    endpoint: str,
+    mode: str,
+    workspace_id: uuid.UUID,
+) -> None:
     if settings.ragrig_metrics_enabled:
-        observe_retrieval_error(endpoint=endpoint, mode=mode)
+        observe_retrieval_error(
+            endpoint=endpoint,
+            mode=mode,
+            workspace_id=workspace_id,
+            include_workspace_label=settings.ragrig_metrics_workspace_labels_enabled,
+        )
 
 
 def _record_retrieval_report(
@@ -62,6 +73,7 @@ def _record_retrieval_report(
     total_results: int,
     degraded: bool = False,
     cost_latency: dict[str, Any] | None = None,
+    workspace_id: uuid.UUID,
 ) -> None:
     if settings.ragrig_metrics_enabled:
         observe_retrieval_report(
@@ -71,6 +83,8 @@ def _record_retrieval_report(
             total_results=total_results,
             degraded=degraded,
             cost_latency=cost_latency,
+            workspace_id=workspace_id,
+            include_workspace_label=settings.ragrig_metrics_workspace_labels_enabled,
         )
 
 
@@ -86,7 +100,9 @@ def retrieval_search(
     rate_limiter.check_search(str(workspace_id))
     if settings.ragrig_auth_enabled:
         if not request.query.strip():
-            _record_retrieval_error(settings, endpoint="retrieval.search", mode=request.mode)
+            _record_retrieval_error(
+                settings, endpoint="retrieval.search", mode=request.mode, workspace_id=workspace_id
+            )
             return JSONResponse(
                 status_code=400,
                 content=serialize_error(
@@ -99,7 +115,9 @@ def retrieval_search(
             workspace_id=workspace_id,
         )
         if kb is None:
-            _record_retrieval_error(settings, endpoint="retrieval.search", mode=request.mode)
+            _record_retrieval_error(
+                settings, endpoint="retrieval.search", mode=request.mode, workspace_id=workspace_id
+            )
             return JSONResponse(
                 status_code=404,
                 content=serialize_error(
@@ -118,7 +136,9 @@ def retrieval_search(
             allow_anonymous_reader=True,
         )
         if access_error is not None:
-            _record_retrieval_error(settings, endpoint="retrieval.search", mode=request.mode)
+            _record_retrieval_error(
+                settings, endpoint="retrieval.search", mode=request.mode, workspace_id=workspace_id
+            )
             return access_error
     principal_ids, enforce_acl = resolve_acl_context(
         settings=settings,
@@ -149,13 +169,19 @@ def retrieval_search(
             graph_depth=request.graph_depth,
         )
     except KnowledgeBaseNotFoundError as exc:
-        _record_retrieval_error(settings, endpoint="retrieval.search", mode=request.mode)
+        _record_retrieval_error(
+            settings, endpoint="retrieval.search", mode=request.mode, workspace_id=workspace_id
+        )
         return JSONResponse(status_code=404, content=serialize_error(exc))
     except (EmptyQueryError, EmbeddingProfileMismatchError, InvalidTopKError) as exc:
-        _record_retrieval_error(settings, endpoint="retrieval.search", mode=request.mode)
+        _record_retrieval_error(
+            settings, endpoint="retrieval.search", mode=request.mode, workspace_id=workspace_id
+        )
         return JSONResponse(status_code=400, content=serialize_error(exc))
     except RerankerUnavailableError as exc:
-        _record_retrieval_error(settings, endpoint="retrieval.search", mode=request.mode)
+        _record_retrieval_error(
+            settings, endpoint="retrieval.search", mode=request.mode, workspace_id=workspace_id
+        )
         return JSONResponse(status_code=503, content=serialize_error(exc))
 
     response: dict[str, Any] = {
@@ -230,6 +256,7 @@ def retrieval_search(
         total_results=report.total_results,
         degraded=report.degraded,
         cost_latency=report.cost_latency,
+        workspace_id=workspace_id,
     )
     return response
 
@@ -260,7 +287,9 @@ def retrieval_answer(
     answer_kb: KnowledgeBase | None = None
     if settings.ragrig_auth_enabled:
         if not request.query.strip():
-            _record_retrieval_error(settings, endpoint="retrieval.answer", mode=request.mode)
+            _record_retrieval_error(
+                settings, endpoint="retrieval.answer", mode=request.mode, workspace_id=workspace_id
+            )
             return JSONResponse(
                 status_code=400,
                 content=serialize_error(
@@ -273,7 +302,9 @@ def retrieval_answer(
             workspace_id=workspace_id,
         )
         if kb is None:
-            _record_retrieval_error(settings, endpoint="retrieval.answer", mode=request.mode)
+            _record_retrieval_error(
+                settings, endpoint="retrieval.answer", mode=request.mode, workspace_id=workspace_id
+            )
             return JSONResponse(
                 status_code=404,
                 content=serialize_error(
@@ -292,7 +323,9 @@ def retrieval_answer(
             allow_anonymous_reader=True,
         )
         if access_error is not None:
-            _record_retrieval_error(settings, endpoint="retrieval.answer", mode=request.mode)
+            _record_retrieval_error(
+                settings, endpoint="retrieval.answer", mode=request.mode, workspace_id=workspace_id
+            )
             return access_error
         answer_kb = kb
     principal_ids, enforce_acl = resolve_acl_context(
@@ -315,7 +348,9 @@ def retrieval_answer(
     )
     role_selection, role_error = role_model_selection(request.role, effective_role_config)
     if role_error is not None:
-        _record_retrieval_error(settings, endpoint="retrieval.answer", mode=request.mode)
+        _record_retrieval_error(
+            settings, endpoint="retrieval.answer", mode=request.mode, workspace_id=workspace_id
+        )
         return JSONResponse(
             status_code=400,
             content={
@@ -344,7 +379,12 @@ def retrieval_answer(
         if selected_config is not None:
             provider_config, missing_env = resolve_env_config(selected_config)
             if missing_env:
-                _record_retrieval_error(settings, endpoint="retrieval.answer", mode=request.mode)
+                _record_retrieval_error(
+                    settings,
+                    endpoint="retrieval.answer",
+                    mode=request.mode,
+                    workspace_id=workspace_id,
+                )
                 return JSONResponse(
                     status_code=400,
                     content={
@@ -361,7 +401,12 @@ def retrieval_answer(
         if selected_answer_config is not None:
             answer_provider_config, missing_env = resolve_env_config(selected_answer_config)
             if missing_env:
-                _record_retrieval_error(settings, endpoint="retrieval.answer", mode=request.mode)
+                _record_retrieval_error(
+                    settings,
+                    endpoint="retrieval.answer",
+                    mode=request.mode,
+                    workspace_id=workspace_id,
+                )
                 return JSONResponse(
                     status_code=400,
                     content={
@@ -400,7 +445,9 @@ def retrieval_answer(
             workspace_id=workspace_id,
         )
     except ModelConfigError as exc:
-        _record_retrieval_error(settings, endpoint="retrieval.answer", mode=request.mode)
+        _record_retrieval_error(
+            settings, endpoint="retrieval.answer", mode=request.mode, workspace_id=workspace_id
+        )
         return JSONResponse(
             status_code=400,
             content={
@@ -418,6 +465,7 @@ def retrieval_answer(
             mode=request.mode,
             backend=None,
             total_results=0,
+            workspace_id=workspace_id,
         )
         return JSONResponse(
             status_code=200,
@@ -433,16 +481,24 @@ def retrieval_answer(
             },
         )
     except KnowledgeBaseNotFoundError as exc:
-        _record_retrieval_error(settings, endpoint="retrieval.answer", mode=request.mode)
+        _record_retrieval_error(
+            settings, endpoint="retrieval.answer", mode=request.mode, workspace_id=workspace_id
+        )
         return JSONResponse(status_code=404, content=serialize_error(exc))
     except (EmptyQueryError, EmbeddingProfileMismatchError, InvalidTopKError) as exc:
-        _record_retrieval_error(settings, endpoint="retrieval.answer", mode=request.mode)
+        _record_retrieval_error(
+            settings, endpoint="retrieval.answer", mode=request.mode, workspace_id=workspace_id
+        )
         return JSONResponse(status_code=400, content=serialize_error(exc))
     except RerankerUnavailableError as exc:
-        _record_retrieval_error(settings, endpoint="retrieval.answer", mode=request.mode)
+        _record_retrieval_error(
+            settings, endpoint="retrieval.answer", mode=request.mode, workspace_id=workspace_id
+        )
         return JSONResponse(status_code=503, content=serialize_error(exc))
     except AnswerProviderUnavailableError as exc:
-        _record_retrieval_error(settings, endpoint="retrieval.answer", mode=request.mode)
+        _record_retrieval_error(
+            settings, endpoint="retrieval.answer", mode=request.mode, workspace_id=workspace_id
+        )
         return JSONResponse(
             status_code=503,
             content={
@@ -477,6 +533,7 @@ def retrieval_answer(
         total_results=int(retrieval_trace.get("total_results") or 0),
         degraded=report.grounding_status == "degraded",
         cost_latency=report.cost_latency,
+        workspace_id=workspace_id,
     )
     payload = {
         "answer": report.answer,

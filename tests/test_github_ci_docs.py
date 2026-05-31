@@ -109,11 +109,16 @@ def test_production_observability_docs_and_compose_defaults_are_wired() -> None:
     )
 
     assert "RAGRIG_METRICS_ENABLED: ${RAGRIG_METRICS_ENABLED:-true}" in compose
+    assert (
+        "RAGRIG_METRICS_WORKSPACE_LABELS_ENABLED: ${RAGRIG_METRICS_WORKSPACE_LABELS_ENABLED:-false}"
+    ) in compose
     assert "RAGRIG_LOG_FILE: ${RAGRIG_LOG_FILE:-}" in compose
     assert "- ragrig_logs:/app/logs" in compose
     assert "ragrig_logs:" in compose
+    assert "# RAGRIG_METRICS_WORKSPACE_LABELS_ENABLED=false" in env_example
     assert "# RAGRIG_LOG_FILE=/app/logs/ragrig.jsonl" in env_example
     assert "Prometheus metrics are enabled by default" in optional_services
+    assert 'workspace="ws_<sha256-prefix>"' in optional_services
     assert "RAGRIG_LOG_BACKUP_COUNT=5" in optional_services
 
 
