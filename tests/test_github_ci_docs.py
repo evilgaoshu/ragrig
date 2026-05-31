@@ -126,6 +126,19 @@ def test_contributing_documents_branch_commit_and_frontend_audit_policy() -> Non
     assert "npm audit --audit-level=high" in contributing
 
 
+def test_pull_request_template_uses_canonical_filename_without_generator_footer() -> None:
+    template_path = REPO_ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md"
+
+    assert template_path.exists(), "expected canonical GitHub PR template filename"
+    assert not (REPO_ROOT / ".github" / "pull_request_template.md").exists()
+
+    template = template_path.read_text(encoding="utf-8")
+    assert "## Summary" in template
+    assert "## Test plan" in template
+    assert "Generated with" not in template
+    assert "Claude Code" not in template
+
+
 def test_architecture_decision_records_cover_current_core_choices() -> None:
     adr_dir = REPO_ROOT / "docs" / "adr"
 

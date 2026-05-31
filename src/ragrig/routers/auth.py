@@ -472,8 +472,3 @@ def revoke_workspace_api_key(
 ) -> None:
     """Revoke an API key. Requires admin or owner."""
     auth_service.revoke_workspace_api_key(session, auth, key_id=key_id)
-
-
-def _erase_user(session: Session, user_id: uuid.UUID) -> None:
-    """Anonymise and hard-delete all personal data for *user_id*."""
-    auth_service.erase_user(session, user_id)
