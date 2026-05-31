@@ -46,6 +46,8 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "make web-check" in workflow
     assert "make migrate" in workflow
     assert "make db-check" in workflow
+    assert "tests/test_pgvector_postgres_ci.py" in workflow
+    assert "RAGRIG_PGVECTOR_TEST_DATABASE_URL" in workflow
     assert "docker build -t ragrig:ci ." in workflow
     assert "aquasecurity/trivy-action@v0.36.0" in workflow
     assert "image-ref: ragrig:ci" in workflow

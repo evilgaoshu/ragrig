@@ -180,6 +180,11 @@ jobs:
         env:
           DATABASE_URL: postgresql://ragrig:ragrig_dev@localhost:5432/ragrig
 
+      - name: Verify pgvector distance semantics
+        run: uv run pytest tests/test_pgvector_postgres_ci.py -q
+        env:
+          RAGRIG_PGVECTOR_TEST_DATABASE_URL: postgresql://ragrig:ragrig_dev@localhost:5432/ragrig
+
   smoke:
     name: RAGRig CI / smoke
     runs-on: ubuntu-latest
