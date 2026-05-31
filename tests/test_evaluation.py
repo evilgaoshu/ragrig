@@ -60,6 +60,7 @@ from ragrig.evaluation.report import (
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
+from ragrig.services.common import resolve_evaluation_path
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
@@ -89,6 +90,36 @@ def _make_golden_yaml(path: Path, data: dict) -> Path:
 
     path.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True), encoding="utf-8")
     return path
+
+
+def test_evaluation_path_policy_rejects_outside_root_when_auth_disabled(tmp_path) -> None:
+    path, error = resolve_evaluation_path(
+        str(tmp_path / "golden.yaml"),
+        default_path=Path("evaluation_runs"),
+        allowed_roots=(Path("evaluation_runs"),),
+        settings=Settings(ragrig_auth_enabled=False),
+    )
+
+    assert path is None
+    assert error is not None
+    assert error.status_code == 400
+
+
+def test_evaluation_path_policy_allows_configured_extra_root(tmp_path) -> None:
+    expected = tmp_path / "golden.yaml"
+
+    path, error = resolve_evaluation_path(
+        str(expected),
+        default_path=Path("evaluation_runs"),
+        allowed_roots=(Path("evaluation_runs"),),
+        settings=Settings(
+            ragrig_auth_enabled=False,
+            ragrig_evaluation_extra_allowed_roots=str(tmp_path),
+        ),
+    )
+
+    assert error is None
+    assert path == expected
 
 
 def _make_golden_json(path: Path, data: dict) -> Path:
@@ -977,7 +1008,11 @@ async def test_evaluation_api_list_empty(tmp_path) -> None:
     """GET /evaluations returns empty list when no runs exist (empty state)."""
     database_path = tmp_path / "eval-empty.db"
     session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        settings=Settings(ragrig_evaluation_extra_allowed_roots=str(tmp_path)),
+    )
     transport = httpx.ASGITransport(app=app)
 
     store_dir = tmp_path / "empty_store"
@@ -1045,7 +1080,11 @@ async def test_evaluation_api_list_with_data(tmp_path) -> None:
     store_dir = tmp_path / "eval_runs"
     store_dir.mkdir(parents=True, exist_ok=True)
 
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        settings=Settings(ragrig_evaluation_extra_allowed_roots=str(tmp_path)),
+    )
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -1082,7 +1121,7 @@ async def test_evaluation_api_run_detail_not_found(tmp_path) -> None:
 
 @pytest.mark.anyio
 async def test_evaluation_api_run_golden_not_found(tmp_path) -> None:
-    """POST /evaluations/runs with nonexistent golden path returns 404."""
+    """POST /evaluations/runs rejects golden paths outside the allowlist."""
     database_path = tmp_path / "eval-no-golden.db"
     session_factory = _create_file_session_factory(database_path)
     app = create_app(check_database=lambda: None, session_factory=session_factory)
@@ -1097,8 +1136,8 @@ async def test_evaluation_api_run_golden_not_found(tmp_path) -> None:
             },
         )
 
-    assert response.status_code == 404
-    assert "not found" in response.json()["error"].lower()
+    assert response.status_code == 400
+    assert "evaluation path must be under" in response.json()["error"].lower()
 
 
 @pytest.mark.anyio
@@ -1131,7 +1170,11 @@ async def test_evaluation_report_no_secrets_in_api_response(tmp_path) -> None:
         },
     )
 
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        settings=Settings(ragrig_evaluation_extra_allowed_roots=str(tmp_path)),
+    )
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:

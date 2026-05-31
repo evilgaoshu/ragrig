@@ -180,6 +180,11 @@ jobs:
         env:
           DATABASE_URL: postgresql://ragrig:ragrig_dev@localhost:5432/ragrig
 
+      - name: Verify pgvector distance semantics
+        run: uv run pytest tests/test_pgvector_postgres_ci.py -q
+        env:
+          RAGRIG_PGVECTOR_TEST_DATABASE_URL: postgresql://ragrig:ragrig_dev@localhost:5432/ragrig
+
   smoke:
     name: RAGRig CI / smoke
     runs-on: ubuntu-latest
@@ -242,6 +247,18 @@ jobs:
       - name: Build Docker image
         if: steps.docker_needed.outputs.needed == 'true'
         run: docker build -t ragrig:ci .
+
+      - name: Scan Docker image vulnerabilities
+        if: steps.docker_needed.outputs.needed == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ragrig:ci
+          scanners: vuln
+          format: table
+          vuln-type: os
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
 
       - name: Start Postgres for container health
         if: steps.docker_needed.outputs.needed == 'true'

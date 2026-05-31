@@ -9,9 +9,8 @@ from sqlalchemy.orm import Session
 
 from ragrig.config import Settings, get_settings
 from ragrig.deps import AuthContext
-from ragrig.repositories import get_knowledge_base_by_name
+from ragrig.repositories import get_knowledge_base_by_name, resolve_effective_kb_role
 from ragrig.retrieval import RetrievalError
-from ragrig.routers.runtime import knowledge_base_access_error
 from ragrig.vectorstore import get_vector_backend
 
 
@@ -23,6 +22,28 @@ def serialize_error(exc: RetrievalError) -> dict[str, Any]:
             "details": exc.details,
         }
     }
+
+
+class ServiceError(Exception):
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        content: dict[str, Any],
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(str(content.get("error") or content))
+        self.status_code = status_code
+        self.content = content
+        self.headers = headers
+
+
+def service_error_response(exc: ServiceError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.content,
+        headers=exc.headers,
+    )
 
 
 def create_runtime_settings(settings: Settings | None = None) -> Settings:
@@ -48,6 +69,99 @@ def resolve_acl_context(
     if not settings.ragrig_auth_enabled:
         return requested_principal_ids, requested_enforce_acl
     return auth.principal_ids, True
+
+
+def role_meets(role: str | None, minimum: str) -> bool:
+    role_order = {"owner": 3, "admin": 2, "editor": 1, "viewer": 0, "none": -1}
+    return role_order.get(role or "none", -1) >= role_order.get(minimum, 999)
+
+
+def knowledge_base_access_error(
+    *,
+    settings: Settings,
+    session: Session,
+    auth: AuthContext,
+    knowledge_base_id: uuid.UUID,
+    minimum: str,
+    allow_anonymous_reader: bool = False,
+) -> JSONResponse | None:
+    exc = knowledge_base_access_violation(
+        settings=settings,
+        session=session,
+        auth=auth,
+        knowledge_base_id=knowledge_base_id,
+        minimum=minimum,
+        allow_anonymous_reader=allow_anonymous_reader,
+    )
+    if exc is None:
+        return None
+    return service_error_response(exc)
+
+
+def require_knowledge_base_access(
+    *,
+    settings: Settings,
+    session: Session,
+    auth: AuthContext,
+    knowledge_base_id: uuid.UUID,
+    minimum: str,
+    allow_anonymous_reader: bool = False,
+) -> None:
+    exc = knowledge_base_access_violation(
+        settings=settings,
+        session=session,
+        auth=auth,
+        knowledge_base_id=knowledge_base_id,
+        minimum=minimum,
+        allow_anonymous_reader=allow_anonymous_reader,
+    )
+    if exc is not None:
+        raise exc
+
+
+def knowledge_base_access_violation(
+    *,
+    settings: Settings,
+    session: Session,
+    auth: AuthContext,
+    knowledge_base_id: uuid.UUID,
+    minimum: str,
+    allow_anonymous_reader: bool = False,
+) -> ServiceError | None:
+    if not settings.ragrig_auth_enabled:
+        return None
+    if auth.is_anonymous:
+        if allow_anonymous_reader and minimum == "viewer":
+            return None
+        return ServiceError(
+            status_code=401,
+            content={"error": "authentication required"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if auth.user_id is None:
+        if minimum == "viewer":
+            return None
+        return ServiceError(
+            status_code=403,
+            content={"error": f"{minimum} role or above required"},
+        )
+    if auth.role is None:
+        return ServiceError(
+            status_code=403,
+            content={"error": f"{minimum} role or above required"},
+        )
+    role = resolve_effective_kb_role(
+        session,
+        user_id=auth.user_id,
+        knowledge_base_id=knowledge_base_id,
+        workspace_role=auth.role,
+    )
+    if not role_meets(role, minimum):
+        return ServiceError(
+            status_code=403,
+            content={"error": f"{minimum} role or above required for this knowledge base"},
+        )
+    return None
 
 
 def knowledge_base_role_error_by_name(
@@ -82,14 +196,18 @@ def resolve_evaluation_path(
     settings: Settings,
 ) -> tuple[Path | None, JSONResponse | None]:
     path = Path(raw_path) if raw_path else default_path
-    if not settings.ragrig_auth_enabled:
-        return path, None
     resolved = path.resolve()
-    for root in allowed_roots:
+    configured_roots = tuple(
+        Path(value.strip())
+        for value in settings.ragrig_evaluation_extra_allowed_roots.split(",")
+        if value.strip()
+    )
+    all_roots = allowed_roots + configured_roots
+    for root in all_roots:
         root_resolved = root.resolve()
         if resolved == root_resolved or root_resolved in resolved.parents:
             return path, None
-    allowed = ", ".join(str(root) for root in allowed_roots)
+    allowed = ", ".join(str(root) for root in all_roots)
     return None, JSONResponse(
         status_code=400,
         content={"error": f"evaluation path must be under one of: {allowed}"},

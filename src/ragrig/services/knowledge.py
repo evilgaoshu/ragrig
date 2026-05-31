@@ -4,7 +4,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from ragrig.auth import ensure_default_workspace
@@ -33,7 +32,7 @@ from ragrig.repositories import (
     list_kb_permissions,
     set_kb_permission,
 )
-from ragrig.routers.runtime import knowledge_base_access_error
+from ragrig.services.common import ServiceError, require_knowledge_base_access
 from ragrig.understanding import (
     DocumentVersionNotFoundError,
     ProviderUnavailableError,
@@ -65,21 +64,21 @@ def knowledge_base_by_id_for_workspace(
     session: Session,
     kb_id: str,
     workspace_id: uuid.UUID,
-) -> tuple[KnowledgeBase | None, JSONResponse | None]:
+) -> KnowledgeBase:
     try:
         knowledge_base_id = uuid.UUID(str(kb_id))
-    except ValueError:
-        return None, JSONResponse(
+    except ValueError as exc:
+        raise ServiceError(
             status_code=404,
             content={"error": "knowledge_base_not_found"},
-        )
+        ) from exc
     knowledge_base = session.get(KnowledgeBase, knowledge_base_id)
     if knowledge_base is None or knowledge_base.workspace_id != workspace_id:
-        return None, JSONResponse(
+        raise ServiceError(
             status_code=404,
             content={"error": "knowledge_base_not_found"},
         )
-    return knowledge_base, None
+    return knowledge_base
 
 
 def summarize_relation_feedback(items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -106,25 +105,20 @@ def _resolve_kb_with_access(
     auth: AuthContext,
     kb_id: str,
     minimum: str,
-) -> tuple[KnowledgeBase | None, JSONResponse | None]:
-    knowledge_base, kb_error = knowledge_base_by_id_for_workspace(
+) -> KnowledgeBase:
+    knowledge_base = knowledge_base_by_id_for_workspace(
         session=session,
         kb_id=kb_id,
         workspace_id=workspace_id,
     )
-    if kb_error is not None:
-        return None, kb_error
-    assert knowledge_base is not None
-    access_error = knowledge_base_access_error(
+    require_knowledge_base_access(
         settings=settings,
         session=session,
         auth=auth,
         knowledge_base_id=knowledge_base.id,
         minimum=minimum,
     )
-    if access_error is not None:
-        return None, access_error
-    return knowledge_base, None
+    return knowledge_base
 
 
 def knowledge_bases(
@@ -147,20 +141,20 @@ def create_knowledge_base(
     *,
     name: str,
     workspace_id: uuid.UUID,
-) -> JSONResponse:
+) -> tuple[dict[str, Any], int]:
     normalized_name = name.strip()
     if not normalized_name:
-        return JSONResponse(status_code=400, content={"error": "knowledge base name is required"})
+        raise ServiceError(
+            status_code=400,
+            content={"error": "knowledge base name is required"},
+        )
     ensure_default_workspace(session)
     existed = (
         get_knowledge_base_by_name(session, normalized_name, workspace_id=workspace_id) is not None
     )
     kb = get_or_create_knowledge_base(session, normalized_name, workspace_id=workspace_id)
     session.commit()
-    return JSONResponse(
-        status_code=200 if existed else 201,
-        content={"id": str(kb.id), "name": kb.name, "created": not existed},
-    )
+    return {"id": str(kb.id), "name": kb.name, "created": not existed}, 200 if existed else 201
 
 
 def list_permissions(
@@ -168,17 +162,14 @@ def list_permissions(
     *,
     kb_name: str,
     workspace_id: uuid.UUID,
-) -> JSONResponse:
+) -> dict[str, list[dict[str, Any]]]:
     kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
     if kb is None:
-        return JSONResponse(
+        raise ServiceError(
             status_code=404,
             content={"error": f"knowledge base '{kb_name}' not found"},
         )
-    return JSONResponse(
-        status_code=200,
-        content={"items": list_kb_permissions(session, knowledge_base_id=kb.id)},
-    )
+    return {"items": list_kb_permissions(session, knowledge_base_id=kb.id)}
 
 
 def set_permission(
@@ -188,14 +179,17 @@ def set_permission(
     user_id: str,
     role: str,
     workspace_id: uuid.UUID,
-) -> JSONResponse:
+) -> dict[str, str]:
     try:
         user_uuid = uuid.UUID(user_id)
-    except ValueError:
-        return JSONResponse(status_code=400, content={"error": f"invalid user_id: {user_id!r}"})
+    except ValueError as exc:
+        raise ServiceError(
+            status_code=400,
+            content={"error": f"invalid user_id: {user_id!r}"},
+        ) from exc
     kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
     if kb is None:
-        return JSONResponse(
+        raise ServiceError(
             status_code=404,
             content={"error": f"knowledge base '{kb_name}' not found"},
         )
@@ -206,10 +200,7 @@ def set_permission(
         role=role,
     )
     session.commit()
-    return JSONResponse(
-        status_code=200,
-        content={"knowledge_base": kb_name, "user_id": user_id, "role": role},
-    )
+    return {"knowledge_base": kb_name, "user_id": user_id, "role": role}
 
 
 def delete_permission(
@@ -218,14 +209,17 @@ def delete_permission(
     kb_name: str,
     user_id: str,
     workspace_id: uuid.UUID,
-) -> JSONResponse:
+) -> dict[str, Any]:
     try:
         user_uuid = uuid.UUID(user_id)
-    except ValueError:
-        return JSONResponse(status_code=400, content={"error": f"invalid user_id: {user_id!r}"})
+    except ValueError as exc:
+        raise ServiceError(
+            status_code=400,
+            content={"error": f"invalid user_id: {user_id!r}"},
+        ) from exc
     kb = get_knowledge_base_by_name(session, kb_name, workspace_id=workspace_id)
     if kb is None:
-        return JSONResponse(
+        raise ServiceError(
             status_code=404,
             content={"error": f"knowledge base '{kb_name}' not found"},
         )
@@ -235,15 +229,12 @@ def delete_permission(
         user_id=user_uuid,
     )
     if not existed:
-        return JSONResponse(
+        raise ServiceError(
             status_code=404,
             content={"error": "no permission override found for this user"},
         )
     session.commit()
-    return JSONResponse(
-        status_code=200,
-        content={"knowledge_base": kb_name, "user_id": user_id, "deleted": True},
-    )
+    return {"knowledge_base": kb_name, "user_id": user_id, "deleted": True}
 
 
 def documents(session: Session, *, workspace_id: uuid.UUID) -> dict[str, list[dict[str, Any]]]:
@@ -277,20 +268,20 @@ def web_understanding_runs(
     }
 
 
-def understanding_run_detail(session: Session, run_id: str) -> dict[str, Any] | JSONResponse:
+def understanding_run_detail(session: Session, run_id: str) -> dict[str, Any]:
     detail = get_understanding_run_detail(session, run_id)
     if detail is None:
-        return JSONResponse(status_code=404, content={"error": "understanding_run_not_found"})
+        raise ServiceError(status_code=404, content={"error": "understanding_run_not_found"})
     return detail
 
 
 def export_understanding_run_payload(
     session: Session,
     run_id: str,
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     result = export_understanding_run(session, run_id)
     if result is None:
-        return JSONResponse(status_code=404, content={"error": "understanding_run_not_found"})
+        raise ServiceError(status_code=404, content={"error": "understanding_run_not_found"})
     return result
 
 
@@ -308,10 +299,10 @@ def diff_understanding_runs(
     *,
     run_id: str,
     against: str,
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     result = compare_understanding_runs(session, run_id, against)
     if result is None:
-        return JSONResponse(status_code=404, content={"error": "understanding_run_not_found"})
+        raise ServiceError(status_code=404, content={"error": "understanding_run_not_found"})
     return result
 
 
@@ -335,7 +326,7 @@ def understand_document_version(
     *,
     document_version_id: str,
     request: UnderstandingRequest,
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     try:
         record = generate_document_understanding(
             session,
@@ -345,9 +336,15 @@ def understand_document_version(
             profile_id=request.profile_id,
         )
     except DocumentVersionNotFoundError as exc:
-        return JSONResponse(status_code=404, content={"error": exc.code, "message": str(exc)})
+        raise ServiceError(
+            status_code=404,
+            content={"error": exc.code, "message": str(exc)},
+        ) from exc
     except ProviderUnavailableError as exc:
-        return JSONResponse(status_code=503, content={"error": exc.code, "message": str(exc)})
+        raise ServiceError(
+            status_code=503,
+            content={"error": exc.code, "message": str(exc)},
+        ) from exc
     return {
         "id": record.id,
         "document_version_id": record.document_version_id,
@@ -368,7 +365,7 @@ def get_document_understanding(
     *,
     document_version_id: str,
     allow_missing: bool,
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     record = get_understanding_by_version(session, document_version_id)
     if record is None:
         content = {
@@ -376,8 +373,8 @@ def get_document_understanding(
             "message": f"No understanding result for document version '{document_version_id}'.",
         }
         if allow_missing:
-            return JSONResponse(status_code=200, content=content)
-        return JSONResponse(status_code=404, content=content)
+            return content
+        raise ServiceError(status_code=404, content=content)
     return {
         "id": record.id,
         "document_version_id": record.document_version_id,
@@ -399,7 +396,7 @@ def understand_all(
     kb_id: str,
     request: UnderstandAllRequest,
     operator: str | None,
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     try:
         result = understand_all_versions(
             session,
@@ -411,7 +408,10 @@ def understand_all(
             operator=operator,
         )
     except ProviderUnavailableError as exc:
-        return JSONResponse(status_code=503, content={"error": exc.code, "message": str(exc)})
+        raise ServiceError(
+            status_code=503,
+            content={"error": exc.code, "message": str(exc)},
+        ) from exc
 
     kb_uuid = uuid.UUID(kb_id)
     latest_run = (
@@ -459,8 +459,8 @@ def knowledge_map(
     settings: Settings,
     workspace_id: uuid.UUID,
     auth: AuthContext,
-) -> dict[str, Any] | JSONResponse:
-    knowledge_base, error = _resolve_kb_with_access(
+) -> dict[str, Any]:
+    _resolve_kb_with_access(
         session=session,
         settings=settings,
         workspace_id=workspace_id,
@@ -468,12 +468,9 @@ def knowledge_map(
         kb_id=kb_id,
         minimum="viewer",
     )
-    if error is not None:
-        return error
-    assert knowledge_base is not None
     result = build_knowledge_map(session, kb_id, profile_id=profile_id)
     if result is None:
-        return JSONResponse(status_code=404, content={"error": "knowledge_base_not_found"})
+        raise ServiceError(status_code=404, content={"error": "knowledge_base_not_found"})
     return knowledge_map_to_dict(result)
 
 
@@ -484,8 +481,8 @@ def knowledge_graph(
     settings: Settings,
     workspace_id: uuid.UUID,
     auth: AuthContext,
-) -> dict[str, Any] | JSONResponse:
-    knowledge_base, error = _resolve_kb_with_access(
+) -> dict[str, Any]:
+    _resolve_kb_with_access(
         session=session,
         settings=settings,
         workspace_id=workspace_id,
@@ -493,13 +490,13 @@ def knowledge_graph(
         kb_id=kb_id,
         minimum="viewer",
     )
-    if error is not None:
-        return error
-    assert knowledge_base is not None
     try:
         return get_knowledge_graph(session, kb_id).model_dump(mode="json")
-    except (ValueError, KnowledgeGraphNotFoundError):
-        return JSONResponse(status_code=404, content={"error": "knowledge_base_not_found"})
+    except (ValueError, KnowledgeGraphNotFoundError) as exc:
+        raise ServiceError(
+            status_code=404,
+            content={"error": "knowledge_base_not_found"},
+        ) from exc
 
 
 def rebuild_knowledge_graph_payload(
@@ -510,8 +507,8 @@ def rebuild_knowledge_graph_payload(
     settings: Settings,
     workspace_id: uuid.UUID,
     auth: AuthContext,
-) -> dict[str, Any] | JSONResponse:
-    knowledge_base, error = _resolve_kb_with_access(
+) -> dict[str, Any]:
+    _resolve_kb_with_access(
         session=session,
         settings=settings,
         workspace_id=workspace_id,
@@ -519,9 +516,6 @@ def rebuild_knowledge_graph_payload(
         kb_id=kb_id,
         minimum="editor",
     )
-    if error is not None:
-        return error
-    assert knowledge_base is not None
     try:
         result = rebuild_knowledge_graph(
             session,
@@ -530,8 +524,11 @@ def rebuild_knowledge_graph_payload(
             extractor_version=request.extractor_version,
             reset=request.reset,
         )
-    except (ValueError, KnowledgeGraphNotFoundError):
-        return JSONResponse(status_code=404, content={"error": "knowledge_base_not_found"})
+    except (ValueError, KnowledgeGraphNotFoundError) as exc:
+        raise ServiceError(
+            status_code=404,
+            content={"error": "knowledge_base_not_found"},
+        ) from exc
     return result.model_dump(mode="json")
 
 
@@ -545,8 +542,8 @@ def submit_relation_feedback(
     settings: Settings,
     workspace_id: uuid.UUID,
     auth: AuthContext,
-) -> dict[str, Any] | JSONResponse:
-    knowledge_base, error = _resolve_kb_with_access(
+) -> dict[str, Any]:
+    knowledge_base = _resolve_kb_with_access(
         session=session,
         settings=settings,
         workspace_id=workspace_id,
@@ -554,16 +551,13 @@ def submit_relation_feedback(
         kb_id=kb_id,
         minimum="editor",
     )
-    if error is not None:
-        return error
-    assert knowledge_base is not None
     try:
         relation_uuid = uuid.UUID(str(relation_id))
-    except ValueError:
-        return JSONResponse(status_code=404, content={"error": "relation_not_found"})
+    except ValueError as exc:
+        raise ServiceError(status_code=404, content={"error": "relation_not_found"}) from exc
     relation = session.get(KnowledgeGraphRelation, relation_uuid)
     if relation is None or relation.knowledge_base_id != knowledge_base.id:
-        return JSONResponse(status_code=404, content={"error": "relation_not_found"})
+        raise ServiceError(status_code=404, content={"error": "relation_not_found"})
 
     metadata = dict(relation.metadata_json or {})
     feedback_items = [item for item in metadata.get("feedback", []) if isinstance(item, dict)]
@@ -608,8 +602,8 @@ def get_retrieval_preferences(
     settings: Settings,
     workspace_id: uuid.UUID,
     auth: AuthContext,
-) -> dict[str, Any] | JSONResponse:
-    knowledge_base, error = _resolve_kb_with_access(
+) -> dict[str, Any]:
+    knowledge_base = _resolve_kb_with_access(
         session=session,
         settings=settings,
         workspace_id=workspace_id,
@@ -617,9 +611,6 @@ def get_retrieval_preferences(
         kb_id=kb_id,
         minimum="viewer",
     )
-    if error is not None:
-        return error
-    assert knowledge_base is not None
     return {
         "knowledge_base_id": str(knowledge_base.id),
         "knowledge_base": knowledge_base.name,
@@ -635,8 +626,8 @@ def put_retrieval_preferences(
     settings: Settings,
     workspace_id: uuid.UUID,
     auth: AuthContext,
-) -> dict[str, Any] | JSONResponse:
-    knowledge_base, error = _resolve_kb_with_access(
+) -> dict[str, Any]:
+    knowledge_base = _resolve_kb_with_access(
         session=session,
         settings=settings,
         workspace_id=workspace_id,
@@ -644,9 +635,6 @@ def put_retrieval_preferences(
         kb_id=kb_id,
         minimum="editor",
     )
-    if error is not None:
-        return error
-    assert knowledge_base is not None
     preferences = request.model_dump(mode="json")
     metadata = dict(knowledge_base.metadata_json or {})
     metadata["retrieval_preferences"] = preferences
@@ -680,8 +668,8 @@ def get_role_model_config(
     settings: Settings,
     workspace_id: uuid.UUID,
     auth: AuthContext,
-) -> dict[str, Any] | JSONResponse:
-    knowledge_base, error = _resolve_kb_with_access(
+) -> dict[str, Any]:
+    knowledge_base = _resolve_kb_with_access(
         session=session,
         settings=settings,
         workspace_id=workspace_id,
@@ -689,9 +677,6 @@ def get_role_model_config(
         kb_id=kb_id,
         minimum="viewer",
     )
-    if error is not None:
-        return error
-    assert knowledge_base is not None
     config = kb_role_model_config(knowledge_base) or {}
     return {
         "knowledge_base_id": str(knowledge_base.id),
@@ -709,8 +694,8 @@ def put_role_model_config(
     settings: Settings,
     workspace_id: uuid.UUID,
     auth: AuthContext,
-) -> dict[str, Any] | JSONResponse:
-    knowledge_base, error = _resolve_kb_with_access(
+) -> dict[str, Any]:
+    knowledge_base = _resolve_kb_with_access(
         session=session,
         settings=settings,
         workspace_id=workspace_id,
@@ -718,12 +703,9 @@ def put_role_model_config(
         kb_id=kb_id,
         minimum="editor",
     )
-    if error is not None:
-        return error
-    assert knowledge_base is not None
     validation_error = validate_role_model_config(request.config)
     if validation_error is not None:
-        return JSONResponse(
+        raise ServiceError(
             status_code=400,
             content={
                 "error": {

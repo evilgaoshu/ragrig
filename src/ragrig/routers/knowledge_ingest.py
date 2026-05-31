@@ -23,8 +23,8 @@ from ragrig.routers.runtime import (
     get_session_factory,
     get_task_executor,
     get_workspace_id,
-    knowledge_base_access_error,
 )
+from ragrig.services.common import knowledge_base_access_error
 from ragrig.tasks import (
     cleanup_staging_dir,
     create_upload_pipeline_run,

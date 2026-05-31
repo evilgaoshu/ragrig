@@ -5,8 +5,36 @@ import uuid
 from time import perf_counter
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 
+from ragrig.config import Settings
 from ragrig.observability import bind_log_context, log_event
+from ragrig.services.common import ServiceError, service_error_response
+
+
+def _parse_cors_origins(raw: str) -> list[str]:
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+def configure_cors(app: FastAPI, settings: Settings) -> None:
+    origins = _parse_cors_origins(settings.ragrig_cors_origins)
+    origin_regex = settings.ragrig_cors_allow_origin_regex.strip() or None
+    if not origins and origin_regex is None:
+        return
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_origin_regex=origin_regex,
+        allow_credentials=settings.ragrig_cors_allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
+def configure_service_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ServiceError)
+    async def service_error_handler(_request: Request, exc: ServiceError):
+        return service_error_response(exc)
 
 
 def configure_structured_request_logging(app: FastAPI, logger: logging.Logger) -> None:
