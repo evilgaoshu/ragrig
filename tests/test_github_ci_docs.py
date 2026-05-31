@@ -45,6 +45,7 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "make coverage" in workflow
     assert "make web-check" in workflow
     assert "npm audit --audit-level=high" in workflow
+    assert "npm run test:run" in workflow
     assert "make migrate" in workflow
     assert "make db-check" in workflow
     assert "tests/test_pgvector_postgres_ci.py" in workflow
