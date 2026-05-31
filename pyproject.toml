@@ -1,7 +1,7 @@
 [project]
 name = "ragrig"
 version = "0.1.0"
-description = "RAGRig Phase 1a scaffold"
+description = "Local-first RAG platform with ingestion, retrieval, auth, and evaluation APIs"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }

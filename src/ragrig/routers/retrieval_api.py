@@ -33,9 +33,9 @@ from ragrig.retrieval import (
 from ragrig.routers.runtime import (
     get_rate_limiter,
     get_workspace_id,
-    knowledge_base_access_error,
 )
 from ragrig.services.common import (
+    knowledge_base_access_error,
     record_usage_for_request,
     resolve_acl_context,
     resolve_vector_backend,

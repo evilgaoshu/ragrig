@@ -243,6 +243,17 @@ jobs:
         if: steps.docker_needed.outputs.needed == 'true'
         run: docker build -t ragrig:ci .
 
+      - name: Scan Docker image vulnerabilities
+        if: steps.docker_needed.outputs.needed == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ragrig:ci
+          format: table
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
       - name: Start Postgres for container health
         if: steps.docker_needed.outputs.needed == 'true'
         run: |

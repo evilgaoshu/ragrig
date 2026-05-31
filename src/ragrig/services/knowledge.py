@@ -33,7 +33,7 @@ from ragrig.repositories import (
     list_kb_permissions,
     set_kb_permission,
 )
-from ragrig.routers.runtime import knowledge_base_access_error
+from ragrig.services.common import knowledge_base_access_error
 from ragrig.understanding import (
     DocumentVersionNotFoundError,
     ProviderUnavailableError,

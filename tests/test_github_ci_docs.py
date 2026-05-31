@@ -47,6 +47,8 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "make migrate" in workflow
     assert "make db-check" in workflow
     assert "docker build -t ragrig:ci ." in workflow
+    assert "aquasecurity/trivy-action@v0.36.0" in workflow
+    assert "image-ref: ragrig:ci" in workflow
     assert "make sqlite-warning-check" not in workflow
     assert "-W always::ResourceWarning" not in workflow
 

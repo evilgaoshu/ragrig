@@ -157,3 +157,23 @@ def test_fastapi_entrypoint_uses_routers_and_services_layers() -> None:
     assert "@app." not in main_source
     assert (REPO_ROOT / "src/ragrig/api").is_dir()
     assert (REPO_ROOT / "src/ragrig/services").is_dir()
+
+
+def test_services_layer_does_not_import_routers_layer() -> None:
+    offenders: dict[str, list[str]] = {}
+
+    for path in sorted((REPO_ROOT / "src/ragrig/services").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports: list[str] = []
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                imports.extend(
+                    alias.name for alias in node.names if alias.name.startswith("ragrig.routers")
+                )
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                if node.module.startswith("ragrig.routers"):
+                    imports.append(node.module)
+        if imports:
+            offenders[str(path.relative_to(REPO_ROOT))] = sorted(imports)
+
+    assert offenders == {}

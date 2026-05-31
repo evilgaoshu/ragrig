@@ -128,6 +128,32 @@ class Settings(BaseSettings):
         description="Expose Prometheus /metrics endpoint.",
     )
 
+    # ── CORS ─────────────────────────────────────────────────────────────────
+    ragrig_cors_origins: str = Field(
+        default="",
+        description=(
+            "Comma-separated allowed CORS origins for separate frontend deployments. "
+            "Empty disables CORS middleware."
+        ),
+    )
+    ragrig_cors_allow_origin_regex: str = Field(
+        default="",
+        description="Optional CORS allowed-origin regex.",
+    )
+    ragrig_cors_allow_credentials: bool = Field(
+        default=False,
+        description="Allow browsers to include credentials on configured CORS origins.",
+    )
+
+    # ── Evaluation API path policy ───────────────────────────────────────────
+    ragrig_evaluation_extra_allowed_roots: str = Field(
+        default="",
+        description=(
+            "Comma-separated extra filesystem roots accepted by evaluation APIs. "
+            "Default evaluation roots are evaluation_runs, evaluation_baselines, and tests."
+        ),
+    )
+
     # ── Email (SMTP) ──────────────────────────────────────────────────────────
     ragrig_smtp_enabled: bool = Field(default=False, description="Enable SMTP email delivery.")
     ragrig_smtp_host: str = Field(default="localhost", description="SMTP server host.")
