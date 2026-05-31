@@ -6,6 +6,12 @@ function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
 }
 
+function redirectToLogin(): void {
+  if (window.location.pathname !== LOGIN_PATH) {
+    window.location.href = LOGIN_PATH
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken()
   const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
@@ -16,7 +22,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith('/auth/')) {
       localStorage.removeItem(TOKEN_KEY)
-      window.location.href = LOGIN_PATH
+      redirectToLogin()
     }
     const body = await res.json().catch(() => ({}))
     throw new Error(body?.error ?? body?.detail ?? `HTTP ${res.status}`)
@@ -32,7 +38,7 @@ async function requestForm<T>(path: string, body: FormData): Promise<T> {
   if (!res.ok) {
     if (res.status === 401) {
       localStorage.removeItem(TOKEN_KEY)
-      window.location.href = LOGIN_PATH
+      redirectToLogin()
     }
     const b = await res.json().catch(() => ({}))
     throw new Error(b?.error ?? b?.detail ?? `HTTP ${res.status}`)
