@@ -18,5 +18,3 @@
 ## Breaking changes
 
 <!-- List any breaking API, schema, or behavior changes. Leave blank if none. -->
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
