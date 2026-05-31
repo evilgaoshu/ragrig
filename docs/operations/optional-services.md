@@ -41,11 +41,22 @@ Prometheus metrics are enabled by default and exposed at `/metrics`.
 Application-level metrics include HTTP request latency/status, retrieval
 hit/zero/degraded counts, retrieval result counts, and estimated model
 operation token/cost/latency totals.
+Database pool metrics are also exposed as low-cardinality process metrics:
+`ragrig_db_pool_size`, `ragrig_db_pool_checked_in`,
+`ragrig_db_pool_checked_out`, `ragrig_db_pool_overflow`,
+`ragrig_db_pool_checkouts_total`, `ragrig_db_pool_checkins_total`, and
+`ragrig_db_pool_invalidations_total`.
 
 Workspace-hash business metrics are available as a separate optional series.
 Keep them disabled unless the Prometheus cardinality is acceptable for your
 deployment. When enabled, RAGRig emits `*_by_workspace` metrics with
 `workspace="ws_<sha256-prefix>"` labels instead of raw workspace IDs.
+
+When OpenTelemetry is enabled, RAGRig emits business spans for retrieval and
+indexing phases, including query embedding, vector search, rerank, chunking,
+embedding batches, and vector upsert. Span attributes use counts, backend
+names, provider/model metadata, and hashed workspace/knowledge-base labels
+only.
 
 File logs are deliberately opt-in. In containers, stdout/stderr remains the
 portable default because most orchestrators own log collection and rotation. If
@@ -64,6 +75,21 @@ RAGRIG_LOG_BACKUP_COUNT=5
 `docker-compose.yml` mounts `/app/logs` to the `ragrig_logs` volume. The
 application creates the parent directory and rotates the file according to
 `RAGRIG_LOG_MAX_BYTES` and `RAGRIG_LOG_BACKUP_COUNT`.
+
+## ARQ / Redis task queue
+
+The default task backend is the in-process threadpool. Redis is only required
+when `RAGRIG_TASK_BACKEND=arq` and a worker is running.
+
+```
+RAGRIG_TASK_BACKEND=arq
+RAGRIG_REDIS_URL=redis://redis:6379
+RAGRIG_TASK_QUEUE_MAX_JOBS=10
+```
+
+When the ARQ backend is active, `/health` pings Redis and reports
+`redis.status="connected"` or returns HTTP 503 with `redis.status="error"`.
+With the default threadpool backend, Redis health is reported as `skipped`.
 
 ## Fileshare live smoke (`--profile fileshare-live`)
 

@@ -120,7 +120,21 @@ def test_production_observability_docs_and_compose_defaults_are_wired() -> None:
     assert "# RAGRIG_LOG_FILE=/app/logs/ragrig.jsonl" in env_example
     assert "Prometheus metrics are enabled by default" in optional_services
     assert 'workspace="ws_<sha256-prefix>"' in optional_services
+    assert "ragrig_db_pool_checked_out" in optional_services
+    assert "business spans for retrieval and" in optional_services
+    assert "# RAGRIG_TASK_BACKEND=threadpool" in env_example
     assert "RAGRIG_LOG_BACKUP_COUNT=5" in optional_services
+
+
+def test_troubleshooting_runbook_covers_operational_failure_modes() -> None:
+    runbook = (REPO_ROOT / "docs" / "operations" / "troubleshooting.md").read_text(encoding="utf-8")
+
+    assert "# RAGRig Troubleshooting Runbook" in runbook
+    assert "redis.status=error" in runbook
+    assert "ragrig_db_pool_checked_out" in runbook
+    assert "ragrig.retrieval.vector_search" in runbook
+    assert "ragrig.indexing.embed" in runbook
+    assert "retry_backoff_multiplier" in runbook
 
 
 def test_contributing_documents_branch_commit_and_frontend_audit_policy() -> None:

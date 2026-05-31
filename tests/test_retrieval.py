@@ -691,6 +691,68 @@ async def test_retrieval_search_api_emits_optional_workspace_metrics(tmp_path) -
     assert str(DEFAULT_WORKSPACE_ID) not in metrics_payload
 
 
+def test_retrieval_and_indexing_emit_business_spans(tmp_path, monkeypatch) -> None:
+    from contextlib import contextmanager
+
+    span_names: list[str] = []
+    span_attributes: list[dict[str, object]] = []
+
+    class FakeSpan:
+        def __init__(self) -> None:
+            self.attributes: dict[str, object] = {}
+
+        def set_attribute(self, key: str, value: object) -> None:
+            self.attributes[key] = value
+
+        def record_exception(self, _exc: BaseException) -> None:
+            return None
+
+        def set_status(self, _status: object) -> None:
+            return None
+
+    @contextmanager
+    def fake_start_span(name: str, **attrs):
+        span = FakeSpan()
+        span_names.append(name)
+        index = len(span_attributes)
+        span_attributes.append(dict(attrs))
+        try:
+            yield span
+        finally:
+            span_attributes[index].update(span.attributes)
+
+    monkeypatch.setattr("ragrig.observability.tracing.start_span", fake_start_span)
+    monkeypatch.setattr("ragrig.indexing.pipeline.start_span", fake_start_span)
+    monkeypatch.setattr("ragrig.retrieval.start_span", fake_start_span)
+
+    docs = _seed_documents(tmp_path, {"guide.txt": "business span target"})
+    with _create_session() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+        report = search_knowledge_base(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="business span target",
+            top_k=1,
+        )
+
+    assert report.total_results == 1
+    assert "ragrig.indexing.knowledge_base" in span_names
+    assert "ragrig.indexing.chunk" in span_names
+    assert "ragrig.indexing.embed" in span_names
+    assert "ragrig.retrieval.search" in span_names
+    assert "ragrig.retrieval.embed_query" in span_names
+    assert "ragrig.retrieval.vector_search" in span_names
+    serialized_attributes = repr(span_attributes)
+    assert "business span target" not in serialized_attributes
+    assert "fixture-local" not in serialized_attributes
+    assert "ragrig.workspace_hash" in serialized_attributes
+
+
 @pytest.mark.anyio
 async def test_retrieval_search_api_returns_not_found_error_for_missing_knowledge_base() -> None:
     app = create_app(check_database=lambda: None, session_factory=_create_session)

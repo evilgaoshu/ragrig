@@ -29,9 +29,13 @@ from ragrig.db.models import (
 from ragrig.lexical import token_overlap_score
 from ragrig.observability import (
     aggregate_cost_latency,
+    hash_attribute,
     log_event,
     observe_model_call,
     safe_query_fields,
+    set_span_attributes,
+    start_span,
+    trace_function,
 )
 from ragrig.providers import get_provider_registry
 from ragrig.repositories import get_knowledge_base_by_name
@@ -60,6 +64,33 @@ from ragrig.vectorstore.pgvector import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _retrieval_search_span_attributes(*_args, **kwargs) -> dict[str, object]:
+    return {
+        "ragrig.operation": "retrieval.search",
+        "ragrig.knowledge_base_hash": hash_attribute(
+            kwargs.get("knowledge_base_name"), prefix="kb"
+        ),
+        "ragrig.workspace_hash": hash_attribute(kwargs.get("workspace_id"), prefix="ws"),
+        "retrieval.mode": kwargs.get("mode", "dense"),
+        "retrieval.top_k": int(kwargs.get("top_k", 5) or 5),
+        "retrieval.candidate_k": int(kwargs.get("candidate_k", 20) or 20),
+        "retrieval.enforce_acl": bool(kwargs.get("enforce_acl", True)),
+        "embedding.provider.requested": kwargs.get("provider"),
+        "embedding.model.requested": kwargs.get("model"),
+    }
+
+
+def _retrieval_search_result_span_attributes(report: "RetrievalReport") -> dict[str, object]:
+    return {
+        "retrieval.total_results": report.total_results,
+        "retrieval.backend": report.backend,
+        "retrieval.degraded": report.degraded,
+        "embedding.provider": report.provider,
+        "embedding.model": report.model,
+        "embedding.dimensions": report.dimensions,
+    }
 
 
 class RetrievalError(ValueError):
@@ -1058,6 +1089,11 @@ def _hydrate_parent_text(
     return hydrated
 
 
+@trace_function(
+    "ragrig.retrieval.search",
+    attributes=_retrieval_search_span_attributes,
+    result_attributes=_retrieval_search_result_span_attributes,
+)
 def search_knowledge_base(
     session: Session,
     *,
@@ -1203,7 +1239,17 @@ def search_knowledge_base(
     # Embed the primary (first) query; sub-query merging happens after retrieval
     primary_query = sub_queries[0]
     try:
-        query_embedding = embedding_provider.embed_text(primary_query)
+        with start_span(
+            "ragrig.retrieval.embed_query",
+            **{
+                "ragrig.knowledge_base_hash": hash_attribute(knowledge_base.id, prefix="kb"),
+                "ragrig.workspace_hash": hash_attribute(kb_workspace_id, prefix="ws"),
+                "embedding.provider": resolved_provider,
+                "embedding.model": resolved_model,
+                "embedding.dimensions": resolved_dimensions,
+            },
+        ):
+            query_embedding = embedding_provider.embed_text(primary_query)
     except Exception as exc:
         log_event(
             logger,
@@ -1243,7 +1289,20 @@ def search_knowledge_base(
             hyde_started = perf_counter()
             hypo_doc = generate_hypothetical_document(primary_query, hyde_llm)
             if hypo_doc:
-                hyde_embedding = embedding_provider.embed_text(hypo_doc)
+                with start_span(
+                    "ragrig.retrieval.embed_query",
+                    **{
+                        "ragrig.knowledge_base_hash": hash_attribute(
+                            knowledge_base.id, prefix="kb"
+                        ),
+                        "ragrig.workspace_hash": hash_attribute(kb_workspace_id, prefix="ws"),
+                        "embedding.operation": "hyde_embedding",
+                        "embedding.provider": resolved_provider,
+                        "embedding.model": resolved_model,
+                        "embedding.dimensions": resolved_dimensions,
+                    },
+                ):
+                    hyde_embedding = embedding_provider.embed_text(hypo_doc)
                 blend = getattr(hyde_config, "blend", 1.0)
                 query_vector = blend_vectors(query_vector, hyde_embedding.vector, blend)
                 phase_latencies["hyde_ms"] = round((perf_counter() - hyde_started) * 1000, 3)
@@ -1277,12 +1336,23 @@ def search_knowledge_base(
         fetch_k = candidate_k if mode != "dense" else top_k
         if enforce_acl and principal_ids is not None:
             fetch_k = fetch_k * 3
-        vector_results = vector_backend.search(
-            session,
-            collection,
-            query_vector=query_vector,
+        with start_span(
+            "ragrig.retrieval.vector_search",
+            backend=vector_backend.backend_name,
             top_k=fetch_k,
-        )
+            mode=mode,
+            **{
+                "ragrig.knowledge_base_hash": hash_attribute(knowledge_base.id, prefix="kb"),
+                "ragrig.workspace_hash": hash_attribute(kb_workspace_id, prefix="ws"),
+            },
+        ) as vector_span:
+            vector_results = vector_backend.search(
+                session,
+                collection,
+                query_vector=query_vector,
+                top_k=fetch_k,
+            )
+            set_span_attributes(vector_span, **{"retrieval.candidate_count": len(vector_results)})
         if enforce_acl:
             acl_filter_report = _filter_acl_candidates(
                 vector_results,
@@ -1324,18 +1394,29 @@ def search_knowledge_base(
                 )
             )
     elif session.bind is not None and session.bind.dialect.name == "postgresql":
-        dense_results = _search_with_sql_distance(
-            session,
-            knowledge_base_id=knowledge_base.id,
-            provider=resolved_provider,
-            model=resolved_model,
-            dimensions=resolved_dimensions,
-            query_vector=query_vector,
+        with start_span(
+            "ragrig.retrieval.vector_search",
+            backend="pgvector",
             top_k=candidate_k if mode != "dense" else top_k,
-            principal_ids=principal_ids,
-            enforce_acl=enforce_acl,
-            workspace_id=kb_workspace_id,
-        )
+            mode=mode,
+            **{
+                "ragrig.knowledge_base_hash": hash_attribute(knowledge_base.id, prefix="kb"),
+                "ragrig.workspace_hash": hash_attribute(kb_workspace_id, prefix="ws"),
+            },
+        ) as vector_span:
+            dense_results = _search_with_sql_distance(
+                session,
+                knowledge_base_id=knowledge_base.id,
+                provider=resolved_provider,
+                model=resolved_model,
+                dimensions=resolved_dimensions,
+                query_vector=query_vector,
+                top_k=candidate_k if mode != "dense" else top_k,
+                principal_ids=principal_ids,
+                enforce_acl=enforce_acl,
+                workspace_id=kb_workspace_id,
+            )
+            set_span_attributes(vector_span, **{"retrieval.candidate_count": len(dense_results)})
         acl_filter_report = _AclFilterReport(
             results=dense_results,
             candidate_count=len(dense_results),
@@ -1344,18 +1425,29 @@ def search_knowledge_base(
             reason_counts={},
         )
     else:
-        dense_results, acl_filter_report = _search_with_python_distance(
-            session,
-            knowledge_base_id=knowledge_base.id,
-            provider=resolved_provider,
-            model=resolved_model,
-            dimensions=resolved_dimensions,
-            query_vector=query_vector,
+        with start_span(
+            "ragrig.retrieval.vector_search",
+            backend="python_distance",
             top_k=candidate_k if mode != "dense" else top_k,
-            principal_ids=principal_ids,
-            enforce_acl=enforce_acl,
-            workspace_id=kb_workspace_id,
-        )
+            mode=mode,
+            **{
+                "ragrig.knowledge_base_hash": hash_attribute(knowledge_base.id, prefix="kb"),
+                "ragrig.workspace_hash": hash_attribute(kb_workspace_id, prefix="ws"),
+            },
+        ) as vector_span:
+            dense_results, acl_filter_report = _search_with_python_distance(
+                session,
+                knowledge_base_id=knowledge_base.id,
+                provider=resolved_provider,
+                model=resolved_model,
+                dimensions=resolved_dimensions,
+                query_vector=query_vector,
+                top_k=candidate_k if mode != "dense" else top_k,
+                principal_ids=principal_ids,
+                enforce_acl=enforce_acl,
+                workspace_id=kb_workspace_id,
+            )
+            set_span_attributes(vector_span, **{"retrieval.candidate_count": len(dense_results)})
     phase_latencies["dense_retrieval_ms"] = round((perf_counter() - dense_started) * 1000, 3)
 
     graph_context: dict[str, Any] = {}
@@ -1444,12 +1536,27 @@ def search_knowledge_base(
             # ACL filtering is already applied in Phase 1 — only authorized
             # candidates reach here, so reranker input is ACL-safe.
             rerank_started = perf_counter()
-            reranked, rerank_degraded, rerank_reason = _apply_rerank(
-                dense_results,
-                normalized_query,
-                reranker_provider=reranker_provider,
-                reranker_model=reranker_model,
-            )
+            with start_span(
+                "ragrig.retrieval.rerank",
+                candidate_count=len(dense_results),
+                provider=reranker_provider or "fake",
+                model=reranker_model or "deterministic-reranker",
+                **{
+                    "ragrig.knowledge_base_hash": hash_attribute(knowledge_base.id, prefix="kb"),
+                    "ragrig.workspace_hash": hash_attribute(kb_workspace_id, prefix="ws"),
+                },
+            ) as rerank_span:
+                reranked, rerank_degraded, rerank_reason = _apply_rerank(
+                    dense_results,
+                    normalized_query,
+                    reranker_provider=reranker_provider,
+                    reranker_model=reranker_model,
+                )
+                set_span_attributes(
+                    rerank_span,
+                    result_count=len(reranked),
+                    degraded=rerank_degraded,
+                )
             phase_latencies["rerank_ms"] = round((perf_counter() - rerank_started) * 1000, 3)
             cost_latency_operations.append(
                 observe_model_call(

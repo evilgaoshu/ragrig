@@ -194,6 +194,48 @@ def test_workflow_engine_rejects_cycles_and_unknown_operations() -> None:
             )
 
 
+def test_workflow_engine_retries_with_exponential_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ragrig.workflows import engine as workflow_engine
+    from ragrig.workflows.engine import WorkflowDefinition, WorkflowStep, run_workflow
+
+    attempts = 0
+    sleeps: list[float] = []
+
+    def flaky_runner(_session: Session, _config: dict[str, object]):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise RuntimeError("transient")
+        return None, {"attempts": attempts}
+
+    monkeypatch.setitem(workflow_engine._RUNNERS, "flaky", flaky_runner)
+    workflow = WorkflowDefinition(
+        workflow_id="retry-backoff",
+        steps=[
+            WorkflowStep(
+                step_id="flaky",
+                operation="flaky",
+                max_retries=2,
+                retry_backoff_seconds=0.5,
+                retry_backoff_multiplier=3.0,
+            )
+        ],
+    )
+
+    with _create_session() as session:
+        report = run_workflow(
+            session=session,
+            definition=workflow,
+            retry_sleep=sleeps.append,
+        )
+
+    assert report.status == "completed"
+    assert attempts == 3
+    assert sleeps == [0.5, 1.5]
+    assert report.steps[0].attempts == 3
+    assert report.steps[0].output == {"attempts": 3}
+
+
 @pytest.mark.anyio
 async def test_enterprise_connector_and_workflow_api_endpoints(tmp_path: Path) -> None:
     docs = tmp_path / "docs"

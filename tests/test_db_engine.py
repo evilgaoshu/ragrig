@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from prometheus_client import generate_latest
 
 from ragrig.config import Settings
 from ragrig.db import engine as db_engine
@@ -15,6 +16,22 @@ def test_create_db_engine_uses_explicit_settings() -> None:
 
     assert engine.url.render_as_string(hide_password=False) == "sqlite+pysqlite:///:memory:"
     assert engine.pool._pre_ping is True
+    engine.dispose()
+
+
+def test_create_db_engine_instruments_pool_metrics(tmp_path) -> None:
+    engine = db_engine.create_db_engine(
+        Settings(database_url=f"sqlite+pysqlite:///{tmp_path / 'pool-metrics.db'}"),
+    )
+
+    with engine.connect() as connection:
+        connection.exec_driver_sql("SELECT 1")
+
+    payload = generate_latest().decode("utf-8")
+    assert "ragrig_db_pool_checkouts_total" in payload
+    assert "ragrig_db_pool_checkins_total" in payload
+    assert "ragrig_db_pool_checked_out" in payload
+    assert "ragrig_db_pool_size" in payload
     engine.dispose()
 
 
