@@ -26,6 +26,10 @@ from ragrig.config import Settings
 # ── Prometheus ────────────────────────────────────────────────────────────────
 
 
+def _metric_lines(payload: str, metric_name: str) -> list[str]:
+    return [line for line in payload.splitlines() if line.startswith(metric_name)]
+
+
 @pytest.mark.unit
 def test_metrics_endpoint_exposed():
     """setup_metrics attaches /metrics route to the FastAPI app."""
@@ -49,6 +53,99 @@ def test_metrics_not_in_openapi_schema():
     setup_metrics(app)
     schema = app.openapi()
     assert "/metrics" not in schema.get("paths", {})
+
+
+@pytest.mark.unit
+def test_metrics_records_http_request_latency_and_status():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from ragrig.metrics import setup_metrics
+
+    app = FastAPI()
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"app": "ok"}
+
+    setup_metrics(app)
+    client = TestClient(app)
+
+    assert client.get("/health").status_code == 200
+
+    payload = client.get("/metrics").text
+    assert 'ragrig_http_requests_total{method="GET",path="/health",status_code="200"}' in payload
+    assert any(
+        'method="GET"' in line
+        and 'path="/health"' in line
+        and 'status_code="200"' in line
+        and "le=" in line
+        for line in _metric_lines(payload, "ragrig_http_request_duration_seconds_bucket")
+    )
+
+
+@pytest.mark.unit
+def test_retrieval_metrics_record_hits_cost_tokens_and_latency():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from ragrig.metrics import observe_retrieval_report, setup_metrics
+
+    observe_retrieval_report(
+        endpoint="unit.retrieval",
+        mode="dense",
+        backend="pgvector",
+        total_results=2,
+        cost_latency={
+            "operations": [
+                {
+                    "operation": "retrieval_query_embedding",
+                    "provider": "deterministic-local",
+                    "model": "hash-8d",
+                    "input_tokens_estimated": 4,
+                    "output_tokens_estimated": 0,
+                    "total_tokens_estimated": 4,
+                    "total_cost_usd_estimated": 0.0,
+                    "latency_ms": 12.5,
+                }
+            ]
+        },
+    )
+
+    app = FastAPI()
+    setup_metrics(app)
+    payload = TestClient(app).get("/metrics").text
+
+    assert any(
+        'endpoint="unit.retrieval"' in line
+        and 'mode="dense"' in line
+        and 'backend="pgvector"' in line
+        and 'status="hit"' in line
+        for line in _metric_lines(payload, "ragrig_retrieval_requests_total")
+    )
+    assert any(
+        'endpoint="unit.retrieval"' in line
+        and 'mode="dense"' in line
+        and 'backend="pgvector"' in line
+        and 'le="2.0"' in line
+        for line in _metric_lines(payload, "ragrig_retrieval_results_bucket")
+    )
+    assert any(
+        'endpoint="unit.retrieval"' in line
+        and 'operation="retrieval_query_embedding"' in line
+        and 'provider="deterministic-local"' in line
+        and 'model="hash-8d"' in line
+        and 'token_type="total"' in line
+        for line in _metric_lines(payload, "ragrig_model_operation_tokens_estimated_total")
+    )
+    assert any(
+        'endpoint="unit.retrieval"' in line
+        and 'operation="retrieval_query_embedding"' in line
+        and 'provider="deterministic-local"' in line
+        and 'model="hash-8d"' in line
+        and "le=" in line
+        for line in _metric_lines(payload, "ragrig_model_operation_latency_seconds_bucket")
+    )
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────

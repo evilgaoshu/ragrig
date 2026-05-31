@@ -35,6 +35,30 @@ QDRANT_GRPC_PORT=6334
 
 Bring it up with `docker compose --profile qdrant up -d qdrant`.
 
+## Production observability
+
+Prometheus metrics are enabled by default and exposed at `/metrics`.
+Application-level metrics include HTTP request latency/status, retrieval
+hit/zero/degraded counts, retrieval result counts, and estimated model
+operation token/cost/latency totals.
+
+File logs are deliberately opt-in. In containers, stdout/stderr remains the
+portable default because most orchestrators own log collection and rotation. If
+you want compose-managed rotating log files, copy this block into `.env`:
+
+```
+RAGRIG_METRICS_ENABLED=true
+RAGRIG_LOG_FORMAT=json
+RAGRIG_LOG_LEVEL=INFO
+RAGRIG_LOG_FILE=/app/logs/ragrig.jsonl
+RAGRIG_LOG_MAX_BYTES=10485760
+RAGRIG_LOG_BACKUP_COUNT=5
+```
+
+`docker-compose.yml` mounts `/app/logs` to the `ragrig_logs` volume. The
+application creates the parent directory and rotates the file according to
+`RAGRIG_LOG_MAX_BYTES` and `RAGRIG_LOG_BACKUP_COUNT`.
+
 ## Fileshare live smoke (`--profile fileshare-live`)
 
 ```
