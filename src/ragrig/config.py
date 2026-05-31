@@ -127,6 +127,13 @@ class Settings(BaseSettings):
         default=True,
         description="Expose Prometheus /metrics endpoint.",
     )
+    ragrig_metrics_workspace_labels_enabled: bool = Field(
+        default=False,
+        description=(
+            "Also emit low-cardinality workspace-hash labels on selected business metrics. "
+            "Disabled by default to keep Prometheus cardinality predictable."
+        ),
+    )
 
     # ── CORS ─────────────────────────────────────────────────────────────────
     ragrig_cors_origins: str = Field(

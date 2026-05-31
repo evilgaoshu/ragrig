@@ -148,6 +148,122 @@ def test_retrieval_metrics_record_hits_cost_tokens_and_latency():
     )
 
 
+@pytest.mark.unit
+def test_retrieval_workspace_metrics_are_disabled_by_default():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from ragrig.metrics import observe_retrieval_report, setup_metrics
+
+    endpoint = "unit.workspace.disabled"
+    workspace_id = "tenant-alpha-secret"
+    observe_retrieval_report(
+        endpoint=endpoint,
+        mode="dense",
+        backend="pgvector",
+        total_results=1,
+        workspace_id=workspace_id,
+        include_workspace_label=False,
+    )
+
+    app = FastAPI()
+    setup_metrics(app)
+    payload = TestClient(app).get("/metrics").text
+
+    base_lines = [
+        line
+        for line in _metric_lines(payload, "ragrig_retrieval_requests_total")
+        if endpoint in line
+    ]
+    workspace_lines = [
+        line
+        for line in _metric_lines(payload, "ragrig_retrieval_requests_by_workspace_total")
+        if endpoint in line
+    ]
+    assert base_lines
+    assert all("workspace=" not in line for line in base_lines)
+    assert workspace_lines == []
+    assert workspace_id not in payload
+
+
+@pytest.mark.unit
+def test_retrieval_workspace_metrics_use_hashed_low_cardinality_label():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from ragrig.metrics import observe_retrieval_report, setup_metrics
+
+    endpoint = "unit.workspace.enabled"
+    workspace_id = "tenant-alpha-secret@example.com"
+    expected_workspace = f"ws_{hashlib.sha256(workspace_id.encode('utf-8')).hexdigest()[:12]}"
+    observe_retrieval_report(
+        endpoint=endpoint,
+        mode="dense",
+        backend="pgvector",
+        total_results=3,
+        degraded=True,
+        cost_latency={
+            "operations": [
+                {
+                    "operation": "retrieval_query_embedding",
+                    "provider": "deterministic-local",
+                    "model": "hash-8d",
+                    "input_tokens_estimated": 6,
+                    "output_tokens_estimated": 0,
+                    "total_tokens_estimated": 6,
+                    "total_cost_usd_estimated": 0.0,
+                    "latency_ms": 9.0,
+                }
+            ]
+        },
+        workspace_id=workspace_id,
+        include_workspace_label=True,
+    )
+
+    app = FastAPI()
+    setup_metrics(app)
+    payload = TestClient(app).get("/metrics").text
+    workspace_lines = [
+        line for line in payload.splitlines() if endpoint in line and "_by_workspace" in line
+    ]
+
+    assert workspace_lines
+    assert workspace_id not in payload
+    assert all(f'workspace="{expected_workspace}"' in line for line in workspace_lines)
+    assert any(
+        'endpoint="unit.workspace.enabled"' in line
+        and 'status="hit"' in line
+        and f'workspace="{expected_workspace}"' in line
+        for line in _metric_lines(payload, "ragrig_retrieval_requests_by_workspace_total")
+    )
+    assert any(
+        'endpoint="unit.workspace.enabled"' in line
+        and 'le="3.0"' in line
+        and f'workspace="{expected_workspace}"' in line
+        for line in _metric_lines(payload, "ragrig_retrieval_results_by_workspace_bucket")
+    )
+    assert any(
+        'endpoint="unit.workspace.enabled"' in line and f'workspace="{expected_workspace}"' in line
+        for line in _metric_lines(payload, "ragrig_retrieval_degraded_by_workspace_total")
+    )
+    assert any(
+        'endpoint="unit.workspace.enabled"' in line
+        and 'token_type="total"' in line
+        and f'workspace="{expected_workspace}"' in line
+        for line in _metric_lines(
+            payload,
+            "ragrig_model_operation_tokens_estimated_by_workspace_total",
+        )
+    )
+    assert any(
+        'endpoint="unit.workspace.enabled"' in line and f'workspace="{expected_workspace}"' in line
+        for line in _metric_lines(
+            payload,
+            "ragrig_model_operation_latency_by_workspace_seconds_bucket",
+        )
+    )
+
+
 # ── Email ─────────────────────────────────────────────────────────────────────
 
 

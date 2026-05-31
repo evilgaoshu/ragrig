@@ -9,6 +9,8 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from ragrig.acl import AclMetadata, Principal
+from ragrig.auth import DEFAULT_WORKSPACE_ID
+from ragrig.config import Settings
 from ragrig.db.models import AuditEvent, Base, Document, DocumentVersion
 from ragrig.embeddings import DeterministicEmbeddingProvider
 from ragrig.indexing.pipeline import index_knowledge_base
@@ -643,6 +645,50 @@ async def test_retrieval_search_api_returns_contract_payload(tmp_path) -> None:
     assert 'backend="pgvector"' in metrics_payload
     assert 'status="hit"' in metrics_payload
     assert "ragrig_model_operation_tokens_estimated_total" in metrics_payload
+
+
+@pytest.mark.anyio
+async def test_retrieval_search_api_emits_optional_workspace_metrics(tmp_path) -> None:
+    database_path = tmp_path / "retrieval-workspace-metrics.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    docs = _seed_documents(tmp_path, {"guide.txt": "retrieval workspace metric"})
+    with session_factory() as session:
+        ingest_local_directory(
+            session=session,
+            knowledge_base_name="fixture-local",
+            root_path=docs,
+        )
+        index_knowledge_base(session=session, knowledge_base_name="fixture-local")
+
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        settings=Settings(
+            ragrig_auth_enabled=False,
+            ragrig_metrics_workspace_labels_enabled=True,
+        ),
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/retrieval/search",
+            json={
+                "knowledge_base": "fixture-local",
+                "query": "retrieval workspace metric",
+                "top_k": 1,
+            },
+        )
+        metrics_response = await client.get("/metrics")
+
+    assert response.status_code == 200
+    assert metrics_response.status_code == 200
+    metrics_payload = metrics_response.text
+    assert "ragrig_retrieval_requests_by_workspace_total" in metrics_payload
+    assert 'endpoint="retrieval.search"' in metrics_payload
+    assert 'workspace="ws_' in metrics_payload
+    assert str(DEFAULT_WORKSPACE_ID) not in metrics_payload
 
 
 @pytest.mark.anyio
