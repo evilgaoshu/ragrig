@@ -31,6 +31,7 @@ SESSION_TOKEN_PREFIX = "rag_session"
 INVITATION_TOKEN_PREFIX = "rag_invite"
 INVITATION_DEFAULT_DAYS = 7
 _DEFAULT_LOCAL_PEPPER = "ragrig-local-dev-auth-pepper"
+_PRODUCTION_APP_ENVS = {"prod", "production"}
 
 
 @dataclass(frozen=True)
@@ -225,9 +226,22 @@ def _hash_audit_value(value: str | None, *, pepper: str | bytes | None = None) -
 def _pepper_bytes(pepper: str | bytes | None) -> bytes:
     if pepper is None:
         pepper = os.getenv("RAGRIG_AUTH_SECRET_PEPPER", _DEFAULT_LOCAL_PEPPER)
+    if (
+        _uses_insecure_production_pepper(pepper)
+        and os.getenv("APP_ENV", "development").lower() in _PRODUCTION_APP_ENVS
+    ):
+        raise RuntimeError(
+            "RAGRIG_AUTH_SECRET_PEPPER must be set to a non-default value in production."
+        )
     if isinstance(pepper, bytes):
         return pepper
     return pepper.encode("utf-8")
+
+
+def _uses_insecure_production_pepper(pepper: str | bytes) -> bool:
+    if isinstance(pepper, bytes):
+        return not pepper or pepper == _DEFAULT_LOCAL_PEPPER.encode("utf-8")
+    return not pepper.strip() or pepper == _DEFAULT_LOCAL_PEPPER
 
 
 def _is_expired(expires_at: datetime | None, *, now: datetime | None = None) -> bool:

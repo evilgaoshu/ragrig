@@ -44,6 +44,31 @@ def health(
     settings: Annotated[Settings, Depends(get_settings)],
     database_check: Annotated[Callable[[], None], Depends(get_database_check)],
 ) -> dict[str, Any] | JSONResponse:
+    return _readiness_health(settings=settings, database_check=database_check)
+
+
+@router.get("/health/live", response_model=None)
+def health_live() -> dict[str, Any]:
+    return {
+        "status": "alive",
+        "app": "ok",
+        "version": __version__,
+    }
+
+
+@router.get("/health/ready", response_model=None)
+def health_ready(
+    settings: Annotated[Settings, Depends(get_settings)],
+    database_check: Annotated[Callable[[], None], Depends(get_database_check)],
+) -> dict[str, Any] | JSONResponse:
+    return _readiness_health(settings=settings, database_check=database_check)
+
+
+def _readiness_health(
+    *,
+    settings: Settings,
+    database_check: Callable[[], None],
+) -> dict[str, Any] | JSONResponse:
     redis_health = build_redis_health(settings)
     try:
         database_check()

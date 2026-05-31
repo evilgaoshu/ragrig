@@ -53,6 +53,39 @@ async def test_health_reports_database_connection(
 
 
 @pytest.mark.anyio
+async def test_health_ready_reports_dependency_readiness(
+    make_client: Callable[[Callable[[], None]], httpx.AsyncClient],
+) -> None:
+    async with make_client(lambda: None) as client:
+        response = await client.get("/health/ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "healthy"
+    assert payload["app"] == "ok"
+    assert payload["db"] == "connected"
+    assert payload["redis"]["status"] == "skipped"
+
+
+@pytest.mark.anyio
+async def test_health_live_does_not_check_dependencies(
+    make_client: Callable[[Callable[[], None]], httpx.AsyncClient],
+) -> None:
+    def failing_check() -> None:
+        raise AssertionError("liveness must not run dependency checks")
+
+    async with make_client(failing_check) as client:
+        response = await client.get("/health/live")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "alive",
+        "app": "ok",
+        "version": "0.1.0",
+    }
+
+
+@pytest.mark.anyio
 async def test_health_returns_503_when_database_check_fails(
     make_client: Callable[[Callable[[], None]], httpx.AsyncClient],
 ) -> None:

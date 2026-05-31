@@ -114,13 +114,26 @@ def test_production_observability_docs_and_compose_defaults_are_wired() -> None:
         "RAGRIG_METRICS_WORKSPACE_LABELS_ENABLED: ${RAGRIG_METRICS_WORKSPACE_LABELS_ENABLED:-false}"
     ) in compose
     assert "RAGRIG_LOG_FILE: ${RAGRIG_LOG_FILE:-}" in compose
+    assert "restart: unless-stopped" in compose
+    assert "mem_limit: ${RAGRIG_APP_MEM_LIMIT:-2g}" in compose
+    assert "cpus: ${RAGRIG_APP_CPUS:-2.0}" in compose
+    assert "mem_limit: ${RAGRIG_DB_MEM_LIMIT:-2g}" in compose
+    assert "cpus: ${RAGRIG_DB_CPUS:-2.0}" in compose
+    assert "http://127.0.0.1:8000/health/ready" in compose
     assert "- ragrig_logs:/app/logs" in compose
     assert "ragrig_logs:" in compose
+    assert "# RAGRIG_AUTH_SECRET_PEPPER=replace-with-a-long-random-secret" in env_example
+    assert "# RAGRIG_DB_POOL_SIZE=10" in env_example
     assert "# RAGRIG_METRICS_WORKSPACE_LABELS_ENABLED=false" in env_example
     assert "# RAGRIG_LOG_FILE=/app/logs/ragrig.jsonl" in env_example
+    assert "APP_ENV=production" in optional_services
+    assert "RAGRIG_AUTH_SECRET_PEPPER" in optional_services
+    assert "/health/live" in optional_services
+    assert "/health/ready" in optional_services
     assert "Prometheus metrics are enabled by default" in optional_services
     assert 'workspace="ws_<sha256-prefix>"' in optional_services
     assert "ragrig_db_pool_checked_out" in optional_services
+    assert "RAGRIG_DB_POOL_RECYCLE=1800" in optional_services
     assert "business spans for retrieval and" in optional_services
     assert "# RAGRIG_TASK_BACKEND=threadpool" in env_example
     assert "RAGRIG_LOG_BACKUP_COUNT=5" in optional_services
@@ -130,8 +143,11 @@ def test_troubleshooting_runbook_covers_operational_failure_modes() -> None:
     runbook = (REPO_ROOT / "docs" / "operations" / "troubleshooting.md").read_text(encoding="utf-8")
 
     assert "# RAGRig Troubleshooting Runbook" in runbook
+    assert "/health/live" in runbook
+    assert "/health/ready" in runbook
     assert "redis.status=error" in runbook
     assert "ragrig_db_pool_checked_out" in runbook
+    assert "RAGRIG_DB_MAX_OVERFLOW" in runbook
     assert "ragrig.retrieval.vector_search" in runbook
     assert "ragrig.indexing.embed" in runbook
     assert "retry_backoff_multiplier" in runbook

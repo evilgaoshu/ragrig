@@ -35,6 +35,54 @@ def test_create_db_engine_instruments_pool_metrics(tmp_path) -> None:
     engine.dispose()
 
 
+def test_create_db_engine_applies_postgresql_pool_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+    fake_engine = object()
+
+    def fake_create_engine(url: str, **kwargs: object) -> object:
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return fake_engine
+
+    monkeypatch.setattr(db_engine, "create_engine", fake_create_engine)
+    monkeypatch.setattr(db_engine, "setup_db_pool_metrics", lambda _engine: None)
+
+    engine = db_engine.create_db_engine(
+        Settings(
+            database_url="postgresql://user:pass@localhost:5432/ragrig",
+            ragrig_db_pool_size=7,
+            ragrig_db_max_overflow=11,
+            ragrig_db_pool_recycle=123,
+        ),
+    )
+
+    assert engine is fake_engine
+    assert captured["url"] == "postgresql+psycopg://user:pass@localhost:5432/ragrig"
+    assert captured["kwargs"] == {
+        "pool_pre_ping": True,
+        "pool_size": 7,
+        "max_overflow": 11,
+        "pool_recycle": 123,
+    }
+
+
+def test_create_db_engine_omits_pool_sizing_for_sqlite(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+    fake_engine = object()
+
+    def fake_create_engine(url: str, **kwargs: object) -> object:
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return fake_engine
+
+    monkeypatch.setattr(db_engine, "create_engine", fake_create_engine)
+    monkeypatch.setattr(db_engine, "setup_db_pool_metrics", lambda _engine: None)
+
+    db_engine.create_db_engine(Settings(database_url="sqlite+pysqlite:///:memory:"))
+
+    assert captured["kwargs"] == {"pool_pre_ping": True}
+
+
 def test_get_db_engine_uses_cached_factory(monkeypatch) -> None:
     created = []
 
