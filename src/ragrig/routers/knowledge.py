@@ -66,11 +66,12 @@ def create_knowledge_base(
     workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     _auth: Annotated[AuthContext, Depends(require_write_auth)],
 ) -> JSONResponse:
-    return knowledge_service.create_knowledge_base(
+    content, status_code = knowledge_service.create_knowledge_base(
         session,
         name=request.name,
         workspace_id=workspace_id,
     )
+    return JSONResponse(status_code=status_code, content=content)
 
 
 @router.get("/knowledge-bases/{kb_name}/permissions", response_model=None)
@@ -81,10 +82,13 @@ def list_kb_permissions_endpoint(
     _auth: Annotated[AuthContext, Depends(require_admin_auth)],
 ) -> JSONResponse:
     """List all per-KB permission overrides for a knowledge base."""
-    return knowledge_service.list_permissions(
-        session,
-        kb_name=kb_name,
-        workspace_id=workspace_id,
+    return JSONResponse(
+        status_code=200,
+        content=knowledge_service.list_permissions(
+            session,
+            kb_name=kb_name,
+            workspace_id=workspace_id,
+        ),
     )
 
 
@@ -98,12 +102,15 @@ def set_kb_permission_endpoint(
     _auth: Annotated[AuthContext, Depends(require_admin_auth)],
 ) -> JSONResponse:
     """Upsert a per-KB role override for a user."""
-    return knowledge_service.set_permission(
-        session,
-        kb_name=kb_name,
-        user_id=user_id,
-        role=request.role,
-        workspace_id=workspace_id,
+    return JSONResponse(
+        status_code=200,
+        content=knowledge_service.set_permission(
+            session,
+            kb_name=kb_name,
+            user_id=user_id,
+            role=request.role,
+            workspace_id=workspace_id,
+        ),
     )
 
 
@@ -116,11 +123,14 @@ def delete_kb_permission_endpoint(
     _auth: Annotated[AuthContext, Depends(require_admin_auth)],
 ) -> JSONResponse:
     """Remove the per-KB permission override for a user."""
-    return knowledge_service.delete_permission(
-        session,
-        kb_name=kb_name,
-        user_id=user_id,
-        workspace_id=workspace_id,
+    return JSONResponse(
+        status_code=200,
+        content=knowledge_service.delete_permission(
+            session,
+            kb_name=kb_name,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        ),
     )
 
 
@@ -161,7 +171,7 @@ def web_understanding_runs(
 def web_understanding_run_detail(
     run_id: str,
     session: Annotated[Session, Depends(get_session)],
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.understanding_run_detail(session, run_id)
 
 
@@ -169,7 +179,7 @@ def web_understanding_run_detail(
 def export_understanding_run_endpoint(
     run_id: str,
     session: Annotated[Session, Depends(get_session)],
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.export_understanding_run_payload(session, run_id)
 
 
@@ -206,7 +216,7 @@ def diff_understanding_runs_endpoint(
     run_id: str,
     session: Annotated[Session, Depends(get_session)],
     against: str,
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.diff_understanding_runs(session, run_id=run_id, against=against)
 
 
@@ -229,7 +239,7 @@ def understand_document_version(
     request: UnderstandingRequest,
     session: Annotated[Session, Depends(get_session)],
     _auth: Annotated[AuthContext, Depends(require_write_auth)],
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.understand_document_version(
         session,
         document_version_id=document_version_id,
@@ -242,7 +252,7 @@ def get_document_understanding(
     document_version_id: str,
     session: Annotated[Session, Depends(get_session)],
     allow_missing: bool = False,
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.get_document_understanding(
         session,
         document_version_id=document_version_id,
@@ -257,7 +267,7 @@ def understand_all(
     session: Annotated[Session, Depends(get_session)],
     _auth: Annotated[AuthContext, Depends(require_write_auth)],
     x_operator: Annotated[str | None, Header()] = None,
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.understand_all(
         session,
         kb_id=kb_id,
@@ -282,7 +292,7 @@ def knowledge_map(
     workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     auth: Annotated[AuthContext, Depends(get_auth_context)],
     profile_id: str = "*.understand.default",
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.knowledge_map(
         session,
         kb_id=kb_id,
@@ -300,7 +310,7 @@ def knowledge_graph(
     settings: Annotated[Settings, Depends(get_settings)],
     workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     auth: Annotated[AuthContext, Depends(get_auth_context)],
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.knowledge_graph(
         session,
         kb_id=kb_id,
@@ -318,7 +328,7 @@ def rebuild_knowledge_graph_endpoint(
     settings: Annotated[Settings, Depends(get_settings)],
     workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     auth: Annotated[AuthContext, Depends(require_write_auth)],
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.rebuild_knowledge_graph_payload(
         session,
         kb_id=kb_id,
@@ -341,7 +351,7 @@ def submit_knowledge_graph_relation_feedback(
     settings: Annotated[Settings, Depends(get_settings)],
     workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     auth: Annotated[AuthContext, Depends(require_write_auth)],
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.submit_relation_feedback(
         session,
         kb_id=kb_id,
@@ -361,7 +371,7 @@ def get_retrieval_preferences(
     settings: Annotated[Settings, Depends(get_settings)],
     workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     auth: Annotated[AuthContext, Depends(get_auth_context)],
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.get_retrieval_preferences(
         session,
         kb_id=kb_id,
@@ -379,7 +389,7 @@ def put_retrieval_preferences(
     settings: Annotated[Settings, Depends(get_settings)],
     workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     auth: Annotated[AuthContext, Depends(require_write_auth)],
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.put_retrieval_preferences(
         session,
         kb_id=kb_id,
@@ -397,7 +407,7 @@ def get_role_model_config(
     settings: Annotated[Settings, Depends(get_settings)],
     workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     auth: Annotated[AuthContext, Depends(get_auth_context)],
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.get_role_model_config(
         session,
         kb_id=kb_id,
@@ -415,7 +425,7 @@ def put_role_model_config(
     settings: Annotated[Settings, Depends(get_settings)],
     workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
     auth: Annotated[AuthContext, Depends(require_write_auth)],
-) -> dict[str, Any] | JSONResponse:
+) -> dict[str, Any]:
     return knowledge_service.put_role_model_config(
         session,
         kb_id=kb_id,

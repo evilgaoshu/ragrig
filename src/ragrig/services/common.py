@@ -24,6 +24,28 @@ def serialize_error(exc: RetrievalError) -> dict[str, Any]:
     }
 
 
+class ServiceError(Exception):
+    def __init__(
+        self,
+        *,
+        status_code: int,
+        content: dict[str, Any],
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(str(content.get("error") or content))
+        self.status_code = status_code
+        self.content = content
+        self.headers = headers
+
+
+def service_error_response(exc: ServiceError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.content,
+        headers=exc.headers,
+    )
+
+
 def create_runtime_settings(settings: Settings | None = None) -> Settings:
     active_settings = settings or get_settings()
     payload = active_settings.model_dump()
@@ -63,12 +85,55 @@ def knowledge_base_access_error(
     minimum: str,
     allow_anonymous_reader: bool = False,
 ) -> JSONResponse | None:
+    exc = knowledge_base_access_violation(
+        settings=settings,
+        session=session,
+        auth=auth,
+        knowledge_base_id=knowledge_base_id,
+        minimum=minimum,
+        allow_anonymous_reader=allow_anonymous_reader,
+    )
+    if exc is None:
+        return None
+    return service_error_response(exc)
+
+
+def require_knowledge_base_access(
+    *,
+    settings: Settings,
+    session: Session,
+    auth: AuthContext,
+    knowledge_base_id: uuid.UUID,
+    minimum: str,
+    allow_anonymous_reader: bool = False,
+) -> None:
+    exc = knowledge_base_access_violation(
+        settings=settings,
+        session=session,
+        auth=auth,
+        knowledge_base_id=knowledge_base_id,
+        minimum=minimum,
+        allow_anonymous_reader=allow_anonymous_reader,
+    )
+    if exc is not None:
+        raise exc
+
+
+def knowledge_base_access_violation(
+    *,
+    settings: Settings,
+    session: Session,
+    auth: AuthContext,
+    knowledge_base_id: uuid.UUID,
+    minimum: str,
+    allow_anonymous_reader: bool = False,
+) -> ServiceError | None:
     if not settings.ragrig_auth_enabled:
         return None
     if auth.is_anonymous:
         if allow_anonymous_reader and minimum == "viewer":
             return None
-        return JSONResponse(
+        return ServiceError(
             status_code=401,
             content={"error": "authentication required"},
             headers={"WWW-Authenticate": "Bearer"},
@@ -76,12 +141,12 @@ def knowledge_base_access_error(
     if auth.user_id is None:
         if minimum == "viewer":
             return None
-        return JSONResponse(
+        return ServiceError(
             status_code=403,
             content={"error": f"{minimum} role or above required"},
         )
     if auth.role is None:
-        return JSONResponse(
+        return ServiceError(
             status_code=403,
             content={"error": f"{minimum} role or above required"},
         )
@@ -92,7 +157,7 @@ def knowledge_base_access_error(
         workspace_role=auth.role,
     )
     if not role_meets(role, minimum):
-        return JSONResponse(
+        return ServiceError(
             status_code=403,
             content={"error": f"{minimum} role or above required for this knowledge base"},
         )

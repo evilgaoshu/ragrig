@@ -177,3 +177,10 @@ def test_services_layer_does_not_import_routers_layer() -> None:
             offenders[str(path.relative_to(REPO_ROOT))] = sorted(imports)
 
     assert offenders == {}
+
+
+def test_knowledge_service_uses_service_errors_not_json_responses() -> None:
+    source = (REPO_ROOT / "src/ragrig/services/knowledge.py").read_text(encoding="utf-8")
+
+    assert "ServiceError" in source
+    assert "JSONResponse" not in source

@@ -49,7 +49,11 @@ from ragrig.routers.system import router as system_router
 from ragrig.routers.usage import router as usage_router
 from ragrig.services.common import create_runtime_settings
 from ragrig.services.common import serialize_error as _serialize_error
-from ragrig.services.middleware import configure_cors, configure_structured_request_logging
+from ragrig.services.middleware import (
+    configure_cors,
+    configure_service_exception_handlers,
+    configure_structured_request_logging,
+)
 from ragrig.tasks import default_task_executor, sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -102,6 +106,7 @@ def create_app(
 
     setup_otel(app, active_settings)
     configure_cors(app, active_settings)
+    configure_service_exception_handlers(app)
     configure_structured_request_logging(app, logger)
 
     def get_session() -> Session:

@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ragrig.config import Settings
 from ragrig.observability import bind_log_context, log_event
+from ragrig.services.common import ServiceError, service_error_response
 
 
 def _parse_cors_origins(raw: str) -> list[str]:
@@ -28,6 +29,12 @@ def configure_cors(app: FastAPI, settings: Settings) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+
+def configure_service_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ServiceError)
+    async def service_error_handler(_request: Request, exc: ServiceError):
+        return service_error_response(exc)
 
 
 def configure_structured_request_logging(app: FastAPI, logger: logging.Logger) -> None:
