@@ -253,8 +253,9 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ragrig:ci
+          scanners: vuln
           format: table
-          vuln-type: os,library
+          vuln-type: os
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"

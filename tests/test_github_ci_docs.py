@@ -51,6 +51,8 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "docker build -t ragrig:ci ." in workflow
     assert "aquasecurity/trivy-action@v0.36.0" in workflow
     assert "image-ref: ragrig:ci" in workflow
+    assert "scanners: vuln" in workflow
+    assert "vuln-type: os" in workflow
     assert "make sqlite-warning-check" not in workflow
     assert "-W always::ResourceWarning" not in workflow
 
