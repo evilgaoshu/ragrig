@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Callable
-from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
@@ -24,6 +23,7 @@ from ragrig.routers.runtime import (
     get_workspace_id,
     redact_summary,
 )
+from ragrig.security_paths import PathPolicyError, resolve_local_ingestion_root
 from ragrig.services.common import knowledge_base_access_error
 from ragrig.tasks import (
     TaskRetryError,
@@ -168,6 +168,7 @@ def source_save_config(
             knowledge_base_name=request.knowledge_base,
             operator=request.operator,
             workspace_id=workspace_id,
+            settings=settings,
         )
     except Exception as exc:
         return JSONResponse(
@@ -181,6 +182,7 @@ def source_save_config(
 def source_dry_run(
     request: SourceDryRunRequest,
     session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
     _auth: Annotated[AuthContext, Depends(require_write_auth)],
 ) -> dict[str, Any] | JSONResponse:
     """Dry-run ingestion scan for a source.
@@ -193,6 +195,7 @@ def source_dry_run(
             session,
             plugin_id=request.plugin_id,
             config=request.config,
+            settings=settings,
         )
     except Exception as exc:
         return JSONResponse(
@@ -377,16 +380,18 @@ def ingestion_dag_run(
     request: IngestionDagRequest,
     _auth: Annotated[AuthContext, Depends(require_write_auth)],
     workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+    settings: Annotated[Settings, Depends(get_settings)],
     session_factory: Annotated[Callable[[], Session], Depends(get_session_factory)],
     task_executor: Annotated[Any, Depends(get_task_executor)],
 ) -> dict[str, Any] | JSONResponse:
     try:
+        root_path = resolve_local_ingestion_root(request.root_path, settings=settings)
         with session_factory() as session:
             run = create_ingestion_dag_run(
                 session,
                 knowledge_base_name=request.knowledge_base,
                 workspace_id=workspace_id,
-                root_path=Path(request.root_path),
+                root_path=root_path,
                 include_patterns=request.include_patterns,
                 exclude_patterns=request.exclude_patterns,
                 max_file_size_bytes=request.max_file_size_bytes,
@@ -401,13 +406,14 @@ def ingestion_dag_run(
                 **request.model_dump(),
                 "workspace_id": str(workspace_id),
                 "pipeline_run_id": pipeline_run_id,
+                "root_path": str(root_path),
             },
             runner=lambda: run_ingestion_dag_task(
                 session_factory=session_factory,
                 pipeline_run_id=pipeline_run_id,
             ),
         )
-    except (ValueError, IngestionDagRejected) as exc:
+    except (ValueError, IngestionDagRejected, PathPolicyError) as exc:
         return JSONResponse(
             status_code=400,
             content={"status": "rejected", "degraded": True, "reason": str(exc)},

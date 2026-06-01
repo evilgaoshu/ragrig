@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
 import uuid
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, UploadFile
@@ -13,6 +15,7 @@ from sqlalchemy.orm import Session
 from ragrig.config import Settings, get_settings
 from ragrig.db.session import get_session
 from ragrig.deps import AuthContext, require_write_auth
+from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.ingestion.web_import import WebsiteImportError
 from ragrig.local_pilot import import_website_pages
 from ragrig.ratelimit import RateLimiter
@@ -26,14 +29,16 @@ from ragrig.routers.runtime import (
 )
 from ragrig.services.common import knowledge_base_access_error
 from ragrig.tasks import (
+    UploadAcceptance,
     cleanup_staging_dir,
     create_upload_pipeline_run,
     enqueue_task,
     run_upload_pipeline,
-    validate_and_stage_uploads,
+    sanitize_filename,
 )
 
 router = APIRouter(tags=["knowledge-ingest"])
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 class WebsiteImportRequest(BaseModel):
@@ -122,12 +127,8 @@ async def knowledge_base_upload(
             content={"error": "at least one file is required"},
         )
 
-    file_payloads: list[tuple[str, bytes]] = []
-    for file in files:
-        file_payloads.append((file.filename or "unknown", await file.read()))
-
     try:
-        accepted = validate_and_stage_uploads(files=file_payloads)
+        accepted = await _validate_and_stage_upload_files(files)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
@@ -182,3 +183,106 @@ async def knowledge_base_upload(
             "warnings": accepted.warnings,
         },
     )
+
+
+async def _validate_and_stage_upload_files(files: list[UploadFile]) -> UploadAcceptance:
+    registry = get_format_registry()
+    rejected: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    staged_files: list[dict[str, str]] = []
+    staging_dir = Path(tempfile.mkdtemp(prefix="ragrig-upload-"))
+
+    for file in files:
+        filename = file.filename or "unknown"
+        extension = Path(filename).suffix.lower()
+        fmt = registry.lookup(extension or "")
+        if fmt is None:
+            rejected.append(
+                {
+                    "filename": filename,
+                    "extension": extension or "(none)",
+                    "reason": "unsupported_format",
+                    "message": f"File format {extension or '(no extension)'} is not supported.",
+                }
+            )
+            continue
+        if fmt.status == FormatStatus.PLANNED:
+            rejected.append(
+                {
+                    "filename": filename,
+                    "extension": extension,
+                    "reason": "unsupported_format",
+                    "message": (
+                        f"{fmt.display_name} support is planned. "
+                        f"{fmt.limitations or 'Not yet implemented.'}"
+                    ),
+                }
+            )
+            continue
+        if fmt.status == FormatStatus.PREVIEW:
+            warnings.append(
+                {
+                    "filename": filename,
+                    "extension": extension,
+                    "status": "preview",
+                    "parser_id": fmt.parser_id,
+                    "fallback_policy": fmt.fallback_policy,
+                    "message": (
+                        f"{fmt.display_name} is in preview status - "
+                        f"{fmt.limitations or 'content will be parsed as plain text.'}"
+                    ),
+                }
+            )
+
+        max_size = fmt.max_file_size_mb * 1024 * 1024
+        dest = _unique_staging_path(staging_dir, sanitize_filename(filename))
+        size = 0
+        too_large = False
+        with dest.open("wb") as out:
+            while chunk := await file.read(_UPLOAD_CHUNK_BYTES):
+                size += len(chunk)
+                if size > max_size:
+                    too_large = True
+                    break
+                out.write(chunk)
+        if too_large:
+            dest.unlink(missing_ok=True)
+            while await file.read(_UPLOAD_CHUNK_BYTES):
+                pass
+            rejected.append(
+                {
+                    "filename": filename,
+                    "extension": extension,
+                    "reason": "file_too_large",
+                    "message": (
+                        f"File '{filename}' exceeds the {fmt.max_file_size_mb} MB size limit for "
+                        f"{fmt.display_name}."
+                    ),
+                }
+            )
+            continue
+        staged_files.append({"filename": filename, "path": str(dest)})
+
+    if len(staged_files) > 10:
+        cleanup_staging_dir(str(staging_dir))
+        raise ValueError(f"too many files: {len(staged_files)}. Maximum 10 files per request.")
+
+    return UploadAcceptance(
+        warnings=warnings,
+        rejected=rejected,
+        staged_files=staged_files,
+        staging_dir=str(staging_dir),
+    )
+
+
+def _unique_staging_path(staging_dir: Path, safe_name: str) -> Path:
+    candidate = staging_dir / safe_name
+    if not candidate.exists():
+        return candidate
+    stem = candidate.stem
+    suffix = candidate.suffix
+    for index in range(1, 1000):
+        candidate = staging_dir / f"{stem}-{index}{suffix}"
+        if not candidate.exists():
+            return candidate
+    raise ValueError("too many files with the same name")

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 
 from ragrig.plugins.sources.fileshare.client import (
+    MountedPathClient,
     SFTPClient,
     SMBClient,
     WebDAVClient,
@@ -114,6 +116,12 @@ class TestSMBClientListFiles:
             with pytest.raises(FileshareRetryableError):
                 client.list_files(root_path="/", cursor=None, page_size=100)
 
+    def test_list_files_rejects_path_traversal(self) -> None:
+        client = SMBClient(host="host", share="share")
+        with patch.dict(sys.modules, {"smbclient": MagicMock()}):
+            with pytest.raises(FilesharePermanentError, match="stay within the root"):
+                client.list_files(root_path="../secret", cursor=None, page_size=100)
+
 
 class TestSMBClientReadFile:
     def test_read_file_success(self) -> None:
@@ -162,6 +170,18 @@ class TestSMBClientReadFile:
             mock_smb.open_file.side_effect = FilesharePermanentError("boom")
             with pytest.raises(FilesharePermanentError, match="boom"):
                 client.read_file(path="guide.md")
+
+
+class TestMountedPathClientReadFile:
+    def test_read_file_rejects_path_traversal(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        (tmp_path / "secret.txt").write_text("secret", encoding="utf-8")
+
+        client = MountedPathClient(root_path=root)
+
+        with pytest.raises(FilesharePermanentError, match="stay within the root"):
+            client.read_file(path="../secret.txt")
 
 
 class TestSMBClientErrorMapping:
@@ -404,6 +424,92 @@ class TestWebDAVClientListFiles:
             with pytest.raises(FilesharePermanentError, match="invalid WebDAV"):
                 client.list_files(root_path="/", cursor=None, page_size=100)
 
+    def test_list_files_rejects_xxe_payload(self) -> None:
+        mock_response = MagicMock()
+        mock_response.text = """<?xml version="1.0"?>
+<!DOCTYPE foo [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>
+<D:multistatus xmlns:D="DAV:">&xxe;</D:multistatus>
+"""
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+
+        with patch("httpx.Client", return_value=mock_client):
+            client = WebDAVClient(base_url="http://localhost:8080")
+            with pytest.raises(FilesharePermanentError, match="invalid WebDAV"):
+                client.list_files(root_path="/", cursor=None, page_size=100)
+
+    def test_list_files_ignores_entries_outside_requested_root(self) -> None:
+        mock_response = MagicMock()
+        mock_response.text = """<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/docs/guide.md</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype/>
+        <D:getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</D:getlastmodified>
+        <D:getcontentlength>31</D:getcontentlength>
+      </D:prop>
+    </D:propstat>
+  </D:response>
+  <D:response>
+    <D:href>/secret.txt</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype/>
+        <D:getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</D:getlastmodified>
+        <D:getcontentlength>99</D:getcontentlength>
+      </D:prop>
+    </D:propstat>
+  </D:response>
+</D:multistatus>
+"""
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+
+        with patch("httpx.Client", return_value=mock_client):
+            client = WebDAVClient(base_url="http://localhost:8080")
+            result = client.list_files(root_path="docs", cursor=None, page_size=100)
+
+        assert [item.path for item in result.files] == ["guide.md"]
+
+    def test_list_files_handles_base_url_path_prefix(self) -> None:
+        mock_response = MagicMock()
+        mock_response.text = """<?xml version="1.0"?>
+<D:multistatus xmlns:D="DAV:">
+  <D:response>
+    <D:href>/webdav/docs/guide.md</D:href>
+    <D:propstat>
+      <D:prop>
+        <D:resourcetype/>
+        <D:getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</D:getlastmodified>
+        <D:getcontentlength>31</D:getcontentlength>
+      </D:prop>
+    </D:propstat>
+  </D:response>
+</D:multistatus>
+"""
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+
+        with patch("httpx.Client", return_value=mock_client):
+            client = WebDAVClient(base_url="http://localhost:8080/webdav")
+            result = client.list_files(root_path="docs", cursor=None, page_size=100)
+
+        assert [item.path for item in result.files] == ["guide.md"]
+
     def test_list_files_missing_modified_skips(self) -> None:
         mock_response = MagicMock()
         mock_response.text = """<?xml version="1.0"?>
@@ -533,6 +639,12 @@ class TestWebDAVClientReadFile:
             with pytest.raises(FilesharePermanentError):
                 client.read_file(path="guide.md")
 
+    def test_read_file_rejects_path_traversal(self) -> None:
+        client = WebDAVClient(base_url="http://localhost:8080")
+
+        with pytest.raises(FilesharePermanentError, match="stay within the root"):
+            client.read_file(path="../../etc/passwd")
+
 
 class TestWebDAVClientAuth:
     def test_client_uses_basic_auth_when_credentials_set(self) -> None:
@@ -572,44 +684,77 @@ class TestSFTPClientMissingSDK:
 
 class TestSFTPClientConnect:
     def test_connect_with_password(self) -> None:
-        mock_transport = MagicMock()
+        mock_ssh = MagicMock()
         mock_sftp = MagicMock()
 
         client = SFTPClient(host="host", username="u", password="p")
         with patch.dict(sys.modules, {"paramiko": MagicMock()}):
             mock_paramiko = sys.modules["paramiko"]
-            mock_paramiko.Transport.return_value = mock_transport
-            mock_paramiko.SFTPClient.from_transport.return_value = mock_sftp
+            reject_policy = MagicMock()
+            mock_paramiko.RejectPolicy.return_value = reject_policy
+            mock_paramiko.SSHClient.return_value = mock_ssh
+            mock_ssh.open_sftp.return_value = mock_sftp
 
             result = client._connect()
 
-        assert result == mock_sftp
-        mock_transport.connect.assert_called_once_with(username="u", password="p", pkey=None)
+        assert result.file == mock_sftp.file
+        mock_ssh.load_system_host_keys.assert_called_once_with()
+        mock_ssh.set_missing_host_key_policy.assert_called_once_with(reject_policy)
+        mock_ssh.connect.assert_called_once_with(
+            hostname="host",
+            port=22,
+            username="u",
+            password="p",
+            pkey=None,
+            look_for_keys=False,
+        )
 
     def test_connect_with_private_key(self) -> None:
-        mock_transport = MagicMock()
+        mock_ssh = MagicMock()
         mock_sftp = MagicMock()
         mock_pkey = MagicMock()
 
         client = SFTPClient(host="host", username="u", private_key="KEY")
         with patch.dict(sys.modules, {"paramiko": MagicMock()}):
             mock_paramiko = sys.modules["paramiko"]
-            mock_paramiko.Transport.return_value = mock_transport
-            mock_paramiko.SFTPClient.from_transport.return_value = mock_sftp
+            mock_paramiko.SSHClient.return_value = mock_ssh
+            mock_ssh.open_sftp.return_value = mock_sftp
             mock_paramiko.RSAKey.from_private_key.return_value = mock_pkey
 
             result = client._connect()
 
-        assert result == mock_sftp
-        mock_transport.connect.assert_called_once_with(username="u", password=None, pkey=mock_pkey)
+        assert result.file == mock_sftp.file
+        mock_ssh.connect.assert_called_once_with(
+            hostname="host",
+            port=22,
+            username="u",
+            password=None,
+            pkey=mock_pkey,
+            look_for_keys=False,
+        )
+
+    def test_connect_can_explicitly_allow_unknown_host_key(self) -> None:
+        mock_ssh = MagicMock()
+        client = SFTPClient(host="host", username="u", allow_unknown_host_key=True)
+        with patch.dict(sys.modules, {"paramiko": MagicMock()}):
+            mock_paramiko = sys.modules["paramiko"]
+            policy = MagicMock()
+            mock_paramiko.AutoAddPolicy.return_value = policy
+            mock_paramiko.SSHClient.return_value = mock_ssh
+            client._connect()
+
+        mock_ssh.set_missing_host_key_policy.assert_called_once_with(policy)
 
     def test_connect_maps_auth_exception(self) -> None:
         client = SFTPClient(host="host", username="u")
         with patch.dict(sys.modules, {"paramiko": MagicMock()}):
             mock_paramiko = sys.modules["paramiko"]
-            mock_paramiko.Transport.side_effect = Exception("auth failed")
-            # Simulate AuthenticationException path by checking exception type
-            mock_paramiko.AuthenticationException = Exception
+            mock_ssh = MagicMock()
+            mock_paramiko.SSHClient.return_value = mock_ssh
+            mock_paramiko.AuthenticationException = type(
+                "AuthenticationException", (Exception,), {}
+            )
+            mock_ssh.connect.side_effect = mock_paramiko.AuthenticationException("auth failed")
             with pytest.raises(FileshareCredentialError):
                 client._connect()
 
@@ -618,7 +763,9 @@ class TestSFTPClientConnect:
         with patch.dict(sys.modules, {"paramiko": MagicMock()}):
             mock_paramiko = sys.modules["paramiko"]
             SSHException = type("SSHException", (Exception,), {})
-            mock_paramiko.Transport.side_effect = SSHException("connection refused")
+            mock_ssh = MagicMock()
+            mock_paramiko.SSHClient.return_value = mock_ssh
+            mock_ssh.connect.side_effect = SSHException("connection refused")
             mock_paramiko.AuthenticationException = type(
                 "AuthenticationException", (Exception,), {}
             )
@@ -630,7 +777,7 @@ class TestSFTPClientConnect:
         client = SFTPClient(host="host", username="u")
         with patch.dict(sys.modules, {"paramiko": MagicMock()}):
             mock_paramiko = sys.modules["paramiko"]
-            mock_paramiko.Transport.side_effect = ValueError("boom")
+            mock_paramiko.SSHClient.side_effect = ValueError("boom")
             mock_paramiko.AuthenticationException = type(
                 "AuthenticationException", (Exception,), {}
             )
@@ -643,7 +790,9 @@ class TestSFTPClientConnect:
         with patch.dict(sys.modules, {"paramiko": MagicMock()}):
             mock_paramiko = sys.modules["paramiko"]
             SSHException = type("SSHException", (Exception,), {})
-            mock_paramiko.Transport.side_effect = SSHException("some ssh error")
+            mock_ssh = MagicMock()
+            mock_paramiko.SSHClient.return_value = mock_ssh
+            mock_ssh.connect.side_effect = SSHException("some ssh error")
             mock_paramiko.AuthenticationException = type(
                 "AuthenticationException", (Exception,), {}
             )
@@ -739,6 +888,28 @@ class TestSFTPClientListFiles:
                 with pytest.raises(FilesharePermanentError):
                     client.list_files(root_path="/docs", cursor=None, page_size=100)
 
+    def test_list_files_rejects_traversing_root_path(self) -> None:
+        client = SFTPClient(host="host", username="u")
+        with patch.dict(sys.modules, {"paramiko": MagicMock()}):
+            with patch.object(client, "_connect") as mock_connect:
+                with pytest.raises(FilesharePermanentError, match="stay within the root"):
+                    client.list_files(root_path="../etc", cursor=None, page_size=100)
+
+        mock_connect.assert_not_called()
+
+    def test_list_files_rejects_malicious_remote_child(self) -> None:
+        mock_sftp = MagicMock()
+        mock_stat = MagicMock()
+        mock_stat.st_mode = 0o100644
+        mock_stat.filename = ".."
+        mock_sftp.listdir_attr.return_value = [mock_stat]
+
+        client = SFTPClient(host="host", username="u")
+        with patch.dict(sys.modules, {"paramiko": MagicMock()}):
+            with patch.object(client, "_connect", return_value=mock_sftp):
+                with pytest.raises(FilesharePermanentError, match="single safe path segment"):
+                    client.list_files(root_path="/docs", cursor=None, page_size=100)
+
 
 class TestSFTPClientReadFile:
     def test_read_file_success(self) -> None:
@@ -780,3 +951,9 @@ class TestSFTPClientReadFile:
                     client.read_file(path="/docs/guide.md")
 
         mock_sftp.close.assert_called_once()
+
+    def test_read_file_rejects_path_traversal(self) -> None:
+        client = SFTPClient(host="host", username="u")
+
+        with pytest.raises(FilesharePermanentError, match="stay within the root"):
+            client.read_file(path="../../etc/passwd")

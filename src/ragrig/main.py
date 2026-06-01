@@ -23,7 +23,7 @@ from ragrig.api.schemas import (
 )
 from ragrig.auth import assert_auth_secret_pepper_safe
 from ragrig.auth_throttle import AuthLoginAttemptLimiter
-from ragrig.config import Settings, get_settings
+from ragrig.config import Settings, assert_database_url_safe, get_settings
 from ragrig.db.engine import create_db_engine
 from ragrig.db.session import get_session as _get_session_default
 from ragrig.health import create_database_check
@@ -72,6 +72,7 @@ def create_app(
     task_executor=None,
 ) -> FastAPI:
     active_settings = settings or get_settings()
+    assert_database_url_safe(active_settings)
     if active_settings.ragrig_auth_enabled:
         assert_auth_secret_pepper_safe(app_env=active_settings.app_env)
     database_check = check_database or create_database_check(active_settings)

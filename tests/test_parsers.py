@@ -239,6 +239,18 @@ def test_csv_parser_oversized_line_is_handled(tmp_path) -> None:
     assert "data:" in result.extracted_text
 
 
+def test_csv_parser_restores_global_field_size_limit(tmp_path) -> None:
+    import csv
+
+    path = tmp_path / "oversized.csv"
+    path.write_text(f"id,data\n1,{'x' * 500_000}\n", encoding="utf-8")
+    original_limit = csv.field_size_limit()
+
+    CsvParser().parse(path)
+
+    assert csv.field_size_limit() == original_limit
+
+
 def test_csv_parser_sensitive_fields_not_leaked_in_metadata(tmp_path) -> None:
     path = tmp_path / "sensitive.csv"
     raw_text = "name,api_key,password\nadmin,sk-secret-12345,sk-pass-abcdefghij\n"

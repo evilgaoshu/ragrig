@@ -43,6 +43,7 @@ from ragrig.providers import get_provider_registry
 from ragrig.providers.model_catalog import serialize_provider_catalog
 from ragrig.repositories.audit import create_audit_event
 from ragrig.retrieval_benchmark_integrity import get_integrity_summary as _get_integrity_summary
+from ragrig.security_paths import resolve_local_ingestion_root
 from ragrig.vectorstore.base import VectorBackendHealth
 from ragrig.workflows.ingestion_dag import dag_snapshot, resume_ingestion_dag
 
@@ -2381,6 +2382,7 @@ def dry_run_source(
     config: dict[str, Any],
     env: dict[str, str] | None = None,
     client=None,
+    settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Run a dry-run ingestion scan for a source plugin.
 
@@ -2398,6 +2400,10 @@ def dry_run_source(
     session.commit()
 
     if plugin_id == "source.local":
+        if settings is not None:
+            validated["root_path"] = str(
+                resolve_local_ingestion_root(str(validated["root_path"]), settings=settings)
+            )
         report = _dry_run_local_directory(session, validated)
     elif plugin_id == "source.s3":
         report = _dry_run_s3_source(session, validated, env=env, client=client)
@@ -2414,6 +2420,10 @@ def dry_run_source(
     elif plugin_id == "source.slack":
         report = _dry_run_slack_source(session, validated, env=env)
     elif plugin_id == "source.fileshare":
+        if settings is not None and validated.get("protocol") == "nfs_mounted":
+            validated["root_path"] = str(
+                resolve_local_ingestion_root(str(validated["root_path"]), settings=settings)
+            )
         report = _dry_run_fileshare_source(session, validated, env=env)
     elif plugin_id == "source.database":
         report = _dry_run_database_source(session, validated, env=env, client=client)
@@ -2614,6 +2624,7 @@ def save_source_config(
     knowledge_base_name: str,
     operator: str | None = None,
     workspace_id: uuid.UUID | None = None,
+    settings: Settings | None = None,
 ) -> dict[str, Any]:
     """Validate and save a source configuration.
 
@@ -2636,6 +2647,9 @@ def save_source_config(
 
         kb = _workspace_kb(_get_or_create_kb)
         root_path = Path(str(validated.get("root_path", "")))
+        if settings is not None:
+            root_path = resolve_local_ingestion_root(root_path, settings=settings)
+            validated["root_path"] = str(root_path)
         source_uri = str(root_path.resolve()) if root_path else "local://unspecified"
 
         source = _get_or_create_src(
@@ -2766,6 +2780,10 @@ def save_source_config(
         from ragrig.repositories import get_or_create_source as _get_or_create_src
 
         kb = _workspace_kb(_get_or_create_kb)
+        if settings is not None and validated.get("protocol") == "nfs_mounted":
+            validated["root_path"] = str(
+                resolve_local_ingestion_root(str(validated["root_path"]), settings=settings)
+            )
         protocol = str(validated.get("protocol", "smb"))
         host = str(validated.get("host", ""))
         share = str(validated.get("share", ""))

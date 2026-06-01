@@ -38,14 +38,17 @@ class CsvParser(TextFileParser):
                 },
             )
 
-        csv.field_size_limit(max(1024 * 1024, len(raw_text)))
         parse_error: str | None = None
         rows: list[list[str]] = []
+        previous_limit = csv.field_size_limit()
         try:
+            csv.field_size_limit(max(1024 * 1024, len(raw_text)))
             reader = csv.reader(raw_text.splitlines())
             rows = list(reader)
         except Exception as exc:
             parse_error = str(exc)
+        finally:
+            csv.field_size_limit(previous_limit)
 
         if rows and not parse_error and len(rows) >= 2:
             headers = rows[0]

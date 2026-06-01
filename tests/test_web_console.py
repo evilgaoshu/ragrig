@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from ragrig.auth import DEFAULT_WORKSPACE_ID
+from ragrig.config import Settings
 from ragrig.db.models import (
     Base,
     Document,
@@ -73,6 +74,10 @@ def _seed_documents(tmp_path, files: dict[str, str]):
     for name, content in files.items():
         (docs / name).write_text(content, encoding="utf-8")
     return docs
+
+
+def _settings_with_tmp_ingestion_root(tmp_path: Path) -> Settings:
+    return Settings(ragrig_ingestion_extra_allowed_roots=str(tmp_path))
 
 
 async def _wait_for_task_completion(
@@ -306,6 +311,7 @@ async def test_ingestion_dag_console_api_exposes_failure_and_resume(tmp_path) ->
         check_database=lambda: None,
         session_factory=session_factory,
         task_executor=task_executor,
+        settings=_settings_with_tmp_ingestion_root(tmp_path),
     )
     transport = httpx.ASGITransport(app=app)
 
@@ -354,6 +360,7 @@ async def test_task_retry_recovers_failed_ingestion_dag_without_overwriting_hist
         check_database=lambda: None,
         session_factory=session_factory,
         task_executor=task_executor,
+        settings=_settings_with_tmp_ingestion_root(tmp_path),
     )
     transport = httpx.ASGITransport(app=app)
 
@@ -445,6 +452,7 @@ async def test_task_retry_rejects_duplicate_retry_before_retry_runs(tmp_path) ->
         check_database=lambda: None,
         session_factory=session_factory,
         task_executor=task_executor,
+        settings=_settings_with_tmp_ingestion_root(tmp_path),
     )
     transport = httpx.ASGITransport(app=app)
 
@@ -501,6 +509,7 @@ async def test_task_retry_db_edge_rejects_stale_multiprocess_duplicate(tmp_path)
         check_database=lambda: None,
         session_factory=session_factory,
         task_executor=task_executor,
+        settings=_settings_with_tmp_ingestion_root(tmp_path),
     )
     transport = httpx.ASGITransport(app=app)
 
@@ -607,6 +616,7 @@ async def test_ingestion_dag_returns_task_id_and_runs_in_background(tmp_path) ->
         check_database=lambda: None,
         session_factory=session_factory,
         task_executor=task_executor,
+        settings=_settings_with_tmp_ingestion_root(tmp_path),
     )
     transport = httpx.ASGITransport(app=app)
 
@@ -707,7 +717,11 @@ async def test_upload_more_than_ten_files_returns_400(tmp_path) -> None:
         test_file.write_text(f"# Upload {index}\n", encoding="utf-8")
         upload_files.append(test_file)
 
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        settings=_settings_with_tmp_ingestion_root(tmp_path),
+    )
     transport = httpx.ASGITransport(app=app)
 
     request_files = []
@@ -729,6 +743,54 @@ async def test_upload_more_than_ten_files_returns_400(tmp_path) -> None:
 
     assert response.status_code == 400
     assert response.json()["error"] == "too many files: 11. Maximum 10 files per request."
+
+
+@pytest.mark.anyio
+async def test_upload_endpoint_streams_files_in_chunks(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from starlette.datastructures import UploadFile as StarletteUploadFile
+
+    from ragrig.repositories import get_or_create_knowledge_base
+
+    database_path = tmp_path / "web-console-upload-streaming.db"
+    session_factory = _create_file_session_factory(database_path)
+
+    with session_factory() as session:
+        get_or_create_knowledge_base(session, "fixture-local")
+        session.commit()
+
+    original_read = StarletteUploadFile.read
+    read_sizes: list[int] = []
+
+    async def tracked_read(self, size: int = -1) -> bytes:
+        read_sizes.append(size)
+        if size == -1:
+            raise AssertionError("upload endpoint must not read the full file at once")
+        return await original_read(self, size)
+
+    monkeypatch.setattr(StarletteUploadFile, "read", tracked_read)
+
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        task_executor=ControlledTaskExecutor(),
+        settings=_settings_with_tmp_ingestion_root(tmp_path),
+    )
+    transport = httpx.ASGITransport(app=app)
+    test_file = tmp_path / "streamed.md"
+    test_file.write_text("# Streamed\n\ncontent", encoding="utf-8")
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with open(test_file, "rb") as handle:
+            response = await client.post(
+                "/knowledge-bases/fixture-local/upload",
+                files={"files": (test_file.name, handle, "text/markdown")},
+            )
+
+    assert response.status_code == 202
+    assert read_sizes
+    assert all(size == 1024 * 1024 for size in read_sizes)
 
 
 @pytest.mark.anyio
@@ -4884,7 +4946,11 @@ async def test_source_save_creates_audit_event(tmp_path) -> None:
     """source_save should produce a source_save AuditEvent."""
     database_path = tmp_path / "source-save-audit.db"
     session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        settings=_settings_with_tmp_ingestion_root(tmp_path),
+    )
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -4918,7 +4984,11 @@ async def test_dry_run_creates_audit_events(tmp_path) -> None:
     docs = _seed_documents(tmp_path, {"test.txt": "hello world"})
     database_path = tmp_path / "dry-run-audit.db"
     session_factory = _create_file_session_factory(database_path)
-    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=session_factory,
+        settings=_settings_with_tmp_ingestion_root(tmp_path),
+    )
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:

@@ -132,6 +132,7 @@ class TestSFTPLiveSmoke:
             username="testuser",
             password="testpass",
             port=_SFTP_PORT,
+            allow_unknown_host_key=True,
         )
 
     def test_list_files_returns_expected_entries(self, client: SFTPClient) -> None:
@@ -152,6 +153,7 @@ class TestSFTPLiveSmoke:
                 host="localhost",
                 port=_SFTP_PORT,
                 root_path="upload",
+                allow_unknown_host_key=True,
             ),
         )
         discovered_paths = [c.file_metadata.path for c in result.discovered]

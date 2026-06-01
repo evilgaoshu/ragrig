@@ -366,6 +366,10 @@ def _build_client(
             password=secrets.password,
             private_key=secrets.private_key,
             port=int(config.get("port") or 22),
+            known_hosts_path=str(config["known_hosts_path"])
+            if config.get("known_hosts_path")
+            else None,
+            allow_unknown_host_key=bool(config.get("allow_unknown_host_key", False)),
         )
     return FakeFileshareClient(
         protocol=protocol,

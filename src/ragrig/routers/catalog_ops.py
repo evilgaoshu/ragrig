@@ -9,10 +9,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ragrig.config import Settings, get_settings
 from ragrig.db.session import get_session
 from ragrig.deps import AuthContext, require_write_auth
 from ragrig.plugins.enterprise import list_enterprise_connectors, probe_enterprise_connector
 from ragrig.providers.model_catalog import list_provider_models, measure_provider_latency
+from ragrig.security_paths import PathPolicyError, resolve_local_ingestion_root
 from ragrig.web_console import (
     PluginWizardValidationError,
     check_format,
@@ -107,8 +109,27 @@ def enterprise_connectors() -> dict[str, list[dict[str, object]]]:
 def enterprise_connector_probe(
     connector_id: str,
     request: EnterpriseConnectorProbeRequest,
-) -> dict[str, object]:
-    return probe_enterprise_connector(connector_id, config=request.config)
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> dict[str, object] | JSONResponse:
+    config = dict(request.config)
+    try:
+        if connector_id == "source.local" or (
+            connector_id == "source.fileshare" and config.get("protocol") == "nfs_mounted"
+        ):
+            config["root_path"] = str(
+                resolve_local_ingestion_root(str(config.get("root_path", "")), settings=settings)
+            )
+    except PathPolicyError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "connector_id": connector_id,
+                "status": "rejected",
+                "network_called": False,
+                "reason": str(exc),
+            },
+        )
+    return probe_enterprise_connector(connector_id, config=config)
 
 
 @router.get("/workflows/operations", response_model=None)
@@ -121,6 +142,7 @@ def workflow_run(
     request: WorkflowRunRequest,
     session: Annotated[Session, Depends(get_session)],
     _auth: Annotated[AuthContext, Depends(require_write_auth)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict[str, Any] | JSONResponse:
     try:
         definition = WorkflowDefinition(
@@ -129,7 +151,7 @@ def workflow_run(
                 WorkflowStep(
                     step_id=step.step_id,
                     operation=step.operation,
-                    config=step.config,
+                    config=_validated_workflow_step_config(step, settings),
                     depends_on=step.depends_on,
                     max_retries=step.max_retries,
                     retry_backoff_seconds=step.retry_backoff_seconds,
@@ -144,8 +166,23 @@ def workflow_run(
             definition=definition,
             dry_run=request.dry_run,
         ).as_dict()
-    except WorkflowValidationError as exc:
+    except (WorkflowValidationError, PathPolicyError) as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+def _validated_workflow_step_config(
+    step: WorkflowStepRequest, settings: Settings
+) -> dict[str, Any]:
+    config = dict(step.config)
+    if step.operation == "ingest.local":
+        config["root_path"] = str(
+            resolve_local_ingestion_root(str(config.get("root_path", "")), settings=settings)
+        )
+    elif step.operation == "ingest.fileshare" and config.get("protocol") == "nfs_mounted":
+        config["root_path"] = str(
+            resolve_local_ingestion_root(str(config.get("root_path", "")), settings=settings)
+        )
+    return config
 
 
 @router.post("/plugins/{plugin_id}/validate-config", response_model=None)

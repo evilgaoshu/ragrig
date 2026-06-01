@@ -66,6 +66,11 @@ def test_create_db_engine_applies_postgresql_pool_settings(monkeypatch: pytest.M
     }
 
 
+def test_create_db_engine_rejects_default_database_url_in_protected_env() -> None:
+    with pytest.raises(RuntimeError, match="default development database URL"):
+        db_engine.create_db_engine(Settings(app_env="production"))
+
+
 def test_create_db_engine_omits_pool_sizing_for_sqlite(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
     fake_engine = object()
