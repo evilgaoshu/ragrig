@@ -28,6 +28,7 @@ env:
   PILOT_BASE_URL: http://127.0.0.1:18000
   FILESHARE_AUTO_PICK_PORTS: "1"
   COMPOSE_PROJECT_NAME: ragrig-nightly-evidence
+  RAGRIG_POSTGRES_PASSWORD: nightly-evidence-db-password
 
 jobs:
   evidence-smoke:

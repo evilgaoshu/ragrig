@@ -133,6 +133,7 @@ def build_smoke_steps(artifacts_dir: Path) -> tuple[SmokeStep, ...]:
         **artifact_env,
         "FILESHARE_AUTO_PICK_PORTS": os.environ.get("FILESHARE_AUTO_PICK_PORTS", "1"),
         "COMPOSE_PROJECT_NAME": compose_project,
+        "RAGRIG_POSTGRES_PASSWORD": postgres_password,
     }
     operations_env = {
         **pilot_docker_env,
