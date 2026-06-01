@@ -250,12 +250,12 @@ jobs:
 
       - name: Scan Docker image vulnerabilities
         if: steps.docker_needed.outputs.needed == 'true'
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
         with:
           image-ref: ragrig:ci
           scanners: vuln
           format: table
-          vuln-type: os
+          vuln-type: os,library
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"

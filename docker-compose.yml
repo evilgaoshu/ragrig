@@ -9,7 +9,7 @@ services:
       APP_ENV: ${APP_ENV:-development}
       APP_HOST: 0.0.0.0
       APP_PORT: 8000
-      DATABASE_URL: ${RAGRIG_DOCKER_DATABASE_URL:-postgresql://ragrig:ragrig_dev@db:5432/ragrig}
+      DATABASE_URL: ${RAGRIG_DOCKER_DATABASE_URL:-postgresql://ragrig:${RAGRIG_POSTGRES_PASSWORD:?Set RAGRIG_POSTGRES_PASSWORD to a strong database password}@db:5432/ragrig}
       DB_RUNTIME_HOST: ${RAGRIG_DOCKER_DB_RUNTIME_HOST:-db}
       DB_HOST_PORT: 5432
       VECTOR_BACKEND: ${VECTOR_BACKEND:-pgvector}
@@ -54,9 +54,7 @@ services:
     environment:
       POSTGRES_DB: ragrig
       POSTGRES_USER: ragrig
-      POSTGRES_PASSWORD: ragrig_dev
-    ports:
-      - "${DB_HOST_PORT:-5432}:5432"
+      POSTGRES_PASSWORD: ${RAGRIG_POSTGRES_PASSWORD:?Set RAGRIG_POSTGRES_PASSWORD to a strong database password}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytestmark = pytest.mark.unit
 
@@ -51,10 +52,10 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "tests/test_pgvector_postgres_ci.py" in workflow
     assert "RAGRIG_PGVECTOR_TEST_DATABASE_URL" in workflow
     assert "docker build -t ragrig:ci ." in workflow
-    assert "aquasecurity/trivy-action@v0.36.0" in workflow
+    assert "aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8" in workflow
     assert "image-ref: ragrig:ci" in workflow
     assert "scanners: vuln" in workflow
-    assert "vuln-type: os" in workflow
+    assert "vuln-type: os,library" in workflow
     assert "make sqlite-warning-check" not in workflow
     assert "-W always::ResourceWarning" not in workflow
 
@@ -102,6 +103,24 @@ def test_docker_compose_uses_existing_qdrant_image_tag() -> None:
     assert "image: qdrant/qdrant:v1.14.1" in compose
 
 
+def test_docker_compose_does_not_ship_default_database_secret_or_publish_db_port() -> None:
+    compose_text = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    db_port_override = yaml.safe_load(
+        (REPO_ROOT / "docker-compose.db-port.yml").read_text(encoding="utf-8")
+    )
+    compose = yaml.safe_load(compose_text)
+    db = compose["services"]["db"]
+    app_env = compose["services"]["app"]["environment"]
+
+    assert "ragrig_dev" not in compose_text
+    assert db["environment"]["POSTGRES_PASSWORD"].startswith("${RAGRIG_POSTGRES_PASSWORD:?")
+    assert "ports" not in db
+    assert "${RAGRIG_POSTGRES_PASSWORD:?" in app_env["DATABASE_URL"]
+    assert db_port_override["services"]["db"]["ports"] == [
+        "${DB_BIND_HOST:-127.0.0.1}:${DB_HOST_PORT:-5432}:5432"
+    ]
+
+
 def test_production_observability_docs_and_compose_defaults_are_wired() -> None:
     compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     env_example = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
@@ -122,6 +141,7 @@ def test_production_observability_docs_and_compose_defaults_are_wired() -> None:
     assert "http://127.0.0.1:8000/health/ready" in compose
     assert "- ragrig_logs:/app/logs" in compose
     assert "ragrig_logs:" in compose
+    assert "RAGRIG_POSTGRES_PASSWORD=replace-with-a-strong-postgres-password" in env_example
     assert "# RAGRIG_AUTH_SECRET_PEPPER=replace-with-a-long-random-secret" in env_example
     assert "# RAGRIG_AUTH_LOGIN_RATE_LIMIT_ENABLED=true" in env_example
     assert "# RAGRIG_DB_POOL_SIZE=10" in env_example

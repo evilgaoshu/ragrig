@@ -572,6 +572,32 @@ def test_retrieval_search_uses_token_principals_not_request_body(
     local_client.close()
 
 
+@pytest.mark.unit
+def test_public_acl_context_ignores_request_body_when_auth_is_disabled() -> None:
+    from ragrig.config import Settings
+    from ragrig.deps import AuthContext
+    from ragrig.services.common import resolve_acl_context
+
+    auth = AuthContext(
+        workspace_id=DEFAULT_WORKSPACE_ID,
+        user_id=None,
+        is_anonymous=True,
+        scopes=["*"],
+        role="owner",
+        principal_ids=[],
+    )
+
+    principal_ids, enforce_acl = resolve_acl_context(
+        settings=Settings(ragrig_auth_enabled=False),
+        auth=auth,
+        requested_principal_ids=["user:attacker"],
+        requested_enforce_acl=False,
+    )
+
+    assert principal_ids == []
+    assert enforce_acl is True
+
+
 # ── Hard-delete / right-to-erasure tests ─────────────────────────────────────
 
 

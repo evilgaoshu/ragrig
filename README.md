@@ -32,6 +32,8 @@ chatbot. Every chunk, every retrieval hit, every model call is inspectable
 ```bash
 git clone https://github.com/evilgaoshu/ragrig.git
 cd ragrig
+cp .env.example .env
+# edit RAGRIG_POSTGRES_PASSWORD in .env first
 docker compose up
 ```
 
@@ -42,6 +44,7 @@ question immediately, no registration, no API key, no manual upload.
 - Multi-stage build assembles the React console from source inside the image.
 - Alembic migrations run on startup.
 - The default answer provider is `deterministic-local` — no LLM credentials needed.
+- Compose refuses to start until `.env` sets a deployment-specific `RAGRIG_POSTGRES_PASSWORD`.
 - Auth is **off** in demo mode. Flip `RAGRIG_AUTH_ENABLED=true` in `.env` before exposing the install.
 
 Stop with `docker compose down`.
@@ -102,10 +105,14 @@ team.**
 
 `docker compose up` from the Quick Start above is the supported path. It
 runs Postgres + pgvector + the app, executes migrations, and auto-seeds
-the demo KB.
+the demo KB. Postgres is only reachable on the Compose network by default;
+use `docker compose exec db psql -U ragrig -d ragrig` for local admin access.
 
-**If ports 8000 or 5432 are taken**, set `APP_HOST_PORT=18000` and
-`DB_HOST_PORT=15433` in `.env`.
+**If port 8000 is taken**, set `APP_HOST_PORT=18000` in `.env`.
+
+**If a host-side DB port is required for local tooling**, opt in explicitly:
+`docker compose -f docker-compose.yml -f docker-compose.db-port.yml up`. The
+override binds Postgres to `127.0.0.1` by default.
 
 **Optional sidecars** (MinIO/S3, Qdrant, Samba/WebDAV/SFTP fileshare smoke,
 local-LLM answer smoke) — env-var reference in

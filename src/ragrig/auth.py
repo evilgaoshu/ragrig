@@ -31,7 +31,7 @@ SESSION_TOKEN_PREFIX = "rag_session"
 INVITATION_TOKEN_PREFIX = "rag_invite"
 INVITATION_DEFAULT_DAYS = 7
 _DEFAULT_LOCAL_PEPPER = "ragrig-local-dev-auth-pepper"
-_PRODUCTION_APP_ENVS = {"prod", "production"}
+_PROTECTED_APP_ENVS = {"prod", "production", "staging", "stage", "preview", "canary"}
 
 
 @dataclass(frozen=True)
@@ -223,16 +223,25 @@ def _hash_audit_value(value: str | None, *, pepper: str | bytes | None = None) -
     return _hash_secret(value, pepper=pepper)
 
 
+def assert_auth_secret_pepper_safe(
+    *,
+    app_env: str | None = None,
+    pepper: str | bytes | None = None,
+) -> None:
+    if pepper is None:
+        pepper = os.getenv("RAGRIG_AUTH_SECRET_PEPPER", _DEFAULT_LOCAL_PEPPER)
+    active_env = (app_env or os.getenv("APP_ENV", "development")).lower()
+    if _uses_insecure_production_pepper(pepper) and active_env in _PROTECTED_APP_ENVS:
+        raise RuntimeError(
+            "RAGRIG_AUTH_SECRET_PEPPER must be set to a non-default value "
+            "in protected environments."
+        )
+
+
 def _pepper_bytes(pepper: str | bytes | None) -> bytes:
     if pepper is None:
         pepper = os.getenv("RAGRIG_AUTH_SECRET_PEPPER", _DEFAULT_LOCAL_PEPPER)
-    if (
-        _uses_insecure_production_pepper(pepper)
-        and os.getenv("APP_ENV", "development").lower() in _PRODUCTION_APP_ENVS
-    ):
-        raise RuntimeError(
-            "RAGRIG_AUTH_SECRET_PEPPER must be set to a non-default value in production."
-        )
+    assert_auth_secret_pepper_safe(pepper=pepper)
     if isinstance(pepper, bytes):
         return pepper
     return pepper.encode("utf-8")

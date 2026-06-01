@@ -136,6 +136,45 @@ def test_openai_chat_completion_unknown_kb(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
+def test_openai_chat_completion_keeps_acl_enforced_when_auth_is_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragrig.answer.schema import AnswerReport
+    from ragrig.routers import openai_compat as oa_mod
+
+    captured: dict[str, object] = {}
+
+    def fake_generate_answer(**kwargs):
+        captured.update(kwargs)
+        return AnswerReport(
+            answer="grounded",
+            citations=[],
+            evidence_chunks=[],
+            model="deterministic-local",
+            provider="deterministic-local",
+            retrieval_trace={},
+            grounding_status="grounded",
+        )
+
+    monkeypatch.setattr(oa_mod, "generate_answer", fake_generate_answer)
+    client = _make_client(tmp_path)
+
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "ragrig/kb1",
+            "messages": [{"role": "user", "content": "What is RAGRig?"}],
+            "enforce_acl": False,
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert captured["principal_ids"] == []
+    assert captured["enforce_acl"] is True
+
+
+@pytest.mark.integration
 def test_openai_models_lists_knowledge_bases(tmp_path: Path) -> None:
     client = _make_client(tmp_path)
     resp = client.get("/v1/models")
