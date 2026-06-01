@@ -123,17 +123,22 @@ def test_production_observability_docs_and_compose_defaults_are_wired() -> None:
     assert "- ragrig_logs:/app/logs" in compose
     assert "ragrig_logs:" in compose
     assert "# RAGRIG_AUTH_SECRET_PEPPER=replace-with-a-long-random-secret" in env_example
+    assert "# RAGRIG_AUTH_LOGIN_RATE_LIMIT_ENABLED=true" in env_example
     assert "# RAGRIG_DB_POOL_SIZE=10" in env_example
     assert "# RAGRIG_METRICS_WORKSPACE_LABELS_ENABLED=false" in env_example
     assert "# RAGRIG_LOG_FILE=/app/logs/ragrig.jsonl" in env_example
     assert "APP_ENV=production" in optional_services
     assert "RAGRIG_AUTH_SECRET_PEPPER" in optional_services
+    assert "RAGRIG_AUTH_LOGIN_MAX_FAILURES=5" in optional_services
     assert "/health/live" in optional_services
     assert "/health/ready" in optional_services
     assert "Prometheus metrics are enabled by default" in optional_services
     assert 'workspace="ws_<sha256-prefix>"' in optional_services
     assert "ragrig_db_pool_checked_out" in optional_services
     assert "RAGRIG_DB_POOL_RECYCLE=1800" in optional_services
+    assert "HTTPX client instrumentation" in optional_services
+    assert "ragrig_pipeline_runs_total" in optional_services
+    assert "ragrig_indexing_embeddings_total" in optional_services
     assert "business spans for retrieval and" in optional_services
     assert "# RAGRIG_TASK_BACKEND=threadpool" in env_example
     assert "RAGRIG_LOG_BACKUP_COUNT=5" in optional_services
@@ -146,8 +151,11 @@ def test_troubleshooting_runbook_covers_operational_failure_modes() -> None:
     assert "/health/live" in runbook
     assert "/health/ready" in runbook
     assert "redis.status=error" in runbook
+    assert "auth.login.rate_limited" in runbook
     assert "ragrig_db_pool_checked_out" in runbook
     assert "RAGRIG_DB_MAX_OVERFLOW" in runbook
+    assert "ragrig_pipeline_runs_total" in runbook
+    assert "HTTPX instrumentation" in runbook
     assert "ragrig.retrieval.vector_search" in runbook
     assert "ragrig.indexing.embed" in runbook
     assert "retry_backoff_multiplier" in runbook
@@ -185,6 +193,7 @@ def test_architecture_decision_records_cover_current_core_choices() -> None:
         "0001-vector-backend-strategy.md": ("pgvector", "Qdrant"),
         "0002-database-test-strategy.md": ("SQLite", "PostgreSQL"),
         "0003-application-boundary.md": ("FastAPI monolith", "microservices"),
+        "0004-external-dependency-resilience.md": ("circuit breaker", "HTTPX spans"),
     }
     for filename, expected_terms in records.items():
         content = (adr_dir / filename).read_text(encoding="utf-8")

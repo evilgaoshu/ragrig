@@ -3225,6 +3225,22 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-instrumentation-httpx"
+version = "0.62b1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "opentelemetry-util-http" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/33/cb/7a418e69c7dad281803529cb4f6de1b747d802cca44c38032668690b4836/opentelemetry_instrumentation_httpx-0.62b1.tar.gz", hash = "sha256:a1fac9bcc3a6ef5996a7990563f1af0798468b2c146de535fd598369383fba7e", size = 24181, upload-time = "2026-04-24T13:22:52.124Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/e0/eca824e9492ccec00e055bdd243aeda8eb7c5eda746d98af4d7a2d97ecf3/opentelemetry_instrumentation_httpx-0.62b1-py3-none-any.whl", hash = "sha256:88614015df451d61bc7e73f22524e6f223611f80b6caad2f6bdcbe05fa0df653", size = 17201, upload-time = "2026-04-24T13:21:58.072Z" },
+]
+
+[[package]]
 name = "opentelemetry-instrumentation-sqlalchemy"
 version = "0.62b1"
 source = { registry = "https://pypi.org/simple" }
@@ -4447,6 +4463,7 @@ dependencies = [
     { name = "ldap3" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "opentelemetry-instrumentation-httpx" },
     { name = "opentelemetry-instrumentation-sqlalchemy" },
     { name = "opentelemetry-sdk" },
     { name = "pgvector" },
@@ -4557,6 +4574,7 @@ requires-dist = [
     { name = "openpyxl", marker = "extra == 'doc-parsers'", specifier = ">=3.1.0,<4.0.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.25.0,<2.0.0" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.46b0,<1.0.0" },
+    { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.46b0,<1.0.0" },
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.46b0,<1.0.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.25.0,<2.0.0" },
     { name = "paramiko", marker = "extra == 'fileshare'", specifier = ">=3.5.0,<6.0.0" },

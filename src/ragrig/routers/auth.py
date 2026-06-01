@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from ragrig.config import Settings, get_settings
 from ragrig.db.session import get_session
 from ragrig.deps import AuthContext, require_admin_auth, require_auth
+from ragrig.routers.runtime import get_auth_login_limiter
 from ragrig.services import auth as auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -96,6 +97,7 @@ def login(
     request: Request,
     session: Annotated[Session, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
+    auth_login_limiter: Annotated[object, Depends(get_auth_login_limiter)],
 ) -> AuthResponse:
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
@@ -107,6 +109,7 @@ def login(
             settings=settings,
             ip=ip,
             user_agent=ua,
+            login_limiter=auth_login_limiter,
         )
     )
 

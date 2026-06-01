@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy import func, inspect, select, text
@@ -27,6 +28,7 @@ from ragrig.db.models import (
 )
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.indexing.pipeline import index_knowledge_base
+from ragrig.metrics import observe_pipeline_run
 from ragrig.observability import pipeline_run_duration_ms
 from ragrig.plugins import PluginConfigValidationError, get_plugin_registry
 from ragrig.plugins.sources.azure_blob.connector import ingest_azure_blob_source
@@ -2476,6 +2478,7 @@ def run_source_ingest(
     client=None,
 ) -> dict[str, Any]:
     """Run a source ingestion and immediately index newly created versions."""
+    run_started = perf_counter()
     registry = get_plugin_registry()
     validated = registry.validate_config(plugin_id, config)
 
@@ -2567,6 +2570,12 @@ def run_source_ingest(
             env=env,
             client=client,
         )
+
+    observe_pipeline_run(
+        pipeline_type=f"{plugin_id.removeprefix('source.')}_ingest",
+        status="completed_with_failures" if ingestion_report.failed_count else "completed",
+        duration_seconds=perf_counter() - run_started,
+    )
 
     indexing_payload: dict[str, Any] | None = None
     if ingestion_report.created_versions > 0:

@@ -28,6 +28,7 @@ def set_runtime_state(
     task_executor: Any,
     database_check: DatabaseCheck | None = None,
     rate_limiter: Any | None = None,
+    auth_login_limiter: Any | None = None,
 ) -> None:
     app.state.ragrig_session_factory = session_factory
     app.state.ragrig_task_executor = task_executor
@@ -35,6 +36,8 @@ def set_runtime_state(
         app.state.ragrig_database_check = database_check
     if rate_limiter is not None:
         app.state.ragrig_rate_limiter = rate_limiter
+    if auth_login_limiter is not None:
+        app.state.ragrig_auth_login_limiter = auth_login_limiter
 
 
 def get_session_factory(request: Request) -> SessionFactory:
@@ -63,6 +66,13 @@ def get_rate_limiter(request: Request) -> Any:
     if rate_limiter is None:  # pragma: no cover - indicates app wiring drift
         raise RuntimeError("RAGRig runtime rate limiter is not configured")
     return rate_limiter
+
+
+def get_auth_login_limiter(request: Request) -> Any:
+    auth_login_limiter = getattr(request.app.state, "ragrig_auth_login_limiter", None)
+    if auth_login_limiter is None:  # pragma: no cover - indicates app wiring drift
+        raise RuntimeError("RAGRig auth login limiter is not configured")
+    return auth_login_limiter
 
 
 def get_workspace_id(

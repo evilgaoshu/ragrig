@@ -15,7 +15,7 @@ from ragrig.main import create_app
 pytestmark = pytest.mark.unit
 
 
-def _make_client(*, auth_enabled: bool) -> TestClient:
+def _make_client(*, auth_enabled: bool, **settings_overrides) -> TestClient:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
         future=True,
@@ -27,6 +27,7 @@ def _make_client(*, auth_enabled: bool) -> TestClient:
     settings = Settings(
         database_url="sqlite+pysqlite:///:memory:",
         ragrig_auth_enabled=auth_enabled,
+        **settings_overrides,
     )
     app = create_app(
         check_database=lambda: None,
@@ -111,6 +112,67 @@ def test_login_unknown_email_returns_401(auth_client):
         json={"email": "nobody@example.com", "password": "doesnotmatter"},
     )
     assert resp.status_code == 401
+
+
+def test_login_rate_limiter_blocks_repeated_failures() -> None:
+    with _make_client(
+        auth_enabled=True,
+        ragrig_auth_login_rate_limit_enabled=True,
+        ragrig_auth_login_max_failures=2,
+        ragrig_auth_login_window_seconds=60,
+        ragrig_auth_login_lockout_seconds=120,
+    ) as client:
+        client.post(
+            "/auth/register",
+            json={"email": "limit@example.com", "password": "correcthorsebatterystaple"},
+        )
+
+        first = client.post(
+            "/auth/login",
+            json={"email": "limit@example.com", "password": "wrongpassword"},
+        )
+        second = client.post(
+            "/auth/login",
+            json={"email": "limit@example.com", "password": "wrongpassword"},
+        )
+        correct_during_lockout = client.post(
+            "/auth/login",
+            json={"email": "limit@example.com", "password": "correcthorsebatterystaple"},
+        )
+
+    assert first.status_code == 401
+    assert second.status_code == 429
+    assert second.headers["Retry-After"] == "120"
+    assert second.json()["detail"] == "too many login attempts"
+    assert correct_during_lockout.status_code == 429
+
+
+def test_login_success_clears_rate_limiter_failures() -> None:
+    with _make_client(
+        auth_enabled=True,
+        ragrig_auth_login_rate_limit_enabled=True,
+        ragrig_auth_login_max_failures=2,
+    ) as client:
+        client.post(
+            "/auth/register",
+            json={"email": "clear@example.com", "password": "correcthorsebatterystaple"},
+        )
+        failed = client.post(
+            "/auth/login",
+            json={"email": "clear@example.com", "password": "wrongpassword"},
+        )
+        success = client.post(
+            "/auth/login",
+            json={"email": "clear@example.com", "password": "correcthorsebatterystaple"},
+        )
+        failed_again = client.post(
+            "/auth/login",
+            json={"email": "clear@example.com", "password": "wrongpassword"},
+        )
+
+    assert failed.status_code == 401
+    assert success.status_code == 200
+    assert failed_again.status_code == 401
 
 
 def test_me_with_valid_token(auth_client):

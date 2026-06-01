@@ -18,4 +18,4 @@ revisiting.
 | [0001](0001-vector-backend-strategy.md) | Accepted | Vector backend strategy: pgvector first, Qdrant optional |
 | [0002](0002-database-test-strategy.md) | Accepted | Database test strategy: SQLite fast path plus PostgreSQL pgvector CI |
 | [0003](0003-application-boundary.md) | Accepted | Application boundary: modular FastAPI monolith before services |
-
+| [0004](0004-external-dependency-resilience.md) | Accepted | External dependency resilience and circuit breakers |

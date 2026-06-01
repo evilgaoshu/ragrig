@@ -155,7 +155,10 @@ def login_password(
     settings: Settings,
     ip: str | None,
     user_agent: str | None,
+    login_limiter: Any | None = None,
 ) -> dict[str, Any]:
+    if login_limiter is not None:
+        login_limiter.check_allowed(email=email, ip=ip)
     created = login_user(
         session,
         email=email,
@@ -174,10 +177,14 @@ def login_password(
             user_agent_sha256=_hash_identifier(user_agent),
             **_email_log_fields(email),
         )
+        if login_limiter is not None:
+            login_limiter.record_failure(email=email, ip=ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid credentials",
         )
+    if login_limiter is not None:
+        login_limiter.record_success(email=email, ip=ip)
     user = session.get(User, created.session.user_id)
 
     if user is not None and user.mfa_enabled:

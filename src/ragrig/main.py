@@ -21,6 +21,7 @@ from ragrig.api.schemas import (
     RetrievalSearchRequest,
     WebhookExportRequest,
 )
+from ragrig.auth_throttle import AuthLoginAttemptLimiter
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
 from ragrig.db.session import get_session as _get_session_default
@@ -84,6 +85,7 @@ def create_app(
 
     active_task_executor = task_executor or default_task_executor()
     rate_limiter = RateLimiter(active_settings)
+    auth_login_limiter = AuthLoginAttemptLimiter(active_settings)
 
     def noop_otel_shutdown() -> None:
         return None
@@ -145,6 +147,7 @@ def create_app(
         task_executor=active_task_executor,
         database_check=database_check,
         rate_limiter=rate_limiter,
+        auth_login_limiter=auth_login_limiter,
     )
 
     app.include_router(auth_router)
