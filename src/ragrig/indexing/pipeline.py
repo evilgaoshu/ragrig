@@ -19,6 +19,7 @@ from ragrig.indexing.llm_steps import (
     generate_chunk_description,
     generate_document_summary,
 )
+from ragrig.metrics import observe_indexing_counts, observe_pipeline_run
 from ragrig.observability import (
     aggregate_cost_latency,
     hash_attribute,
@@ -749,17 +750,30 @@ def index_knowledge_base(
     run.failure_count = failed_count
     run.status = "completed_with_failures" if failed_count else "completed"
     run.finished_at = datetime.now(timezone.utc)
+    duration_seconds = perf_counter() - run_started
     run.config_snapshot_json = {
         **(run.config_snapshot_json or {}),
         "cost_latency_summary": {
             **aggregate_cost_latency(
                 run_cost_latency_operations,
-                total_latency_ms=(perf_counter() - run_started) * 1000,
+                total_latency_ms=duration_seconds * 1000,
             ),
             "operations": run_cost_latency_operations,
         },
     }
     session.commit()
+    observe_pipeline_run(
+        pipeline_type=run.run_type,
+        status=run.status,
+        duration_seconds=duration_seconds,
+    )
+    observe_indexing_counts(
+        indexed_count=indexed_count,
+        skipped_count=skipped_count,
+        failed_count=failed_count,
+        chunk_count=chunk_count,
+        embedding_count=embedding_count,
+    )
     log_event(
         logger,
         logging.INFO,
@@ -772,7 +786,7 @@ def index_knowledge_base(
         failed_count=failed_count,
         chunk_count=chunk_count,
         embedding_count=embedding_count,
-        duration_ms=round((perf_counter() - run_started) * 1000, 3),
+        duration_ms=round(duration_seconds * 1000, 3),
     )
 
     return IndexingReport(

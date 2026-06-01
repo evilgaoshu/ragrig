@@ -38,6 +38,7 @@ def setup_otel(app: "FastAPI", settings: "Settings") -> Callable[[], None]:
         from opentelemetry import trace
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
         from opentelemetry.sdk.resources import SERVICE_NAME, Resource
         from opentelemetry.sdk.trace import TracerProvider
@@ -56,21 +57,41 @@ def setup_otel(app: "FastAPI", settings: "Settings") -> Callable[[], None]:
 
     FastAPIInstrumentor.instrument_app(app)
     SQLAlchemyInstrumentor().instrument(enable_commenter=False)
+    httpx_shutdown = _instrument_httpx(HTTPXClientInstrumentor())
 
     logger.info(
         "OpenTelemetry tracing enabled (endpoint=%s, service=%s)",
         settings.ragrig_otel_endpoint,
         settings.ragrig_otel_service_name,
     )
-    return _otel_shutdown(provider)
+    return _otel_shutdown(provider, httpx_shutdown=httpx_shutdown)
 
 
 def _noop_shutdown() -> None:
     return None
 
 
-def _otel_shutdown(provider: object) -> Callable[[], None]:
+def _instrument_httpx(httpx_instrumentor: object) -> Callable[[], None]:
+    httpx_instrumentor.instrument()
+
     def shutdown() -> None:
+        uninstrument = getattr(httpx_instrumentor, "uninstrument", None)
+        if callable(uninstrument):
+            uninstrument()
+
+    return shutdown
+
+
+def _otel_shutdown(
+    provider: object, *, httpx_shutdown: Callable[[], None] | None = None
+) -> Callable[[], None]:
+    def shutdown() -> None:
+        if httpx_shutdown is not None:
+            try:
+                httpx_shutdown()
+            except Exception as exc:  # pragma: no cover - defensive cleanup path
+                logger.warning("OpenTelemetry HTTPX uninstrument failed: %s", exc)
+
         force_flush = getattr(provider, "force_flush", None)
         if callable(force_flush):
             try:

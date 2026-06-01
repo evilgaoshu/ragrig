@@ -45,6 +45,22 @@ class Settings(BaseSettings):
         default=30,
         description="Session token lifetime in days.",
     )
+    ragrig_auth_login_rate_limit_enabled: bool = Field(
+        default=True,
+        description="Enable in-process throttling for repeated password login failures.",
+    )
+    ragrig_auth_login_max_failures: int = Field(
+        default=5,
+        description="Failed password login attempts allowed per IP/email window.",
+    )
+    ragrig_auth_login_window_seconds: int = Field(
+        default=300,
+        description="Window in seconds for password login failure counting.",
+    )
+    ragrig_auth_login_lockout_seconds: int = Field(
+        default=900,
+        description="Temporary lockout duration after too many password login failures.",
+    )
     ragrig_open_registration: bool = Field(
         default=True,
         description=(

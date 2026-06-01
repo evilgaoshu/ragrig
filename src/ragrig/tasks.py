@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -20,6 +21,7 @@ from ragrig.db.models import DocumentVersion, PipelineRun
 from ragrig.formats import FormatStatus, get_format_registry
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import _select_parser
+from ragrig.metrics import observe_pipeline_run
 from ragrig.parsers.base import ParserTimeoutError, parse_with_timeout
 from ragrig.repositories import (
     create_pipeline_run,
@@ -750,6 +752,7 @@ def run_upload_pipeline(
     staged_files: list[dict[str, str]],
     workspace_id: uuid.UUID | str | None = None,
 ) -> dict[str, Any]:
+    run_started = perf_counter()
     workspace_uuid = uuid.UUID(str(workspace_id)) if workspace_id is not None else None
     retain_staged_files = False
     resolved_workspace_id: uuid.UUID | None = workspace_uuid
@@ -864,8 +867,14 @@ def run_upload_pipeline(
             run.status = "completed_with_failures" if failed_count else "completed"
             run.finished_at = datetime.now(timezone.utc)
             run_status = run.status
+            run_type = getattr(run, "run_type", "web_upload")
             retain_staged_files = failed_count > 0
             session.commit()
+            observe_pipeline_run(
+                pipeline_type=run_type,
+                status=run_status,
+                duration_seconds=perf_counter() - run_started,
+            )
 
         try:
             lock_key = f"{resolved_workspace_id}:{kb_name}"

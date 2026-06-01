@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from ragrig.db.models import PipelineRun, PipelineRunItem
+from ragrig.metrics import observe_pipeline_item
 
 
 def create_pipeline_run(
@@ -49,4 +50,27 @@ def create_pipeline_run_item(
     )
     session.add(item)
     session.flush()
+    observe_pipeline_item(
+        pipeline_type=_pipeline_type(session, pipeline_run_id),
+        stage=_pipeline_stage(metadata_json),
+        status=status,
+    )
     return item
+
+
+def _pipeline_type(session: Session, pipeline_run_id) -> str:
+    run = session.get(PipelineRun, pipeline_run_id)
+    return run.run_type if run is not None else "unknown"
+
+
+def _pipeline_stage(metadata_json: dict[str, object]) -> str:
+    stage = metadata_json.get("stage")
+    if isinstance(stage, str) and stage.strip():
+        return stage
+    if "chunk_count" in metadata_json or "embedding_dimensions" in metadata_json:
+        return "index"
+    if "parser_name" in metadata_json or "parser_id" in metadata_json:
+        return "parse"
+    if "skip_reason" in metadata_json:
+        return "filter"
+    return "document"

@@ -139,6 +139,43 @@ DB_POOL_INVALIDATIONS = Counter(
     "Total SQLAlchemy database connection pool invalidation events.",
 )
 
+PIPELINE_RUNS = Counter(
+    "ragrig_pipeline_runs_total",
+    "Total ingestion/indexing pipeline runs by final status.",
+    ("pipeline_type", "status"),
+)
+
+PIPELINE_ITEMS = Counter(
+    "ragrig_pipeline_items_total",
+    "Total ingestion/indexing pipeline items by stage and status.",
+    ("pipeline_type", "stage", "status"),
+)
+
+PIPELINE_DURATION = Histogram(
+    "ragrig_pipeline_duration_seconds",
+    "Ingestion/indexing pipeline run duration in seconds.",
+    ("pipeline_type", "status"),
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 300.0),
+)
+
+INDEXING_DOCUMENTS = Counter(
+    "ragrig_indexing_documents_total",
+    "Documents processed by the indexing pipeline.",
+    ("status",),
+)
+
+INDEXING_CHUNKS = Counter(
+    "ragrig_indexing_chunks_total",
+    "Chunks created by the indexing pipeline.",
+    ("status",),
+)
+
+INDEXING_EMBEDDINGS = Counter(
+    "ragrig_indexing_embeddings_total",
+    "Embeddings created by the indexing pipeline.",
+    ("status",),
+)
+
 _INSTRUMENTED_POOLS: weakref.WeakSet[object] = weakref.WeakSet()
 _INSTRUMENTED_POOL_IDS: set[int] = set()
 
@@ -219,6 +256,46 @@ def observe_db_pool_state(engine: object) -> None:
     _set_pool_gauge(DB_POOL_CHECKED_IN, _pool_value(pool, "checkedin"))
     _set_pool_gauge(DB_POOL_CHECKED_OUT, _pool_value(pool, "checkedout"))
     _set_pool_gauge(DB_POOL_OVERFLOW, _pool_value(pool, "overflow"))
+
+
+def observe_pipeline_item(
+    *,
+    pipeline_type: str | None,
+    stage: str | None,
+    status: str | None,
+) -> None:
+    PIPELINE_ITEMS.labels(
+        _label(pipeline_type),
+        _label(stage),
+        _label(status),
+    ).inc()
+
+
+def observe_pipeline_run(
+    *,
+    pipeline_type: str | None,
+    status: str | None,
+    duration_seconds: float | None = None,
+) -> None:
+    labels = (_label(pipeline_type), _label(status))
+    PIPELINE_RUNS.labels(*labels).inc()
+    if duration_seconds is not None:
+        PIPELINE_DURATION.labels(*labels).observe(max(0.0, float(duration_seconds)))
+
+
+def observe_indexing_counts(
+    *,
+    indexed_count: int,
+    skipped_count: int,
+    failed_count: int,
+    chunk_count: int,
+    embedding_count: int,
+) -> None:
+    INDEXING_DOCUMENTS.labels("success").inc(max(0, indexed_count))
+    INDEXING_DOCUMENTS.labels("skipped").inc(max(0, skipped_count))
+    INDEXING_DOCUMENTS.labels("failed").inc(max(0, failed_count))
+    INDEXING_CHUNKS.labels("success").inc(max(0, chunk_count))
+    INDEXING_EMBEDDINGS.labels("success").inc(max(0, embedding_count))
 
 
 def observe_retrieval_report(

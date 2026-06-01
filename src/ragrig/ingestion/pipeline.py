@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ragrig.db.models import DocumentVersion
 from ragrig.ingestion.scanner import scan_paths
+from ragrig.metrics import observe_pipeline_run
 from ragrig.observability import log_event
 from ragrig.parsers import (
     AdvancedParserBridge,
@@ -347,6 +348,12 @@ def ingest_local_directory(
     run.status = "completed_with_failures" if failed_count else "completed"
     run.finished_at = datetime.now(timezone.utc)
     session.commit()
+    duration_seconds = perf_counter() - ingest_started
+    observe_pipeline_run(
+        pipeline_type=run.run_type,
+        status=run.status,
+        duration_seconds=duration_seconds,
+    )
     log_event(
         logger,
         logging.INFO,
@@ -358,7 +365,7 @@ def ingest_local_directory(
         created_versions=created_versions,
         skipped_count=skipped_count,
         failed_count=failed_count,
-        duration_ms=round((perf_counter() - ingest_started) * 1000, 3),
+        duration_ms=round(duration_seconds * 1000, 3),
     )
 
     return IngestionReport(

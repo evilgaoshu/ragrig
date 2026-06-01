@@ -264,6 +264,56 @@ def test_retrieval_workspace_metrics_use_hashed_low_cardinality_label():
     )
 
 
+@pytest.mark.unit
+def test_pipeline_metrics_record_runs_items_and_indexing_counts():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from ragrig.metrics import (
+        observe_indexing_counts,
+        observe_pipeline_item,
+        observe_pipeline_run,
+        setup_metrics,
+    )
+
+    observe_pipeline_run(
+        pipeline_type="chunk_embedding",
+        status="completed",
+        duration_seconds=1.25,
+    )
+    observe_pipeline_item(
+        pipeline_type="chunk_embedding",
+        stage="index",
+        status="success",
+    )
+    observe_indexing_counts(
+        indexed_count=2,
+        skipped_count=1,
+        failed_count=0,
+        chunk_count=6,
+        embedding_count=6,
+    )
+
+    app = FastAPI()
+    setup_metrics(app)
+    payload = TestClient(app).get("/metrics").text
+
+    assert (
+        'ragrig_pipeline_runs_total{pipeline_type="chunk_embedding",status="completed"}' in payload
+    )
+    assert (
+        'ragrig_pipeline_items_total{pipeline_type="chunk_embedding",stage="index",status="success"}'
+        in payload
+    )
+    assert any(
+        'pipeline_type="chunk_embedding"' in line and 'status="completed"' in line
+        for line in _metric_lines(payload, "ragrig_pipeline_duration_seconds_bucket")
+    )
+    assert 'ragrig_indexing_documents_total{status="success"}' in payload
+    assert 'ragrig_indexing_chunks_total{status="success"}' in payload
+    assert 'ragrig_indexing_embeddings_total{status="success"}' in payload
+
+
 # ── Email ─────────────────────────────────────────────────────────────────────
 
 
@@ -533,6 +583,25 @@ def test_otel_json_logging_configures_formatter():
         assert True
     finally:
         root.handlers = original_handlers
+
+
+@pytest.mark.unit
+def test_otel_httpx_instrumentor_returns_uninstrument_shutdown():
+    from ragrig.otel import _instrument_httpx
+
+    calls: list[str] = []
+
+    class FakeHTTPXInstrumentor:
+        def instrument(self) -> None:
+            calls.append("instrument")
+
+        def uninstrument(self) -> None:
+            calls.append("uninstrument")
+
+    shutdown = _instrument_httpx(FakeHTTPXInstrumentor())
+    shutdown()
+
+    assert calls == ["instrument", "uninstrument"]
 
 
 # ── ARQ worker / task backend ─────────────────────────────────────────────────

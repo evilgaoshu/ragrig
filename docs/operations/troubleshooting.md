@@ -22,6 +22,8 @@ retrieval, indexing, task-queue, and database issues.
      or process-wide.
    - Retrieval metrics show hit, zero-result, degraded, and error counts.
    - DB pool metrics show connection pressure and invalidation events.
+   - Pipeline metrics show ingestion/indexing run and item health without
+     high-cardinality document or user labels.
 4. Check logs by request ID.
    - Every API response includes `X-Request-ID`.
    - JSON logs include request context plus OpenTelemetry trace/span IDs when
@@ -38,6 +40,20 @@ Actions:
 - Check the matching trace for route, SQLAlchemy spans, and business spans.
 - Confirm the global handler did not expose the traceback to clients; traceback
   detail should remain in server logs only.
+
+## Login Throttling
+
+Symptoms:
+- `POST /auth/login` returns HTTP 429 with `Retry-After`.
+- Logs include `auth.login.rate_limited` or `auth.login.locked`.
+
+Actions:
+- Confirm `RAGRIG_AUTH_LOGIN_RATE_LIMIT_ENABLED=true`.
+- Tune `RAGRIG_AUTH_LOGIN_MAX_FAILURES`,
+  `RAGRIG_AUTH_LOGIN_WINDOW_SECONDS`, and
+  `RAGRIG_AUTH_LOGIN_LOCKOUT_SECONDS` for the deployment's proxy topology.
+- If all clients share one edge IP, pass the real client address through the
+  reverse proxy before tightening limits.
 
 ## Database Pressure
 
@@ -94,6 +110,7 @@ Actions:
 Symptoms:
 - pipeline runs finish with failures.
 - retrieval is healthy but new documents never appear.
+- `ragrig_pipeline_runs_total{status="completed_with_failures"}` increases.
 
 Actions:
 - Check pipeline run items for parser, chunking, embedding, or upsert failures.
@@ -105,6 +122,16 @@ Actions:
 - If embedding spans dominate latency, reduce batch pressure or inspect provider
   health and rate limits.
 - If upsert spans fail, inspect vector backend health and DB pool metrics.
+- Compare `ragrig_pipeline_items_total` by `pipeline_type`, `stage`, and
+  `status` to find whether failures are concentrated in filtering, parsing, or
+  indexing.
+
+## Outbound Calls
+
+When OpenTelemetry is enabled, HTTPX instrumentation emits outbound spans for
+OIDC discovery/token exchange, webhooks, web imports, connector APIs, and model
+provider APIs. Use these spans to separate upstream latency and errors from
+local database or retrieval behavior.
 
 ## Workflow Retries
 
@@ -127,4 +154,6 @@ histogram_quantile(0.95, sum by (le, path) (rate(ragrig_http_request_duration_se
 sum by (endpoint, mode, backend, status) (rate(ragrig_retrieval_requests_total[5m]))
 ragrig_db_pool_checked_out
 increase(ragrig_db_pool_invalidations_total[15m])
+sum by (pipeline_type, status) (rate(ragrig_pipeline_runs_total[5m]))
+sum by (pipeline_type, stage, status) (rate(ragrig_pipeline_items_total[5m]))
 ```

@@ -45,6 +45,17 @@ APP_ENV=production
 RAGRIG_AUTH_SECRET_PEPPER=replace-with-a-long-random-secret
 ```
 
+Password login brute-force throttling is enabled by default. The limiter uses
+an in-process IP + normalized-email hash and never labels metrics with raw
+email, IP, user, or session identifiers.
+
+```
+RAGRIG_AUTH_LOGIN_RATE_LIMIT_ENABLED=true
+RAGRIG_AUTH_LOGIN_MAX_FAILURES=5
+RAGRIG_AUTH_LOGIN_WINDOW_SECONDS=300
+RAGRIG_AUTH_LOGIN_LOCKOUT_SECONDS=900
+```
+
 The default compose file adds `restart: unless-stopped` to services and applies
 resource limits to the primary app and database containers. Override these
 defaults in `.env` when the host capacity differs:
@@ -83,6 +94,16 @@ indexing phases, including query embedding, vector search, rerank, chunking,
 embedding batches, and vector upsert. Span attributes use counts, backend
 names, provider/model metadata, and hashed workspace/knowledge-base labels
 only.
+HTTPX client instrumentation is also enabled with OpenTelemetry so OIDC,
+webhook, connector, web import, and provider calls appear as outbound spans.
+
+Ingestion and indexing pipeline metrics are low-cardinality counters and
+histograms:
+`ragrig_pipeline_runs_total`, `ragrig_pipeline_items_total`,
+`ragrig_pipeline_duration_seconds`, `ragrig_indexing_documents_total`,
+`ragrig_indexing_chunks_total`, and `ragrig_indexing_embeddings_total`.
+They use labels such as `pipeline_type`, `stage`, and `status`; document names,
+knowledge-base names, user IDs, and file paths are intentionally excluded.
 
 File logs are deliberately opt-in. In containers, stdout/stderr remains the
 portable default because most orchestrators own log collection and rotation. If
