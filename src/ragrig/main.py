@@ -21,6 +21,7 @@ from ragrig.api.schemas import (
     RetrievalSearchRequest,
     WebhookExportRequest,
 )
+from ragrig.auth import assert_auth_secret_pepper_safe
 from ragrig.auth_throttle import AuthLoginAttemptLimiter
 from ragrig.config import Settings, get_settings
 from ragrig.db.engine import create_db_engine
@@ -71,6 +72,8 @@ def create_app(
     task_executor=None,
 ) -> FastAPI:
     active_settings = settings or get_settings()
+    if active_settings.ragrig_auth_enabled:
+        assert_auth_secret_pepper_safe(app_env=active_settings.app_env)
     database_check = check_database or create_database_check(active_settings)
     default_engine = None
     default_session_factory = None

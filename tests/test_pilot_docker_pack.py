@@ -25,6 +25,8 @@ def test_dockerfile_supports_local_pilot_runtime() -> None:
     assert "groupadd --gid 10001 ragrig" in dockerfile
     assert "useradd --uid 10001 --gid ragrig" in dockerfile
     assert "UV_CACHE_DIR=/tmp/uv-cache" in dockerfile
+    assert "/usr/local/bin/python -m pip uninstall -y setuptools wheel" in dockerfile
+    assert 'rm -rf "$UV_CACHE_DIR"' in dockerfile
     assert "chown -R ragrig:ragrig /app /home/ragrig" in dockerfile
     assert "USER ragrig" in dockerfile
     assert "uv run --no-dev uvicorn" in dockerfile
@@ -38,9 +40,10 @@ def test_compose_app_is_ready_for_pilot_without_bundled_models() -> None:
     app = compose["services"]["app"]
 
     assert app["build"] == "."
-    assert app["environment"]["DATABASE_URL"] == (
-        "${RAGRIG_DOCKER_DATABASE_URL:-postgresql://ragrig:ragrig_dev@db:5432/ragrig}"
+    assert app["environment"]["DATABASE_URL"].startswith(
+        "${RAGRIG_DOCKER_DATABASE_URL:-postgresql://ragrig:"
     )
+    assert "${RAGRIG_POSTGRES_PASSWORD:?" in app["environment"]["DATABASE_URL"]
     assert app["environment"]["DB_RUNTIME_HOST"] == "${RAGRIG_DOCKER_DB_RUNTIME_HOST:-db}"
     assert app["environment"]["RAGRIG_AUTO_MIGRATE"] == "${RAGRIG_AUTO_MIGRATE:-1}"
     assert app["environment"]["RAGRIG_ANSWER_BASE_URL"].startswith(

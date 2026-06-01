@@ -29,8 +29,12 @@ def test_default_workspace_bootstrap_is_idempotent(sqlite_session) -> None:
     assert second.display_name == "Default Workspace"
 
 
-def test_default_auth_pepper_is_rejected_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("APP_ENV", "production")
+@pytest.mark.parametrize("app_env", ["production", "prod", "staging", "preview", "canary"])
+def test_default_auth_pepper_is_rejected_in_protected_envs(
+    monkeypatch: pytest.MonkeyPatch,
+    app_env: str,
+) -> None:
+    monkeypatch.setenv("APP_ENV", app_env)
     monkeypatch.delenv("RAGRIG_AUTH_SECRET_PEPPER", raising=False)
 
     with pytest.raises(RuntimeError, match="RAGRIG_AUTH_SECRET_PEPPER"):
@@ -49,6 +53,26 @@ def test_custom_auth_pepper_is_allowed_in_production(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("RAGRIG_AUTH_SECRET_PEPPER", "prod-test-pepper")
 
     assert _hash_secret("secret").startswith("hmac-sha256:")
+
+
+def test_app_startup_rejects_default_auth_pepper_in_protected_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ragrig.config import Settings
+    from ragrig.main import create_app
+
+    monkeypatch.delenv("RAGRIG_AUTH_SECRET_PEPPER", raising=False)
+
+    with pytest.raises(RuntimeError, match="RAGRIG_AUTH_SECRET_PEPPER"):
+        create_app(
+            check_database=lambda: None,
+            session_factory=lambda: None,
+            settings=Settings(
+                app_env="staging",
+                database_url="sqlite://",
+                ragrig_auth_enabled=True,
+            ),
+        )
 
 
 def test_api_key_create_and_verify_stores_hash_only(sqlite_session) -> None:

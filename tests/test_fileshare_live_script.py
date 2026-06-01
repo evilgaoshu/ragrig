@@ -9,7 +9,7 @@ def test_docker_compose_helpers_target_only_fileshare_services(monkeypatch) -> N
     commands: list[list[str]] = []
 
     def _fake_run(cmd, **kwargs):
-        del kwargs
+        assert kwargs["env"]["RAGRIG_POSTGRES_PASSWORD"]
         commands.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 

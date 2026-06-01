@@ -66,8 +66,7 @@ def resolve_acl_context(
     requested_principal_ids: list[str] | None,
     requested_enforce_acl: bool,
 ) -> tuple[list[str] | None, bool]:
-    if not settings.ragrig_auth_enabled:
-        return requested_principal_ids, requested_enforce_acl
+    _ = settings, requested_principal_ids, requested_enforce_acl
     return auth.principal_ids, True
 
 

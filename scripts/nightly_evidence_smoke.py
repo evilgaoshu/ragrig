@@ -115,10 +115,17 @@ def build_smoke_steps(artifacts_dir: Path) -> tuple[SmokeStep, ...]:
     artifact_env = {"ARTIFACTS_DIR": _display(artifacts_dir)}
     compose_project = os.environ.get("COMPOSE_PROJECT_NAME", "ragrig-nightly-evidence")
     db_host_port = os.environ.get("DB_HOST_PORT", "15433")
+    postgres_password = os.environ.get("RAGRIG_POSTGRES_PASSWORD", "nightly-evidence-db-password")
+    compose_file = os.environ.get(
+        "COMPOSE_FILE",
+        f"{REPO_ROOT / 'docker-compose.yml'}:{REPO_ROOT / 'docker-compose.db-port.yml'}",
+    )
     pilot_docker_env = {
         **artifact_env,
         "APP_HOST_PORT": os.environ.get("APP_HOST_PORT", "18000"),
         "DB_HOST_PORT": db_host_port,
+        "COMPOSE_FILE": compose_file,
+        "RAGRIG_POSTGRES_PASSWORD": postgres_password,
         "PILOT_BASE_URL": os.environ.get("PILOT_BASE_URL", "http://127.0.0.1:18000"),
         "COMPOSE_PROJECT_NAME": compose_project,
     }
@@ -126,12 +133,13 @@ def build_smoke_steps(artifacts_dir: Path) -> tuple[SmokeStep, ...]:
         **artifact_env,
         "FILESHARE_AUTO_PICK_PORTS": os.environ.get("FILESHARE_AUTO_PICK_PORTS", "1"),
         "COMPOSE_PROJECT_NAME": compose_project,
+        "RAGRIG_POSTGRES_PASSWORD": postgres_password,
     }
     operations_env = {
         **pilot_docker_env,
         "DATABASE_URL": os.environ.get(
             "NIGHTLY_EVIDENCE_DATABASE_URL",
-            f"postgresql://ragrig:ragrig_dev@localhost:{db_host_port}/ragrig",
+            f"postgresql://ragrig:{postgres_password}@localhost:{db_host_port}/ragrig",
         ),
         "OPS_BACKUP_DIR": os.environ.get("OPS_BACKUP_DIR", "backups/nightly-evidence-smoke"),
     }

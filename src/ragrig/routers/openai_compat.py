@@ -288,8 +288,8 @@ def chat_completions(
                     }
                 },
             )
-    principal_ids = None if not settings.ragrig_auth_enabled else _auth.principal_ids
-    enforce_acl = request.enforce_acl if not settings.ragrig_auth_enabled else True
+    principal_ids = _auth.principal_ids
+    enforce_acl = True
 
     try:
         report = generate_answer(

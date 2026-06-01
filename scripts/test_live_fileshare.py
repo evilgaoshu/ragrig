@@ -29,6 +29,7 @@ _RECORD_DIR = _REPO_ROOT / "docs" / "operations" / "artifacts"
 _DEFAULT_RECORD = _RECORD_DIR / "fileshare-live-smoke-record.json"
 _COMPOSE_FILE = _REPO_ROOT / "docker-compose.yml"
 _LIVE_SERVICES = ["samba", "webdav", "sftp"]
+_FILES_SHARE_COMPOSE_PASSWORD = "fileshare-live-smoke-db-password"
 
 
 def _now() -> str:
@@ -58,6 +59,15 @@ def _run(
     )
 
 
+def _compose_env() -> dict[str, str]:
+    return {
+        "RAGRIG_POSTGRES_PASSWORD": os.environ.get(
+            "RAGRIG_POSTGRES_PASSWORD",
+            _FILES_SHARE_COMPOSE_PASSWORD,
+        )
+    }
+
+
 def _docker_compose_up() -> dict[str, object]:
     start = _now()
     proc = _run(
@@ -71,6 +81,7 @@ def _docker_compose_up() -> dict[str, object]:
             "--wait",
             *_LIVE_SERVICES,
         ],
+        env=_compose_env(),
         check=False,
         timeout=120,
         cwd=_REPO_ROOT,
@@ -141,6 +152,7 @@ def _container_logs_tail(lines: int = 100) -> dict[str, object]:
     for svc in services:
         proc = _run(
             ["docker", "compose", "logs", "--tail", str(lines), svc],
+            env=_compose_env(),
             check=False,
             timeout=30,
             cwd=_REPO_ROOT,
@@ -166,6 +178,7 @@ def _docker_compose_down() -> dict[str, object]:
             "--remove-orphans",
             *_LIVE_SERVICES,
         ],
+        env=_compose_env(),
         check=False,
         timeout=60,
         cwd=_REPO_ROOT,
