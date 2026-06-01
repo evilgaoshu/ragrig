@@ -138,6 +138,14 @@ def test_default_nightly_steps_cover_evi110_evidence_groups(tmp_path: Path) -> N
     assert "make ops-restore-smoke" in commands
     assert "make ops-upgrade-smoke" in commands
 
+    fileshare_command = next(
+        command
+        for step in steps
+        for command in step.commands
+        if command.command == ("make", "test-live-fileshare")
+    )
+    assert fileshare_command.env["RAGRIG_POSTGRES_PASSWORD"]
+
 
 def test_nightly_evidence_smoke_writes_pass_report_and_runs_cleanup(tmp_path: Path) -> None:
     calls: list[str] = []

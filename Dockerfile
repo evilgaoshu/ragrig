@@ -50,6 +50,8 @@ COPY examples ./examples
 COPY --from=frontend /frontend/dist ./src/ragrig/static/dist
 
 RUN uv sync --no-dev --frozen \
+    && python -m pip uninstall -y setuptools wheel \
+    && rm -rf "$UV_CACHE_DIR" \
     && mkdir -p "$UV_CACHE_DIR" \
     && chown -R ragrig:ragrig /app /home/ragrig "$UV_CACHE_DIR"
 
