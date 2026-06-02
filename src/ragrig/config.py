@@ -4,6 +4,9 @@ from urllib.parse import urlsplit, urlunsplit
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_DATABASE_URL = "postgresql://ragrig:ragrig_dev@localhost:5432/ragrig"
+_PROTECTED_APP_ENVS = {"prod", "production", "staging", "stage", "preview", "canary"}
+
 
 class Settings(BaseSettings):
     app_name: str = "ragrig"
@@ -13,7 +16,7 @@ class Settings(BaseSettings):
     db_host_port: int = 5432
     db_runtime_host: str = "localhost"
     database_url: str = Field(
-        default="postgresql://ragrig:ragrig_dev@localhost:5432/ragrig",
+        default=DEFAULT_DATABASE_URL,
         description="PostgreSQL connection string for RAGRig.",
     )
     ragrig_db_pool_size: int = Field(
@@ -188,6 +191,13 @@ class Settings(BaseSettings):
             "Default evaluation roots are evaluation_runs, evaluation_baselines, and tests."
         ),
     )
+    ragrig_ingestion_extra_allowed_roots: str = Field(
+        default="",
+        description=(
+            "Comma-separated extra filesystem roots accepted by local ingestion APIs. "
+            "Default roots are data, docs, and uploads."
+        ),
+    )
 
     # ── Email (SMTP) ──────────────────────────────────────────────────────────
     ragrig_smtp_enabled: bool = Field(default=False, description="Enable SMTP email delivery.")
@@ -348,3 +358,22 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+def assert_database_url_safe(settings: Settings) -> None:
+    if settings.app_env.strip().lower() not in _PROTECTED_APP_ENVS:
+        return
+    if _normalized_database_url(settings.database_url) == _normalized_database_url(
+        DEFAULT_DATABASE_URL
+    ):
+        raise RuntimeError(
+            "DATABASE_URL must be set to environment-specific credentials in protected "
+            f"app environments; the default development database URL is not allowed "
+            f"when APP_ENV={settings.app_env!r}."
+        )
+
+
+def _normalized_database_url(value: str) -> str:
+    if value.startswith("postgresql+psycopg://"):
+        return value.replace("postgresql+psycopg://", "postgresql://", 1)
+    return value

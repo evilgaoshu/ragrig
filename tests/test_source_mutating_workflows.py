@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from ragrig.config import Settings
 from ragrig.db.models import Base, Document, DocumentVersion, Source
 from ragrig.main import create_app
 from ragrig.plugins import PluginConfigValidationError
@@ -526,7 +527,11 @@ class TestDryRunAPI:
         def sf():
             return Session(engine, expire_on_commit=False)
 
-        app = create_app(check_database=lambda: None, session_factory=sf)
+        app = create_app(
+            check_database=lambda: None,
+            session_factory=sf,
+            settings=Settings(ragrig_ingestion_extra_allowed_roots=str(tmp_path)),
+        )
         transport = httpx.ASGITransport(app=app)
 
         docs = tmp_path / "dryrun_docs"
@@ -565,7 +570,11 @@ class TestSaveConfigAPI:
         def sf():
             return Session(engine, expire_on_commit=False)
 
-        app = create_app(check_database=lambda: None, session_factory=sf)
+        app = create_app(
+            check_database=lambda: None,
+            session_factory=sf,
+            settings=Settings(ragrig_ingestion_extra_allowed_roots=str(tmp_path)),
+        )
         transport = httpx.ASGITransport(app=app)
 
         docs = tmp_path / "save_docs"

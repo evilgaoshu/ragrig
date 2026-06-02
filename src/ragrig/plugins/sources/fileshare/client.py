@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import io
+import posixpath
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
-from xml.etree import ElementTree as ET
+from urllib.parse import urlsplit
+
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 
 from ragrig.plugins.sources.fileshare.errors import (
     FileshareConfigError,
@@ -112,6 +116,33 @@ class FakeFileshareClient:
         raise FilesharePermanentError(f"file not found: {path}")
 
 
+def _safe_relative_posix_path(path: str, *, label: str) -> str:
+    raw = path.replace("\\", "/").strip()
+    if raw.startswith("/"):
+        raw = raw.lstrip("/")
+    normalized = posixpath.normpath(raw)
+    if normalized in {"", "."}:
+        return ""
+    if normalized == ".." or normalized.startswith("../") or "/../" in f"/{normalized}/":
+        raise FilesharePermanentError(f"{label} must be relative and stay within the root")
+    return normalized
+
+
+def _safe_remote_child(parent: str, filename: str) -> tuple[str, str]:
+    if "/" in filename or "\\" in filename or filename in {"", ".", ".."}:
+        raise FilesharePermanentError("remote filename must be a single safe path segment")
+    remote_path = posixpath.normpath(posixpath.join(parent, filename)) if parent else filename
+    if parent and not (remote_path == parent or remote_path.startswith(f"{parent}/")):
+        raise FilesharePermanentError("remote path escaped the configured root")
+    return remote_path, filename
+
+
+def _webdav_href_path(href: str) -> str:
+    parsed = urlsplit(href)
+    raw_path = parsed.path if parsed.scheme or parsed.netloc else href
+    return posixpath.normpath("/" + raw_path.lstrip("/"))
+
+
 @dataclass
 class MountedPathClient:
     root_path: Path
@@ -147,7 +178,14 @@ class MountedPathClient:
         return FileshareListResult(files=files, next_cursor=next_cursor)
 
     def read_file(self, *, path: str) -> bytes:
-        return (self.root_path / path).read_bytes()
+        relative = _safe_relative_posix_path(path, label="mounted file path")
+        if not relative:
+            raise FilesharePermanentError("mounted file path must not be empty")
+        root = self.root_path.resolve()
+        target = (root / relative).resolve()
+        if target != root and root not in target.parents:
+            raise FilesharePermanentError("mounted file path escaped the configured root")
+        return target.read_bytes()
 
 
 @dataclass
@@ -190,7 +228,12 @@ class SMBClient:
         conn_kwargs = self._connection_kwargs()
         base_path = f"\\\\{self.host}\\{self.share}"
         _backslash = "\\"
-        scan_root = f"{base_path}\\{root_path.strip('/').replace('/', _backslash)}"
+        safe_root_path = _safe_relative_posix_path(root_path, label="SMB root path")
+        scan_root = (
+            f"{base_path}\\{safe_root_path.replace('/', _backslash)}"
+            if safe_root_path
+            else base_path
+        )
         files = []
         try:
             smbclient.register_session(
@@ -229,7 +272,10 @@ class SMBClient:
         conn_kwargs = self._connection_kwargs()
         base_path = f"\\\\{self.host}\\{self.share}"
         _backslash = "\\"
-        remote_path = f"{base_path}\\{path.replace('/', _backslash)}"
+        relative = _safe_relative_posix_path(path, label="SMB file path")
+        if not relative:
+            raise FilesharePermanentError("SMB file path must not be empty")
+        remote_path = f"{base_path}\\{relative.replace('/', _backslash)}"
         try:
             with smbclient.open_file(remote_path, mode="rb", **conn_kwargs) as fh:
                 return fh.read()
@@ -283,8 +329,14 @@ class WebDAVClient:
         self._require_sdk()
         import httpx
 
-        url = self.base_url.rstrip("/") + "/" + root_path.strip("/")
-        url_path = "/" + root_path.strip("/")
+        safe_root_path = _safe_relative_posix_path(root_path, label="WebDAV root path")
+        url = self.base_url.rstrip("/") + "/" + safe_root_path
+        base_path = posixpath.normpath("/" + urlsplit(self.base_url).path.strip("/"))
+        url_path = (
+            posixpath.normpath("/" + safe_root_path)
+            if base_path == "/"
+            else posixpath.normpath(f"{base_path.rstrip('/')}/{safe_root_path}")
+        )
         try:
             with self._client() as client:
                 response = client.request("PROPFIND", url, headers={"Depth": "1"})
@@ -302,7 +354,7 @@ class WebDAVClient:
         root_tag = "{DAV:}"
         try:
             tree = ET.fromstring(response.text.encode("utf-8"))
-        except ET.ParseError as exc:
+        except (ET.ParseError, DefusedXmlException) as exc:
             raise FilesharePermanentError(f"invalid WebDAV PROPFIND response: {exc}") from exc
 
         for response_elem in tree.findall(f"{root_tag}response"):
@@ -310,8 +362,11 @@ class WebDAVClient:
             if href_elem is None or href_elem.text is None:
                 continue
             href = href_elem.text
+            href_path = _webdav_href_path(href)
             # Skip the root directory itself
-            if href.rstrip("/") == url_path.rstrip("/"):
+            if href_path.rstrip("/") == url_path.rstrip("/"):
+                continue
+            if url_path != "/" and not href_path.startswith(f"{url_path.rstrip('/')}/"):
                 continue
             propstat = response_elem.find(f"{root_tag}propstat")
             if propstat is None:
@@ -334,7 +389,18 @@ class WebDAVClient:
             if getcontentlength is not None and getcontentlength.text is not None:
                 size = int(getcontentlength.text)
 
-            rel_path = href.removeprefix(url_path).lstrip("/")
+            try:
+                relative_href = (
+                    href_path.lstrip("/")
+                    if url_path == "/"
+                    else href_path.removeprefix(url_path.rstrip("/")).lstrip("/")
+                )
+                rel_path = _safe_relative_posix_path(
+                    relative_href,
+                    label="WebDAV response path",
+                )
+            except FilesharePermanentError:
+                continue
             files.append(
                 FileshareFileMetadata(
                     path=rel_path,
@@ -353,7 +419,10 @@ class WebDAVClient:
         self._require_sdk()
         import httpx
 
-        url = self.base_url.rstrip("/") + "/" + path.strip("/")
+        relative = _safe_relative_posix_path(path, label="WebDAV file path")
+        if not relative:
+            raise FilesharePermanentError("WebDAV file path must not be empty")
+        url = self.base_url.rstrip("/") + "/" + relative
         try:
             with self._client() as client:
                 response = client.get(url)
@@ -385,6 +454,8 @@ class SFTPClient:
     password: str | None = None
     private_key: str | None = None
     port: int = 22
+    known_hosts_path: str | None = None
+    allow_unknown_host_key: bool = False
     protocol: str = "sftp"
 
     def _require_sdk(self) -> None:
@@ -400,12 +471,27 @@ class SFTPClient:
         import paramiko
 
         try:
-            transport = paramiko.Transport((self.host, self.port))
+            ssh = paramiko.SSHClient()
+            if self.known_hosts_path:
+                ssh.load_host_keys(self.known_hosts_path)
+            else:
+                ssh.load_system_host_keys()
+            policy = (
+                paramiko.AutoAddPolicy() if self.allow_unknown_host_key else paramiko.RejectPolicy()
+            )
+            ssh.set_missing_host_key_policy(policy)
             pkey = None
             if self.private_key is not None:
                 pkey = paramiko.RSAKey.from_private_key(io.StringIO(self.private_key))
-            transport.connect(username=self.username, password=self.password, pkey=pkey)
-            return paramiko.SFTPClient.from_transport(transport)
+            ssh.connect(
+                hostname=self.host,
+                port=self.port,
+                username=self.username,
+                password=self.password,
+                pkey=pkey,
+                look_for_keys=False,
+            )
+            return _ManagedSFTPClient(ssh.open_sftp(), ssh)
         except paramiko.AuthenticationException as exc:
             raise FileshareCredentialError(str(exc)) from exc
         except paramiko.SSHException as exc:
@@ -424,11 +510,18 @@ class SFTPClient:
         page_size: int,
     ) -> FileshareListResult:
         del page_size
+        safe_root_path = _safe_relative_posix_path(root_path, label="SFTP root path")
         self._require_sdk()
         sftp = self._connect()
         files = []
         try:
-            self._walk_sftp(sftp, root_path.strip("/"), "", cursor, files)
+            self._walk_sftp(
+                sftp,
+                safe_root_path,
+                "",
+                cursor,
+                files,
+            )
         except FileshareSourceError:
             raise
         except Exception as exc:
@@ -451,8 +544,15 @@ class SFTPClient:
 
         try:
             for item in sftp.listdir_attr(root_path):
-                remote_path = f"{root_path}/{item.filename}"
-                rel_path = f"{rel_prefix}/{item.filename}".lstrip("/")
+                remote_path, filename = _safe_remote_child(root_path, item.filename)
+                rel_path = (
+                    _safe_relative_posix_path(
+                        f"{rel_prefix}/{filename}".lstrip("/"),
+                        label="SFTP relative path",
+                    )
+                    if rel_prefix
+                    else filename
+                )
                 if stat.S_ISDIR(item.st_mode):
                     self._walk_sftp(sftp, remote_path, rel_path, cursor, files)
                 elif stat.S_ISREG(item.st_mode):
@@ -472,10 +572,13 @@ class SFTPClient:
             raise FilesharePermanentError(str(exc)) from exc
 
     def read_file(self, *, path: str) -> bytes:
+        relative = _safe_relative_posix_path(path, label="SFTP file path")
+        if not relative:
+            raise FilesharePermanentError("SFTP file path must not be empty")
         self._require_sdk()
         sftp = self._connect()
         try:
-            with sftp.file(path, "rb") as fh:
+            with sftp.file(relative, "rb") as fh:
                 return fh.read()
         except FileshareSourceError:
             raise
@@ -483,3 +586,18 @@ class SFTPClient:
             raise FilesharePermanentError(f"SFTP read failed for {path}: {exc}") from exc
         finally:
             sftp.close()
+
+
+class _ManagedSFTPClient:
+    def __init__(self, sftp, ssh_client) -> None:
+        self._sftp = sftp
+        self._ssh_client = ssh_client
+
+    def __getattr__(self, name: str):
+        return getattr(self._sftp, name)
+
+    def close(self) -> None:
+        try:
+            self._sftp.close()
+        finally:
+            self._ssh_client.close()

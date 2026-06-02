@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ragrig.auth import DEFAULT_WORKSPACE_ID
@@ -40,6 +41,17 @@ def get_or_create_knowledge_base(
         name=name,
         metadata_json={},
     )
-    session.add(knowledge_base)
-    session.flush()
-    return knowledge_base
+    try:
+        with session.begin_nested():
+            session.add(knowledge_base)
+            session.flush()
+        return knowledge_base
+    except IntegrityError:
+        knowledge_base = get_knowledge_base_by_name(
+            session,
+            name,
+            workspace_id=resolved_workspace_id,
+        )
+        if knowledge_base is None:
+            raise
+        return knowledge_base

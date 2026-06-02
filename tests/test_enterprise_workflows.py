@@ -8,6 +8,7 @@ from conftest import _create_session
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from ragrig.config import Settings
 from ragrig.db.models import Base, Chunk, KnowledgeBase, PipelineRun
 from ragrig.main import create_app
 
@@ -248,7 +249,11 @@ async def test_enterprise_connector_and_workflow_api_endpoints(tmp_path: Path) -
     def _session_factory() -> Session:
         return Session(engine, expire_on_commit=False)
 
-    app = create_app(check_database=lambda: None, session_factory=_session_factory)
+    app = create_app(
+        check_database=lambda: None,
+        session_factory=_session_factory,
+        settings=Settings(ragrig_ingestion_extra_allowed_roots=str(tmp_path)),
+    )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         connectors = await client.get("/enterprise-connectors")
@@ -284,5 +289,70 @@ async def test_enterprise_connector_and_workflow_api_endpoints(tmp_path: Path) -
     assert "ingest.database" in {item["operation"] for item in operations.json()["items"]}
     assert workflow.status_code == 200
     assert workflow.json()["status"] == "planned"
+
+    engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_workflow_api_rejects_local_ingest_root_outside_allowlist(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("# Guide\n\nAlpha\n", encoding="utf-8")
+
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+
+    def _session_factory() -> Session:
+        return Session(engine, expire_on_commit=False)
+
+    app = create_app(check_database=lambda: None, session_factory=_session_factory)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/workflows/runs",
+            json={
+                "workflow_id": "api-rejects-root",
+                "dry_run": True,
+                "steps": [
+                    {
+                        "step_id": "ingest",
+                        "operation": "ingest.local",
+                        "config": {
+                            "knowledge_base": "api-kb",
+                            "root_path": str(docs),
+                        },
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 400
+    assert "local ingestion root path must be under" in response.json()["error"]
+
+    engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_enterprise_probe_rejects_local_root_outside_allowlist(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+
+    def _session_factory() -> Session:
+        return Session(engine, expire_on_commit=False)
+
+    app = create_app(check_database=lambda: None, session_factory=_session_factory)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/enterprise-connectors/source.local/probe",
+            json={"config": {"root_path": str(docs)}},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["status"] == "rejected"
+    assert "local ingestion root path must be under" in response.json()["reason"]
 
     engine.dispose()

@@ -5,12 +5,13 @@ from sqlalchemy import Engine, create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
-from ragrig.config import Settings, get_settings
+from ragrig.config import Settings, assert_database_url_safe, get_settings
 from ragrig.metrics import setup_db_pool_metrics
 
 
 def create_db_engine(settings: Settings | None = None) -> Engine:
     active_settings = settings or get_settings()
+    assert_database_url_safe(active_settings)
     engine = create_engine(
         active_settings.sqlalchemy_database_url,
         **_create_engine_kwargs(active_settings),

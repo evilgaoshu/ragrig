@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ragrig.db.models import Document, DocumentVersion
@@ -35,9 +36,21 @@ def get_or_create_document(
         mime_type=mime_type,
         metadata_json=metadata_json,
     )
-    session.add(document)
-    session.flush()
-    return document, True
+    try:
+        with session.begin_nested():
+            session.add(document)
+            session.flush()
+        return document, True
+    except IntegrityError:
+        document = get_document_by_uri(session, knowledge_base_id=knowledge_base_id, uri=uri)
+        if document is None:
+            raise
+        document.source_id = source_id
+        document.content_hash = content_hash
+        document.mime_type = mime_type
+        document.metadata_json = metadata_json
+        session.flush()
+        return document, False
 
 
 def get_document_by_uri(session: Session, *, knowledge_base_id, uri: str) -> Document | None:

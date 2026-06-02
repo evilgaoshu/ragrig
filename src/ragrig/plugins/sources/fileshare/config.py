@@ -17,6 +17,8 @@ class FileshareSourceConfig(PluginConfigModel):
     username: str | None = None
     password: str | None = None
     private_key: str | None = None
+    known_hosts_path: str | None = None
+    allow_unknown_host_key: bool = False
     include_patterns: list[str] = Field(default_factory=list)
     exclude_patterns: list[str] = Field(default_factory=list)
     max_file_size_mb: float = Field(default=50, gt=0)

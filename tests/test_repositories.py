@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -29,6 +31,40 @@ from ragrig.repositories import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+class _NestedTransaction:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class _IntegrityRaceSession:
+    def __init__(self, scalar_results: list[object | None]) -> None:
+        self.scalar_results = scalar_results
+        self.added: list[object] = []
+        self.flush_calls = 0
+        self.nested_calls = 0
+        self._raise_next_flush = True
+
+    def scalar(self, statement):
+        del statement
+        return self.scalar_results.pop(0)
+
+    def add(self, obj) -> None:
+        self.added.append(obj)
+
+    def flush(self) -> None:
+        self.flush_calls += 1
+        if self._raise_next_flush:
+            self._raise_next_flush = False
+            raise IntegrityError("insert", {}, Exception("unique constraint"))
+
+    def begin_nested(self) -> _NestedTransaction:
+        self.nested_calls += 1
+        return _NestedTransaction()
 
 
 def test_repository_helpers_create_and_update_entities(sqlite_session) -> None:
@@ -82,6 +118,50 @@ def test_repository_helpers_create_and_update_entities(sqlite_session) -> None:
         )
         == document
     )
+
+
+def test_get_or_create_document_recovers_from_concurrent_insert_race() -> None:
+    existing = SimpleNamespace(
+        id="doc-existing",
+        source_id=None,
+        content_hash="old",
+        mime_type="text/plain",
+        metadata_json={},
+    )
+    session = _IntegrityRaceSession([None, existing])
+
+    document, created = get_or_create_document(
+        session,  # type: ignore[arg-type]
+        knowledge_base_id="kb-1",
+        source_id="source-2",
+        uri="/tmp/docs/race.md",
+        content_hash="new-hash",
+        mime_type="text/markdown",
+        metadata_json={"race": True},
+    )
+
+    assert document is existing
+    assert created is False
+    assert existing.source_id == "source-2"
+    assert existing.content_hash == "new-hash"
+    assert existing.mime_type == "text/markdown"
+    assert existing.metadata_json == {"race": True}
+    assert session.nested_calls == 1
+    assert session.flush_calls == 2
+
+
+def test_get_or_create_knowledge_base_recovers_from_concurrent_insert_race() -> None:
+    existing = SimpleNamespace(id="kb-existing", name="race-kb")
+    session = _IntegrityRaceSession([None, existing])
+
+    knowledge_base = get_or_create_knowledge_base(
+        session,  # type: ignore[arg-type]
+        "race-kb",
+    )
+
+    assert knowledge_base is existing
+    assert session.nested_calls == 1
+    assert session.flush_calls == 1
 
 
 def test_document_version_helpers_and_pipeline_run_helpers(sqlite_session) -> None:
