@@ -45,13 +45,23 @@ jobs:
       - name: Pull Vercel project settings
         run: vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
 
+      - name: Prepare deployment source
+        id: source
+        run: |
+          set -euo pipefail
+          deploy_dir="$RUNNER_TEMP/ragrig-vercel-deploy"
+          mkdir -p "$deploy_dir"
+          rsync -a --delete --exclude .git ./ "$deploy_dir/"
+          echo "dir=$deploy_dir" >> "$GITHUB_OUTPUT"
+
       - name: Deploy production
         id: deploy
         run: |
           set -euo pipefail
-          vercel deploy --prod --yes --token="${{ secrets.VERCEL_TOKEN }}" > deployment-url.txt
+          vercel deploy "${{ steps.source.outputs.dir }}" --prod --yes --no-wait --token="${{ secrets.VERCEL_TOKEN }}" > deployment-url.txt
           cat deployment-url.txt
           deployment_url="$(tail -n 1 deployment-url.txt)"
+          vercel inspect "$deployment_url" --wait --timeout 10m --token="${{ secrets.VERCEL_TOKEN }}"
           echo "url=$deployment_url" >> "$GITHUB_OUTPUT"
 
       - name: Alias demo domain
