@@ -20,6 +20,11 @@
   <a href="#deploy">Deploy</a>
 </p>
 
+<p align="center">
+  <a href="https://demo.ragrig.dev/"><strong>Try it online</strong></a><br>
+  Read-only demo: <code>demo@ragrig.dev</code> / <code>ragrig-demo-readonly</code>
+</p>
+
 ---
 
 RAGRig is for **small and medium-sized teams** who want to run their own

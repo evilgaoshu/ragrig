@@ -891,6 +891,22 @@ def test_protected_document_returned_with_valid_principal(tmp_path) -> None:
     assert report.results[0].text == "protected secret content"
 
 
+def test_postgres_acl_where_clause_uses_text_array_for_principal_overlap() -> None:
+    """Postgres jsonb ?| requires a text[] right operand, not JSONB."""
+    from sqlalchemy import select
+    from sqlalchemy.dialects import postgresql
+
+    from ragrig.db.models import Chunk
+    from ragrig.retrieval import _build_acl_where_clause
+
+    statement = select(Chunk.id).where(_build_acl_where_clause(["user:alice", "group:eng"]))
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+
+    assert "?|" in compiled
+    assert "::TEXT[]" in compiled
+    assert "::JSONB" not in compiled
+
+
 def test_protected_document_not_returned_without_principal(tmp_path) -> None:
     """Protected document + no principal → not returned."""
     docs = _seed_documents(tmp_path, {"secret.md": "top secret guarded content"})

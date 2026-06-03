@@ -16,6 +16,11 @@
   <a href="#部署方式">部署</a>
 </p>
 
+<p align="center">
+  <a href="https://demo.ragrig.dev/"><strong>在线试用</strong></a><br>
+  只读 demo：<code>demo@ragrig.dev</code> / <code>ragrig-demo-readonly</code>
+</p>
+
 ---
 
 RAGRig 服务于 **2–50 人规模的团队**：想自己跑一套带检索的知识层，而不是按

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import threading
+import tomllib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -19,15 +20,22 @@ def test_vercel_json_routes_all_requests_to_fastapi_function() -> None:
     config = json.loads(config_path.read_text(encoding="utf-8"))
 
     assert config["$schema"] == "https://openapi.vercel.sh/vercel.json"
+    assert "npm run build" in config["buildCommand"]
+    assert "python -m compileall api src scripts" in config["buildCommand"]
     assert config["rewrites"] == [{"source": "/(.*)", "destination": "/api/index"}]
-    assert config["functions"]["api/index.py"]["maxDuration"] >= 30
-    assert config["functions"]["api/index.py"]["memory"] >= 1024
+    assert "functions" not in config
 
 
 def test_vercel_fastapi_entrypoint_exports_ragrig_app() -> None:
     module = importlib.import_module("api.index")
 
     assert module.app.title == "RAGRig"
+
+
+def test_vercel_pyproject_declares_fastapi_entrypoint() -> None:
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert pyproject["tool"]["vercel"]["entrypoint"] == "api.index:app"
 
 
 def test_vercel_preview_runtime_dependencies_are_available_to_python_builder() -> None:
@@ -61,6 +69,30 @@ def test_vercel_preview_docs_describe_supabase_env_and_migration_boundary() -> N
         assert "DB_RUNTIME_HOST" in text
         assert "DB_HOST_PORT" in text
         assert "no model credentials are required for startup" in normalized
+
+
+def test_readmes_link_to_hosted_read_only_demo() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    zh_readme = (REPO_ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+
+    for text in (readme, zh_readme):
+        assert "https://demo.ragrig.dev/" in text
+        assert "demo@ragrig.dev" in text
+        assert "ragrig-demo-readonly" in text
+
+
+def test_vercel_demo_workflow_deploys_main_and_aliases_custom_domain() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "vercel-demo-deploy.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "branches: [main]" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}" in workflow
+    assert "VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}" in workflow
+    assert 'vercel deploy --prod --yes --token="${{ secrets.VERCEL_TOKEN }}"' in workflow
+    assert "vercel alias set" in workflow
+    assert "demo.ragrig.dev" in workflow
 
 
 def test_makefile_exposes_vercel_preview_smoke() -> None:
