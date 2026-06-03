@@ -82,9 +82,9 @@ def test_readmes_link_to_hosted_read_only_demo() -> None:
 
 
 def test_vercel_demo_workflow_deploys_main_and_aliases_custom_domain() -> None:
-    workflow = (
-        REPO_ROOT / ".github" / "workflows" / "vercel-demo-deploy.yml"
-    ).read_text(encoding="utf-8")
+    workflow = (REPO_ROOT / ".github" / "workflows" / "vercel-demo-deploy.yml").read_text(
+        encoding="utf-8"
+    )
 
     assert "branches: [main]" in workflow
     assert "workflow_dispatch:" in workflow
