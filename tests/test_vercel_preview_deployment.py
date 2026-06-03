@@ -90,7 +90,10 @@ def test_vercel_demo_workflow_deploys_main_and_aliases_custom_domain() -> None:
     assert "workflow_dispatch:" in workflow
     assert "VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}" in workflow
     assert "VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}" in workflow
-    assert 'vercel deploy --prod --yes --token="${{ secrets.VERCEL_TOKEN }}"' in workflow
+    assert 'rsync -a --delete --exclude .git ./ "$deploy_dir/"' in workflow
+    assert 'vercel deploy "${{ steps.source.outputs.dir }}"' in workflow
+    assert "--prod --yes --no-wait" in workflow
+    assert 'vercel inspect "$deployment_url" --wait --timeout 10m' in workflow
     assert "vercel alias set" in workflow
     assert "demo.ragrig.dev" in workflow
 
