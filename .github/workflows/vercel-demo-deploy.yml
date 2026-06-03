@@ -1,0 +1,58 @@
+name: Deploy Demo to Vercel
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vercel-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Vercel demo / production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: demo
+      url: https://demo.ragrig.dev/
+    env:
+      DEMO_DOMAIN: demo.ragrig.dev
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_SCOPE: evilgaoshus-projects
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Verify Vercel secrets
+        run: |
+          test -n "$VERCEL_ORG_ID"
+          test -n "$VERCEL_PROJECT_ID"
+          test -n "${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@54.7.1
+
+      - name: Pull Vercel project settings
+        run: vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
+
+      - name: Deploy production
+        id: deploy
+        run: |
+          set -euo pipefail
+          vercel deploy --prod --yes --token="${{ secrets.VERCEL_TOKEN }}" > deployment-url.txt
+          cat deployment-url.txt
+          deployment_url="$(tail -n 1 deployment-url.txt)"
+          echo "url=$deployment_url" >> "$GITHUB_OUTPUT"
+
+      - name: Alias demo domain
+        run: vercel alias set "${{ steps.deploy.outputs.url }}" "$DEMO_DOMAIN" --scope "$VERCEL_SCOPE" --token="${{ secrets.VERCEL_TOKEN }}"

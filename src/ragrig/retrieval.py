@@ -442,17 +442,16 @@ def _search_with_python_distance(
 def _build_acl_where_clause(principal_ids: list[str]) -> Any:
     """Build a SQLAlchemy WHERE clause for chunk ACL filtering on JSONB metadata."""
     from sqlalchemy import Text as _Text
-    from sqlalchemy import or_
-    from sqlalchemy import type_coerce as _tc
-    from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy import literal, or_
+    from sqlalchemy.dialects.postgresql import ARRAY
 
-    principals_json = [pid.lower() for pid in principal_ids]
+    principals = literal([pid.lower() for pid in principal_ids], type_=ARRAY(_Text()))
     not_public = (
         Chunk.metadata_json["acl", "visibility"].astext.cast(_Text).in_(["protected", "unknown"])
     )
     is_public = Chunk.metadata_json["acl", "visibility"].astext == "public"
-    allowed = Chunk.metadata_json["acl", "allowed_principals"].has_any(_tc(principals_json, JSONB))
-    denied = Chunk.metadata_json["acl", "denied_principals"].has_any(_tc(principals_json, JSONB))
+    allowed = Chunk.metadata_json["acl", "allowed_principals"].has_any(principals)
+    denied = Chunk.metadata_json["acl", "denied_principals"].has_any(principals)
     no_acl = ~Chunk.metadata_json.has_key("acl")
     return or_(
         is_public,
