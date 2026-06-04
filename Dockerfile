@@ -64,4 +64,4 @@ USER ragrig
 
 ENTRYPOINT ["sh", "/app/scripts/docker-entrypoint.sh"]
 
-CMD ["sh", "-c", "uv run --no-dev uvicorn ragrig.main:app --host 0.0.0.0 --port ${APP_PORT:-8000}"]
+CMD ["sh", "-c", "uv run --no-dev uvicorn ragrig.main:create_app --factory --host 0.0.0.0 --port ${APP_PORT:-8000}"]

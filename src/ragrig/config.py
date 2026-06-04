@@ -1,358 +1,105 @@
 from functools import lru_cache
-from urllib.parse import urlsplit, urlunsplit
+from typing import TypeVar
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from ragrig.settings import (
+    SETTINGS_CONFIG,
+    AppSettings,
+    AuthSettings,
+    CorsSettings,
+    DatabaseSettings,
+    EmailSettings,
+    LdapSettings,
+    MfaSettings,
+    ObservabilitySettings,
+    OidcSettings,
+    PathPolicySettings,
+    RateLimitSettings,
+    RetentionSettings,
+    RuntimePolicySettings,
+    TaskQueueSettings,
+    VectorSettings,
+    WebhookSettings,
+)
+from ragrig.settings.database import DEFAULT_DATABASE_URL
 
-DEFAULT_DATABASE_URL = "postgresql://ragrig:ragrig_dev@localhost:5432/ragrig"
 _PROTECTED_APP_ENVS = {"prod", "production", "staging", "stage", "preview", "canary"}
+_SettingsSectionT = TypeVar("_SettingsSectionT")
 
 
-class Settings(BaseSettings):
-    app_name: str = "ragrig"
-    app_env: str = "development"
-    app_host: str = "0.0.0.0"
-    app_port: int = 8000
-    db_host_port: int = 5432
-    db_runtime_host: str = "localhost"
-    database_url: str = Field(
-        default=DEFAULT_DATABASE_URL,
-        description="PostgreSQL connection string for RAGRig.",
-    )
-    ragrig_db_pool_size: int = Field(
-        default=10,
-        description="SQLAlchemy PostgreSQL connection pool size.",
-    )
-    ragrig_db_max_overflow: int = Field(
-        default=20,
-        description="Maximum overflow connections above the PostgreSQL pool size.",
-    )
-    ragrig_db_pool_recycle: int = Field(
-        default=1800,
-        description="Seconds before PostgreSQL pooled connections are recycled.",
-    )
-    vector_backend: str = Field(default="pgvector", description="Vector backend name.")
-    qdrant_url: str = Field(
-        default="http://localhost:6333",
-        description="Qdrant base URL for the optional vector backend.",
-    )
-    qdrant_api_key: str | None = Field(default=None, description="Optional Qdrant API key.")
-    ragrig_auth_enabled: bool = Field(
-        default=True,
-        description=(
-            "Enable authentication enforcement. When False, all requests are treated as "
-            "anonymous and routed to the default workspace. Disable only for local dev."
-        ),
-    )
-    ragrig_auth_session_days: int = Field(
-        default=30,
-        description="Session token lifetime in days.",
-    )
-    ragrig_auth_login_rate_limit_enabled: bool = Field(
-        default=True,
-        description="Enable in-process throttling for repeated password login failures.",
-    )
-    ragrig_auth_login_max_failures: int = Field(
-        default=5,
-        description="Failed password login attempts allowed per IP/email window.",
-    )
-    ragrig_auth_login_window_seconds: int = Field(
-        default=300,
-        description="Window in seconds for password login failure counting.",
-    )
-    ragrig_auth_login_lockout_seconds: int = Field(
-        default=900,
-        description="Temporary lockout duration after too many password login failures.",
-    )
-    ragrig_open_registration: bool = Field(
-        default=True,
-        description=(
-            "Allow anyone to register without an invitation. When False, registration "
-            "requires a valid invitation token issued by an admin. Ignored when "
-            "ragrig_auth_enabled is False."
-        ),
-    )
+class Settings(
+    AppSettings,
+    DatabaseSettings,
+    VectorSettings,
+    AuthSettings,
+    LdapSettings,
+    OidcSettings,
+    MfaSettings,
+    RuntimePolicySettings,
+    ObservabilitySettings,
+    CorsSettings,
+    PathPolicySettings,
+    EmailSettings,
+    WebhookSettings,
+    TaskQueueSettings,
+    RateLimitSettings,
+    RetentionSettings,
+):
+    """Aggregate runtime settings.
 
-    # ── LDAP ─────────────────────────────────────────────────────────────────
-    ragrig_ldap_enabled: bool = Field(default=False, description="Enable LDAP authentication.")
-    ragrig_ldap_url: str = Field(
-        default="ldap://localhost:389",
-        description="LDAP server URL, e.g. ldap://ad.corp.example.com:389",
-    )
-    ragrig_ldap_use_tls: bool = Field(default=True, description="Upgrade connection with StartTLS.")
-    ragrig_ldap_bind_dn: str = Field(
-        default="",
-        description="Service-account DN used for directory searches.",
-    )
-    ragrig_ldap_bind_password: str = Field(default="", description="Service-account password.")
-    ragrig_ldap_search_base: str = Field(
-        default="dc=example,dc=com",
-        description="Base DN for user searches.",
-    )
-    ragrig_ldap_user_filter: str = Field(
-        default="(mail={login})",
-        description=(
-            "LDAP search filter template. {login} is replaced with the submitted email/username."
-        ),
-    )
-    ragrig_ldap_attr_email: str = Field(default="mail", description="Attribute holding email.")
-    ragrig_ldap_attr_display_name: str = Field(
-        default="displayName", description="Attribute holding display name."
-    )
-    ragrig_ldap_attr_groups: str = Field(
-        default="memberOf", description="Attribute holding group DNs."
-    )
-    ragrig_ldap_default_role: str = Field(
-        default="viewer", description="Default workspace role for LDAP users."
-    )
+    Field names stay flat for compatibility with existing callers and
+    environment variables, while each functional domain lives in its own
+    Settings class under ``ragrig.settings``.
+    """
 
-    # ── OIDC ──────────────────────────────────────────────────────────────────
-    ragrig_oidc_enabled: bool = Field(default=False, description="Enable OIDC authentication.")
-    ragrig_oidc_provider_name: str = Field(
-        default="oidc",
-        description="Short label for this provider, e.g. 'google' or 'azure'.",
-    )
-    ragrig_oidc_issuer: str = Field(
-        default="",
-        description="OIDC issuer URL, e.g. https://accounts.google.com",
-    )
-    ragrig_oidc_client_id: str = Field(default="", description="OAuth2 client ID.")
-    ragrig_oidc_client_secret: str = Field(default="", description="OAuth2 client secret.")
-    ragrig_oidc_redirect_uri: str = Field(
-        default="http://localhost:8000/auth/oidc/callback",
-        description="Callback URL registered with the IdP.",
-    )
-    ragrig_oidc_scopes: str = Field(
-        default="openid email profile",
-        description="Space-separated OIDC scopes.",
-    )
-    ragrig_oidc_default_role: str = Field(
-        default="viewer", description="Default workspace role for OIDC users."
-    )
-
-    # ── MFA ───────────────────────────────────────────────────────────────────
-    ragrig_mfa_issuer: str = Field(
-        default="RAGRig",
-        description="Issuer name shown in authenticator apps.",
-    )
-    ragrig_mfa_backup_code_count: int = Field(
-        default=8, description="Number of one-time backup codes generated on MFA setup."
-    )
-
-    # ── PII redaction ─────────────────────────────────────────────────────────
-    ragrig_pii_redaction_enabled: bool = Field(
-        default=False,
-        description="Redact detected PII patterns from chunk text before storing.",
-    )
-
-    ragrig_allow_fake_reranker: bool = Field(
-        default=False,
-        description=(
-            "Allow the deterministic fake reranker fallback in production. "
-            "Use only for demos or explicitly accepted degraded environments."
-        ),
-    )
-
-    # ── Prometheus metrics ────────────────────────────────────────────────────
-    ragrig_metrics_enabled: bool = Field(
-        default=True,
-        description="Expose Prometheus /metrics endpoint.",
-    )
-    ragrig_metrics_workspace_labels_enabled: bool = Field(
-        default=False,
-        description=(
-            "Also emit low-cardinality workspace-hash labels on selected business metrics. "
-            "Disabled by default to keep Prometheus cardinality predictable."
-        ),
-    )
-
-    # ── CORS ─────────────────────────────────────────────────────────────────
-    ragrig_cors_origins: str = Field(
-        default="",
-        description=(
-            "Comma-separated allowed CORS origins for separate frontend deployments. "
-            "Empty disables CORS middleware."
-        ),
-    )
-    ragrig_cors_allow_origin_regex: str = Field(
-        default="",
-        description="Optional CORS allowed-origin regex.",
-    )
-    ragrig_cors_allow_credentials: bool = Field(
-        default=False,
-        description="Allow browsers to include credentials on configured CORS origins.",
-    )
-
-    # ── Evaluation API path policy ───────────────────────────────────────────
-    ragrig_evaluation_extra_allowed_roots: str = Field(
-        default="",
-        description=(
-            "Comma-separated extra filesystem roots accepted by evaluation APIs. "
-            "Default evaluation roots are evaluation_runs, evaluation_baselines, and tests."
-        ),
-    )
-    ragrig_ingestion_extra_allowed_roots: str = Field(
-        default="",
-        description=(
-            "Comma-separated extra filesystem roots accepted by local ingestion APIs. "
-            "Default roots are data, docs, and uploads."
-        ),
-    )
-
-    # ── Email (SMTP) ──────────────────────────────────────────────────────────
-    ragrig_smtp_enabled: bool = Field(default=False, description="Enable SMTP email delivery.")
-    ragrig_smtp_host: str = Field(default="localhost", description="SMTP server host.")
-    ragrig_smtp_port: int = Field(default=587, description="SMTP server port.")
-    ragrig_smtp_use_tls: bool = Field(default=True, description="Use STARTTLS.")
-    ragrig_smtp_username: str = Field(default="", description="SMTP username.")
-    ragrig_smtp_password: str = Field(default="", description="SMTP password.")
-    ragrig_smtp_from: str = Field(
-        default="noreply@ragrig.local",
-        description="From address for outbound emails.",
-    )
-    ragrig_app_base_url: str = Field(
-        default="http://localhost:8000",
-        description="Public base URL, used to build invitation links.",
-    )
-
-    # ── Alert webhooks ────────────────────────────────────────────────────────
-    ragrig_webhook_url: str = Field(
-        default="",
-        description=(
-            "Outbound webhook URL. Receives JSON POST on pipeline failure/completion. "
-            "Supports Slack Incoming Webhook, generic HTTP endpoints."
-        ),
-    )
-    ragrig_webhook_secret: str = Field(
-        default="",
-        description="Optional HMAC-SHA256 signing secret for outbound webhooks.",
-    )
-    ragrig_webhook_on_failure: bool = Field(
-        default=True, description="Fire webhook on pipeline/task failure."
-    )
-    ragrig_webhook_on_completion: bool = Field(
-        default=False, description="Fire webhook on pipeline/task completion."
-    )
-
-    # ── OpenTelemetry ─────────────────────────────────────────────────────────
-    ragrig_otel_enabled: bool = Field(
-        default=False,
-        description="Enable OpenTelemetry tracing and structured log export.",
-    )
-    ragrig_otel_endpoint: str = Field(
-        default="http://localhost:4318",
-        description="OTLP HTTP collector endpoint (e.g. http://otel-collector:4318).",
-    )
-    ragrig_otel_service_name: str = Field(
-        default="ragrig",
-        description="Service name reported to the OTel collector.",
-    )
-    ragrig_log_format: str = Field(
-        default="plain",
-        description="Log format: 'plain'/'text' (human-readable) or 'json' (structured).",
-    )
-    ragrig_log_level: str = Field(
-        default="INFO",
-        description="Root logging level, e.g. DEBUG, INFO, WARNING, ERROR.",
-    )
-    ragrig_log_file: str = Field(
-        default="",
-        description="Optional file path for rotating application logs. Empty disables file logs.",
-    )
-    ragrig_log_max_bytes: int = Field(
-        default=10 * 1024 * 1024,
-        description="Maximum bytes per rotating log file before rollover.",
-    )
-    ragrig_log_backup_count: int = Field(
-        default=5,
-        description="Number of rotated log files to keep when RAGRIG_LOG_FILE is set.",
-    )
-
-    # ── Async task queue (ARQ / Redis) ────────────────────────────────────────
-    ragrig_task_backend: str = Field(
-        default="threadpool",
-        description="Task execution backend: 'threadpool' (default) or 'arq' (Redis-backed).",
-    )
-    ragrig_redis_url: str = Field(
-        default="redis://localhost:6379",
-        description="Redis URL for the ARQ task queue backend.",
-    )
-    ragrig_task_queue_max_jobs: int = Field(
-        default=10,
-        description="Max concurrent jobs in the ARQ worker.",
-    )
-
-    # ── Rate limiting ─────────────────────────────────────────────────────────
-    ragrig_rate_limit_enabled: bool = Field(
-        default=False,
-        description="Enable per-workspace in-process rate limiting.",
-    )
-    ragrig_rate_limit_search_rpm: int = Field(
-        default=60,
-        description="Max search/answer requests per minute per workspace.",
-    )
-    ragrig_rate_limit_ingest_rpm: int = Field(
-        default=20,
-        description="Max ingest/upload requests per minute per workspace.",
-    )
-    ragrig_rate_limit_burst_factor: float = Field(
-        default=1.5,
-        description="Burst multiplier applied on top of the RPM limit.",
-    )
-
-    # ── Data retention ────────────────────────────────────────────────────────
-    ragrig_audit_retention_days: int = Field(
-        default=0,
-        description=(
-            "Global audit-event retention in days. 0 = keep forever. "
-            "Applied when POST /admin/retention/run is called."
-        ),
-    )
+    model_config = SETTINGS_CONFIG
 
     @property
-    def runtime_database_url(self) -> str:
-        if "://" not in self.database_url or not self.database_url.startswith("postgresql"):
-            return self.database_url
-        parts = urlsplit(self.database_url)
-        username = parts.username or ""
-        password = parts.password or ""
-        auth = username
-        if password:
-            auth = f"{auth}:{password}"
-        if auth:
-            auth = f"{auth}@"
-        return urlunsplit(
-            (
-                parts.scheme,
-                f"{auth}{self.db_runtime_host}:{self.db_host_port}",
-                parts.path,
-                parts.query,
-                parts.fragment,
-            )
-        )
+    def app(self) -> AppSettings:
+        return self._section(AppSettings)
 
     @property
-    def sqlalchemy_database_url(self) -> str:
-        if self.database_url.startswith("postgresql+psycopg://"):
-            return self.database_url
-        if self.database_url.startswith("postgresql://"):
-            return self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
-        return self.database_url
+    def database(self) -> DatabaseSettings:
+        return self._section(DatabaseSettings)
 
     @property
-    def sqlalchemy_runtime_database_url(self) -> str:
-        if self.runtime_database_url.startswith("postgresql+psycopg://"):
-            return self.runtime_database_url
-        if self.runtime_database_url.startswith("postgresql://"):
-            return self.runtime_database_url.replace("postgresql://", "postgresql+psycopg://", 1)
-        return self.runtime_database_url
+    def vector(self) -> VectorSettings:
+        return self._section(VectorSettings)
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
+    @property
+    def auth(self) -> AuthSettings:
+        return self._section(AuthSettings)
+
+    @property
+    def ldap(self) -> LdapSettings:
+        return self._section(LdapSettings)
+
+    @property
+    def oidc(self) -> OidcSettings:
+        return self._section(OidcSettings)
+
+    @property
+    def mfa(self) -> MfaSettings:
+        return self._section(MfaSettings)
+
+    @property
+    def observability(self) -> ObservabilitySettings:
+        return self._section(ObservabilitySettings)
+
+    @property
+    def task_queue(self) -> TaskQueueSettings:
+        return self._section(TaskQueueSettings)
+
+    @property
+    def rate_limit(self) -> RateLimitSettings:
+        return self._section(RateLimitSettings)
+
+    @property
+    def retention(self) -> RetentionSettings:
+        return self._section(RetentionSettings)
+
+    def _section(self, section_type: type[_SettingsSectionT]) -> _SettingsSectionT:
+        values = {name: getattr(self, name) for name in section_type.model_fields}
+        return section_type.model_validate(values)
 
 
 @lru_cache(maxsize=1)
@@ -377,3 +124,27 @@ def _normalized_database_url(value: str) -> str:
     if value.startswith("postgresql+psycopg://"):
         return value.replace("postgresql+psycopg://", "postgresql://", 1)
     return value
+
+
+__all__ = [
+    "AppSettings",
+    "AuthSettings",
+    "CorsSettings",
+    "DatabaseSettings",
+    "DEFAULT_DATABASE_URL",
+    "EmailSettings",
+    "LdapSettings",
+    "MfaSettings",
+    "ObservabilitySettings",
+    "OidcSettings",
+    "PathPolicySettings",
+    "RateLimitSettings",
+    "RetentionSettings",
+    "RuntimePolicySettings",
+    "Settings",
+    "TaskQueueSettings",
+    "VectorSettings",
+    "WebhookSettings",
+    "assert_database_url_safe",
+    "get_settings",
+]

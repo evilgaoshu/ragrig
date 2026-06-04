@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from ragrig.auth import (
-    _DEFAULT_LOCAL_PEPPER,
     _hash_secret,
     create_api_key,
     create_user_session,
@@ -41,7 +40,7 @@ def test_default_auth_pepper_is_rejected_in_protected_envs(
         _hash_secret("secret")
 
     with pytest.raises(RuntimeError, match="RAGRIG_AUTH_SECRET_PEPPER"):
-        _hash_secret("secret", pepper=_DEFAULT_LOCAL_PEPPER)
+        _hash_secret("secret", pepper="")
 
     monkeypatch.setenv("RAGRIG_AUTH_SECRET_PEPPER", "")
     with pytest.raises(RuntimeError, match="RAGRIG_AUTH_SECRET_PEPPER"):

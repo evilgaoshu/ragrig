@@ -66,6 +66,22 @@ def test_settings_include_vector_backend_defaults() -> None:
     assert settings.qdrant_api_key is None
 
 
+def test_settings_exposes_domain_sections() -> None:
+    settings = Settings(
+        app_env="staging",
+        ragrig_auth_secret_pepper="staging-pepper",
+        ragrig_ldap_enabled=True,
+        ragrig_otel_enabled=True,
+        ragrig_rate_limit_enabled=True,
+    )
+
+    assert settings.app.app_env == "staging"
+    assert settings.auth.ragrig_auth_secret_pepper == "staging-pepper"
+    assert settings.ldap.ragrig_ldap_enabled is True
+    assert settings.observability.ragrig_otel_enabled is True
+    assert settings.rate_limit.ragrig_rate_limit_enabled is True
+
+
 def test_settings_parses_fake_reranker_guard_env(monkeypatch) -> None:
     get_settings.cache_clear()
     monkeypatch.setenv("RAGRIG_ALLOW_FAKE_RERANKER", "true")

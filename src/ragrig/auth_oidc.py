@@ -14,9 +14,6 @@ from dataclasses import dataclass
 from urllib.parse import urlencode
 
 import httpx
-from joserfc import jwt
-from joserfc.errors import JoseError
-from joserfc.jwk import KeySet
 
 from ragrig.config import Settings
 
@@ -31,6 +28,16 @@ class OidcUserInfo:
 
 class OidcAuthError(Exception):
     """Raised when OIDC auth fails."""
+
+
+def _load_joserfc():
+    try:
+        from joserfc import jwt
+        from joserfc.errors import JoseError
+        from joserfc.jwk import KeySet
+    except ImportError as exc:
+        raise RuntimeError("OIDC support requires the 'oidc' optional extra") from exc
+    return jwt, JoseError, KeySet
 
 
 def generate_state() -> str:
@@ -84,6 +91,7 @@ def exchange_code(settings: Settings, code: str) -> OidcUserInfo:
     if jwks_resp.status_code != 200:
         raise OidcAuthError(f"jwks_uri returned {jwks_resp.status_code}")
 
+    jwt, JoseError, KeySet = _load_joserfc()
     try:
         key_set = KeySet.import_key_set(jwks_resp.json())
         token = jwt.decode(id_token, key_set)

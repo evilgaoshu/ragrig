@@ -8,6 +8,15 @@ from ragrig.config import Settings
 pytestmark = pytest.mark.unit
 
 
+def test_main_module_keeps_app_creation_lazy() -> None:
+    from pathlib import Path
+
+    source = Path("src/ragrig/main.py").read_text(encoding="utf-8")
+
+    assert "app = create_app()" not in source
+    assert "create_app(" in source
+
+
 @pytest.mark.anyio
 async def test_lifespan_disposes_default_engine_and_flushes_otel(
     monkeypatch: pytest.MonkeyPatch,

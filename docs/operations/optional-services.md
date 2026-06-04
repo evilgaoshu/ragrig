@@ -37,8 +37,8 @@ Bring it up with `docker compose --profile qdrant up -d qdrant`.
 
 ## Production hardening
 
-Production mode rejects the local development auth pepper. Set an environment-
-specific secret before running with `APP_ENV=production`:
+Production mode rejects a missing auth pepper. Set an environment-specific
+secret before running with `APP_ENV=production`:
 
 ```
 APP_ENV=production
@@ -96,6 +96,9 @@ names, provider/model metadata, and hashed workspace/knowledge-base labels
 only.
 HTTPX client instrumentation is also enabled with OpenTelemetry so OIDC,
 webhook, connector, web import, and provider calls appear as outbound spans.
+Install the OTel SDKs with `uv sync --extra otel` before setting
+`RAGRIG_OTEL_ENABLED=true`; without the extra, tracing is skipped with a
+startup warning.
 
 Ingestion and indexing pipeline metrics are low-cardinality counters and
 histograms:

@@ -7,11 +7,13 @@ credentials by binding as that user. Supports StartTLS.
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-import ldap3
-import ldap3.core.exceptions as ldap_exc
+from types import SimpleNamespace
+from typing import Any
 
 from ragrig.config import Settings
+
+ldap3: Any | None = None
+ldap_exc: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -27,16 +29,39 @@ class LdapAuthError(Exception):
     """Raised when LDAP auth fails for any reason."""
 
 
-def _server(settings: Settings) -> ldap3.Server:
-    return ldap3.Server(
+def _load_ldap3() -> Any:
+    global ldap3, ldap_exc
+    if ldap3 is None:
+        try:
+            import ldap3 as ldap3_module
+            import ldap3.core.exceptions as ldap_exceptions
+        except ImportError as exc:
+            raise RuntimeError("LDAP support requires the 'ldap' optional extra") from exc
+        ldap3 = ldap3_module
+        ldap_exc = ldap_exceptions
+    if ldap_exc is None:
+        ldap_exc = SimpleNamespace(LDAPException=Exception)
+    return ldap3
+
+
+def _ldap_exception_type() -> type[BaseException]:
+    if ldap_exc is None:
+        return Exception
+    return getattr(ldap_exc, "LDAPException", Exception)
+
+
+def _server(settings: Settings):
+    ldap_module = _load_ldap3()
+    return ldap_module.Server(
         settings.ragrig_ldap_url,
         use_ssl=settings.ragrig_ldap_url.startswith("ldaps://"),
-        get_info=ldap3.NONE,
+        get_info=ldap_module.NONE,
     )
 
 
 def _build_filter(template: str, login: str) -> str:
-    escaped = ldap3.utils.conv.escape_filter_chars(login)
+    ldap_module = _load_ldap3()
+    escaped = ldap_module.utils.conv.escape_filter_chars(login)
     return template.replace("{login}", escaped)
 
 
@@ -53,22 +78,23 @@ def authenticate_ldap(login: str, password: str, settings: Settings) -> LdapUser
     if not password:
         raise LdapAuthError("password must not be empty")
 
+    ldap_module = _load_ldap3()
     server = _server(settings)
 
     # Step 1: service-account bind + user search
     try:
-        svc_conn = ldap3.Connection(
+        svc_conn = ldap_module.Connection(
             server,
             user=settings.ragrig_ldap_bind_dn,
             password=settings.ragrig_ldap_bind_password,
-            auto_bind=ldap3.AUTO_BIND_NONE,
+            auto_bind=ldap_module.AUTO_BIND_NONE,
         )
         if settings.ragrig_ldap_use_tls and not settings.ragrig_ldap_url.startswith("ldaps://"):
             svc_conn.start_tls()
         svc_conn.bind()
         if not svc_conn.bound:
             raise LdapAuthError("LDAP service account bind failed")
-    except ldap_exc.LDAPException as exc:
+    except _ldap_exception_type() as exc:
         raise LdapAuthError(f"LDAP service bind error: {exc}") from exc
 
     search_filter = _build_filter(settings.ragrig_ldap_user_filter, login)
@@ -95,18 +121,18 @@ def authenticate_ldap(login: str, password: str, settings: Settings) -> LdapUser
 
     # Step 2: bind as the user to verify the password
     try:
-        user_conn = ldap3.Connection(
+        user_conn = ldap_module.Connection(
             server,
             user=user_dn,
             password=password,
-            auto_bind=ldap3.AUTO_BIND_NONE,
+            auto_bind=ldap_module.AUTO_BIND_NONE,
         )
         if settings.ragrig_ldap_use_tls and not settings.ragrig_ldap_url.startswith("ldaps://"):
             user_conn.start_tls()
         user_conn.bind()
         bound = user_conn.bound
         user_conn.unbind()
-    except ldap_exc.LDAPException as exc:
+    except _ldap_exception_type() as exc:
         raise LdapAuthError(f"LDAP user bind error: {exc}") from exc
 
     if not bound:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import os
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -30,7 +29,6 @@ API_KEY_TOKEN_PREFIX = "rag_live"
 SESSION_TOKEN_PREFIX = "rag_session"
 INVITATION_TOKEN_PREFIX = "rag_invite"
 INVITATION_DEFAULT_DAYS = 7
-_DEFAULT_LOCAL_PEPPER = "ragrig-local-dev-auth-pepper"
 _PROTECTED_APP_ENVS = {"prod", "production", "staging", "stage", "preview", "canary"}
 
 
@@ -228,9 +226,13 @@ def assert_auth_secret_pepper_safe(
     app_env: str | None = None,
     pepper: str | bytes | None = None,
 ) -> None:
-    if pepper is None:
-        pepper = os.getenv("RAGRIG_AUTH_SECRET_PEPPER", _DEFAULT_LOCAL_PEPPER)
-    active_env = (app_env or os.getenv("APP_ENV", "development")).lower()
+    if pepper is None or app_env is None:
+        settings_app_env, settings_pepper = _auth_secret_pepper_from_settings()
+        if pepper is None:
+            pepper = settings_pepper
+        if app_env is None:
+            app_env = settings_app_env
+    active_env = (app_env or "development").lower()
     if _uses_insecure_production_pepper(pepper) and active_env in _PROTECTED_APP_ENVS:
         raise RuntimeError(
             "RAGRIG_AUTH_SECRET_PEPPER must be set to a non-default value "
@@ -240,7 +242,7 @@ def assert_auth_secret_pepper_safe(
 
 def _pepper_bytes(pepper: str | bytes | None) -> bytes:
     if pepper is None:
-        pepper = os.getenv("RAGRIG_AUTH_SECRET_PEPPER", _DEFAULT_LOCAL_PEPPER)
+        _, pepper = _auth_secret_pepper_from_settings()
     assert_auth_secret_pepper_safe(pepper=pepper)
     if isinstance(pepper, bytes):
         return pepper
@@ -249,8 +251,15 @@ def _pepper_bytes(pepper: str | bytes | None) -> bytes:
 
 def _uses_insecure_production_pepper(pepper: str | bytes) -> bool:
     if isinstance(pepper, bytes):
-        return not pepper or pepper == _DEFAULT_LOCAL_PEPPER.encode("utf-8")
-    return not pepper.strip() or pepper == _DEFAULT_LOCAL_PEPPER
+        return not pepper or not pepper.strip()
+    return not pepper.strip()
+
+
+def _auth_secret_pepper_from_settings() -> tuple[str, str]:
+    from ragrig.config import Settings
+
+    settings = Settings()
+    return settings.app_env, settings.ragrig_auth_secret_pepper
 
 
 def _is_expired(expires_at: datetime | None, *, now: datetime | None = None) -> bool:

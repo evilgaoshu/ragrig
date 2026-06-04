@@ -94,7 +94,11 @@ def _resolve_auth(
     if authorization:
         token = authorization.removeprefix("Bearer ").strip()
         if token.startswith(SESSION_TOKEN_PREFIX):
-            user_session = verify_session_token(session, token)
+            user_session = verify_session_token(
+                session,
+                token,
+                pepper=settings.ragrig_auth_secret_pepper,
+            )
             if user_session is not None:
                 if "mfa:pending" in user_session.scopes:
                     raise HTTPException(
@@ -115,7 +119,11 @@ def _resolve_auth(
                     ],
                 )
         elif token.startswith(API_KEY_TOKEN_PREFIX):
-            api_key = verify_api_key(session, token)
+            api_key = verify_api_key(
+                session,
+                token,
+                pepper=settings.ragrig_auth_secret_pepper,
+            )
             if api_key is not None:
                 principal_ids: list[str] = []
                 if api_key.principal_user_id:
