@@ -113,21 +113,18 @@ def test_readmes_link_to_hosted_read_only_demo() -> None:
         assert "ragrig-demo-readonly" in text
 
 
-def test_vercel_demo_workflow_deploys_main_and_aliases_custom_domain() -> None:
-    workflow = (REPO_ROOT / ".github" / "workflows" / "vercel-demo-deploy.yml").read_text(
+def test_vercel_git_integration_is_the_only_production_deployment_path() -> None:
+    assert not (REPO_ROOT / ".github" / "workflows" / "vercel-demo-deploy.yml").exists()
+
+
+def test_vercel_docs_describe_git_managed_deployment_lifecycle() -> None:
+    spec = (REPO_ROOT / "docs" / "specs" / "EVI-130-vercel-preview-supabase.md").read_text(
         encoding="utf-8"
     )
 
-    assert "branches: [main]" in workflow
-    assert "workflow_dispatch:" in workflow
-    assert "VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}" in workflow
-    assert "VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}" in workflow
-    assert 'rsync -a --delete --exclude .git ./ "$deploy_dir/"' in workflow
-    assert 'vercel deploy "${{ steps.source.outputs.dir }}"' in workflow
-    assert "--prod --yes --no-wait" in workflow
-    assert 'vercel inspect "$deployment_url" --wait --timeout 10m' in workflow
-    assert "vercel alias set" in workflow
-    assert "demo.ragrig.dev" in workflow
+    assert "Vercel Git integration" in spec
+    assert "`demo.ragrig.dev` is a Production Domain" in spec
+    assert "Do not add a second GitHub Actions workflow" in spec
 
 
 def test_makefile_exposes_vercel_preview_smoke() -> None:

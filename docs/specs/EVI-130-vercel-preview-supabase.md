@@ -15,6 +15,13 @@ Web Console while using Supabase Postgres as the remote metadata database.
 - Supabase is configured through environment variables only. No Supabase URL,
   password, service key, or model credential is committed.
 
+## Deployment Lifecycle
+
+- Pull requests and non-production branches create Vercel Preview deployments.
+- Pushes to `main` create Vercel Production deployments through Vercel Git integration.
+- `demo.ragrig.dev` is a Production Domain attached to the Vercel project.
+- Do not add a second GitHub Actions workflow that runs `vercel deploy --prod`.
+
 ## Required Vercel Preview Environment
 
 Set these in Vercel Project Settings for the Preview target:
