@@ -22,16 +22,6 @@ from ragrig.auth import (
     register_user,
     verify_session_token,
 )
-from ragrig.auth_ldap import LdapAuthError, authenticate_ldap
-from ragrig.auth_mfa import (
-    consume_backup_code,
-    generate_backup_codes,
-    generate_totp_secret,
-    totp_provisioning_uri,
-    totp_qr_png_b64,
-    verify_totp,
-)
-from ragrig.auth_oidc import OidcAuthError, build_authorization_url, exchange_code, generate_state
 from ragrig.config import Settings
 from ragrig.db.models import (
     ApiKey,
@@ -48,6 +38,19 @@ from ragrig.observability import log_event
 logger = logging.getLogger(__name__)
 
 _oidc_states: dict[str, str] = {}
+
+
+def _auth_secret_pepper(settings: Settings | None) -> str:
+    if settings is not None:
+        return settings.ragrig_auth_secret_pepper
+    return Settings().ragrig_auth_secret_pepper
+
+
+def _optional_auth_feature_unavailable(feature: str, extra: str, exc: BaseException) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=f"{feature} dependencies are not installed. Install with: uv sync --extra {extra}",
+    ) from exc
 
 
 def _hash_identifier(value: str | None) -> str | None:
@@ -126,6 +129,7 @@ def register_account(
             display_name=display_name,
             session_days=settings.ragrig_auth_session_days,
             invitation_token=invitation_token,
+            pepper=_auth_secret_pepper(settings),
         )
     except ValueError as exc:
         status_code = (
@@ -166,6 +170,7 @@ def login_password(
         session_days=settings.ragrig_auth_session_days,
         ip=ip,
         user_agent=user_agent,
+        pepper=_auth_secret_pepper(settings),
     )
     if created is None:
         log_event(
@@ -198,6 +203,7 @@ def login_password(
             scopes=["mfa:pending"],
             ip=ip,
             user_agent=user_agent,
+            pepper=_auth_secret_pepper(settings),
         )
         session.commit()
         log_event(
@@ -239,11 +245,16 @@ def login_password(
     )
 
 
-def logout_session(session: Session, authorization: str | None) -> None:
+def logout_session(
+    session: Session,
+    authorization: str | None,
+    *,
+    settings: Settings | None = None,
+) -> None:
     token = get_session_token(authorization)
     if not token:
         return
-    user_session = verify_session_token(session, token)
+    user_session = verify_session_token(session, token, pepper=_auth_secret_pepper(settings))
     if user_session is None:
         return
     user_session.revoked_at = datetime.now(UTC)
@@ -269,7 +280,11 @@ def current_user(
             }
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not authenticated")
 
-    user_session = verify_session_token(session, token)
+    user_session = verify_session_token(
+        session,
+        token,
+        pepper=_auth_secret_pepper(settings),
+    )
     if user_session is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -384,6 +399,7 @@ def create_workspace_invitation(
         email=email,
         role=role,
         days=days,
+        pepper=_auth_secret_pepper(settings),
     )
     session.commit()
 
@@ -531,7 +547,14 @@ def login_ldap_user(
     if not settings.ragrig_ldap_enabled:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="LDAP not enabled")
     try:
+        from ragrig.auth_ldap import LdapAuthError, authenticate_ldap
+    except ImportError as exc:
+        _optional_auth_feature_unavailable("LDAP", "ldap", exc)
+
+    try:
         info = authenticate_ldap(login, password, settings)
+    except RuntimeError as exc:
+        _optional_auth_feature_unavailable("LDAP", "ldap", exc)
     except LdapAuthError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
@@ -549,6 +572,7 @@ def login_ldap_user(
         user_id=user.id,
         expires_at=expires_in(days=settings.ragrig_auth_session_days),
         scopes=["*"],
+        pepper=_auth_secret_pepper(settings),
     )
     session.commit()
     return _auth_payload(
@@ -563,9 +587,16 @@ def login_ldap_user(
 def oidc_authorization(settings: Settings) -> dict[str, str]:
     if not settings.ragrig_oidc_enabled:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="OIDC not enabled")
+    try:
+        from ragrig.auth_oidc import OidcAuthError, build_authorization_url, generate_state
+    except ImportError as exc:
+        _optional_auth_feature_unavailable("OIDC", "oidc", exc)
+
     state = generate_state()
     try:
         url = build_authorization_url(settings, state)
+    except RuntimeError as exc:
+        _optional_auth_feature_unavailable("OIDC", "oidc", exc)
     except OidcAuthError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     _oidc_states[state] = state
@@ -575,6 +606,11 @@ def oidc_authorization(settings: Settings) -> dict[str, str]:
 def oidc_callback(session: Session, *, code: str, state: str, settings: Settings) -> dict[str, Any]:
     if not settings.ragrig_oidc_enabled:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="OIDC not enabled")
+    try:
+        from ragrig.auth_oidc import OidcAuthError, exchange_code
+    except ImportError as exc:
+        _optional_auth_feature_unavailable("OIDC", "oidc", exc)
+
     if state not in _oidc_states:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -584,6 +620,8 @@ def oidc_callback(session: Session, *, code: str, state: str, settings: Settings
 
     try:
         info = exchange_code(settings, code)
+    except RuntimeError as exc:
+        _optional_auth_feature_unavailable("OIDC", "oidc", exc)
     except OidcAuthError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
@@ -601,6 +639,7 @@ def oidc_callback(session: Session, *, code: str, state: str, settings: Settings
         user_id=user.id,
         expires_at=expires_in(days=settings.ragrig_auth_session_days),
         scopes=["*"],
+        pepper=_auth_secret_pepper(settings),
     )
     session.commit()
     return _auth_payload(
@@ -613,6 +652,16 @@ def oidc_callback(session: Session, *, code: str, state: str, settings: Settings
 
 
 def setup_mfa(session: Session, auth: AuthContext, settings: Settings) -> dict[str, Any]:
+    try:
+        from ragrig.auth_mfa import (
+            generate_backup_codes,
+            generate_totp_secret,
+            totp_provisioning_uri,
+            totp_qr_png_b64,
+        )
+    except RuntimeError as exc:
+        _optional_auth_feature_unavailable("MFA", "mfa", exc)
+
     if auth.user_id is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API keys cannot use MFA")
     user = session.get(User, auth.user_id)
@@ -632,6 +681,11 @@ def setup_mfa(session: Session, auth: AuthContext, settings: Settings) -> dict[s
 
 
 def confirm_mfa(session: Session, auth: AuthContext, *, code: str) -> dict[str, bool]:
+    try:
+        from ragrig.auth_mfa import verify_totp
+    except RuntimeError as exc:
+        _optional_auth_feature_unavailable("MFA", "mfa", exc)
+
     if auth.user_id is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API keys cannot use MFA")
     user = session.get(User, auth.user_id)
@@ -649,6 +703,11 @@ def confirm_mfa(session: Session, auth: AuthContext, *, code: str) -> dict[str, 
 
 
 def disable_mfa(session: Session, auth: AuthContext, *, code: str) -> dict[str, bool]:
+    try:
+        from ragrig.auth_mfa import consume_backup_code, verify_totp
+    except RuntimeError as exc:
+        _optional_auth_feature_unavailable("MFA", "mfa", exc)
+
     if auth.user_id is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API keys cannot use MFA")
     user = session.get(User, auth.user_id)
@@ -675,7 +734,16 @@ def complete_mfa_challenge(
     code: str,
     settings: Settings,
 ) -> dict[str, Any]:
-    user_session = verify_session_token(session, session_token)
+    try:
+        from ragrig.auth_mfa import consume_backup_code, verify_totp
+    except RuntimeError as exc:
+        _optional_auth_feature_unavailable("MFA", "mfa", exc)
+
+    user_session = verify_session_token(
+        session,
+        session_token,
+        pepper=_auth_secret_pepper(settings),
+    )
     if user_session is None or "mfa:pending" not in user_session.scopes:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -702,6 +770,7 @@ def complete_mfa_challenge(
         user_id=user.id,
         expires_at=expires_in(days=settings.ragrig_auth_session_days),
         scopes=["*"],
+        pepper=_auth_secret_pepper(settings),
     )
     session.commit()
     role = role_for(session, user.id, created.session.workspace_id)
@@ -714,14 +783,19 @@ def complete_mfa_challenge(
     )
 
 
-def delete_own_account(session: Session, authorization: str | None) -> None:
+def delete_own_account(
+    session: Session,
+    authorization: str | None,
+    *,
+    settings: Settings | None = None,
+) -> None:
     token = get_session_token(authorization)
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="authentication required",
         )
-    user_session = verify_session_token(session, token)
+    user_session = verify_session_token(session, token, pepper=_auth_secret_pepper(settings))
     if user_session is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -774,6 +848,7 @@ def create_workspace_api_key(
     name: str,
     scopes: list[str],
     expires_days: int | None,
+    settings: Settings | None = None,
 ) -> dict[str, Any]:
     expires_at = None
     if expires_days is not None:
@@ -785,6 +860,7 @@ def create_workspace_api_key(
         created_by_user_id=auth.user_id,
         scopes=scopes,
         expires_at=expires_at,
+        pepper=_auth_secret_pepper(settings),
     )
     session.commit()
     return {**api_key_payload(created.api_key), "token": created.token}

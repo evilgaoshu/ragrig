@@ -85,7 +85,8 @@ def test_graph_console_demo_browser_smoke_is_registered() -> None:
     assert runner.exists()
     assert browser_spec.exists()
     assert "demo-graph-console-smoke:" in makefile
-    assert "demo-graph-console-smoke: frontend-build" in makefile
+    assert "$(MAKE) -C frontend build" in makefile
+    assert "check: lint test-run build" in Path("frontend/Makefile").read_text(encoding="utf-8")
     assert "scripts.demo_graph_console_smoke" in makefile
     assert "/knowledge-map" in browser_source
     assert "/retrieval-lab" in browser_source

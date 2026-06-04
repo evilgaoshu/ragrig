@@ -72,9 +72,13 @@ def create_app(
     task_executor=None,
 ) -> FastAPI:
     active_settings = settings or get_settings()
-    assert_database_url_safe(active_settings)
+    if session_factory is None:
+        assert_database_url_safe(active_settings)
     if active_settings.ragrig_auth_enabled:
-        assert_auth_secret_pepper_safe(app_env=active_settings.app_env)
+        assert_auth_secret_pepper_safe(
+            app_env=active_settings.app_env,
+            pepper=active_settings.ragrig_auth_secret_pepper,
+        )
     database_check = check_database or create_database_check(active_settings)
     default_engine = None
     default_session_factory = None
@@ -176,10 +180,6 @@ def create_app(
     configure_frontend(app)
     return app
 
-
-app = create_app()
-
-
 __all__ = [
     "AgentAccessExportRequest",
     "AnswerRequest",
@@ -194,7 +194,6 @@ __all__ = [
     "WebhookExportRequest",
     "_sanitize_filename",
     "_serialize_error",
-    "app",
     "create_app",
     "create_runtime_settings",
 ]

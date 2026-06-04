@@ -573,7 +573,7 @@ def test_retrieval_search_uses_token_principals_not_request_body(
 
 
 @pytest.mark.unit
-def test_public_acl_context_ignores_request_body_when_auth_is_disabled() -> None:
+def test_public_acl_context_allows_explicit_principals_when_auth_is_disabled() -> None:
     from ragrig.config import Settings
     from ragrig.deps import AuthContext
     from ragrig.services.common import resolve_acl_context
@@ -594,8 +594,8 @@ def test_public_acl_context_ignores_request_body_when_auth_is_disabled() -> None
         requested_enforce_acl=False,
     )
 
-    assert principal_ids == []
-    assert enforce_acl is True
+    assert principal_ids == ["user:attacker"]
+    assert enforce_acl is False
 
 
 # ── Hard-delete / right-to-erasure tests ─────────────────────────────────────

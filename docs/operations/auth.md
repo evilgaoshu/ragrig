@@ -11,7 +11,7 @@ the README Quick Start.
 | --- | --- | --- |
 | `RAGRIG_AUTH_ENABLED` | `true` (`false` in shipped `.env.example`) | Enable auth enforcement. Set `false` only for local dev or single-user demos. |
 | `RAGRIG_AUTH_SESSION_DAYS` | `30` | Session token lifetime in days. |
-| `RAGRIG_AUTH_SECRET_PEPPER` | dev default | HMAC pepper for token hashing. **Always override in production.** |
+| `RAGRIG_AUTH_SECRET_PEPPER` | empty | HMAC pepper for token hashing, read from `.env` or the runtime environment. Required in protected environments. |
 
 To enable auth on a fresh deploy:
 
@@ -84,10 +84,18 @@ LDAP, OIDC/OAuth2, and MFA/TOTP are wired through `/auth/login/ldap`,
 `/auth/oidc/authorize` + `/auth/oidc/callback`, and `/auth/mfa/*`. See the
 P0 enterprise security spec for the full surface and the relevant env vars.
 
+Install only the integrations you run:
+
+```bash
+uv sync --extra ldap
+uv sync --extra oidc
+uv sync --extra mfa
+```
+
 ## Local development (auth disabled)
 
 ```bash
-RAGRIG_AUTH_ENABLED=false uv run uvicorn ragrig.main:app --reload
+RAGRIG_AUTH_ENABLED=false uv run uvicorn ragrig.main:create_app --factory --reload
 ```
 
 All requests are routed to the default workspace as an anonymous user. This

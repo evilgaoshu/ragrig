@@ -9,28 +9,52 @@ from __future__ import annotations
 import base64
 import io
 import secrets
+from typing import Any
 
 import bcrypt
-import pyotp
-import qrcode
 
 from ragrig.config import Settings
+
+pyotp: Any | None = None
+qrcode: Any | None = None
+
+
+def _load_pyotp() -> Any:
+    global pyotp
+    if pyotp is None:
+        try:
+            import pyotp as pyotp_module
+        except ImportError as exc:
+            raise RuntimeError("MFA support requires the 'mfa' optional extra") from exc
+        pyotp = pyotp_module
+    return pyotp
+
+
+def _load_qrcode() -> Any:
+    global qrcode
+    if qrcode is None:
+        try:
+            import qrcode as qrcode_module
+        except ImportError as exc:
+            raise RuntimeError("MFA QR code support requires the 'mfa' optional extra") from exc
+        qrcode = qrcode_module
+    return qrcode
 
 
 def generate_totp_secret() -> str:
     """Return a new random base32 TOTP secret."""
-    return pyotp.random_base32()
+    return _load_pyotp().random_base32()
 
 
 def totp_provisioning_uri(secret: str, email: str, settings: Settings) -> str:
     """Return the otpauth:// URI for QR code generation."""
-    totp = pyotp.TOTP(secret)
+    totp = _load_pyotp().TOTP(secret)
     return totp.provisioning_uri(name=email, issuer_name=settings.ragrig_mfa_issuer)
 
 
 def totp_qr_png_b64(uri: str) -> str:
     """Return the QR code for *uri* as a base64-encoded PNG string."""
-    img = qrcode.make(uri)
+    img = _load_qrcode().make(uri)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("ascii")
@@ -38,7 +62,7 @@ def totp_qr_png_b64(uri: str) -> str:
 
 def verify_totp(secret: str, code: str) -> bool:
     """Return True if *code* is a valid TOTP for *secret* (±1 window)."""
-    totp = pyotp.TOTP(secret)
+    totp = _load_pyotp().TOTP(secret)
     return totp.verify(code, valid_window=1)
 
 

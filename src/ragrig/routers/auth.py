@@ -118,8 +118,9 @@ def login(
 def logout(
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
     session: Annotated[Session, Depends(get_session)] = None,  # type: ignore[assignment]
+    settings: Annotated[Settings, Depends(get_settings)] = None,  # type: ignore[assignment]
 ) -> None:
-    auth_service.logout_session(session, authorization)
+    auth_service.logout_session(session, authorization, settings=settings)
 
 
 @router.get("/me", response_model=MeResponse)
@@ -385,6 +386,7 @@ def mfa_challenge(
 def delete_own_account(
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
     session: Annotated[Session, Depends(get_session)] = None,  # type: ignore[assignment]
+    settings: Annotated[Settings, Depends(get_settings)] = None,  # type: ignore[assignment]
 ) -> None:
     """Permanently delete the authenticated user's account and all personal data.
 
@@ -392,7 +394,7 @@ def delete_own_account(
     - Removes workspace memberships.
     - Anonymises and soft-deletes the user record (email cleared, status=deleted).
     """
-    auth_service.delete_own_account(session, authorization)
+    auth_service.delete_own_account(session, authorization, settings=settings)
 
 
 @router.delete(
@@ -437,6 +439,7 @@ def create_workspace_api_key(
     body: CreateApiKeyRequest,
     session: Annotated[Session, Depends(get_session)],
     auth: Annotated[AuthContext, Depends(require_admin_auth)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> CreatedApiKeyResponse:
     """Create a new API key for the workspace. Requires admin or owner."""
     return CreatedApiKeyResponse(
@@ -446,6 +449,7 @@ def create_workspace_api_key(
             name=body.name,
             scopes=body.scopes,
             expires_days=body.expires_days,
+            settings=settings,
         )
     )
 

@@ -42,7 +42,12 @@ def test_vercel_preview_runtime_dependencies_are_available_to_python_builder() -
     requirements = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8")
 
     for dependency in (
+        "bcrypt",
+        "defusedxml",
+        "email-validator",
         "fastapi",
+        "httpx",
+        "prometheus-client",
         "sqlalchemy",
         "psycopg[binary]",
         "pgvector",
@@ -52,6 +57,33 @@ def test_vercel_preview_runtime_dependencies_are_available_to_python_builder() -
         "python-docx",
     ):
         assert dependency in requirements
+
+
+def test_requirements_txt_matches_default_pyproject_dependencies() -> None:
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    expected = sorted(pyproject["project"]["dependencies"])
+    requirements = sorted(
+        line.strip()
+        for line in (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+    assert requirements == expected
+
+
+def test_auth_and_observability_sdks_are_optional_extras() -> None:
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = "\n".join(pyproject["project"]["dependencies"])
+    extras = pyproject["project"]["optional-dependencies"]
+
+    for dependency in ("ldap3", "joserfc", "pyotp", "qrcode", "opentelemetry-sdk"):
+        assert dependency not in dependencies
+
+    assert "ldap3>=2.9.0,<3.0.0" in extras["ldap"]
+    assert "joserfc>=1.0.0,<2.0.0" in extras["oidc"]
+    assert "pyotp>=2.9.0,<3.0.0" in extras["mfa"]
+    assert "qrcode[pil]>=7.4.0,<9.0.0" in extras["mfa"]
+    assert "opentelemetry-sdk>=1.25.0,<2.0.0" in extras["otel"]
 
 
 def test_vercel_preview_docs_describe_supabase_env_and_migration_boundary() -> None:

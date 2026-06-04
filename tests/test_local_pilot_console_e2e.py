@@ -16,7 +16,8 @@ def test_local_pilot_console_e2e_runner_is_registered() -> None:
     assert runner.exists()
     assert browser_spec.exists()
     assert "local-pilot-console-e2e:" in makefile
-    assert "local-pilot-console-e2e: frontend-build" in makefile
+    assert "$(MAKE) -C frontend build" in makefile
+    assert "test-run:" in Path("frontend/Makefile").read_text(encoding="utf-8")
     assert "scripts.local_pilot_console_e2e" in makefile
     assert "/knowledge-bases" in browser_source
     assert "/upload" in browser_source
