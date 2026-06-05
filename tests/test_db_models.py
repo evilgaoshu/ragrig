@@ -50,6 +50,15 @@ def test_phase_1a_metadata_defines_core_tables() -> None:
     assert {"sources.knowledge_base_id", "sources.id"}.issubset(pipeline_run_fk_targets)
 
 
+def test_entity_compatibility_exports_point_to_domain_modules() -> None:
+    from ragrig.db.models import Workspace
+    from ragrig.db.models.entities import Workspace as CompatWorkspace
+    from ragrig.db.models.identity import Workspace as IdentityWorkspace
+
+    assert Workspace is IdentityWorkspace
+    assert CompatWorkspace is IdentityWorkspace
+
+
 def test_chunks_and_embeddings_support_one_to_many_embeddings() -> None:
     embeddings = Base.metadata.tables["embeddings"]
 

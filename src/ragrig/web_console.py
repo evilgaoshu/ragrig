@@ -1,3 +1,9 @@
+"""Backend workflow helpers used by the React Web Console routers.
+
+The legacy single-file HTML prototype lives under docs/prototypes/. This module
+is still active API surface for routers, tasks, services, and tests.
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -50,13 +56,6 @@ from ragrig.workflows.ingestion_dag import dag_snapshot, resume_ingestion_dag
 
 def _plugin_discovery_by_id() -> dict[str, dict[str, Any]]:
     return {item["plugin_id"]: item for item in get_plugin_registry().list_discovery()}
-
-
-CONSOLE_HTML_PATH = Path(__file__).with_name("web_console.html")
-
-
-def load_console_html() -> str:
-    return CONSOLE_HTML_PATH.read_text(encoding="utf-8")
 
 
 def _isoformat(value: datetime | None) -> str | None:
