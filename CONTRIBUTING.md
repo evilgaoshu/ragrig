@@ -13,6 +13,25 @@ RAGRig is early, so the most valuable contributions are clear problem reports, c
 - local model support
 - documentation, examples, and deployment notes
 
+## Where Do I Add X?
+
+| Change | Start here | Also check |
+| --- | --- | --- |
+| Document parser | `src/ragrig/parsers/<format>.py` | `src/ragrig/formats/supported_formats.yaml`, parser tests |
+| Advanced parser fixture | `tests/fixtures/advanced_documents/` | `scripts/advanced_parser_corpus_check.py` |
+| Model provider | `src/ragrig/providers/<name>.py` | `src/ragrig/providers/__init__.py`, `src/ragrig/providers/model_catalog.py` |
+| Reranker provider | `src/ragrig/providers/<name>.py` | provider metadata capabilities, retrieval tests |
+| Source connector | `src/ragrig/plugins/sources/<name>/` | `src/ragrig/plugins/official.py`, source router/service tests |
+| Sink connector | `src/ragrig/plugins/sinks/<name>/` | `src/ragrig/routers/sink_exports.py` |
+| Ingestion behavior | `src/ragrig/ingestion/` | `src/ragrig/indexing/`, pipeline run tests |
+| Vector backend | `src/ragrig/vectorstore/<name>.py` | `src/ragrig/vectorstore/base.py`, retrieval tests |
+| API route | `src/ragrig/routers/<name>.py` | `src/ragrig/main.py`, service/repository boundary |
+| Shared service logic | `src/ragrig/services/<domain>.py` | route tests and repository helpers |
+| Settings domain | `src/ragrig/settings/<domain>.py` | `src/ragrig/config.py`, env docs |
+| SQLAlchemy model | `src/ragrig/db/models/entities.py` | Alembic migration, repository tests |
+| Web Console page | `frontend/src/pages/<Name>.tsx` | `frontend/src/App.tsx`, API client tests |
+| Smoke script | `scripts/<name>.py` | `Makefile`, `docs/operations/verification.md` |
+
 ## Development Principles
 
 - Keep the core small and observable.

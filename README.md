@@ -5,7 +5,7 @@
 <h1 align="center">RAGRig</h1>
 
 <p align="center">
-  <strong>An open-source RAG workbench you can self-host in two minutes — pipeline-grade, traceable, model-flexible.</strong>
+  <strong>An open-source RAG workbench you can self-host in minutes — pipeline-grade, traceable, model-flexible.</strong>
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="./README.zh-CN.md">中文</a> ·
-  <a href="#try-it-in-30-seconds">Try it</a> ·
+  <a href="#try-it-locally">Try it</a> ·
   <a href="#whats-in-the-box">Features</a> ·
   <a href="#how-ragrig-compares">vs. others</a> ·
   <a href="#deploy">Deploy</a>
@@ -32,7 +32,28 @@ retrieval-augmented knowledge layer instead of paying per-seat for a hosted
 chatbot. Every chunk, every retrieval hit, every model call is inspectable
 — no black-box "chat with your docs."
 
-## Try it in 30 seconds
+## Prerequisites
+
+For the Docker quickstart:
+
+- Docker Engine / Docker Desktop 24+ with Compose v2.
+- At least 4 GB RAM available to Docker and several GB of free disk for image layers.
+- Port `8000` free on the host, or set `APP_HOST_PORT=18000` in `.env`.
+
+For local development outside Docker, install `uv` first:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# or: brew install uv
+```
+
+Frontend-only work also needs Node.js 22+ and npm.
+
+## Try it locally
+
+The first Docker build compiles the React console (`npm ci` + Vite build) and
+syncs Python dependencies, so expect roughly 3-8 minutes on a cold machine.
+Subsequent runs reuse Docker layers and are much faster.
 
 ```bash
 git clone https://github.com/evilgaoshu/ragrig.git
@@ -53,6 +74,9 @@ question immediately, no registration, no API key, no manual upload.
 - Auth is **off** in demo mode. Flip `RAGRIG_AUTH_ENABLED=true` in `.env` before exposing the install.
 
 Stop with `docker compose down`.
+
+For a step-by-step version with development paths, see
+[docs/getting-started.md](./docs/getting-started.md).
 
 ## What's in the box
 
@@ -108,7 +132,7 @@ team.**
 
 ### Docker Compose (recommended)
 
-`docker compose up` from the Quick Start above is the supported path. It
+`docker compose up` from the local quickstart above is the supported path. It
 runs Postgres + pgvector + the app, executes migrations, and auto-seeds
 the demo KB. Postgres is only reachable on the Compose network by default;
 use `docker compose exec db psql -U ragrig -d ragrig` for local admin access.
@@ -210,6 +234,8 @@ spec context:
 
 ## Develop & contribute
 
+Install `uv` from the Prerequisites section before running these commands.
+
 ```bash
 make sync                       # install dependencies via uv
 cp .env.example .env            # local env
@@ -237,6 +263,9 @@ evidence, supply-chain audit, live-provider smokes):
 [docs/operations/verification.md](./docs/operations/verification.md).
 
 ## Architecture
+
+For the longer system map, request lifecycle, terminology, and spec reading
+path, see [docs/architecture.md](./docs/architecture.md).
 
 ```mermaid
 flowchart LR

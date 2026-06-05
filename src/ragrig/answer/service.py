@@ -102,6 +102,25 @@ def _build_retrieval_trace(report: Any) -> dict[str, Any]:
     }
 
 
+def _embed_cache_query(
+    query: str,
+    *,
+    provider: str,
+    model: str | None,
+    dimensions: int | None,
+    provider_config: dict[str, Any] | None,
+) -> list[float]:
+    from ragrig.providers import get_provider_registry
+
+    config = dict(provider_config or {})
+    if model is not None:
+        config.setdefault("model_name", model)
+    if dimensions is not None:
+        config.setdefault("dimensions", dimensions)
+    embedding_provider = get_provider_registry().get(provider, **config)
+    return embedding_provider.embed_text(query).vector
+
+
 def _sanitize_error_message(exc: Exception) -> str:
     """Return a safe error message — never leak raw provider keys or full prompts."""
     import re
@@ -181,18 +200,17 @@ def generate_answer(
     # 0. Semantic cache lookup
     if cache_config is not None:
         try:
-            from ragrig.embeddings import get_embedding_provider
-
-            embedding_provider = get_embedding_provider(
-                provider,
+            cache_vector = _embed_cache_query(
+                query,
+                provider=provider,
                 model=model,
-                **(provider_config or {}),
+                dimensions=dimensions,
+                provider_config=provider_config,
             )
-            cache_embedding = embedding_provider.embed([query])[0]
-            cache_dims = len(cache_embedding.vector)
+            cache_dims = len(cache_vector)
             cache_hit_result = lookup_cache(
                 session,
-                query_vector=cache_embedding.vector,
+                query_vector=cache_vector,
                 knowledge_base_name=knowledge_base_name,
                 provider=provider,
                 model=model or "",
@@ -384,22 +402,21 @@ def generate_answer(
     # 7. Store to semantic cache (best-effort, only on grounded answers)
     if cache_config is not None and grounding_status == "grounded":
         try:
-            from ragrig.embeddings import get_embedding_provider
-
-            embedding_provider = get_embedding_provider(
-                provider,
+            cache_vector = _embed_cache_query(
+                query,
+                provider=provider,
                 model=model,
-                **(provider_config or {}),
+                dimensions=dimensions,
+                provider_config=provider_config,
             )
-            cache_embedding = embedding_provider.embed([query])[0]
             store_cache(
                 session,
                 knowledge_base_name=knowledge_base_name,
                 query_text=query,
-                query_vector=cache_embedding.vector,
+                query_vector=cache_vector,
                 provider=provider,
                 model=model or "",
-                dimensions=len(cache_embedding.vector),
+                dimensions=len(cache_vector),
                 answer_text=answer_text,
                 citations_json=[
                     {
