@@ -6,9 +6,22 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+LEGACY_CONSOLE_HTML = "docs/prototypes/legacy-web-console/web_console.html"
+
+
+def test_legacy_console_html_is_archived_outside_runtime_package() -> None:
+    assert Path(LEGACY_CONSOLE_HTML).is_file()
+    assert not Path("src/ragrig/web_console.html").exists()
+
+
+def test_legacy_console_loader_is_removed_from_backend_module() -> None:
+    import ragrig.web_console as console
+
+    assert not hasattr(console, "load_console_html")
+
 
 def test_console_contains_local_pilot_wizard() -> None:
-    html = Path("src/ragrig/web_console.html").read_text(encoding="utf-8")
+    html = Path(LEGACY_CONSOLE_HTML).read_text(encoding="utf-8")
 
     assert "Local Pilot" in html
     assert "data-local-pilot-wizard" in html
@@ -27,7 +40,7 @@ def test_console_contains_local_pilot_wizard() -> None:
 
 
 def test_console_local_pilot_wizard_has_file_and_playground_controls() -> None:
-    html = Path("src/ragrig/web_console.html").read_text(encoding="utf-8")
+    html = Path(LEGACY_CONSOLE_HTML).read_text(encoding="utf-8")
 
     assert 'id="pilot-file-input"' in html
     assert 'accept=".md,.markdown,.txt,.text,.pdf,.docx"' in html
@@ -41,7 +54,7 @@ def test_console_local_pilot_wizard_has_file_and_playground_controls() -> None:
 
 
 def test_console_local_pilot_wizard_has_model_config_controls() -> None:
-    html = Path("src/ragrig/web_console.html").read_text(encoding="utf-8")
+    html = Path(LEGACY_CONSOLE_HTML).read_text(encoding="utf-8")
 
     assert 'id="pilot-api-key-ref"' in html
     assert 'id="pilot-model-health"' in html
@@ -54,7 +67,7 @@ def test_console_local_pilot_wizard_has_model_config_controls() -> None:
 
 
 def test_console_local_pilot_playground_uses_selected_model_config() -> None:
-    html = Path("src/ragrig/web_console.html").read_text(encoding="utf-8")
+    html = Path(LEGACY_CONSOLE_HTML).read_text(encoding="utf-8")
     function_body = html.split("async function runPilotPlaygroundAnswer()", 1)[1].split(
         "async function loadInitialData()", 1
     )[0]
@@ -67,7 +80,7 @@ def test_console_local_pilot_playground_uses_selected_model_config() -> None:
 
 
 def test_console_local_pilot_upload_status_counts_real_failures_only() -> None:
-    html = Path("src/ragrig/web_console.html").read_text(encoding="utf-8")
+    html = Path(LEGACY_CONSOLE_HTML).read_text(encoding="utf-8")
     function_body = html.split("async function runPilotFileUpload()", 1)[1].split(
         "function buildPilotModelConfig()", 1
     )[0]
@@ -82,7 +95,7 @@ def test_console_local_pilot_upload_status_counts_real_failures_only() -> None:
 
 
 def test_console_local_pilot_run_summary_exposes_failures_and_retry_actions() -> None:
-    html = Path("src/ragrig/web_console.html").read_text(encoding="utf-8")
+    html = Path(LEGACY_CONSOLE_HTML).read_text(encoding="utf-8")
     function_body = html.split("async function renderPilotRunSummary", 1)[1].split(
         "async function renderPilotChunkPreview", 1
     )[0]
