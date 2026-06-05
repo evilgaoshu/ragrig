@@ -15,8 +15,11 @@ make local-pilot-smoke
 make dependency-inventory
 ```
 
-These run in CI on every PR. `make web-check` covers the FastAPI Web Console
-contract; `make local-pilot-smoke` runs the API-level Local Pilot smoke.
+These run in CI on every PR. `make coverage` includes the FastAPI app
+entrypoint. The active `src/ragrig/web_console.py` backend facade remains
+outside the aggregate coverage gate until it is split into smaller service
+modules. `make web-check` covers the FastAPI Web Console contract; `make
+local-pilot-smoke` runs the API-level Local Pilot smoke.
 
 ## Smoke Test Catalog
 

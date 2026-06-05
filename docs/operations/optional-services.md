@@ -150,6 +150,11 @@ When the ARQ backend is active, `/health/ready` and `/health` ping Redis and rep
 `redis.status="connected"` or returns HTTP 503 with `redis.status="error"`.
 With the default threadpool backend, Redis health is reported as `skipped`.
 
+ARQ/Redis only backs background task execution. It does not make the API request
+rate limiter shared across workers or replicas; use an API gateway policy,
+Redis-backed limiter, or equivalent shared limiter for multi-process
+deployments.
+
 ## Fileshare live smoke (`--profile fileshare-live`)
 
 ```
