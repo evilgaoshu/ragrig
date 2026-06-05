@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -162,6 +163,45 @@ def test_production_observability_docs_and_compose_defaults_are_wired() -> None:
     assert "business spans for retrieval and" in optional_services
     assert "# RAGRIG_TASK_BACKEND=threadpool" in env_example
     assert "RAGRIG_LOG_BACKUP_COUNT=5" in optional_services
+
+
+def test_coverage_omit_scope_stays_intentional() -> None:
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    coverage_omit = pyproject["tool"]["coverage"]["run"]["omit"]
+    core_coverage_spec = (
+        REPO_ROOT / "docs" / "specs" / "ragrig-core-coverage-supply-chain-gates.md"
+    ).read_text(encoding="utf-8")
+    verification = (REPO_ROOT / "docs" / "operations" / "verification.md").read_text(
+        encoding="utf-8"
+    )
+    verification_text = " ".join(verification.split())
+
+    assert coverage_omit == ["src/ragrig/web_console.py"]
+    assert not (REPO_ROOT / "src" / "ragrig" / "cleaners" / "__init__.py").exists()
+    assert "`make coverage` includes the FastAPI app entrypoint" in verification_text
+    assert "`src/ragrig/web_console.py`: active backend workflow facade" in core_coverage_spec
+    assert "src/ragrig/main.py" not in core_coverage_spec.split("### Explicit Omits", maxsplit=1)[1]
+    assert "src/ragrig/cleaners" not in core_coverage_spec
+
+
+def test_runtime_boundary_docs_match_mcp_and_rate_limiter_implementation() -> None:
+    architecture = (REPO_ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
+    optional_services = (REPO_ROOT / "docs" / "operations" / "optional-services.md").read_text(
+        encoding="utf-8"
+    )
+    architecture_text = " ".join(architecture.split())
+    optional_services_text = " ".join(optional_services.split())
+    ratelimit_source = (REPO_ROOT / "src" / "ragrig" / "ratelimit.py").read_text(encoding="utf-8")
+    mcp_source = (REPO_ROOT / "src" / "ragrig" / "routers" / "mcp.py").read_text(encoding="utf-8")
+
+    assert "HTTP JSON-RPC request/response only" in architecture_text
+    assert "bidirectional streaming transport" in architecture
+    assert '@router.post("/mcp"' in mcp_source
+    assert "token bucket" not in ratelimit_source.lower()
+    assert "process-local" in architecture
+    assert "sliding-window" in architecture
+    assert "ARQ/Redis task execution does not share API request limiter state" in architecture_text
+    assert "does not make the API request rate limiter shared" in optional_services_text
 
 
 def test_troubleshooting_runbook_covers_operational_failure_modes() -> None:

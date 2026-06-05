@@ -153,8 +153,6 @@ markers = [
 [tool.coverage.run]
 source = ["src/ragrig"]
 omit = [
-  "src/ragrig/cleaners/*",
-  "src/ragrig/main.py",
   "src/ragrig/web_console.py",
 ]
 

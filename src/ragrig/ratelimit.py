@@ -2,7 +2,11 @@
 
 Applies per-workspace (or per-IP when auth is off) request limits to
 the search/answer and ingestion routes. Uses a thread-safe in-memory
-token bucket — suitable for single-process deployments.
+sliding-window counter suitable for single-process deployments.
+
+Multi-worker or replicated deployments need a gateway, Redis-backed limiter,
+or another external shared limiter. The ARQ task queue only moves background
+work out of the API process; it does not share API request limiter state.
 
 When RAGRIG_RATE_LIMIT_ENABLED=false (default) every check is a no-op.
 

@@ -9,29 +9,21 @@ Turn the local-first quality policy into commands that a fresh clone can run wit
 
 ## Core Coverage Gate
 
-The hard coverage scope for `make coverage` is:
+The aggregate coverage scope for `make coverage` is `src/ragrig`, excluding
+only the explicit omit below. The aggregate gate is `fail_under = 90`.
 
-- `src/ragrig/db`
-- `src/ragrig/repositories`
-- `src/ragrig/ingestion`
-- `src/ragrig/parsers`
-- `src/ragrig/chunkers`
-- `src/ragrig/embeddings`
-- `src/ragrig/indexing`
-- `src/ragrig/retrieval.py`
-- `src/ragrig/config.py`
-- `src/ragrig/health.py`
-
-The gate is line coverage at 100% for this scope.
+`make coverage-strict` remains available for the narrower 100% core logic gate
+over chunking, embeddings, retrieval, and ACL modules.
 
 ### Explicit Omits
 
-The coverage config omits these paths on purpose:
+The coverage config omits this path on purpose:
 
-- `src/ragrig/main.py`: FastAPI app wiring and route composition, not core ingestion/indexing/retrieval logic.
-- `src/ragrig/web_console.py`: Web Console presentation adapter, outside the hard scope for this issue.
-- `src/ragrig/cleaners/*`: placeholder package, no shipped behavior yet.
-- `src/ragrig/vectorstore/*`: placeholder package, no shipped behavior yet.
+- `src/ragrig/web_console.py`: active backend workflow facade with broad
+  production reach through routers, tasks, and services. It remains outside the
+  aggregate coverage gate until the facade is split into smaller service modules
+  that can be measured without treating the legacy console adapter as one large
+  unit.
 
 Generated Alembic migration files are not included in the `ragrig` package coverage source and remain documented but outside the hard gate.
 

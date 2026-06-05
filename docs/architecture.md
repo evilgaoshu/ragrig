@@ -42,9 +42,10 @@ generation contracts.
 - `docker-compose.yml` runs the app with Postgres + pgvector for local trials.
 - `Makefile` collects development, smoke, verification, and demo commands.
 
-The legacy prototype files `src/ragrig/web_console.html` and
-`src/ragrig/web_console.py` are still in the tree for historical tests, but they
-are not the active production UI.
+The legacy HTML prototype lives at
+`docs/prototypes/legacy-web-console/web_console.html`. The production UI is
+React, but `src/ragrig/web_console.py` remains an active backend workflow facade
+used by routers, tasks, services, and tests.
 
 ## Data Lifecycle
 
@@ -111,15 +112,18 @@ services, repositories, providers, or pipeline modules.
 
 - **MCP:** `POST /mcp` is HTTP JSON-RPC request/response only. It does not
   implement bidirectional streaming transport.
-- **Rate limiting:** `src/ragrig/ratelimit.py` is in-process and suitable for a
-  single process. Multi-worker or replicated deployments need an external
-  shared limiter.
+- **Rate limiting:** `src/ragrig/ratelimit.py` uses process-local
+  sliding-window counters and is suitable for a single process. Multi-worker or
+  replicated deployments need an external shared limiter, such as an API gateway
+  policy or Redis-backed limiter. ARQ/Redis task execution does not share API
+  request limiter state.
 - **Task execution:** `threadpool` is the default local backend. ARQ/Redis is
   optional for queue-backed execution.
 - **Auth:** Local demos can disable auth; exposed deployments should enable auth
   and set a strong `RAGRIG_AUTH_SECRET_PEPPER`.
-- **Coverage:** Coverage currently omits legacy console and entrypoint files.
-  Treat the percentage as a useful signal, not the whole risk picture.
+- **Coverage:** Coverage includes the FastAPI app entrypoint. It still omits
+  the active `web_console.py` backend facade, so treat the percentage as a
+  useful signal, not the whole risk picture.
 
 ## Terms
 
