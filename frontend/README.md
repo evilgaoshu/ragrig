@@ -1,50 +1,46 @@
-# React + TypeScript + Vite
+# RAGRig Web Console
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This directory contains the production Web Console served by the FastAPI app.
+The legacy prototype files under `src/ragrig/web_console.*` are not the active
+frontend.
 
-Currently, two official plugins are available:
+## Development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type aware lint rules:
-
-- Configure the top-level `parserOptions` property like this:
-
-```js
-export default tseslint.config({
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-})
+```bash
+npm ci
+npm run dev
 ```
 
-- Replace `tseslint.configs.recommended` to `tseslint.configs.recommendedTypeChecked` or `tseslint.configs.strictTypeChecked`
-- Optionally add `...tseslint.configs.stylisticTypeChecked`
-- Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and update the config:
+The Vite dev server proxies API calls to `http://localhost:8000`. Start the
+backend separately from the repository root:
 
-```js
-// eslint.config.js
-import react from 'eslint-plugin-react'
+```bash
+make run-web
+```
 
-export default tseslint.config({
-  // Set the react version
-  settings: { react: { version: '18.3' } },
-  plugins: {
-    // Add the react plugin
-    react,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended rules
-    ...react.configs.recommended.rules,
-    ...react.configs['jsx-runtime'].rules,
-  },
-})
+## Build Coupling
+
+The console is intentionally coupled to the FastAPI package:
+
+- `frontend/vite.config.ts` writes production assets to
+  `../src/ragrig/static/dist`.
+- `Dockerfile` builds this frontend in a Node stage, then copies the compiled
+  assets into `src/ragrig/static/dist` in the Python runtime image.
+- `src/ragrig/routers/frontend.py` serves those assets under the app routes.
+
+When changing routes or static asset behavior, verify both the Vite dev server
+and the FastAPI-served production build.
+
+## Checks
+
+```bash
+npm run lint
+npm run test:run
+npm run build
+```
+
+For a backend-integrated smoke from the repository root:
+
+```bash
+make web-check
 ```

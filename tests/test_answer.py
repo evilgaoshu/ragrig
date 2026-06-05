@@ -20,6 +20,7 @@ from ragrig.db.models import Base
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
 from ragrig.main import create_app
+from ragrig.semantic_cache import CacheHit, SemanticCacheConfig
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
@@ -101,6 +102,49 @@ def test_generate_answer_with_evidence_returns_grounded_report(tmp_path) -> None
     # No secrets in answer
     assert "api_key" not in report.answer.lower()
     assert "secret" not in report.answer.lower()
+
+
+def test_generate_answer_returns_semantic_cache_hit_without_retrieval(monkeypatch) -> None:
+    """A semantic-cache hit should short-circuit before retrieval or LLM calls."""
+    import uuid
+
+    entry_id = uuid.uuid4()
+
+    def fail_retrieval(**kwargs):
+        raise AssertionError("retrieval should not run after a semantic-cache hit")
+
+    def fake_lookup_cache(*args, **kwargs):
+        return CacheHit(
+            entry_id=entry_id,
+            query_text="What is cached?",
+            answer_text="Cached answer with citations already validated.",
+            citations_json=[],
+            similarity=0.99,
+            hit_count=2,
+        )
+
+    incremented_ids = []
+
+    monkeypatch.setattr("ragrig.answer.service.search_knowledge_base", fail_retrieval)
+    monkeypatch.setattr("ragrig.answer.service.lookup_cache", fake_lookup_cache)
+    monkeypatch.setattr(
+        "ragrig.answer.service.increment_hit_count",
+        lambda session, entry_id: incremented_ids.append(entry_id),
+    )
+
+    with _create_session() as session:
+        report = generate_answer(
+            session=session,
+            knowledge_base_name="fixture-local",
+            query="What is cached?",
+            provider="deterministic-local",
+            cache_config=SemanticCacheConfig(),
+        )
+
+    assert report.cache_hit is True
+    assert report.answer == "Cached answer with citations already validated."
+    assert report.retrieval_trace == {"cache_hit": True, "similarity": 0.99}
+    assert incremented_ids == [entry_id]
 
 
 def test_generate_answer_no_evidence_raises_no_evidence_error(tmp_path) -> None:

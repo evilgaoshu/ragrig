@@ -18,6 +18,29 @@ make dependency-inventory
 These run in CI on every PR. `make web-check` covers the FastAPI Web Console
 contract; `make local-pilot-smoke` runs the API-level Local Pilot smoke.
 
+## Smoke Test Catalog
+
+| Command | Run when | Dependencies | Typical duration | Artifact |
+| --- | --- | --- | --- | --- |
+| `make web-check` | Frontend serving, root routing, or console contract changes | `uv`, built-in test fixtures | < 1 min | pytest output |
+| `make local-pilot-preflight` | Local setup docs or preflight logic changes | `uv` | < 1 min | `docs/operations/artifacts/local-pilot-preflight.json` |
+| `make pilot-docker-preflight` | Docker quickstart or Compose changes | `uv`, Docker | < 1 min | `docs/operations/artifacts/pilot-docker-preflight.json` |
+| `make local-pilot-smoke` | Ingestion, indexing, retrieval, or answer path changes | `uv`, local SQLite/test fixtures | 1-3 min | `docs/operations/artifacts/local-pilot-smoke.json` |
+| `make pilot-docker-smoke` | Running app container or Compose behavior changes | Running `pilot-up` stack | < 1 min | `docs/operations/artifacts/pilot-docker-smoke.json` |
+| `make vercel-preview-smoke` | Vercel/Supabase deployment changes | `VERCEL_PREVIEW_URL` | < 1 min | `docs/operations/artifacts/vercel-preview-smoke.json` |
+| `make pipeline-dag-smoke` | Task DAG, retry, or pipeline orchestration changes | `uv` | < 1 min | `docs/operations/artifacts/pipeline-dag-smoke.json` |
+| `make answer-live-smoke` | Local LLM answer integration changes | Optional local LLM/OpenAI-compatible endpoint | varies | `docs/operations/artifacts/answer-live-smoke.json` |
+| `make reranker-policy-smoke` | Reranker fallback or production policy changes | `uv` | < 1 min | `docs/operations/artifacts/reranker-policy-smoke.json` |
+| `make bge-rerank-smoke` | BGE reranker integration changes | Optional `local-ml` extras | varies | stdout |
+| `make advanced-parser-corpus-check` | Parser quality or fixture changes | `uv`, advanced document fixtures | 1-3 min | `docs/operations/artifacts/advanced-parser-corpus.*` |
+| `make database-source-check` | Database source connector changes | `uv`, fixture DB setup | < 1 min | `docs/operations/artifacts/database-source-check.json` |
+| `make cost-latency-check` | Provider cost/latency accounting changes | `uv` | < 1 min | `docs/operations/artifacts/cost-latency-check.json` |
+| `make knowledge-map-check` | Understanding or knowledge-map changes | `uv` | < 1 min | `docs/operations/artifacts/knowledge-map-check.json` |
+| `make ops-deploy-smoke` | Operations deploy command changes | `uv` | < 1 min | `docs/operations/artifacts/ops-deploy-summary.json` |
+| `make ops-backup-smoke` | Backup behavior changes | `uv`, local backup dir | < 1 min | `docs/operations/artifacts/ops-backup-summary.json` |
+| `make ops-restore-smoke` | Restore behavior changes | `uv`, local backup dir | < 1 min | `docs/operations/artifacts/ops-restore-summary.json` |
+| `make nightly-evidence-smoke` | Release readiness or nightly evidence validation | Docker-backed smoke availability | varies | command summary |
+
 ## Nightly evidence pack
 
 ```bash
