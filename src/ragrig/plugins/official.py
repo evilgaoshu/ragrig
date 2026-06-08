@@ -174,6 +174,11 @@ class CloudRerankModelConfig(PluginConfigModel):
     reranker_model_name: str
 
 
+class CloudRerankerConfig(PluginConfigModel):
+    api_base_url: str
+    model_name: str
+
+
 class VertexAiCloudModelConfig(PluginConfigModel):
     project: str
     location: str = "us-central1"
@@ -213,6 +218,10 @@ class BgeRerankerConfig(PluginConfigModel):
 class CohereEmbeddingConfig(PluginConfigModel):
     model_name: str = "embed-v4.0"
     input_type: str = "search_document"
+
+
+class CohereRerankerConfig(PluginConfigModel):
+    model_name: str = "rerank-v4.0-fast"
 
 
 class VoyageEmbeddingConfig(PluginConfigModel):
@@ -590,6 +599,25 @@ def official_stub_manifests() -> list[PluginManifest]:
                 "api_base_url": "https://api.jina.ai/v1",
                 "embedding_model_name": "jina-embeddings-v4",
                 "reranker_model_name": "jina-reranker-m0",
+            },
+            secret_requirements=(
+                SecretRequirement(name="JINA_API_KEY", description="Jina AI API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="reranker.jina",
+            display_name="Jina Reranker",
+            description="Jina AI reranker provider for retrieval quality experiments.",
+            plugin_type=PluginType.RERANKER,
+            family="jina",
+            capabilities=(Capability.RERANK,),
+            docs_reference="docs/specs/ragrig-phase-1e-local-model-provider-plugin-spec.md",
+            config_model=CloudRerankerConfig,
+            example_config={
+                "api_base_url": "https://api.jina.ai/v1",
+                "model_name": "jina-reranker-m0",
             },
             secret_requirements=(
                 SecretRequirement(name="JINA_API_KEY", description="Jina AI API key"),
@@ -1896,6 +1924,23 @@ def official_stub_manifests() -> list[PluginManifest]:
             example_config={
                 "model_name": "embed-v4.0",
                 "input_type": "search_document",
+            },
+            secret_requirements=(
+                SecretRequirement(name="COHERE_API_KEY", description="Cohere API key"),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="reranker.cohere",
+            display_name="Cohere Reranker",
+            description="Cohere cloud reranker using the Rerank API v2.",
+            plugin_type=PluginType.RERANKER,
+            family="cohere",
+            capabilities=(Capability.RERANK,),
+            config_model=CohereRerankerConfig,
+            example_config={
+                "model_name": "rerank-v4.0-fast",
             },
             secret_requirements=(
                 SecretRequirement(name="COHERE_API_KEY", description="Cohere API key"),

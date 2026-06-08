@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
-from ragrig.providers import get_provider_registry
+from ragrig.providers import ProviderCapability, get_provider_registry
 from ragrig.providers.cloud import (
     AnthropicProvider,
     AzureOpenAIProvider,
@@ -94,6 +94,15 @@ def test_registry_oai_compat_cloud_providers_are_real(monkeypatch: pytest.Monkey
     for name in oai_compat:
         health = registry.get(name).health_check()
         assert health.status != "stub", f"{name} still returns stub status"
+
+
+def test_registry_exposes_named_reranker_providers() -> None:
+    registry = get_provider_registry()
+
+    for provider_name in ("reranker.bge", "reranker.jina", "reranker.cohere"):
+        metadata = registry.read(provider_name)
+        assert ProviderCapability.RERANK in metadata.capabilities
+        assert "model_name" in metadata.config_schema
 
 
 # ── OpenAICompatibleCloudProvider ─────────────────────────────────────────────

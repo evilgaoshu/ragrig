@@ -225,6 +225,7 @@ def create_provider_registry() -> ProviderRegistry:
         GOOGLE_GEMINI_METADATA,
         GROQ_METADATA,
         JINA_METADATA,
+        JINA_RERANKER_METADATA,
         MINIMAX_METADATA,
         MISTRAL_METADATA,
         MOONSHOT_METADATA,
@@ -244,6 +245,7 @@ def create_provider_registry() -> ProviderRegistry:
         create_azure_openai_provider,
         create_bedrock_provider,
         create_jina_provider,
+        create_jina_reranker_provider,
         create_openai_compatible_cloud_provider,
         create_vertex_ai_provider,
     )
@@ -309,7 +311,9 @@ def create_provider_registry() -> ProviderRegistry:
     )
     from ragrig.providers.cohere import (
         COHERE_EMBEDDING_METADATA,
+        COHERE_RERANKER_METADATA,
         create_cohere_embedding_provider,
+        create_cohere_reranker_provider,
     )
     from ragrig.providers.voyage import (
         VOYAGE_EMBEDDING_METADATA,
@@ -319,6 +323,7 @@ def create_provider_registry() -> ProviderRegistry:
     registry.register(BGE_EMBEDDING_METADATA, create_bge_embedding_provider)
     registry.register(BGE_RERANKER_METADATA, create_bge_reranker_provider)
     registry.register(COHERE_EMBEDDING_METADATA, create_cohere_embedding_provider)
+    registry.register(COHERE_RERANKER_METADATA, create_cohere_reranker_provider)
     registry.register(VOYAGE_EMBEDDING_METADATA, create_voyage_embedding_provider)
 
     # Real cloud providers — Vertex AI and Bedrock
@@ -329,6 +334,7 @@ def create_provider_registry() -> ProviderRegistry:
     registry.register(ANTHROPIC_METADATA, create_anthropic_provider)
     registry.register(AZURE_OPENAI_METADATA, create_azure_openai_provider)
     registry.register(JINA_METADATA, create_jina_provider)
+    registry.register(JINA_RERANKER_METADATA, create_jina_reranker_provider)
     registry.register(
         GOOGLE_GEMINI_METADATA,
         lambda **config: GeminiProvider(

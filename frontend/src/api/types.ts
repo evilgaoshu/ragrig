@@ -69,6 +69,27 @@ export interface RetrievalResult {
   rank_stage_trace: unknown
 }
 
+export interface RerankTraceRow {
+  rank: number
+  chunk_id?: string
+  document_uri: string
+  score: number
+  original_rank?: number
+  rerank_score?: number
+}
+
+export interface RerankTrace {
+  status?: 'applied' | 'degraded' | string
+  provider?: string
+  model?: string
+  candidate_count?: number
+  changed_count?: number
+  degraded_reason?: string
+  latency_ms?: number
+  before?: RerankTraceRow[]
+  after?: RerankTraceRow[]
+}
+
 export interface RetrievalReport {
   knowledge_base: string
   query: string
@@ -76,7 +97,11 @@ export interface RetrievalReport {
   provider: string
   model: string | null
   total_results: number
+  degraded?: boolean
+  degraded_reason?: string
   graph_context?: Record<string, unknown>
+  cost_latency?: Record<string, unknown>
+  rerank_trace?: RerankTrace
   results: RetrievalResult[]
 }
 

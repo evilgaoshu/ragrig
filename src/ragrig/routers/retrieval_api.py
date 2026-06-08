@@ -198,6 +198,7 @@ def retrieval_search(
         "total_results": report.total_results,
         "acl_explain": report.acl_explain,
         "graph_context": getattr(report, "graph_context", {}),
+        "rerank_trace": getattr(report, "rerank_trace", {}),
         "results": [
             {
                 "document_id": str(result.document_id),

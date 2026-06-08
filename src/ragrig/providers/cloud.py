@@ -247,6 +247,24 @@ JINA_METADATA = build_cloud_model_metadata(
 )
 
 
+JINA_RERANKER_METADATA = build_cloud_model_metadata(
+    name="reranker.jina",
+    description="Jina AI reranker via HTTP API.",
+    capabilities={ProviderCapability.RERANK},
+    required_secrets=["JINA_API_KEY"],
+    config_schema={
+        "api_base_url": {"type": "string", "default": "https://api.jina.ai/v1"},
+        "model_name": {"type": "string", "default": "jina-reranker-m0"},
+    },
+    sdk_protocol="optional-jina-http-api",
+    dependency_group="cloud-jina",
+    failure_modes=["optional_dependency_missing", "provider_stub_only", "missing_required_secret"],
+    audit_fields=["provider", "api_base_url", "model"],
+    metric_fields=["requests_total", "document_count"],
+    intended_uses=["managed_retrieval", "retrieval_quality"],
+)
+
+
 ANTHROPIC_METADATA = build_cloud_model_metadata(
     name="model.anthropic",
     description="Anthropic Claude provider for chat and generation.",
@@ -1136,13 +1154,16 @@ class JinaProvider(BaseProvider):
     def __init__(
         self,
         *,
+        provider_name: str = "model.jina",
+        metadata: ProviderMetadata = JINA_METADATA,
         api_base_url: str = "https://api.jina.ai/v1",
         embedding_model_name: str = "jina-embeddings-v4",
         reranker_model_name: str = "jina-reranker-m0",
         config: dict[str, Any] | None = None,
         client: httpx.Client | None = None,
     ) -> None:
-        self.metadata = JINA_METADATA
+        self.metadata = metadata
+        self._provider_name = provider_name
         self._api_base = api_base_url.rstrip("/")
         self._embed_model = embedding_model_name
         self._rerank_model = reranker_model_name
@@ -1150,7 +1171,11 @@ class JinaProvider(BaseProvider):
         self._client = client
 
     def _headers(self) -> dict[str, str]:
-        key = _require_api_key(config=self._config, env_var="JINA_API_KEY", provider="model.jina")
+        key = _require_api_key(
+            config=self._config,
+            env_var="JINA_API_KEY",
+            provider=self._provider_name,
+        )
         return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
     def _http(self) -> httpx.Client:
@@ -1166,8 +1191,8 @@ class JinaProvider(BaseProvider):
                 if owned:
                     client.close()
         except httpx.HTTPError as exc:
-            raise _wrap_http_error("model.jina", exc) from exc
-        return _check_response("model.jina", r)
+            raise _wrap_http_error(self._provider_name, exc) from exc
+        return _check_response(self._provider_name, r)
 
     def health_check(self) -> ProviderHealth:
         key = _resolve_api_key(config=self._config, env_var="JINA_API_KEY")
@@ -1175,19 +1200,23 @@ class JinaProvider(BaseProvider):
             return ProviderHealth(
                 status="unavailable",
                 detail="JINA_API_KEY is not configured",
-                metrics={"provider": "model.jina"},
+                metrics={"provider": self._provider_name},
             )
         return ProviderHealth(
             status="healthy",
             detail="Jina API key configured",
-            metrics={"provider": "model.jina", "embed_model": self._embed_model},
+            metrics={
+                "provider": self._provider_name,
+                "embed_model": self._embed_model,
+                "reranker_model": self._rerank_model,
+            },
         )
 
     def embed_text(self, text: str) -> EmbeddingResult:
         body = self._post("/embeddings", {"model": self._embed_model, "input": [text]})
         vector = [float(v) for v in body["data"][0]["embedding"]]
         return EmbeddingResult(
-            provider="model.jina",
+            provider=self._provider_name,
             model=self._embed_model,
             dimensions=len(vector),
             vector=vector,
@@ -1212,6 +1241,8 @@ class JinaProvider(BaseProvider):
 def create_jina_provider(**config: Any) -> JinaProvider:
     schema = JINA_METADATA.config_schema
     return JinaProvider(
+        provider_name="model.jina",
+        metadata=JINA_METADATA,
         api_base_url=str(config.get("api_base_url", schema["api_base_url"]["default"])),
         embedding_model_name=str(
             config.get("embedding_model_name", schema["embedding_model_name"]["default"])
@@ -1219,6 +1250,20 @@ def create_jina_provider(**config: Any) -> JinaProvider:
         reranker_model_name=str(
             config.get("reranker_model_name", schema["reranker_model_name"]["default"])
         ),
+        config=dict(config),
+        client=config.get("client"),
+    )
+
+
+def create_jina_reranker_provider(**config: Any) -> JinaProvider:
+    schema = JINA_RERANKER_METADATA.config_schema
+    model_name = str(config.get("model_name", schema["model_name"]["default"]))
+    return JinaProvider(
+        provider_name="reranker.jina",
+        metadata=JINA_RERANKER_METADATA,
+        api_base_url=str(config.get("api_base_url", schema["api_base_url"]["default"])),
+        embedding_model_name="",
+        reranker_model_name=model_name,
         config=dict(config),
         client=config.get("client"),
     )
@@ -1650,6 +1695,7 @@ __all__ = [
     "GOOGLE_GEMINI_METADATA",
     "GROQ_METADATA",
     "JINA_METADATA",
+    "JINA_RERANKER_METADATA",
     "MINIMAX_METADATA",
     "MISTRAL_METADATA",
     "MOONSHOT_METADATA",
@@ -1677,6 +1723,7 @@ __all__ = [
     "create_bedrock_provider",
     "create_cloud_stub_provider",
     "create_jina_provider",
+    "create_jina_reranker_provider",
     "create_openai_compatible_cloud_provider",
     "create_vertex_ai_provider",
     "load_cloud_client",
