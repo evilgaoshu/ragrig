@@ -7,7 +7,7 @@ import {
   useRetrievalPreferences,
   useSaveRetrievalPreferences,
 } from '../api/hooks'
-import type { RetrievalPreferences, RetrievalReport } from '../api/types'
+import type { RerankTrace, RerankTraceRow, RetrievalPreferences, RetrievalReport } from '../api/types'
 import { Button } from '../components/ui'
 import { ConsolePage, DataTable, MetricCard, Panel, StatusPill } from '../components/console'
 
@@ -19,15 +19,20 @@ type CompareRow = {
   evidence: string
 }
 
-const MODES = ['hybrid_graph', 'dense', 'hybrid', 'graph', 'graph_rerank', 'hybrid_graph_rerank']
-const COMPARE_MODES = ['dense', 'graph', 'hybrid_graph']
+const MODES = ['hybrid_graph', 'dense', 'hybrid', 'rerank', 'hybrid_rerank', 'graph', 'graph_rerank', 'hybrid_graph_rerank']
+const COMPARE_MODES = ['dense', 'rerank', 'hybrid_rerank']
+const RERANKER_OPTIONS = [
+  { value: 'reranker.bge', label: 'BGE local', defaultModel: 'BAAI/bge-reranker-v2-m3' },
+  { value: 'reranker.jina', label: 'Jina rerank', defaultModel: 'jina-reranker-m0' },
+  { value: 'reranker.cohere', label: 'Cohere rerank', defaultModel: 'rerank-v4.0-fast' },
+] as const
 const DEFAULT_PREFERENCES: RetrievalPreferences = {
   mode: 'hybrid_graph',
   lexical_weight: 0.3,
   vector_weight: 0.7,
   candidate_k: 20,
-  reranker_provider: null,
-  reranker_model: null,
+  reranker_provider: 'reranker.bge',
+  reranker_model: 'BAAI/bge-reranker-v2-m3',
   graph_weight: 0.35,
   graph_depth: 1,
 }
@@ -56,6 +61,10 @@ function graphDepth(raw: string, fallback: number) {
   return Math.round(clampNumber(raw, fallback, 0, 2))
 }
 
+function candidateK(raw: string, fallback: number) {
+  return Math.round(clampNumber(raw, fallback, 1, 200))
+}
+
 function topScore(report: RetrievalReport) {
   return report.results[0]?.score ?? 0
 }
@@ -65,6 +74,33 @@ function graphEvidenceLabel(report: RetrievalReport) {
   const entities = recordArray(context.matched_entities).length
   const paths = recordArray(context.relation_paths).length
   return `${report.total_results} results, ${entities} entities, ${paths} paths`
+}
+
+function modeUsesRerank(activeMode: string) {
+  return activeMode.includes('rerank')
+}
+
+function defaultRerankerModel(provider: string) {
+  return RERANKER_OPTIONS.find((option) => option.value === provider)?.defaultModel ?? ''
+}
+
+function formatScore(value: unknown) {
+  return typeof value === 'number' ? value.toFixed(4) : '--'
+}
+
+function formatLatency(trace: RerankTrace | undefined) {
+  return typeof trace?.latency_ms === 'number' ? `${trace.latency_ms.toFixed(1)} ms` : '--'
+}
+
+function movementLabel(row: RerankTraceRow) {
+  return typeof row.original_rank === 'number' && row.original_rank !== row.rank
+    ? `was #${row.original_rank}`
+    : 'same rank'
+}
+
+function changedLabel(trace: RerankTrace | undefined) {
+  const count = trace?.changed_count ?? 0
+  return `${count} changed`
 }
 
 export default function RetrievalLab() {
@@ -77,6 +113,9 @@ export default function RetrievalLab() {
   const [modeOverride, setModeOverride] = useState<string | null>(null)
   const [graphWeightOverride, setGraphWeightOverride] = useState<string | null>(null)
   const [graphDepthOverride, setGraphDepthOverride] = useState<string | null>(null)
+  const [candidateKOverride, setCandidateKOverride] = useState<string | null>(null)
+  const [rerankerProviderOverride, setRerankerProviderOverride] = useState<string | null>(null)
+  const [rerankerModelOverride, setRerankerModelOverride] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [compareRows, setCompareRows] = useState<CompareRow[]>([])
   const [comparePending, setComparePending] = useState(false)
@@ -95,8 +134,14 @@ export default function RetrievalLab() {
   const mode = modeOverride ?? preferences.mode
   const graphWeight = graphWeightOverride ?? String(preferences.graph_weight)
   const graphDepthValue = graphDepthOverride ?? String(preferences.graph_depth)
+  const candidateKValue = candidateKOverride ?? String(preferences.candidate_k)
+  const rerankerProvider = rerankerProviderOverride ?? preferences.reranker_provider ?? RERANKER_OPTIONS[0].value
+  const rerankerModel = rerankerModelOverride ?? preferences.reranker_model ?? defaultRerankerModel(rerankerProvider)
   const report = search.data
   const results = report?.results ?? []
+  const rerankTrace = report?.rerank_trace
+  const beforeRows = rerankTrace?.before ?? []
+  const afterRows = rerankTrace?.after ?? []
   const graphContext = report?.graph_context ?? {}
   const matchedEntities = recordArray(graphContext.matched_entities)
   const relationPaths = recordArray(graphContext.relation_paths)
@@ -108,6 +153,8 @@ export default function RetrievalLab() {
   function requestBody(activeMode = mode) {
     const currentDepth = graphDepth(graphDepthValue, preferences.graph_depth)
     const currentWeight = clampNumber(graphWeight, preferences.graph_weight, 0, 1)
+    const currentCandidateK = candidateK(candidateKValue, preferences.candidate_k)
+    const activeUsesRerank = modeUsesRerank(activeMode)
     return {
       knowledge_base: selectedKb?.name ?? '',
       query: query.trim(),
@@ -120,9 +167,9 @@ export default function RetrievalLab() {
       mode: activeMode,
       lexical_weight: preferences.lexical_weight,
       vector_weight: preferences.vector_weight,
-      candidate_k: preferences.candidate_k,
-      reranker_provider: preferences.reranker_provider,
-      reranker_model: preferences.reranker_model,
+      candidate_k: currentCandidateK,
+      reranker_provider: activeUsesRerank ? rerankerProvider : null,
+      reranker_model: activeUsesRerank ? rerankerModel || null : null,
       graph_weight: currentWeight,
       graph_depth: currentDepth,
     }
@@ -133,7 +180,8 @@ export default function RetrievalLab() {
     if (!selectedKb || !query.trim()) return
     try {
       const result = await search.mutateAsync(requestBody())
-      setMessage(`Search completed in ${mode}: ${result.total_results} results.`)
+      const suffix = result.degraded ? ` Degraded: ${result.degraded_reason ?? 'reranker unavailable'}` : ''
+      setMessage(`Search completed in ${mode}: ${result.total_results} results.${suffix}`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Search failed.')
     }
@@ -175,6 +223,9 @@ export default function RetrievalLab() {
     const payload: RetrievalPreferences = {
       ...preferences,
       mode,
+      candidate_k: candidateK(candidateKValue, preferences.candidate_k),
+      reranker_provider: rerankerProvider,
+      reranker_model: rerankerModel || null,
       graph_weight: clampNumber(graphWeight, preferences.graph_weight, 0, 1),
       graph_depth: graphDepth(graphDepthValue, preferences.graph_depth),
     }
@@ -183,6 +234,9 @@ export default function RetrievalLab() {
       setModeOverride(payload.mode)
       setGraphWeightOverride(String(payload.graph_weight))
       setGraphDepthOverride(String(payload.graph_depth))
+      setCandidateKOverride(String(payload.candidate_k))
+      setRerankerProviderOverride(payload.reranker_provider)
+      setRerankerModelOverride(payload.reranker_model)
       setMessage(`Saved retrieval defaults for ${selectedKb.name}.`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Failed to save retrieval defaults.')
@@ -204,8 +258,8 @@ export default function RetrievalLab() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard label="Mode" value={mode} sub="current query strategy" />
         <MetricCard label="Top K" value={topK} sub="candidate window" />
-        <MetricCard label="Graph context" value={matchedEntities.length + relationPaths.length} sub="entities + relation paths" tone={relationPaths.length ? 'ok' : 'info'} />
-        <MetricCard label="Suppressed" value={suppressedCount} sub="feedback-aware paths" tone={suppressedCount ? 'warn' : 'ok'} />
+        <MetricCard label="Reranker" value={modeUsesRerank(mode) ? rerankerProvider : 'off'} sub={modeUsesRerank(mode) ? `${candidateKValue} candidates` : 'current mode'} tone={modeUsesRerank(mode) ? 'info' : 'neutral'} />
+        <MetricCard label="Rerank latency" value={formatLatency(rerankTrace)} sub={changedLabel(rerankTrace)} tone={report?.degraded ? 'warn' : rerankTrace?.status === 'applied' ? 'ok' : 'neutral'} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
@@ -222,6 +276,9 @@ export default function RetrievalLab() {
                     setModeOverride(null)
                     setGraphWeightOverride(null)
                     setGraphDepthOverride(null)
+                    setCandidateKOverride(null)
+                    setRerankerProviderOverride(null)
+                    setRerankerModelOverride(null)
                   }}
                   className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm"
                 >
@@ -288,6 +345,44 @@ export default function RetrievalLab() {
                   className="w-full rounded-lg border border-line px-3 py-2 text-sm"
                 />
               </label>
+              <label className="space-y-1">
+                <span className="text-xs font-medium text-slate-600">Candidate K</span>
+                <input
+                  id="retrieval-lab-candidate-k"
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={candidateKValue}
+                  onChange={(event) => setCandidateKOverride(event.target.value)}
+                  className="w-full rounded-lg border border-line px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1">
+                <span className="text-xs font-medium text-slate-600">Reranker provider</span>
+                <select
+                  id="retrieval-lab-reranker-provider"
+                  value={rerankerProvider}
+                  onChange={(event) => {
+                    const nextProvider = event.target.value
+                    setRerankerProviderOverride(nextProvider)
+                    setRerankerModelOverride(defaultRerankerModel(nextProvider))
+                  }}
+                  className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm"
+                >
+                  {RERANKER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs font-medium text-slate-600">Reranker model</span>
+                <input
+                  id="retrieval-lab-reranker-model"
+                  value={rerankerModel}
+                  onChange={(event) => setRerankerModelOverride(event.target.value)}
+                  className="w-full rounded-lg border border-line px-3 py-2 text-sm"
+                />
+              </label>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <Button type="submit" disabled={search.isPending || !selectedKb || !query.trim()}>
@@ -300,6 +395,54 @@ export default function RetrievalLab() {
           </form>
         </Panel>
 
+        <Panel title="Rerank Trace" description={rerankTrace ? `${rerankTrace.provider ?? 'reranker'} / ${rerankTrace.model || 'default'}` : 'Run a reranked search to inspect ordering changes.'}>
+          {report?.degraded && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {report.degraded_reason ?? rerankTrace?.degraded_reason ?? 'Reranker unavailable.'}
+            </div>
+          )}
+          {rerankTrace ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <MetricCard label="Provider" value={rerankTrace.provider ?? '--'} sub={rerankTrace.model || 'default model'} tone={report?.degraded ? 'warn' : 'info'} />
+                <MetricCard label="Latency" value={formatLatency(rerankTrace)} sub={`${rerankTrace.candidate_count ?? 0} candidates`} tone={report?.degraded ? 'warn' : 'ok'} />
+                <MetricCard label="Movement" value={changedLabel(rerankTrace)} sub={rerankTrace.status ?? 'not run'} tone={(rerankTrace.changed_count ?? 0) > 0 ? 'ok' : 'neutral'} />
+              </div>
+              <div className="grid gap-3 lg:grid-cols-2">
+                <section role="region" aria-label="Before rerank" className="rounded-lg border border-line bg-white p-3">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted">Before rerank</div>
+                  <div className="mt-3 space-y-2">
+                    {beforeRows.length ? beforeRows.slice(0, 6).map((row) => (
+                      <div key={`before-${row.chunk_id ?? row.document_uri}-${row.rank}`} className="grid grid-cols-[44px_1fr_auto] items-center gap-2 text-sm">
+                        <span className="font-mono text-xs text-muted">#{row.rank}</span>
+                        <span className="truncate font-mono text-xs text-slate-700">{row.document_uri}</span>
+                        <span className="font-mono text-xs text-slate-500">{formatScore(row.score)}</span>
+                      </div>
+                    )) : <div className="text-sm text-muted">No before-rerank rows.</div>}
+                  </div>
+                </section>
+                <section role="region" aria-label="After rerank" className="rounded-lg border border-line bg-white p-3">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted">After rerank</div>
+                  <div className="mt-3 space-y-2">
+                    {afterRows.length ? afterRows.slice(0, 6).map((row) => (
+                      <div key={`after-${row.chunk_id ?? row.document_uri}-${row.rank}`} className="grid grid-cols-[44px_1fr_auto_auto] items-center gap-2 text-sm">
+                        <span className="font-mono text-xs text-brand">#{row.rank}</span>
+                        <span className="truncate font-mono text-xs text-slate-700">{row.document_uri}</span>
+                        <span className="font-mono text-xs text-slate-500">{formatScore(row.rerank_score ?? row.score)}</span>
+                        <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-xs text-slate-600">{movementLabel(row)}</span>
+                      </div>
+                    )) : <div className="text-sm text-muted">No after-rerank rows.</div>}
+                  </div>
+                </section>
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-muted">No rerank trace yet.</div>
+          )}
+        </Panel>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <Panel title="Mode Comparison" description={compareRows.length ? 'Live comparison results.' : 'Run a comparison to populate this board.'}>
           {compareRows.length ? (
             <DataTable
@@ -316,9 +459,6 @@ export default function RetrievalLab() {
             <div className="text-sm text-muted">No comparison run yet.</div>
           )}
         </Panel>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <Panel title="Results" description={report ? `${results.length} results - ${provider} / ${model}` : 'No search run yet.'}>
           {results.length ? (
             <div className="space-y-3" id="retrieval-lab-results">

@@ -41,6 +41,7 @@ from ragrig.providers import get_provider_registry
 from ragrig.repositories import get_knowledge_base_by_name
 from ragrig.repositories.audit import create_audit_event
 from ragrig.reranker import (
+    DEFAULT_RERANKER_PROVIDER,
     RerankCandidate,
     RerankResult,
     fake_rerank,
@@ -162,6 +163,7 @@ class RetrievalReport:
     acl_explain: dict[str, Any] = field(default_factory=dict)
     cost_latency: dict[str, Any] = field(default_factory=dict)
     graph_context: dict[str, Any] = field(default_factory=dict)
+    rerank_trace: dict[str, Any] = field(default_factory=dict)
 
 
 def _span_kwargs(source: Any) -> dict[str, Any]:
@@ -581,15 +583,15 @@ def _apply_rerank(
     *,
     reranker_provider: str | None = None,
     reranker_model: str | None = None,
-) -> tuple[list[RetrievalResult], bool, str]:
+) -> tuple[list[RetrievalResult], bool, str, dict[str, Any]]:
     """Apply reranking to a list of candidate results.
 
-    Returns (results, degraded, degraded_reason).  When the reranker is
-    unavailable, the original candidates are returned unchanged with
-    degraded=True.
+    Returns (results, degraded, degraded_reason, rerank_trace).  When the
+    reranker is unavailable, the original candidates are returned unchanged
+    with degraded=True.
     """
     if not candidates:
-        return [], False, ""
+        return [], False, "", {}
 
     rerank_candidates = [
         RerankCandidate(
@@ -607,6 +609,13 @@ def _apply_rerank(
         )
         for i, r in enumerate(candidates)
     ]
+    before_rows = _rerank_rank_rows(candidates)
+    effective_provider = (
+        reranker_provider if reranker_provider is not None or reranker_model is not None else "fake"
+    )
+    effective_model = reranker_model or (
+        "deterministic-reranker" if effective_provider == "fake" else ""
+    )
 
     # Try provider reranker first, fall back to fake reranker for testing
     rerank_results: list[RerankResult] | None = None
@@ -625,7 +634,7 @@ def _apply_rerank(
             # Provider unavailable; degrade to original order
             degraded = True
             degraded_reason = (
-                f"Reranker provider '{reranker_provider or 'reranker.bge'}' "
+                f"Reranker provider '{reranker_provider or DEFAULT_RERANKER_PROVIDER}' "
                 "is unavailable; results returned in original order."
             )
             rerank_results = None
@@ -648,13 +657,17 @@ def _apply_rerank(
     if rerank_results is None:
         # Degradation path: keep original order, add trace
         results: list[RetrievalResult] = []
-        for r in candidates:
+        for rank, r in enumerate(candidates, start=1):
             trace = dict(r.rank_stage_trace)
             trace["stages"] = trace.get("stages", []) + [
                 {
                     "stage": "rerank",
                     "status": "degraded",
                     "reason": degraded_reason or "reranker unavailable",
+                    "reranker": effective_provider,
+                    "model": effective_model,
+                    "original_rank": rank,
+                    "new_rank": rank,
                 }
             ]
             results.append(
@@ -674,7 +687,21 @@ def _apply_rerank(
                     rank_stage_trace=trace,
                 )
             )
-        return results, degraded, degraded_reason
+        return (
+            results,
+            degraded,
+            degraded_reason,
+            {
+                "status": "degraded",
+                "provider": effective_provider,
+                "model": effective_model,
+                "candidate_count": len(candidates),
+                "changed_count": 0,
+                "degraded_reason": degraded_reason or "reranker unavailable",
+                "before": before_rows,
+                "after": _rerank_rank_rows(results, include_original_rank=True),
+            },
+        )
 
     # Successful rerank
     results = []
@@ -689,8 +716,9 @@ def _apply_rerank(
                     "score": rr_item.rerank_score,
                     "original_rank": rr_item.candidate.original_index + 1,
                     "new_rank": rr_item.new_rank + 1,
-                    "reranker": reranker_provider or "fake",
-                    "model": reranker_model or "",
+                    "reranker": effective_provider,
+                    "model": effective_model,
+                    "status": "applied",
                 }
             ],
             "final_source": "rerank",
@@ -713,7 +741,55 @@ def _apply_rerank(
             )
         )
 
-    return results, degraded, degraded_reason
+    after_rows = _rerank_rank_rows(results, include_original_rank=True)
+    changed_count = sum(1 for row in after_rows if row.get("original_rank") != row["rank"])
+    return (
+        results,
+        degraded,
+        degraded_reason,
+        {
+            "status": "applied",
+            "provider": effective_provider,
+            "model": effective_model,
+            "candidate_count": len(candidates),
+            "changed_count": changed_count,
+            "degraded_reason": "",
+            "before": before_rows,
+            "after": after_rows,
+        },
+    )
+
+
+def _rerank_rank_rows(
+    results: list[RetrievalResult],
+    *,
+    include_original_rank: bool = False,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for rank, result in enumerate(results, start=1):
+        row: dict[str, Any] = {
+            "rank": rank,
+            "chunk_id": str(result.chunk_id),
+            "document_uri": result.document_uri,
+            "score": round(float(result.score), 6),
+        }
+        if include_original_rank:
+            rerank_stage = _last_rerank_stage(result.rank_stage_trace)
+            row["original_rank"] = int(rerank_stage.get("original_rank", rank))
+            if "score" in rerank_stage:
+                row["rerank_score"] = round(float(rerank_stage["score"]), 6)
+        rows.append(row)
+    return rows
+
+
+def _last_rerank_stage(trace: dict[str, Any]) -> dict[str, Any]:
+    stages = trace.get("stages", [])
+    if not isinstance(stages, list):
+        return {}
+    for stage in reversed(stages):
+        if isinstance(stage, dict) and stage.get("stage") == "rerank":
+            return stage
+    return {}
 
 
 def _fetch_all_texts(
@@ -1137,6 +1213,7 @@ def search_knowledge_base(
     search_started = perf_counter()
     cost_latency_operations: list[dict[str, Any]] = []
     phase_latencies: dict[str, float] = {}
+    rerank_trace: dict[str, Any] = {}
 
     if top_k <= 0:
         log_event(
@@ -1545,7 +1622,7 @@ def search_knowledge_base(
                     "ragrig.workspace_hash": hash_attribute(kb_workspace_id, prefix="ws"),
                 },
             ) as rerank_span:
-                reranked, rerank_degraded, rerank_reason = _apply_rerank(
+                reranked, rerank_degraded, rerank_reason, rerank_trace = _apply_rerank(
                     dense_results,
                     normalized_query,
                     reranker_provider=reranker_provider,
@@ -1557,6 +1634,7 @@ def search_knowledge_base(
                     degraded=rerank_degraded,
                 )
             phase_latencies["rerank_ms"] = round((perf_counter() - rerank_started) * 1000, 3)
+            rerank_trace["latency_ms"] = phase_latencies["rerank_ms"]
             cost_latency_operations.append(
                 observe_model_call(
                     operation="rerank",
@@ -1750,6 +1828,7 @@ def search_knowledge_base(
         acl_explain=acl_explain,
         cost_latency=cost_latency,
         graph_context=graph_context,
+        rerank_trace=rerank_trace,
     )
 
 

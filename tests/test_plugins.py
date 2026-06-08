@@ -41,7 +41,7 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     manifests = registry.list()
     manifest_ids = {manifest.plugin_id for manifest in manifests}
 
-    assert len(manifests) == 75
+    assert len(manifests) == 77
     assert {
         "source.local",
         "parser.markdown",
@@ -58,6 +58,8 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
         "model.jina",
         "embedding.bge",
         "reranker.bge",
+        "reranker.jina",
+        "reranker.cohere",
         "vector.pgvector",
         "sink.jsonl",
         "sink.filesystem",
@@ -70,6 +72,8 @@ def test_registry_registers_builtin_plugins_and_official_stubs() -> None:
     assert registry.get("model.openai").tier is PluginTier.OFFICIAL
     assert registry.get("embedding.bge").tier is PluginTier.OFFICIAL
     assert registry.get("embedding.bge").status is PluginStatus.READY
+    assert registry.get("reranker.jina").tier is PluginTier.OFFICIAL
+    assert registry.get("reranker.cohere").tier is PluginTier.OFFICIAL
     assert registry.get("source.s3").tier is PluginTier.OFFICIAL
     expected_s3_status = (
         PluginStatus.READY if is_dependency_available("boto3") else PluginStatus.UNAVAILABLE

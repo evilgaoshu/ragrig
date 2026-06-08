@@ -1,4 +1,4 @@
-"""Unit tests for the Cohere embedding provider."""
+"""Unit tests for the Cohere embedding and reranker providers."""
 
 from __future__ import annotations
 
@@ -9,8 +9,10 @@ import pytest
 from ragrig.providers import ProviderError
 from ragrig.providers.cohere import (
     COHERE_EMBEDDING_METADATA,
+    COHERE_RERANKER_METADATA,
     CohereEmbeddingProvider,
     create_cohere_embedding_provider,
+    create_cohere_reranker_provider,
 )
 
 pytestmark = pytest.mark.unit
@@ -48,6 +50,10 @@ class TestCohereProviderMetadata:
 
     def test_metadata_required_secrets(self) -> None:
         assert "COHERE_API_KEY" in COHERE_EMBEDDING_METADATA.required_secrets
+
+    def test_reranker_metadata_is_configurable_provider(self) -> None:
+        assert COHERE_RERANKER_METADATA.name == "reranker.cohere"
+        assert COHERE_RERANKER_METADATA.config_schema["model_name"]["default"] == "rerank-v4.0-fast"
 
 
 class TestCohereEmbedText:
@@ -168,3 +174,43 @@ class TestCreateCohereProvider:
     def test_factory_default_model_name(self) -> None:
         provider = create_cohere_embedding_provider(api_key="k")
         assert provider.model_name == "embed-v4.0"
+
+
+class TestCohereReranker:
+    def test_rerank_posts_documents_and_maps_relevance_scores(self) -> None:
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "results": [
+                {"index": 1, "relevance_score": 0.91},
+                {"index": 0, "relevance_score": 0.27},
+            ]
+        }
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
+
+        provider = create_cohere_reranker_provider(
+            model_name="rerank-v4.0-fast",
+            api_key="test-key",
+            client=mock_client,
+        )
+        ranked = provider.rerank("needle", ["first document", "second document"])
+
+        call_kwargs = mock_client.post.call_args
+        body = call_kwargs[1].get("json") or call_kwargs.kwargs.get("json", {})
+        assert body == {
+            "model": "rerank-v4.0-fast",
+            "query": "needle",
+            "documents": ["first document", "second document"],
+        }
+        assert ranked == [
+            {"document": "second document", "index": 1, "score": 0.91},
+            {"document": "first document", "index": 0, "score": 0.27},
+        ]
+
+    def test_rerank_raises_on_missing_api_key(self) -> None:
+        provider = create_cohere_reranker_provider()
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(ProviderError, match="COHERE_API_KEY"):
+                provider.rerank("query", ["document"])

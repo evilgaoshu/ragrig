@@ -138,10 +138,11 @@ def test_apply_hybrid_fusion_returns_empty_for_empty_input() -> None:
 
 
 def test_apply_rerank_returns_empty_tuple_for_empty_candidates() -> None:
-    results, degraded, reason = _apply_rerank([], "query")
+    results, degraded, reason, trace = _apply_rerank([], "query")
     assert results == []
     assert degraded is False
     assert reason == ""
+    assert trace == {}
 
 
 def test_apply_rerank_provider_returning_results_covers_success_path() -> None:
@@ -164,13 +165,18 @@ def test_apply_rerank_provider_returning_results_covers_success_path() -> None:
     fake_rr = [RerankResult(candidate=rerank_cand, rerank_score=0.95, new_rank=0)]
 
     with patch("ragrig.retrieval.provider_rerank", return_value=fake_rr):
-        results, degraded, reason = _apply_rerank(
+        results, degraded, reason, trace = _apply_rerank(
             [cand], "hello world", reranker_provider="test-provider"
         )
 
     assert len(results) == 1
     assert results[0].score == 0.95
     assert degraded is False
+    assert reason == ""
+    assert trace["status"] == "applied"
+    assert trace["provider"] == "test-provider"
+    assert trace["candidate_count"] == 1
+    assert trace["after"][0]["rerank_score"] == 0.95
 
 
 # ---------------------------------------------------------------------------

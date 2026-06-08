@@ -1567,6 +1567,14 @@ def test_fake_reranker_changes_candidate_order(tmp_path) -> None:
         )
 
     assert report.total_results == 3
+    assert report.rerank_trace["status"] == "applied"
+    assert report.rerank_trace["provider"] == "fake"
+    assert report.rerank_trace["candidate_count"] == 3
+    assert report.rerank_trace["changed_count"] >= 0
+    assert report.rerank_trace["latency_ms"] >= 0
+    assert report.rerank_trace["before"][0]["rank"] == 1
+    assert report.rerank_trace["after"][0]["rank"] == 1
+    assert report.rerank_trace["after"][0]["original_rank"] >= 1
     # The fake reranker ranks by query token match ratio
     # "apple banana smoothie" has 2/2 tokens matching → highest
     # "apple pie recipe" has 1/2 → lower
@@ -1687,6 +1695,11 @@ def test_reranker_provider_unavailable_degrade(tmp_path) -> None:
 
     assert report.degraded is True
     assert report.degraded_reason != ""
+    assert report.rerank_trace["status"] == "degraded"
+    assert report.rerank_trace["provider"] == "non_existent_reranker"
+    assert report.rerank_trace["candidate_count"] == 1
+    assert report.rerank_trace["changed_count"] == 0
+    assert "unavailable" in report.rerank_trace["degraded_reason"]
     assert report.total_results == 1
     # Trace should show degraded rerank stage
     trace = report.results[0].rank_stage_trace
@@ -1859,6 +1872,11 @@ async def test_retrieval_api_rerank_mode(tmp_path) -> None:
     assert response.status_code == 200
     resp_json = response.json()
     assert len(resp_json["results"]) == 2
+    assert resp_json["rerank_trace"]["status"] == "applied"
+    assert resp_json["rerank_trace"]["provider"] == "fake"
+    assert isinstance(resp_json["rerank_trace"]["latency_ms"], float | int)
+    assert resp_json["rerank_trace"]["before"]
+    assert resp_json["rerank_trace"]["after"]
     for r in resp_json["results"]:
         assert any(s["stage"] == "rerank" for s in r["rank_stage_trace"]["stages"])
 
@@ -1897,6 +1915,9 @@ async def test_retrieval_api_degraded_response(tmp_path) -> None:
     resp_json = response.json()
     assert resp_json.get("degraded") is True
     assert "degraded_reason" in resp_json
+    assert resp_json["rerank_trace"]["status"] == "degraded"
+    assert resp_json["rerank_trace"]["provider"] == "nonexistent_12345"
+    assert resp_json["rerank_trace"]["degraded_reason"] == resp_json["degraded_reason"]
 
 
 @pytest.mark.anyio

@@ -388,6 +388,32 @@ MAINSTREAM_MODEL_PROVIDERS: dict[str, ModelProviderSpec] = {
         list_models_supported=False,
         speed_test_supported=False,
     ),
+    "reranker.jina": ModelProviderSpec(
+        provider="reranker.jina",
+        display_name="Jina Reranker",
+        protocol="jina",
+        official_docs_url="https://jina.ai/reranker/",
+        base_url="https://api.jina.ai/v1",
+        list_models_path="/models",
+        auth_env_vars=("JINA_API_KEY",),
+        list_models_supported=False,
+        speed_test_supported=False,
+        notes=(
+            "Jina reranker model families are published in docs; "
+            "no stable list-model endpoint is exposed."
+        ),
+    ),
+    "reranker.cohere": ModelProviderSpec(
+        provider="reranker.cohere",
+        display_name="Cohere Reranker",
+        protocol="cohere",
+        official_docs_url="https://docs.cohere.com/v2/docs/rerank",
+        base_url="https://api.cohere.ai/v2",
+        list_models_path="",
+        auth_env_vars=("COHERE_API_KEY",),
+        list_models_supported=False,
+        speed_test_supported=False,
+    ),
 }
 
 
