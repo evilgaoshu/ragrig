@@ -53,7 +53,7 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "tests/test_pgvector_postgres_ci.py" in workflow
     assert "RAGRIG_PGVECTOR_TEST_DATABASE_URL" in workflow
     assert "docker build -t ragrig:ci ." in workflow
-    assert "aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8" in workflow
+    assert "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25" in workflow
     assert "image-ref: ragrig:ci" in workflow
     assert "scanners: vuln" in workflow
     assert "vuln-type: os,library" in workflow

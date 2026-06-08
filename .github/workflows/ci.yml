@@ -250,7 +250,7 @@ jobs:
 
       - name: Scan Docker image vulnerabilities
         if: steps.docker_needed.outputs.needed == 'true'
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: ragrig:ci
           scanners: vuln
