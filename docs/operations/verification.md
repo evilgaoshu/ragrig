@@ -91,3 +91,31 @@ contract and Supabase migration boundary.
 Off by default — they need real credentials and incur cost. See
 [optional-services.md](./optional-services.md) for env-var wiring of S3 /
 MinIO, Qdrant, fileshare, and the answer live smoke against a local LLM.
+
+## Advanced parser corpus
+
+The dependency-light check is safe to run without Docling or OCR installed.
+Unavailable adapters are reported as stable `skip` results instead of false
+successes:
+
+```bash
+make advanced-parser-corpus-check
+```
+
+For the layout/table-aware and scanned-PDF path, install the optional Python
+extra and the system Tesseract binary, then run the OCR-enabled corpus command:
+
+```bash
+uv sync --extra doc-parsers-advanced
+# Debian/Ubuntu: sudo apt-get install tesseract-ocr
+uv run python -m scripts.advanced_parser_corpus_check \
+  --ocr \
+  --json-output docs/operations/artifacts/advanced-parser-corpus.json \
+  --markdown-output docs/operations/artifacts/advanced-parser-corpus.md
+```
+
+`doc-parsers-advanced` installs Docling, Pillow, `pypdfium2`, and
+`pytesseract`. MinerU remains a separately managed optional adapter because its
+runtime/model installation varies by deployment. Corpus JSON records parser
+version, page/table/image/chart/formula counts when available, OCR
+enabled/applied/failure state, layout source, and the stable degraded reason.

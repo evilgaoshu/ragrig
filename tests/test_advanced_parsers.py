@@ -128,6 +128,63 @@ def test_docling_adapter_reports_tables_in_docx(tmp_path) -> None:
         assert result.table_count >= 1
 
 
+def test_docling_adapter_exports_markdown_table_and_audit_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    import types
+    from enum import Enum
+
+    import ragrig.parsers.advanced.docling as docling_module
+
+    class FakeConversionStatus(Enum):
+        SUCCESS = "success"
+        PARTIAL_SUCCESS = "partial_success"
+
+    fake_document_module = types.ModuleType("docling.datamodel.document")
+    fake_document_module.ConversionStatus = FakeConversionStatus
+    monkeypatch.setitem(sys.modules, "docling.datamodel.document", fake_document_module)
+
+    fake_doc = types.SimpleNamespace(
+        tables=[object()],
+        pictures=[types.SimpleNamespace(classification="chart")],
+        texts=[types.SimpleNamespace(label="formula")],
+        export_to_markdown=lambda **kwargs: "| Name | Score |\n|---|---|\n| Alice | 95 |",
+    )
+    fake_result = types.SimpleNamespace(
+        status=FakeConversionStatus.SUCCESS,
+        document=fake_doc,
+        pages={1: object(), 2: object()},
+        errors=[],
+    )
+    converter = types.SimpleNamespace(convert=lambda path, raises_on_error: fake_result)
+    monkeypatch.setattr(docling_module, "_document_converter", lambda fmt: converter)
+
+    adapter = DoclingAdapter()
+    monkeypatch.setattr(adapter, "check_dependencies", lambda: True)
+    path = tmp_path / "report.pdf"
+    path.write_bytes(b"%PDF-1.4")
+
+    result = adapter.parse(path)
+
+    assert result.status == ParserStatus.HEALTHY
+    assert "| Name | Score |" in result.extracted_text
+    assert result.table_count == 1
+    assert result.page_or_slide_count == 2
+    assert result.metadata["parser_name"] == "advanced.docling"
+    assert result.metadata["page_count"] == 2
+    assert result.metadata["table_count"] == 1
+    assert result.metadata["image_count"] == 1
+    assert result.metadata["chart_count"] == 1
+    assert result.metadata["formula_count"] == 1
+    assert result.metadata["image_degraded_reason"] == "artifacts_not_persisted"
+    assert result.metadata["chart_degraded_reason"] == "semantic_interpretation_not_supported"
+    assert result.metadata["formula_degraded_reason"] == "semantic_interpretation_not_supported"
+    assert result.metadata["ocr_enabled"] is True
+    assert result.metadata["ocr_applied"] is True
+    assert result.metadata["layout_source"] == "docling"
+
+
 def test_docling_adapter_returns_skip_when_not_installed(monkeypatch) -> None:
     adapter = DoclingAdapter()
     monkeypatch.setattr(adapter, "check_dependencies", lambda: False)
@@ -217,6 +274,166 @@ def test_advanced_parser_bridge_falls_back_when_adapter_skips(tmp_path: Path) ->
     assert result.extracted_text == "fallback text"
     assert result.metadata["advanced_parser"]["fallback_used"] is True
     assert result.metadata["advanced_parser"]["attempts"][0]["parser"] == "advanced.missing"
+
+
+def test_advanced_parser_bridge_degrades_when_adapter_check_raises(tmp_path: Path) -> None:
+    class BrokenAdapter(AdvancedParserAdapter):
+        parser_name = "advanced.broken"
+
+        def can_parse(self, path: Path) -> bool:
+            return True
+
+        def check_dependencies(self) -> bool:
+            raise RuntimeError("dependency probe failed")
+
+        def parse(self, path: Path) -> AdvancedParseResult:
+            raise AssertionError("parse should not run")
+
+    path = tmp_path / "scan.pdf"
+    path.write_bytes(b"%PDF-1.4")
+
+    result = AdvancedParserBridge(
+        adapters=[BrokenAdapter()],
+        fallback_parser=None,
+        ocr_enabled=False,
+    ).parse(path)
+
+    assert result.parser_name == "advanced.none"
+    assert result.metadata["status"] == "degraded"
+    assert result.metadata["degraded_reason"] == "advanced_parser_unavailable"
+    attempt = result.metadata["advanced_parser"]["attempts"][0]
+    assert attempt["parser"] == "advanced.broken"
+    assert attempt["status"] == "failure"
+    assert attempt["degraded_reason"] == "missing_dependency"
+
+
+def test_advanced_parser_bridge_records_ocr_fallback_metadata(tmp_path: Path) -> None:
+    class EmptyAdapter(AdvancedParserAdapter):
+        parser_name = "advanced.empty"
+
+        def can_parse(self, path: Path) -> bool:
+            return True
+
+        def check_dependencies(self) -> bool:
+            return True
+
+        def parse(self, path: Path) -> AdvancedParseResult:
+            return AdvancedParseResult(
+                format="pdf",
+                fixture_id=path.stem,
+                parser=self.parser_name,
+                status=ParserStatus.DEGRADED,
+                degraded_reason="empty_output",
+            )
+
+    class AppliedOcr:
+        enabled = True
+
+        def apply_ocr_fallback(
+            self, path: Path, primary_result: AdvancedParseResult
+        ) -> AdvancedParseResult:
+            return AdvancedParseResult(
+                format="pdf",
+                fixture_id=path.stem,
+                parser=f"{primary_result.parser}+advanced.ocr",
+                status=ParserStatus.DEGRADED,
+                degraded_reason="ocr_fallback",
+                extracted_text="OCR text",
+                text_length=8,
+                page_or_slide_count=1,
+                metadata={
+                    "parser_name": primary_result.parser,
+                    "page_count": 1,
+                    "ocr_enabled": True,
+                    "ocr_applied": True,
+                    "ocr_failure_reason": None,
+                    "layout_aware": False,
+                    "layout_degraded_reason": "ocr_text_only",
+                },
+            )
+
+    path = tmp_path / "scan.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    result = AdvancedParserBridge(
+        adapters=[EmptyAdapter()],
+        fallback_parser=None,
+        ocr_handler=AppliedOcr(),
+    ).parse(path)
+
+    audit = result.metadata["advanced_parser"]
+    assert result.extracted_text == "OCR text"
+    assert audit["ocr_enabled"] is True
+    assert audit["ocr_applied"] is True
+    assert audit["degraded_reason"] == "ocr_fallback"
+    assert audit["attempts"][0]["ocr_applied"] is True
+
+
+def test_advanced_parser_bridge_runs_direct_ocr_after_basic_pdf_fallback_fails(
+    tmp_path: Path,
+) -> None:
+    class MissingAdapter(AdvancedParserAdapter):
+        parser_name = "advanced.missing"
+
+        def can_parse(self, path: Path) -> bool:
+            return True
+
+        def check_dependencies(self) -> bool:
+            return False
+
+        def parse(self, path: Path) -> AdvancedParseResult:
+            raise AssertionError("parse should not run")
+
+    class BrokenPdfFallback:
+        parser_name = "pdf"
+
+        def parse(self, path: Path):
+            raise ValueError("no text layer")
+
+    class DirectOcr:
+        enabled = True
+
+        def apply_ocr_fallback(
+            self, path: Path, primary_result: AdvancedParseResult
+        ) -> AdvancedParseResult:
+            assert primary_result.parser == "advanced.none"
+            return AdvancedParseResult(
+                format="pdf",
+                fixture_id=path.stem,
+                parser="advanced.none+advanced.ocr",
+                status=ParserStatus.DEGRADED,
+                degraded_reason="ocr_fallback",
+                extracted_text="scanned page",
+                text_length=12,
+                page_or_slide_count=1,
+                metadata={
+                    "parser_name": "advanced.none+advanced.ocr",
+                    "page_count": 1,
+                    "ocr_enabled": True,
+                    "ocr_applied": True,
+                    "layout_aware": False,
+                    "layout_degraded_reason": "ocr_text_only",
+                },
+            )
+
+    path = tmp_path / "scan.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    result = AdvancedParserBridge(
+        adapters=[MissingAdapter()],
+        fallback_parser=BrokenPdfFallback(),
+        ocr_handler=DirectOcr(),
+    ).parse(path)
+
+    assert result.extracted_text == "scanned page"
+    assert result.metadata["degraded_reason"] == "ocr_fallback"
+    audit = result.metadata["advanced_parser"]
+    assert audit["fallback_attempted"] is True
+    assert audit["fallback_used"] is False
+    assert audit["ocr_applied"] is True
+    assert [attempt["parser"] for attempt in audit["attempts"]] == [
+        "advanced.missing",
+        "pdf",
+        "advanced.none+advanced.ocr",
+    ]
 
 
 def test_mineru_adapter_parse_returns_failure_when_import_fails(tmp_path, monkeypatch) -> None:
@@ -378,7 +595,9 @@ def test_mineru_adapter_parse_returns_degraded_on_empty_output(
     result = adapter.parse(path)
 
     assert result.status == ParserStatus.DEGRADED
-    assert result.degraded_reason == "empty_output"
+    assert result.degraded_reason == "ocr_empty_output"
+    assert result.metadata["ocr_enabled"] is True
+    assert result.metadata["ocr_applied"] is True
 
 
 def test_unstructured_adapter_check_dependencies_returns_false() -> None:
@@ -616,8 +835,11 @@ def test_ocr_fallback_disabled() -> None:
         text_length=0,
     )
     result = handler.apply_ocr_fallback(Path("test.pdf"), primary)
-    # When OCR is disabled, primary result is returned unchanged
-    assert result is primary
+    assert result.status == ParserStatus.DEGRADED
+    assert result.degraded_reason == "ocr_disabled"
+    assert result.metadata["ocr_enabled"] is False
+    assert result.metadata["ocr_applied"] is False
+    assert result.metadata["ocr_failure_reason"] == "ocr_disabled"
 
 
 def test_ocr_fallback_disabled_with_text() -> None:
@@ -630,10 +852,16 @@ def test_ocr_fallback_disabled_with_text() -> None:
         text_length=100,
     )
     result = handler.apply_ocr_fallback(Path("test.pdf"), primary)
-    assert result is primary
+    assert result.status == ParserStatus.HEALTHY
+    assert result.text_length == 100
+    assert result.metadata["ocr_enabled"] is False
+    assert result.metadata["ocr_applied"] is False
 
 
-def test_ocr_fallback_enabled_missing_deps() -> None:
+def test_ocr_fallback_enabled_missing_deps(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    monkeypatch.setitem(sys.modules, "pytesseract", None)
     handler = OcrFallbackHandler(enabled=True)
     primary = AdvancedParseResult(
         format="pdf",
@@ -644,9 +872,62 @@ def test_ocr_fallback_enabled_missing_deps() -> None:
     )
     result = handler.apply_ocr_fallback(Path("test.pdf"), primary)
     assert result.status == ParserStatus.DEGRADED
-    assert result.degraded_reason == "ocr_fallback"
-    assert result.metadata["ocr_available"] is False
+    assert result.degraded_reason == "ocr_missing_dependency"
+    assert result.metadata["ocr_enabled"] is True
     assert result.metadata["ocr_applied"] is False
+    assert result.metadata["ocr_failure_reason"] == "ocr_missing_dependency"
+
+
+def test_ocr_fallback_executes_tesseract_and_returns_page_marked_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+    import types
+
+    import ragrig.parsers.advanced.ocr as ocr_module
+
+    closed: list[str] = []
+
+    class FakeImage:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def close(self) -> None:
+            closed.append(self.text)
+
+    fake_pytesseract = types.ModuleType("pytesseract")
+    fake_pytesseract.image_to_string = lambda image: image.text
+    fake_pil = types.ModuleType("PIL")
+    fake_pil.Image = object()
+    monkeypatch.setitem(sys.modules, "pytesseract", fake_pytesseract)
+    monkeypatch.setitem(sys.modules, "PIL", fake_pil)
+    monkeypatch.setattr(
+        ocr_module,
+        "_render_images",
+        lambda path, image_module: [FakeImage("Page one"), FakeImage("Page two")],
+    )
+
+    primary = AdvancedParseResult(
+        format="pdf",
+        fixture_id="scan",
+        parser="advanced.fake",
+        status=ParserStatus.DEGRADED,
+        degraded_reason="empty_output",
+    )
+    result = OcrFallbackHandler(enabled=True).apply_ocr_fallback(Path("scan.pdf"), primary)
+
+    assert result.status == ParserStatus.DEGRADED
+    assert result.degraded_reason == "ocr_fallback"
+    assert result.parser == "advanced.fake+advanced.ocr"
+    assert "<!-- page 1; source=ocr -->" in result.extracted_text
+    assert "Page two" in result.extracted_text
+    assert result.page_or_slide_count == 2
+    assert result.metadata["ocr_enabled"] is True
+    assert result.metadata["ocr_applied"] is True
+    assert result.metadata["ocr_failure_reason"] is None
+    assert result.metadata["layout_aware"] is False
+    assert result.metadata["layout_degraded_reason"] == "ocr_text_only"
+    assert closed == ["Page one", "Page two"]
 
 
 def test_ocr_mark_ocr_fallback_already_marked() -> None:
@@ -705,6 +986,24 @@ def test_summary_to_json_contains_expected_fields() -> None:
         assert "table_count" in r
         assert "page_or_slide_count" in r
         assert "degraded_reason" in r
+        assert set(r["metadata"]) >= {
+            "parser_name",
+            "parser_version",
+            "page_count",
+            "table_count",
+            "image_count",
+            "chart_count",
+            "formula_count",
+            "image_degraded_reason",
+            "chart_degraded_reason",
+            "formula_degraded_reason",
+            "ocr_enabled",
+            "ocr_applied",
+            "ocr_failure_reason",
+            "layout_aware",
+            "layout_source",
+            "layout_degraded_reason",
+        }
 
 
 def test_summary_to_markdown_contains_table() -> None:

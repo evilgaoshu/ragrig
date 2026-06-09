@@ -229,6 +229,7 @@ def test_ingest_local_directory_can_use_advanced_parser_with_fallback(
             advanced_parser="docling",
         )
         version = session.scalar(select(DocumentVersion))
+        run_item = session.scalar(select(PipelineRunItem))
 
     assert report.failed_count == 0
     assert version is not None
@@ -236,6 +237,62 @@ def test_ingest_local_directory_can_use_advanced_parser_with_fallback(
     assert version.parser_config_json["plugin_id"] == "parser.docx"
     assert version.metadata_json["advanced_parser"]["fallback_used"] is True
     assert version.metadata_json["advanced_parser"]["attempts"][0]["parser"] == ("advanced.docling")
+    assert run_item is not None
+    assert run_item.metadata_json["advanced_parser"]["fallback_used"] is True
+
+
+def test_ingest_local_directory_auto_parser_records_all_fallback_attempts(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hashlib import sha256
+
+    from ragrig.parsers.advanced.docling import DoclingAdapter
+    from ragrig.parsers.advanced.mineru import MinerUAdapter
+    from ragrig.parsers.base import ParseResult
+    from ragrig.parsers.pdf import PdfParser
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    path = docs / "guide.pdf"
+    fixture = Path(__file__).parent / "fixtures" / "advanced_documents" / "sample.pdf"
+    path.write_bytes(fixture.read_bytes())
+
+    monkeypatch.setattr(DoclingAdapter, "check_dependencies", lambda self: False)
+    monkeypatch.setattr(MinerUAdapter, "check_dependencies", lambda self: False)
+    monkeypatch.setattr(
+        PdfParser,
+        "parse",
+        lambda self, candidate: ParseResult(
+            extracted_text="basic PDF fallback",
+            content_hash=sha256(candidate.read_bytes()).hexdigest(),
+            mime_type="application/pdf",
+            parser_name="pdf",
+            metadata={"parser_id": "parser.pdf", "status": "success"},
+        ),
+    )
+
+    with _create_session() as session:
+        report = ingest_local_directory(
+            session=session,
+            knowledge_base_name="default",
+            root_path=docs,
+            include_patterns=["*.pdf"],
+            advanced_parser="auto",
+        )
+        version = session.scalar(select(DocumentVersion))
+
+    assert report.failed_count == 0
+    assert version is not None
+    audit = version.metadata_json["advanced_parser"]
+    assert audit["strategy"] == "auto"
+    assert audit["fallback_used"] is True
+    assert audit["ocr_enabled"] is True
+    assert audit["ocr_applied"] is False
+    assert [attempt["parser"] for attempt in audit["attempts"]] == [
+        "advanced.docling",
+        "advanced.mineru",
+    ]
+    assert all(attempt["degraded_reason"] == "missing_dependency" for attempt in audit["attempts"])
 
 
 def test_ingest_local_directory_returns_dry_run_report(tmp_path) -> None:

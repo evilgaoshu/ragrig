@@ -18,7 +18,16 @@ class DegradedReason(str, Enum):
     STALE_ARTIFACT = "stale_artifact"
     PARSER_TIMEOUT = "parser_timeout"
     PARSER_ERROR = "parser_error"
+    PARTIAL_SUCCESS = "partial_success"
+    EMPTY_OUTPUT = "empty_output"
     OCR_FALLBACK = "ocr_fallback"
+    OCR_DISABLED = "ocr_disabled"
+    OCR_MISSING_DEPENDENCY = "ocr_missing_dependency"
+    OCR_UNSUPPORTED_FORMAT = "ocr_unsupported_format"
+    OCR_FAILED = "ocr_failed"
+    OCR_EMPTY_OUTPUT = "ocr_empty_output"
+    ADVANCED_PARSER_UNAVAILABLE = "advanced_parser_unavailable"
+    FALLBACK_PARSER_ERROR = "fallback_parser_error"
     UNSUPPORTED_FORMAT = "unsupported_format"
 
 

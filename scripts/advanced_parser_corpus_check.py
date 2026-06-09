@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from ragrig.parsers.advanced import AdvancedParserRunner, ParserStatus
+from ragrig.parsers.advanced.metadata import result_audit_metadata
 from ragrig.parsers.advanced.models import CorpusSummary
 from ragrig.parsers.advanced.runner import _KNOWN_FIXTURES
 
@@ -86,6 +87,7 @@ def _make_json(summary: CorpusSummary) -> str:
                     "table_count": r.table_count,
                     "page_or_slide_count": r.page_or_slide_count,
                     "degraded_reason": r.degraded_reason,
+                    "metadata": result_audit_metadata(r),
                 }
                 for r in summary.results
             ],
