@@ -1,3 +1,11 @@
+from ragrig.knowledge_graph.extractor import (
+    ExtractedClaim,
+    ExtractedEntity,
+    ExtractedRelationship,
+    KnowledgeGraphExtraction,
+    KnowledgeGraphExtractionSource,
+    KnowledgeGraphExtractor,
+)
 from ragrig.knowledge_graph.schema import (
     GraphRetrievalContext,
     KnowledgeGraphBuildRequest,
@@ -19,10 +27,16 @@ from ragrig.knowledge_graph.service import (
 
 __all__ = [
     "DEFAULT_KG_EXTRACTOR_VERSION",
+    "ExtractedClaim",
+    "ExtractedEntity",
+    "ExtractedRelationship",
     "GraphRetrievalContext",
     "KnowledgeGraphBuildRequest",
     "KnowledgeGraphClaimRecord",
     "KnowledgeGraphEntityRecord",
+    "KnowledgeGraphExtraction",
+    "KnowledgeGraphExtractionSource",
+    "KnowledgeGraphExtractor",
     "KnowledgeGraphMentionRecord",
     "KnowledgeGraphNotFoundError",
     "KnowledgeGraphRelationEvidenceRecord",

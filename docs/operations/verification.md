@@ -36,6 +36,7 @@ local-pilot-smoke` runs the API-level Local Pilot smoke.
 | `make reranker-policy-smoke` | Reranker fallback or production policy changes | `uv` | < 1 min | `docs/operations/artifacts/reranker-policy-smoke.json` |
 | `make bge-rerank-smoke` | BGE reranker integration changes | Optional `local-ml` extras | varies | stdout |
 | `make advanced-parser-corpus-check` | Parser quality or fixture changes | `uv`, advanced document fixtures | 1-3 min | `docs/operations/artifacts/advanced-parser-corpus.*` |
+| `make graph-eval-compare` | Graph extraction, retrieval, feedback, or citation changes | `uv`, local SQLite fixtures | 1-3 min | `docs/operations/artifacts/graph-eval-compare.*` |
 | `make database-source-check` | Database source connector changes | `uv`, fixture DB setup | < 1 min | `docs/operations/artifacts/database-source-check.json` |
 | `make cost-latency-check` | Provider cost/latency accounting changes | `uv` | < 1 min | `docs/operations/artifacts/cost-latency-check.json` |
 | `make knowledge-map-check` | Understanding or knowledge-map changes | `uv` | < 1 min | `docs/operations/artifacts/knowledge-map-check.json` |
@@ -119,3 +120,20 @@ uv run python -m scripts.advanced_parser_corpus_check \
 runtime/model installation varies by deployment. Corpus JSON records parser
 version, page/table/image/chart/formula counts when available, OCR
 enabled/applied/failure state, layout source, and the stable degraded reason.
+
+## Graph-RAG evaluation gate
+
+The dependency-light Graph-RAG check seeds a local corpus, indexes it with the
+optional `kg_extract` pipeline stage, compares dense/graph/hybrid-graph modes,
+and writes JSON and Markdown artifacts:
+
+```bash
+make graph-eval-compare
+```
+
+The artifact records the extraction pipeline trace and checks X/Y relationship
+retrieval, cross-document relations, feedback suppression with changed graph
+chunk scores, and citations backed by chunk, document, and document-version
+IDs. The default extractor is deterministic for CI/local use. Future LLM
+extractors implement `KnowledgeGraphExtractor`; no Neo4j or Apache AGE service
+is required.

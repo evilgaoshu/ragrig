@@ -25,6 +25,7 @@ AuditEventType = Literal[
     "resume_start",
     "resume_complete",
     "kg_relation_feedback",
+    "kg_extract",
     "retrieval_preference_update",
     "role_model_config_update",
 ]

@@ -909,6 +909,9 @@ def _merge_graph_results(
     if not graph_results:
         return base_results
     graph_weight = max(0.0, min(graph_weight, 1.0))
+    base_rank_by_chunk = {
+        result.chunk_id: rank for rank, result in enumerate(base_results, start=1)
+    }
     merged_by_chunk: dict[uuid.UUID, RetrievalResult] = {r.chunk_id: r for r in base_results}
     graph_score_by_chunk = {r.chunk_id: r.score for r in graph_results}
 
@@ -923,6 +926,8 @@ def _merge_graph_results(
         stages.append(
             {
                 "stage": "graph_expand",
+                "rank_before": base_rank_by_chunk.get(chunk_id),
+                "score_before": base.score,
                 "base_score": base.score,
                 "score": graph_score,
                 "combined_score": combined,
@@ -945,7 +950,32 @@ def _merge_graph_results(
 
     merged = list(merged_by_chunk.values())
     merged.sort(key=lambda result: (-result.score, result.chunk_index))
-    return merged
+    ranked: list[RetrievalResult] = []
+    for rank_after, result in enumerate(merged, start=1):
+        trace = dict(result.rank_stage_trace)
+        stages = list(trace.get("stages", []))
+        graph_stage_index = next(
+            (
+                index
+                for index in range(len(stages) - 1, -1, -1)
+                if isinstance(stages[index], dict) and stages[index].get("stage") == "graph_expand"
+            ),
+            None,
+        )
+        if graph_stage_index is None:
+            ranked.append(result)
+            continue
+        graph_stage = dict(stages[graph_stage_index])
+        rank_before = graph_stage.get("rank_before", base_rank_by_chunk.get(result.chunk_id))
+        graph_stage["rank_before"] = rank_before
+        graph_stage["rank_after"] = rank_after
+        graph_stage["rank_delta"] = (
+            int(rank_before) - rank_after if isinstance(rank_before, int) else None
+        )
+        graph_stage["score_after"] = result.score
+        stages[graph_stage_index] = graph_stage
+        ranked.append(replace(result, rank_stage_trace={**trace, "stages": stages}))
+    return ranked
 
 
 def _apply_time_decay(
@@ -1542,6 +1572,9 @@ def search_knowledge_base(
                 enforce_acl=enforce_acl,
             )
             graph_context = graph_ctx.model_dump(mode="json")
+            if graph_ctx.degraded:
+                degraded = True
+                degraded_reason = graph_ctx.degraded_reason
             graph_results, graph_acl_report = _fetch_graph_chunk_results(
                 session,
                 knowledge_base_id=knowledge_base.id,
@@ -1578,14 +1611,42 @@ def search_knowledge_base(
                 graph_results,
                 graph_weight=graph_weight,
             )
+            rank_movement = []
+            for result in dense_results:
+                graph_stage = next(
+                    (
+                        stage
+                        for stage in reversed(result.rank_stage_trace.get("stages", []))
+                        if isinstance(stage, dict) and stage.get("stage") == "graph_expand"
+                    ),
+                    None,
+                )
+                if graph_stage is not None:
+                    rank_movement.append(
+                        {
+                            "chunk_id": str(result.chunk_id),
+                            "document_id": str(result.document_id),
+                            "document_version_id": str(result.document_version_id),
+                            "rank_before": graph_stage.get("rank_before"),
+                            "rank_after": graph_stage.get("rank_after"),
+                            "rank_delta": graph_stage.get("rank_delta"),
+                            "score_before": graph_stage.get("score_before"),
+                            "graph_score": graph_stage.get("score"),
+                            "score_after": graph_stage.get("score_after"),
+                        }
+                    )
+            graph_context["rank_movement"] = rank_movement
         except Exception as exc:
             graph_context = {
                 "degraded": True,
-                "degraded_reason": f"graph retrieval unavailable: {exc}",
+                "degraded_reason": "graph_unavailable",
                 "matched_entities": [],
+                "matched_relationships": [],
                 "expanded_entities": [],
                 "relation_paths": [],
                 "chunk_scores": {},
+                "rank_movement": [],
+                "diagnostics": {"exception_type": type(exc).__name__},
             }
             degraded = True
             degraded_reason = graph_context["degraded_reason"]
@@ -1645,8 +1706,9 @@ def search_knowledge_base(
                 )
             )
             dense_results = reranked
-            degraded = rerank_degraded
-            degraded_reason = rerank_reason
+            if rerank_degraded:
+                degraded = True
+                degraded_reason = rerank_reason
 
     # ── Enrich with acl_explain ──────────────────────────────
     dense_results = _enrich_with_acl_explain(dense_results, principal_ids, enforce_acl)

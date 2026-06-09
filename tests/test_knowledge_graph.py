@@ -12,10 +12,24 @@ from sqlalchemy.pool import StaticPool
 
 from ragrig.answer.service import generate_answer
 from ragrig.config import Settings
-from ragrig.db.models import Base, Chunk, KnowledgeGraphRelation, Workspace
+from ragrig.db.models import (
+    AuditEvent,
+    Base,
+    Chunk,
+    KnowledgeGraphRelation,
+    PipelineRun,
+    Workspace,
+)
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
-from ragrig.knowledge_graph import get_knowledge_graph, rebuild_knowledge_graph
+from ragrig.knowledge_graph import (
+    ExtractedClaim,
+    ExtractedEntity,
+    ExtractedRelationship,
+    KnowledgeGraphExtraction,
+    get_knowledge_graph,
+    rebuild_knowledge_graph,
+)
 from ragrig.main import create_app
 from ragrig.repositories import (
     get_knowledge_base_by_name,
@@ -45,7 +59,13 @@ def _seed_docs(tmp_path: Path) -> Path:
     return docs
 
 
-def _index_fixture_kb(session: Session, tmp_path: Path, *, kb_name: str = "kg-fixture") -> str:
+def _index_fixture_kb(
+    session: Session,
+    tmp_path: Path,
+    *,
+    kb_name: str = "kg-fixture",
+    kg_extract: bool = False,
+) -> str:
     ingest_local_directory(
         session=session,
         knowledge_base_name=kb_name,
@@ -55,6 +75,7 @@ def _index_fixture_kb(session: Session, tmp_path: Path, *, kb_name: str = "kg-fi
         session=session,
         knowledge_base_name=kb_name,
         chunk_size=1000,
+        kg_extract=kg_extract,
     )
     kb = get_knowledge_base_by_name(session, kb_name)
     assert kb is not None
@@ -99,6 +120,84 @@ def test_rebuild_knowledge_graph_persists_source_backed_kg_lite(
     assert reloaded.stats.entity_count == graph.stats.entity_count
 
 
+def test_index_pipeline_optional_kg_stage_records_trace_and_audit(
+    sqlite_session: Session, tmp_path: Path
+) -> None:
+    kb_id = _index_fixture_kb(sqlite_session, tmp_path, kg_extract=True)
+
+    graph = get_knowledge_graph(sqlite_session, kb_id)
+    run = sqlite_session.scalars(
+        select(PipelineRun).where(PipelineRun.run_type == "chunk_embedding")
+    ).one()
+    audit = sqlite_session.scalars(
+        select(AuditEvent).where(AuditEvent.event_type == "kg_extract")
+    ).one()
+
+    assert run is not None
+    assert run.config_snapshot_json["stages"] == ["chunk", "embed", "index", "kg_extract"]
+    assert run.config_snapshot_json["kg_extract_result"]["status"] == "completed"
+    assert graph.trace["pipeline_run_id"] == str(run.id)
+    assert graph.trace["source_document_version_count"] == 2
+    assert graph.trace["source_document_version_fingerprint"]
+    assert audit.run_id == run.id
+
+
+def test_provider_extractor_contract_persists_source_backed_outputs(
+    sqlite_session: Session, tmp_path: Path
+) -> None:
+    kb_id = _index_fixture_kb(sqlite_session, tmp_path)
+
+    class FixtureExtractor:
+        name = "fixture-provider"
+        version = "fixture-v1"
+
+        def extract(self, sources):
+            source = sources[0]
+            return KnowledgeGraphExtraction(
+                entities=[
+                    ExtractedEntity(name="AlphaProject", source_chunk_id=source.chunk_id),
+                    ExtractedEntity(name="BillingPolicy", source_chunk_id=source.chunk_id),
+                ],
+                relationships=[
+                    ExtractedRelationship(
+                        subject="BillingPolicy",
+                        predicate="depends_on",
+                        object="AlphaProject",
+                        source_chunk_id=source.chunk_id,
+                        claim="BillingPolicy depends on AlphaProject",
+                        confidence=0.9,
+                    )
+                ],
+                claims=[
+                    ExtractedClaim(
+                        text="BillingPolicy depends on AlphaProject.",
+                        source_chunk_id=source.chunk_id,
+                        confidence=0.9,
+                    )
+                ],
+                metadata={"provider": "fixture"},
+            )
+
+    graph = rebuild_knowledge_graph(sqlite_session, kb_id, extractor=FixtureExtractor())
+
+    assert graph.trace["extractor_name"] == "fixture-provider"
+    assert graph.trace["extractor_version"] == "fixture-v1"
+    assert graph.relations[0].predicate == "depends_on"
+    assert graph.relations[0].evidence[0].chunk_id
+    assert graph.relations[0].evidence[0].document_version_id
+    assert graph.claims[0].source_chunk_id
+
+    relationship_only = search_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-fixture",
+        query="What depends on something else?",
+        top_k=3,
+        mode="graph",
+    )
+    assert relationship_only.graph_context["matched_entities"] == []
+    assert relationship_only.graph_context["matched_relationships"][0]["match_type"] == "predicate"
+
+
 def test_graph_retrieval_mode_expands_entity_evidence(
     sqlite_session: Session, tmp_path: Path
 ) -> None:
@@ -115,11 +214,20 @@ def test_graph_retrieval_mode_expands_entity_evidence(
 
     assert report.total_results >= 1
     assert report.graph_context["matched_entities"]
+    assert report.graph_context["matched_relationships"]
     assert report.graph_context["chunk_scores"]
     assert any(
         path["matched_endpoint_count"] == 2 and path["evidence_score"] >= 0.8
         for path in report.graph_context["relation_paths"]
     )
+    assert all(
+        relationship["evidence"][0]["chunk_id"]
+        and relationship["evidence"][0]["document_id"]
+        and relationship["evidence"][0]["document_version_id"]
+        for relationship in report.graph_context["matched_relationships"]
+    )
+    assert report.graph_context["rank_movement"]
+    assert all("rank_after" in movement for movement in report.graph_context["rank_movement"])
     assert any(
         stage["stage"] == "graph_expand"
         for result in report.results
@@ -183,6 +291,7 @@ def test_graph_retrieval_suppresses_incorrect_relation_feedback(
     assert after.graph_context["relation_paths"] == []
     assert after.graph_context["diagnostics"]["relation_feedback_aware"] is True
     assert after.graph_context["diagnostics"]["suppressed_relation_count"] >= 1
+    assert before.graph_context["chunk_scores"] != after.graph_context["chunk_scores"]
 
 
 def test_graph_retrieval_context_filters_protected_acl_evidence(
@@ -210,6 +319,7 @@ def test_graph_retrieval_context_filters_protected_acl_evidence(
     )
 
     assert blocked.total_results == 0
+    assert blocked.degraded_reason == "graph_acl_no_evidence"
     assert blocked.graph_context.get("matched_entities") in (None, [])
     assert blocked.graph_context.get("chunk_scores") in (None, {})
 
@@ -228,6 +338,90 @@ def test_graph_retrieval_context_filters_protected_acl_evidence(
     assert allowed.graph_context["chunk_scores"]
     visible_chunk_ids = {str(result.chunk_id) for result in allowed.results}
     assert set(allowed.graph_context["chunk_scores"]).issubset(visible_chunk_ids)
+
+
+def test_graph_modes_use_stable_no_data_and_stale_degraded_reasons(
+    sqlite_session: Session, tmp_path: Path
+) -> None:
+    kb_id = _index_fixture_kb(sqlite_session, tmp_path)
+
+    no_graph = search_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-fixture",
+        query="BillingPolicy AlphaProject relationship",
+        top_k=3,
+        mode="graph",
+    )
+    assert no_graph.total_results >= 1
+    assert no_graph.degraded_reason == "graph_no_data"
+
+    rebuild_knowledge_graph(sqlite_session, kb_id)
+    no_match = search_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-fixture",
+        query="zzzz_unrelated_token",
+        top_k=3,
+        mode="graph",
+    )
+    assert no_match.total_results >= 1
+    assert no_match.degraded_reason == "graph_no_match"
+
+    index_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-fixture",
+        chunk_size=1000,
+        force_reindex=True,
+    )
+
+    stale = search_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-fixture",
+        query="BillingPolicy AlphaProject relationship",
+        top_k=3,
+        mode="graph",
+    )
+    assert stale.total_results >= 1
+    assert stale.degraded_reason == "graph_stale"
+
+
+def test_index_pipeline_kg_extraction_failure_is_auditable_and_does_not_break_dense(
+    sqlite_session: Session, tmp_path: Path
+) -> None:
+    ingest_local_directory(
+        session=sqlite_session,
+        knowledge_base_name="kg-failure",
+        root_path=_seed_docs(tmp_path),
+    )
+
+    class FailingExtractor:
+        name = "failing-provider"
+        version = "failing-v1"
+
+        def extract(self, _sources):
+            raise RuntimeError("provider unavailable")
+
+    report = index_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-failure",
+        chunk_size=1000,
+        kg_extract=True,
+        kg_extractor=FailingExtractor(),
+    )
+    graph_report = search_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-failure",
+        query="BillingPolicy",
+        top_k=3,
+        mode="graph",
+    )
+
+    assert report.kg_extract_status == "failed"
+    assert report.kg_extract_trace["degraded_reason"] == "graph_extraction_failed"
+    assert graph_report.total_results >= 1
+    assert graph_report.degraded_reason == "graph_extraction_failed"
+    assert sqlite_session.scalars(
+        select(AuditEvent).where(AuditEvent.event_type == "kg_extract")
+    ).one()
 
 
 def test_answer_trace_includes_rank_and_graph_explainability(

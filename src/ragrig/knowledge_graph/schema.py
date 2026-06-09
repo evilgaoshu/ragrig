@@ -96,13 +96,16 @@ class KnowledgeGraphResult(BaseModel):
     relations: list[KnowledgeGraphRelationRecord] = Field(default_factory=list)
     claims: list[KnowledgeGraphClaimRecord] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+    trace: dict[str, Any] = Field(default_factory=dict)
 
 
 class GraphRetrievalContext(BaseModel):
     matched_entities: list[dict[str, Any]] = Field(default_factory=list)
+    matched_relationships: list[dict[str, Any]] = Field(default_factory=list)
     expanded_entities: list[dict[str, Any]] = Field(default_factory=list)
     relation_paths: list[dict[str, Any]] = Field(default_factory=list)
     chunk_scores: dict[str, float] = Field(default_factory=dict)
+    rank_movement: list[dict[str, Any]] = Field(default_factory=list)
     diagnostics: dict[str, Any] = Field(default_factory=dict)
     degraded: bool = False
     degraded_reason: str = ""

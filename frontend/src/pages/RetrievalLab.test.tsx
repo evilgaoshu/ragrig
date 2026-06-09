@@ -162,4 +162,54 @@ describe('RetrievalLab reranker controls', () => {
     expect(within(afterPanel).getByText('new-top.md')).toBeInTheDocument()
     expect(within(afterPanel).getByText('was #2')).toBeInTheDocument()
   })
+
+  it('renders entity-level, relationship-level, suppression, and graph rank movement data', async () => {
+    fetchMock().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path === '/knowledge-bases') return Promise.resolve(response({ items: [kb] }))
+      if (path === '/knowledge-bases/kb-1/retrieval-preferences') {
+        return Promise.resolve(response({ knowledge_base_id: 'kb-1', knowledge_base: kb.name, preferences }))
+      }
+      if (path === '/retrieval/search' && init?.method === 'POST') {
+        return Promise.resolve(response({
+          ...rerankReport,
+          graph_context: {
+            matched_entities: [{ display_name: 'AlphaProject' }],
+            matched_relationships: [{
+              relation_id: 'relation-1',
+              subject: 'BillingPolicy',
+              predicate: 'depends_on',
+              object: 'AlphaProject',
+            }],
+            relation_paths: [],
+            rank_movement: [{
+              chunk_id: 'chunk-2',
+              rank_before: 2,
+              rank_after: 1,
+            }],
+            diagnostics: {
+              suppressed_relation_count: 1,
+              suppressed_relations: [{
+                relation_id: 'relation-2',
+                subject: 'LegacyPolicy',
+                predicate: 'references',
+                object: 'AlphaProject',
+                reason: 'relation marked incorrect',
+              }],
+            },
+          },
+        }))
+      }
+      return Promise.resolve(response({ detail: `unexpected ${path}` }, 404))
+    })
+
+    renderRetrievalLab()
+    await waitFor(() => expect(screen.getByLabelText('Knowledge base')).toHaveValue('kb-1'))
+    await userEvent.click(screen.getByRole('button', { name: 'Search' }))
+
+    await waitFor(() => expect(screen.getByText('Matched relationships')).toBeInTheDocument())
+    expect(screen.getByText('BillingPolicy - depends_on - AlphaProject')).toBeInTheDocument()
+    expect(screen.getByText(/LegacyPolicy - references - AlphaProject/)).toBeInTheDocument()
+    expect(screen.getByText('chunk-2: #2 to #1')).toBeInTheDocument()
+  })
 })

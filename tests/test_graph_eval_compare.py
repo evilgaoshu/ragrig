@@ -61,7 +61,11 @@ def test_graph_retrieval_eval_compare_workflow(tmp_path: Path) -> None:
     assert report["quality_gate"]["status"] in {"pass", "warn"}
     assert report["quality_gate"]["mode_results"][0]["mode"] == "graph"
     assert report["knowledge_graph"]["stats"]["entity_count"] >= 2
+    assert report["knowledge_graph"]["trace"]["pipeline_run_id"]
+    assert report["contract_gate"]["status"] == "pass"
+    assert all(report["contract_gate"]["checks"].values())
     assert "markdown_summary" in report
     assert "Graph Value Summary" in report["markdown_summary"]
     assert "Question-Level Movement" in report["markdown_summary"]
     assert "Graph-Focused Per-Tag Delta" in report["markdown_summary"]
+    assert "Graph-RAG Contract Gate" in report["markdown_summary"]

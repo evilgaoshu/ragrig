@@ -1,4 +1,4 @@
-# RAGRig KG-lite and Graph-aware Retrieval Spec
+# RAGRig Graph-RAG P0 Spec
 
 ## Scope
 
@@ -7,6 +7,8 @@ This spec covers the first production path for source-backed graph retrieval:
 - P0: demo stability, answer citation trust, explainable retrieval traces, and a golden demo gate.
 - P1: persistent KG-lite entities, mentions, relations, relation evidence, and claims.
 - P2: graph-aware retrieval modes that augment dense/hybrid/rerank retrieval without replacing them.
+- P0 Graph-RAG: optional `kg_extract` indexing stage, provider seam, entity-level and
+  relationship-level retrieval, stable degradation codes, and an auditable eval gate.
 
 ## Non-goals
 
@@ -14,6 +16,8 @@ This spec covers the first production path for source-backed graph retrieval:
 - KG facts are not treated as final answer evidence by themselves.
 - Graph extraction is intentionally conservative and can run deterministically for local/CI use.
 - Native Neo4j, community detection, and LLM entity-resolution workflows are later GraphRAG phases.
+- Apache AGE may be added behind an adapter later; it is not required and cannot replace
+  the Postgres source-of-truth or chunk/document citation contract.
 
 ## Data Model
 
@@ -27,6 +31,24 @@ KG-lite uses these persisted tables:
 
 Every relation and claim must resolve back to a source chunk. Graph answers must still cite chunks,
 not graph rows alone.
+
+## Extraction Pipeline
+
+`index_knowledge_base(..., kg_extract=True)` runs the optional sequence:
+
+`chunk -> embed -> index -> optional kg_extract`
+
+The extraction stage uses the same `PipelineRun` as indexing. Its configuration and result are
+stored in `PipelineRun.config_snapshot_json`; every persisted graph row receives the trace ID,
+pipeline run ID, extractor name/version, and profile ID in metadata. A `kg_extract` audit event
+records successful or failed extraction without storing chunk text.
+The KB build trace stores source document-version and chunk-ID fingerprints so a same-version force
+reindex is reported as `graph_stale` instead of silently using incomplete graph evidence.
+
+The default path is deterministic and understanding-aware for CI/local use.
+`KnowledgeGraphExtractor` is the provider seam for future LLM extractors. Provider output must
+include source-backed entities, relationships, and claims with confidence and metadata. Output
+whose source chunk is not in the current indexed corpus is ignored.
 
 ## API
 
@@ -69,7 +91,24 @@ Graph-aware retrieval performs:
 5. ACL filtering before graph-expanded chunks reach reranking or answer generation.
 6. Score fusion with a configurable `graph_weight`.
 
-If KG-lite rows are missing, graph modes degrade without breaking dense retrieval.
+`graph_context` separates:
+
+- `matched_entities`: entity/alias-level matches.
+- `matched_relationships`: relation-level matches with chunk, document, and document-version
+  evidence.
+- `relation_paths`: explainable path expansion and feedback weighting.
+- `chunk_scores`: graph evidence score by chunk.
+- `rank_movement`: before/after rank and score changes caused by graph expansion.
+
+If graph evidence is unavailable, graph modes degrade without breaking dense/hybrid retrieval.
+Stable reason codes are:
+
+- `graph_no_data`
+- `graph_stale`
+- `graph_extraction_failed`
+- `graph_acl_no_evidence`
+- `graph_no_match`
+- `graph_unavailable`
 
 Relation paths in `retrieval_trace.graph_context` include predicate weight,
 feedback weight, feedback summary, evidence score, and diagnostics describing
@@ -90,6 +129,9 @@ The fixture `tests/fixtures/evaluation_golden_demo_graph.yaml` covers:
 - cross-document multi-hop questions
 - global synthesis
 - conflict-sensitive credential behavior
+- X/Y relationship questions and cross-document relationships
+- relation feedback suppression and graph score changes
+- chunk/document-backed citation contracts
 
 These categories should remain represented before an external demo.
 
@@ -98,6 +140,7 @@ These categories should remain represented before an external demo.
 Required checks for this feature:
 
 - KG-lite model/API tests: `tests/test_knowledge_graph.py`
+- Graph-RAG eval gate and artifact: `make graph-eval-compare`
 - Golden fixture validation: `tests/test_evaluation_golden_fixtures.py`
 - Retrieval and answer regressions: `tests/test_retrieval.py`, `tests/test_answer.py`
 - Knowledge map regression: `tests/test_knowledge_map.py`
