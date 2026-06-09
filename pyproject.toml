@@ -69,7 +69,10 @@ doc-parsers = [
   "pypdf>=6.10.2,<7.0.0",
 ]
 doc-parsers-advanced = [
-  "docling>=2.0.0,<3.0.0",
+  "docling>=2.81.0,<3.0.0",
+  "pillow>=10.0.0,<13.0.0",
+  "pypdfium2>=4.30.0,<6.0.0",
+  "pytesseract>=0.3.13,<1.0.0",
 ]
 local-ml = [
   "FlagEmbedding>=1.3.5,<2.0.0",

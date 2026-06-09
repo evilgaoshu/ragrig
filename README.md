@@ -81,7 +81,11 @@ For a step-by-step version with development paths, see
 ## What's in the box
 
 ### Ingest & retrieve
-- Local files, Markdown / TXT, S3-compatible object storage, PDF / DOCX (text-layer).
+- Local files, Markdown / TXT, S3-compatible object storage, and PDF / DOCX text-layer
+  parsing by default.
+- Optional `doc-parsers-advanced` support, with ingestion configured for
+  `advanced_parser=auto` or `docling`, adds Docling layout/table-aware parsing and local
+  OCR fallback for scanned PDFs; OCR also requires the system Tesseract binary.
 - Parse → clean → chunk → embed → index → retrieve → rerank, each step inspectable in the console.
 - pgvector by default, Qdrant as an optional backend (same retrieval contract).
 - BGE / Ollama / LM Studio / OpenAI-compatible embedders side-by-side with OpenAI / OpenRouter / Gemini.
@@ -295,7 +299,7 @@ flowchart LR
 | Vector backend | pgvector | Qdrant |
 | Local models | Ollama, LM Studio, OpenAI-compatible endpoints | vLLM, llama.cpp, Xinference, LocalAI |
 | Cloud models | OpenAI, OpenRouter, Gemini | Vertex AI, Bedrock, Azure OpenAI, Anthropic catalog |
-| Inputs | local files, Markdown / TXT, S3-compatible | PDF / DOCX upload, URLs, enterprise connectors |
+| Inputs | local files, Markdown / TXT, text-layer PDF / DOCX, S3-compatible | scanned/layout-aware PDF and structured Office parsing via `doc-parsers-advanced`; URLs and enterprise connectors |
 | Quality | pytest, coverage, contract tests | opt-in live provider smoke |
 
 ## Documentation

@@ -60,7 +60,15 @@ class AdvancedParserAdapter(ABC):
 | page_or_slide_count | int | Number of pages or slides |
 | degraded_reason | str or null | Why status is not healthy |
 | extracted_text | str | Full extracted text content |
-| metadata | dict | Adapter-specific metadata |
+| metadata | dict | Stable audit metadata plus adapter-specific metadata |
+
+Every available adapter result records `parser_name`, `parser_version`,
+`page_count`, `table_count`, `image_count`, `chart_count`, `formula_count`,
+the corresponding image/chart/formula degraded reasons, `ocr_enabled`,
+`ocr_applied`, `ocr_failure_reason`, `layout_aware`, `layout_source`, and
+`layout_degraded_reason`. Counts that the adapter cannot derive are recorded as
+`0`; unsupported/degraded capabilities are explicit rather than silently
+omitted.
 
 ### 4.2 ParserStatus Enum
 
@@ -79,17 +87,32 @@ class AdvancedParserAdapter(ABC):
 | parser_timeout | Parser exceeded execution time limit |
 | parser_error | Parser raised an unexpected exception |
 | ocr_fallback | Primary parser returned empty text, OCR attempted |
+| ocr_disabled | Empty output needed OCR, but OCR was disabled |
+| ocr_missing_dependency | Pillow, pypdfium2, or pytesseract was unavailable |
+| ocr_unsupported_format | Local OCR fallback does not support the input format |
+| ocr_failed | PDF rendering or the Tesseract invocation failed |
+| ocr_empty_output | OCR executed but returned no text |
+| advanced_parser_unavailable | No configured advanced adapter could run |
+| fallback_parser_error | The basic fallback parser also failed |
 | unsupported_format | No adapter registered for this file format |
 
 ## 5. OCR Fallback
 
-The `OcrFallbackHandler` manages OCR orchestration:
+The `OcrFallbackHandler` manages a real local OCR fallback:
 
-1. If OCR is **disabled** and primary parser returns empty text, result is marked `degraded` with reason `ocr_fallback` and metadata `ocr_available=False`
-2. If OCR is **enabled** but `pytesseract`/`Pillow` are not installed, result is marked `degraded` with `ocr_available=False`
-3. If OCR is **enabled** and dependencies present, OCR is applied and result is marked `degraded` with `ocr_applied=True`
+1. Docling runs PDF OCR and table/layout analysis in its configured native
+   pipeline. MinerU retries an empty text-mode PDF with its native OCR mode.
+2. If a healthy/degraded primary adapter still returns empty PDF output, or all
+   advanced adapters and the basic PDF parser fail, `pypdfium2` renders each
+   page and Tesseract extracts page-marked text when OCR fallback is enabled.
+3. Missing Python dependencies, a missing system Tesseract binary, rendering
+   failures, and empty OCR output produce stable degraded reasons and audit
+   metadata.
+4. Tesseract fallback is text-only, so `layout_aware=False` and
+   `layout_degraded_reason=ocr_text_only` are recorded.
 
-No real cloud OCR is performed. OCR invocation is a best-effort pass only.
+No cloud OCR is performed. Formula interpretation, chart semantics, and image
+artifact persistence remain outside this P0 slice.
 
 ## 6. Artifact Schema
 
@@ -180,7 +203,7 @@ python -m scripts.advanced_parser_corpus_check \
 | Adapter | Parser Name | Library | Status |
 |---------|-------------|---------|--------|
 | DoclingAdapter | advanced.docling | docling | optional real adapter |
-| MinerUAdapter | advanced.mineru | magic_pdf | optional real adapter |
+| MinerUAdapter | advanced.mineru | magic_pdf | optional PDF adapter; separately installed |
 | UnstructuredAdapter | advanced.unstructured | unstructured | stub |
 
 Each adapter:
@@ -193,7 +216,8 @@ Each adapter:
 
 ## 11. Out of Scope
 
-- Real cloud OCR (Google Vision, AWS Textract, Azure AI)
+- Cloud OCR (Google Vision, AWS Textract, Azure AI)
+- Semantic interpretation of formulas, charts, and images
 - Large binary fixtures (>100 KB)
 - Heavyweight parser library installation in default CI
 - Changes to existing Markdown/Text ingestion main path

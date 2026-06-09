@@ -290,6 +290,13 @@ def ingest_local_directory(
                     metadata_json={
                         "file_name": candidate.path.name,
                         "version_number": version.version_number,
+                        "parser_name": parse_result.parser_name,
+                        "parser_id": parse_result.metadata.get("parser_id"),
+                        **(
+                            {"advanced_parser": parse_result.metadata["advanced_parser"]}
+                            if "advanced_parser" in parse_result.metadata
+                            else {}
+                        ),
                     },
                 )
                 log_event(

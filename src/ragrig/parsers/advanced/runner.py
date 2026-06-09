@@ -8,6 +8,11 @@ from typing import Any
 
 from ragrig.parsers.advanced.adapter import AdvancedParserAdapter
 from ragrig.parsers.advanced.docling import DoclingAdapter
+from ragrig.parsers.advanced.metadata import (
+    capability_metadata,
+    package_version,
+    result_audit_metadata,
+)
 from ragrig.parsers.advanced.mineru import MinerUAdapter
 from ragrig.parsers.advanced.models import (
     AdvancedParseResult,
@@ -27,26 +32,6 @@ _KNOWN_FIXTURES: list[dict[str, str]] = [
     {"fixture_id": "sample", "format": "pptx", "filename": "sample.pptx"},
     {"fixture_id": "sample", "format": "xlsx", "filename": "sample.xlsx"},
 ]
-
-
-def _sanitize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    safe: dict[str, Any] = {}
-    for key, value in metadata.items():
-        if isinstance(value, str) and key != "text_summary":
-            safe[key] = value
-        elif isinstance(value, str) and key == "text_summary":
-            safe[key], _ = sanitize_text_summary(value)
-        elif isinstance(value, list):
-            safe[key] = [v for v in value if not isinstance(v, str) or not _is_secret_like(v)]
-        else:
-            safe[key] = value
-    return safe
-
-
-def _is_secret_like(text: str) -> bool:
-    lowered = text.lower()
-    triggers = ["api_key", "password", "secret", "token", "credential", "sk-", "ghp_", "bearer "]
-    return any(t in lowered for t in triggers)
 
 
 class AdvancedParserRunner:
@@ -98,6 +83,7 @@ class AdvancedParserRunner:
             statuses.append(
                 {
                     "parser": adapter.parser_name,
+                    "parser_version": _adapter_version(adapter.parser_name),
                     "available": available,
                     "supported_extensions": sorted(
                         str(ext)
@@ -203,35 +189,73 @@ class AdvancedParserRunner:
             )
 
         errors: list[str] = []
+        missing_dependencies: list[AdvancedParserAdapter] = []
+        best_degraded: AdvancedParseResult | None = None
+        best_skip: AdvancedParseResult | None = None
         for adapter in matched_adapters:
-            if not adapter.check_dependencies():
+            try:
+                dependency_ready = adapter.check_dependencies()
+            except Exception as exc:
+                errors.append(f"{adapter.parser_name}: dependency check failed: {exc}")
+                continue
+            if not dependency_ready:
+                missing_dependencies.append(adapter)
                 continue
             try:
                 result = adapter.parse(path)
                 sanitized = self._sanitize_result(result)
                 ocr_result = self._ocr.apply_ocr_fallback(path, sanitized)
-                return ocr_result
+                sanitized_ocr_result = self._sanitize_result(ocr_result)
+                if sanitized_ocr_result.status in {ParserStatus.HEALTHY, ParserStatus.DEGRADED}:
+                    if sanitized_ocr_result.extracted_text.strip():
+                        return sanitized_ocr_result
+                    best_degraded = sanitized_ocr_result
+                    continue
+                if sanitized_ocr_result.status == ParserStatus.SKIP:
+                    best_skip = sanitized_ocr_result
+                    continue
+                errors.append(
+                    f"{adapter.parser_name}: "
+                    f"{sanitized_ocr_result.degraded_reason or sanitized_ocr_result.status.value}"
+                )
             except Exception as exc:
                 errors.append(f"{adapter.parser_name}: {exc}")
                 continue
 
-        for adapter in matched_adapters:
-            if not adapter.check_dependencies():
-                return AdvancedParseResult(
-                    format=ext.lstrip("."),
-                    fixture_id=path.stem,
-                    parser=adapter.parser_name,
-                    status=ParserStatus.SKIP,
-                    degraded_reason=DegradedReason.MISSING_DEPENDENCY.value,
-                    metadata={"library": adapter.parser_name, "available": False},
-                )
+        if best_degraded is not None:
+            return best_degraded
+        if best_skip is not None and not errors:
+            return best_skip
+        if missing_dependencies and not errors:
+            adapter = missing_dependencies[0]
+            return AdvancedParseResult(
+                format=ext.lstrip("."),
+                fixture_id=path.stem,
+                parser=adapter.parser_name,
+                status=ParserStatus.SKIP,
+                degraded_reason=DegradedReason.MISSING_DEPENDENCY.value,
+                metadata=capability_metadata(
+                    parser_name=adapter.parser_name,
+                    parser_version=_adapter_version(adapter.parser_name),
+                    ocr_enabled=self._ocr.enabled,
+                    library=adapter.parser_name,
+                    available=False,
+                ),
+            )
         return AdvancedParseResult(
             format=ext.lstrip("."),
             fixture_id=path.stem,
             parser="|".join(a.parser_name for a in matched_adapters),
             status=ParserStatus.FAILURE,
             degraded_reason=DegradedReason.PARSER_ERROR.value,
-            metadata={"errors": errors},
+            metadata=capability_metadata(
+                parser_name="|".join(a.parser_name for a in matched_adapters),
+                parser_version=None,
+                ocr_enabled=self._ocr.enabled,
+                ocr_failure_reason=DegradedReason.PARSER_ERROR.value,
+                layout_degraded_reason=DegradedReason.PARSER_ERROR.value,
+                errors=errors,
+            ),
         )
 
     def _sanitize_result(self, result: AdvancedParseResult) -> AdvancedParseResult:
@@ -313,6 +337,7 @@ class AdvancedParserRunner:
                     "table_count": r.table_count,
                     "page_or_slide_count": r.page_or_slide_count,
                     "degraded_reason": r.degraded_reason,
+                    "metadata": result_audit_metadata(r),
                 }
                 for r in summary.results
             ],
@@ -357,3 +382,12 @@ class AdvancedParserRunner:
             )
         lines.append("")
         return "\n".join(lines)
+
+
+def _adapter_version(parser_name: str) -> str | None:
+    distributions = {
+        "advanced.docling": ("docling",),
+        "advanced.mineru": ("magic-pdf", "mineru"),
+        "advanced.unstructured": ("unstructured",),
+    }
+    return package_version(*distributions.get(parser_name, (parser_name,)))
