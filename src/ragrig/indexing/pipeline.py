@@ -16,7 +16,14 @@ from ragrig.chunking_overrides import (
     override_drafts,
     override_revision,
 )
-from ragrig.db.models import Chunk, Document, DocumentSummary, DocumentVersion, Embedding
+from ragrig.db.models import (
+    Chunk,
+    Document,
+    DocumentSummary,
+    DocumentVersion,
+    Embedding,
+    PipelineRun,
+)
 from ragrig.embeddings import EmbeddingResult
 from ragrig.indexing.conflict_detection import find_conflicting_chunk, record_conflict
 from ragrig.indexing.llm_steps import (
@@ -40,6 +47,7 @@ from ragrig.plugins import get_plugin_registry
 from ragrig.processing_profile import ProcessingProfile, TaskType, resolve_profile
 from ragrig.providers import BaseProvider, get_provider_registry
 from ragrig.repositories import (
+    create_audit_event,
     create_pipeline_run,
     create_pipeline_run_item,
     get_knowledge_base_by_name,
@@ -49,7 +57,7 @@ from ragrig.vectorstore import build_vector_collection
 from ragrig.vectorstore.base import VectorBackend, VectorEmbeddingRecord
 
 if TYPE_CHECKING:
-    pass
+    from ragrig.knowledge_graph import KnowledgeGraphExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +94,8 @@ class IndexingReport:
     failed_count: int
     chunk_count: int
     embedding_count: int
+    kg_extract_status: str = "disabled"
+    kg_extract_trace: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -562,6 +572,10 @@ def index_knowledge_base(
     force_reindex: bool = False,
     pii_redaction: bool = False,
     workspace_id: object = None,
+    kg_extract: bool = False,
+    kg_extractor: "KnowledgeGraphExtractor | None" = None,
+    kg_extractor_version: str = "kg-lite-v1",
+    kg_profile_id: str = "*.understand.default",
     document_version_ids: set[object] | None = None,
 ) -> IndexingReport:
     if embedding_batch_size <= 0:
@@ -601,6 +615,13 @@ def index_knowledge_base(
             "chunk_profile_id": chunk_profile.profile_id,
             "embed_profile_id": embed_profile.profile_id,
             "force_reindex": force_reindex,
+            "stages": ["chunk", "embed", "index", *(["kg_extract"] if kg_extract else [])],
+            "kg_extract": {
+                "enabled": kg_extract,
+                "extractor_name": getattr(kg_extractor, "name", "deterministic-understanding"),
+                "extractor_version": getattr(kg_extractor, "version", kg_extractor_version),
+                "profile_id": kg_profile_id,
+            },
             "document_version_ids": (
                 sorted(str(version_id) for version_id in document_version_ids)
                 if document_version_ids
@@ -623,6 +644,7 @@ def index_knowledge_base(
         embedding_dimensions=embedding_dimensions,
         embedding_batch_size=embedding_batch_size,
         force_reindex=force_reindex,
+        kg_extract=kg_extract,
     )
 
     indexed_count = 0
@@ -787,14 +809,77 @@ def index_knowledge_base(
                 version_number=version.version_number,
             )
 
-    run.total_items = len(versions)
-    run.success_count = indexed_count
-    run.failure_count = failed_count
-    run.status = "completed_with_failures" if failed_count else "completed"
+    kg_extract_status = "disabled"
+    kg_extract_trace: dict[str, object] | None = None
+    if kg_extract:
+        run_id = run.id
+        session.commit()
+        try:
+            from ragrig.knowledge_graph import rebuild_knowledge_graph
+
+            graph = rebuild_knowledge_graph(
+                session,
+                str(knowledge_base.id),
+                profile_id=kg_profile_id,
+                extractor_version=kg_extractor_version,
+                extractor=kg_extractor,
+                pipeline_run_id=run_id,
+            )
+            kg_extract_status = "completed"
+            kg_extract_trace = {
+                **graph.trace,
+                "stats": graph.stats.model_dump(mode="json"),
+            }
+        except Exception as exc:
+            session.rollback()
+            kg_extract_status = "failed"
+            kg_extract_trace = {
+                "status": "failed",
+                "degraded_reason": "graph_extraction_failed",
+                "error": str(exc),
+                "pipeline_run_id": str(run_id),
+            }
+            knowledge_base = get_knowledge_base_by_name(
+                session,
+                knowledge_base_name,
+                workspace_id=workspace_id,
+            )
+            if knowledge_base is not None:
+                knowledge_base.metadata_json = {
+                    **(knowledge_base.metadata_json or {}),
+                    "knowledge_graph": kg_extract_trace,
+                }
+                create_audit_event(
+                    session,
+                    event_type="kg_extract",
+                    actor="pipeline",
+                    workspace_id=knowledge_base.workspace_id,
+                    knowledge_base_id=knowledge_base.id,
+                    run_id=run_id,
+                    payload_json=kg_extract_trace,
+                )
+            log_event(
+                logger,
+                logging.ERROR,
+                "index.kg_extract.failed",
+                pipeline_run_id=str(run_id),
+                knowledge_base=knowledge_base_name,
+                error=str(exc),
+            )
+        run = session.get(PipelineRun, run_id)
+        if run is None:
+            raise RuntimeError(f"pipeline run {run_id} disappeared during KG extraction")
+
+    stage_failure_count = int(kg_extract_status == "failed")
+    run.total_items = len(versions) + int(kg_extract)
+    run.success_count = indexed_count + int(kg_extract_status == "completed")
+    run.failure_count = failed_count + stage_failure_count
+    run.status = "completed_with_failures" if run.failure_count else "completed"
     run.finished_at = datetime.now(timezone.utc)
     duration_seconds = perf_counter() - run_started
     run.config_snapshot_json = {
         **(run.config_snapshot_json or {}),
+        "kg_extract_result": kg_extract_trace,
         "cost_latency_summary": {
             **aggregate_cost_latency(
                 run_cost_latency_operations,
@@ -838,4 +923,6 @@ def index_knowledge_base(
         failed_count=failed_count,
         chunk_count=chunk_count,
         embedding_count=embedding_count,
+        kg_extract_status=kg_extract_status,
+        kg_extract_trace=kg_extract_trace,
     )

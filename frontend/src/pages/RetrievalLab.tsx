@@ -20,7 +20,7 @@ type CompareRow = {
 }
 
 const MODES = ['hybrid_graph', 'dense', 'hybrid', 'rerank', 'hybrid_rerank', 'graph', 'graph_rerank', 'hybrid_graph_rerank']
-const COMPARE_MODES = ['dense', 'rerank', 'hybrid_rerank']
+const COMPARE_MODES = ['dense', 'graph', 'hybrid_graph']
 const RERANKER_OPTIONS = [
   { value: 'reranker.bge', label: 'BGE local', defaultModel: 'BAAI/bge-reranker-v2-m3' },
   { value: 'reranker.jina', label: 'Jina rerank', defaultModel: 'jina-reranker-m0' },
@@ -144,9 +144,12 @@ export default function RetrievalLab() {
   const afterRows = rerankTrace?.after ?? []
   const graphContext = report?.graph_context ?? {}
   const matchedEntities = recordArray(graphContext.matched_entities)
+  const matchedRelationships = recordArray(graphContext.matched_relationships)
   const relationPaths = recordArray(graphContext.relation_paths)
+  const rankMovement = recordArray(graphContext.rank_movement)
   const diagnostics = isRecord(graphContext.diagnostics) ? graphContext.diagnostics : {}
-  const suppressedCount = Number(diagnostics.suppressed_relation_count ?? diagnostics.suppressed_relations ?? 0) || 0
+  const suppressedRelations = recordArray(diagnostics.suppressed_relations)
+  const suppressedCount = Number(diagnostics.suppressed_relation_count ?? suppressedRelations.length) || 0
   const provider = report?.provider ?? 'deterministic-local'
   const model = report?.model || 'default'
 
@@ -482,7 +485,7 @@ export default function RetrievalLab() {
           )}
         </Panel>
 
-        <Panel title="Graph Context" description={report ? `${matchedEntities.length} entities, ${relationPaths.length} paths.` : 'No graph context loaded.'}>
+        <Panel title="Graph Context" description={report ? `${matchedEntities.length} entities, ${matchedRelationships.length} relationships.` : 'No graph context loaded.'}>
           <div className="space-y-3" id="retrieval-lab-graph-context">
             <div className="rounded-lg border border-blue-100 bg-blue-50/45 p-3">
               <div className="flex items-center justify-between gap-3">
@@ -493,6 +496,19 @@ export default function RetrievalLab() {
                 {matchedEntities.length
                   ? matchedEntities.map((entity) => stringValue(entity.display_name ?? entity.name ?? entity.entity)).join(', ')
                   : 'None'}
+              </div>
+            </div>
+            <div className="rounded-lg border border-blue-100 bg-blue-50/45 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted">Matched relationships</div>
+                <StatusPill tone={matchedRelationships.length ? 'ok' : 'neutral'}>{matchedRelationships.length}</StatusPill>
+              </div>
+              <div className="mt-2 space-y-2 text-sm text-slate-700">
+                {matchedRelationships.length ? matchedRelationships.slice(0, 4).map((relation, index) => (
+                  <div key={`${stringValue(relation.relation_id, String(index))}-${index}`}>
+                    {stringValue(relation.subject)} - {stringValue(relation.predicate)} - {stringValue(relation.object)}
+                  </div>
+                )) : <div>None</div>}
               </div>
             </div>
             <div className="rounded-lg border border-blue-100 bg-blue-50/45 p-3">
@@ -515,6 +531,21 @@ export default function RetrievalLab() {
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
               <div className="text-xs font-semibold uppercase tracking-wider text-amber-700">Suppressed relations</div>
               <div className="mt-2 text-sm text-amber-800">{suppressedCount}</div>
+              {suppressedRelations.slice(0, 3).map((relation, index) => (
+                <div key={`${stringValue(relation.relation_id, String(index))}-suppressed`} className="mt-1 text-xs text-amber-800">
+                  {stringValue(relation.subject)} - {stringValue(relation.predicate)} - {stringValue(relation.object)}: {stringValue(relation.reason)}
+                </div>
+              ))}
+            </div>
+            <div className="rounded-lg border border-line bg-white p-3">
+              <div className="text-xs font-semibold uppercase tracking-wider text-muted">Graph rank movement</div>
+              <div className="mt-2 space-y-1 text-xs text-slate-700">
+                {rankMovement.length ? rankMovement.slice(0, 4).map((movement, index) => (
+                  <div key={`${stringValue(movement.chunk_id, String(index))}-movement`}>
+                    {stringValue(movement.chunk_id)}: #{stringValue(movement.rank_before, 'new')} to #{stringValue(movement.rank_after)}
+                  </div>
+                )) : <div>None</div>}
+              </div>
             </div>
           </div>
         </Panel>

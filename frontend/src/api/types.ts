@@ -99,10 +99,22 @@ export interface RetrievalReport {
   total_results: number
   degraded?: boolean
   degraded_reason?: string
-  graph_context?: Record<string, unknown>
+  graph_context?: GraphRetrievalContext
   cost_latency?: Record<string, unknown>
   rerank_trace?: RerankTrace
   results: RetrievalResult[]
+}
+
+export interface GraphRetrievalContext {
+  matched_entities?: Record<string, unknown>[]
+  matched_relationships?: Record<string, unknown>[]
+  expanded_entities?: Record<string, unknown>[]
+  relation_paths?: Record<string, unknown>[]
+  chunk_scores?: Record<string, number>
+  rank_movement?: Record<string, unknown>[]
+  diagnostics?: Record<string, unknown>
+  degraded?: boolean
+  degraded_reason?: string
 }
 
 export interface KnowledgeGraphStats {
@@ -197,6 +209,7 @@ export interface KnowledgeGraphResult {
   relations: KnowledgeGraphRelation[]
   claims: KnowledgeGraphClaim[]
   limitations: string[]
+  trace: Record<string, unknown>
 }
 
 export interface RetrievalPreferences {

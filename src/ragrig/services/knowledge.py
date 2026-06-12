@@ -492,7 +492,7 @@ def knowledge_graph(
     )
     try:
         return get_knowledge_graph(session, kb_id).model_dump(mode="json")
-    except (ValueError, KnowledgeGraphNotFoundError) as exc:
+    except KnowledgeGraphNotFoundError as exc:
         raise ServiceError(
             status_code=404,
             content={"error": "knowledge_base_not_found"},
@@ -508,7 +508,7 @@ def rebuild_knowledge_graph_payload(
     workspace_id: uuid.UUID,
     auth: AuthContext,
 ) -> dict[str, Any]:
-    _resolve_kb_with_access(
+    knowledge_base = _resolve_kb_with_access(
         session=session,
         settings=settings,
         workspace_id=workspace_id,
@@ -523,11 +523,40 @@ def rebuild_knowledge_graph_payload(
             profile_id=request.profile_id,
             extractor_version=request.extractor_version,
             reset=request.reset,
+            actor=str(auth.user_id) if auth.user_id is not None else "anonymous",
         )
-    except (ValueError, KnowledgeGraphNotFoundError) as exc:
+    except KnowledgeGraphNotFoundError as exc:
         raise ServiceError(
             status_code=404,
             content={"error": "knowledge_base_not_found"},
+        ) from exc
+    except Exception as exc:
+        session.rollback()
+        trace_id = str(uuid.uuid4())
+        knowledge_base = session.get(KnowledgeBase, knowledge_base.id)
+        if knowledge_base is not None:
+            failed_trace = {
+                "status": "failed",
+                "trace_id": trace_id,
+                "degraded_reason": "graph_extraction_failed",
+                "error": str(exc),
+            }
+            knowledge_base.metadata_json = {
+                **(knowledge_base.metadata_json or {}),
+                "knowledge_graph": failed_trace,
+            }
+            create_audit_event(
+                session,
+                event_type="kg_extract",
+                actor=str(auth.user_id) if auth.user_id is not None else "anonymous",
+                workspace_id=workspace_id,
+                knowledge_base_id=knowledge_base.id,
+                payload_json=failed_trace,
+            )
+            session.commit()
+        raise ServiceError(
+            status_code=500,
+            content={"error": "graph_extraction_failed", "trace_id": trace_id},
         ) from exc
     return result.model_dump(mode="json")
 

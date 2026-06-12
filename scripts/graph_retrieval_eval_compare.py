@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
+import uuid
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,11 +17,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
-from ragrig.db.models import Base
+from ragrig.db.models import Base, KnowledgeGraphRelation
 from ragrig.evaluation import build_evaluation_run_report, run_evaluation
 from ragrig.indexing.pipeline import index_knowledge_base
 from ragrig.ingestion.pipeline import ingest_local_directory
-from ragrig.knowledge_graph import rebuild_knowledge_graph
+from ragrig.knowledge_graph import KnowledgeGraphResult
+from ragrig.retrieval import search_knowledge_base
 
 REPO_ROOT = Path(__file__).parent.parent
 DEFAULT_GOLDEN_PATH = REPO_ROOT / "tests" / "fixtures" / "evaluation_golden_demo_graph.yaml"
@@ -172,8 +174,9 @@ def run_graph_eval_compare_workflow(
                     chunk_size=500,
                     chunk_overlap=50,
                     force_reindex=True,
+                    kg_extract=True,
                 )
-                graph = rebuild_knowledge_graph(session, _resolve_kb_id(session, knowledge_base))
+                graph = _load_graph(session, knowledge_base)
 
                 comparison = compare_graph_retrieval_modes(
                     session=session,
@@ -189,7 +192,16 @@ def run_graph_eval_compare_workflow(
                 comparison["knowledge_graph"] = {
                     "status": graph.status,
                     "stats": graph.stats.model_dump(),
+                    "trace": graph.trace,
                 }
+                comparison["contract_gate"] = _run_graph_contract_gate(
+                    session=session,
+                    knowledge_base=knowledge_base,
+                    graph=graph,
+                )
+                if comparison["contract_gate"]["status"] != "pass":
+                    comparison["quality_gate"]["status"] = "warn"
+                comparison["markdown_summary"] = render_markdown_summary(comparison)
                 return comparison
         finally:
             engine.dispose()
@@ -297,6 +309,17 @@ def render_markdown_summary(report: dict[str, Any]) -> str:
                 + f"{_format_delta(deltas.get('zero_result_rate'))} |"
             )
 
+    contract_gate = report.get("contract_gate") or {}
+    if contract_gate:
+        lines += [
+            "",
+            "## Graph-RAG Contract Gate",
+            "",
+            f"- Status: `{contract_gate.get('status', 'unknown')}`",
+        ]
+        for name, passed in (contract_gate.get("checks") or {}).items():
+            lines.append(f"- {name}: `{'pass' if passed else 'fail'}`")
+
     tag_rows = _focused_tag_rows(results)
     if tag_rows:
         lines += [
@@ -343,6 +366,103 @@ def _resolve_kb_id(session: Session, knowledge_base: str) -> str:
     if kb is None:
         raise ValueError(f"knowledge base {knowledge_base!r} was not created")
     return str(kb.id)
+
+
+def _load_graph(session: Session, knowledge_base: str) -> KnowledgeGraphResult:
+    from ragrig.knowledge_graph import get_knowledge_graph
+
+    return get_knowledge_graph(session, _resolve_kb_id(session, knowledge_base))
+
+
+def _run_graph_contract_gate(
+    *,
+    session: Session,
+    knowledge_base: str,
+    graph: KnowledgeGraphResult,
+) -> dict[str, Any]:
+    if not graph.relations:
+        return {"status": "warn", "checks": {"relationship_fixture_present": False}}
+
+    relation = graph.relations[0]
+    query = f"How are {relation.subject} and {relation.object} related?"
+    before = search_knowledge_base(
+        session=session,
+        knowledge_base_name=knowledge_base,
+        query=query,
+        top_k=5,
+        mode="graph",
+    )
+    before_relationships = before.graph_context.get("matched_relationships") or []
+    before_scores = dict(before.graph_context.get("chunk_scores") or {})
+    if not before_relationships:
+        return {
+            "status": "warn",
+            "query": query,
+            "checks": {
+                "x_y_relationship_query": False,
+                "cross_document_relation": False,
+                "feedback_suppresses_relation": False,
+                "feedback_changes_chunk_scores": False,
+                "citations_are_chunk_and_document_backed": False,
+            },
+        }
+    target_relation_ids = {
+        str(relationship["relation_id"]) for relationship in before_relationships
+    }
+    citations_are_source_backed = all(
+        relationship.get("evidence")
+        and all(
+            evidence.get("chunk_id")
+            and evidence.get("document_id")
+            and evidence.get("document_version_id")
+            for evidence in relationship["evidence"]
+        )
+        for relationship in before_relationships
+    )
+    cross_document_relation = any(
+        len({evidence.document_id for evidence in item.evidence}) >= 2 for item in graph.relations
+    )
+
+    for target_relation_id in target_relation_ids:
+        relation_row = session.get(KnowledgeGraphRelation, uuid.UUID(target_relation_id))
+        assert relation_row is not None
+        relation_row.metadata_json = {
+            **(relation_row.metadata_json or {}),
+            "feedback_summary": {
+                "total": 1,
+                "incorrect": 1,
+                "correct": 0,
+                "needs_review": 0,
+            },
+        }
+    session.commit()
+    after = search_knowledge_base(
+        session=session,
+        knowledge_base_name=knowledge_base,
+        query=query,
+        top_k=5,
+        mode="graph",
+    )
+    after_scores = dict(after.graph_context.get("chunk_scores") or {})
+    after_relationship_ids = {
+        item.get("relation_id") for item in after.graph_context.get("matched_relationships") or []
+    }
+    feedback_changes_ranking_signal = before_scores != after_scores
+
+    checks = {
+        "x_y_relationship_query": bool(before_relationships),
+        "cross_document_relation": cross_document_relation,
+        "feedback_suppresses_relation": target_relation_ids.isdisjoint(after_relationship_ids),
+        "feedback_changes_chunk_scores": feedback_changes_ranking_signal,
+        "citations_are_chunk_and_document_backed": citations_are_source_backed,
+    }
+    return {
+        "status": "pass" if all(checks.values()) else "warn",
+        "query": query,
+        "checks": checks,
+        "before_chunk_scores": before_scores,
+        "after_chunk_scores": after_scores,
+    }
 
 
 def _metric_deltas(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str, float | None]:

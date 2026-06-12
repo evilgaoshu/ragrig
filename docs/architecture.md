@@ -15,6 +15,7 @@ flowchart LR
     db["Postgres metadata DB\nSQLAlchemy models"]
     vectors["Vector backend\npgvector default, Qdrant optional"]
     providers["Provider registry\nLLM, embedding, reranker, parser"]
+    graph["Postgres Graph-RAG\nentities, relations, claims, evidence"]
     workers["Task runtime\nthreadpool default, ARQ optional"]
 
     user --> console
@@ -25,6 +26,8 @@ flowchart LR
     services --> db
     services --> vectors
     services --> providers
+    services --> graph
+    graph --> db
     services --> workers
 ```
 
@@ -65,10 +68,12 @@ sequenceDiagram
     Ingest->>Provider: embed chunk text
     Provider-->>Ingest: embedding vectors
     Ingest->>DB: Chunk, Embedding, PipelineRun
+    Ingest->>DB: optional KG extract, relation evidence, audit trace
     Ingest->>Vector: vector index records
     Retrieval->>Provider: embed query
     Retrieval->>Vector: top-k vector or hybrid search
     Retrieval->>DB: ACL, metadata, document context
+    Retrieval->>DB: entity and relationship evidence, graph rank boost
     Answer->>Retrieval: evidence chunks
     Answer->>Provider: grounded answer generation
     Answer->>DB: usage, audit, optional semantic cache
@@ -76,6 +81,8 @@ sequenceDiagram
 
 The core invariant is traceability. A grounded answer should be explainable from
 answer text back to citation, chunk, document version, source, and pipeline run.
+Graph rows never replace citations: expanded evidence must pass the same
+workspace/RBAC/ACL and latest-version checks before reranking or answering.
 
 ## FastAPI Module Map
 

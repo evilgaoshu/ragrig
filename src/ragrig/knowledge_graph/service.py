@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import uuid
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from itertools import combinations
 from typing import Any
 
@@ -25,9 +27,16 @@ from ragrig.db.models import (
     KnowledgeGraphRelationEvidence,
 )
 from ragrig.lexical import token_overlap_score
+from ragrig.repositories import create_audit_event
 from ragrig.understanding.provider import compute_input_hash
 from ragrig.understanding.schema import UnderstandingResult
 
+from .extractor import (
+    ExtractedEntity,
+    KnowledgeGraphExtraction,
+    KnowledgeGraphExtractionSource,
+    KnowledgeGraphExtractor,
+)
 from .schema import (
     GraphRetrievalContext,
     KnowledgeGraphClaimRecord,
@@ -40,6 +49,11 @@ from .schema import (
 )
 
 DEFAULT_KG_EXTRACTOR_VERSION = "kg-lite-v1"
+GRAPH_DEGRADED_NO_DATA = "graph_no_data"
+GRAPH_DEGRADED_STALE = "graph_stale"
+GRAPH_DEGRADED_EXTRACTION_FAILED = "graph_extraction_failed"
+GRAPH_DEGRADED_ACL_NO_EVIDENCE = "graph_acl_no_evidence"
+GRAPH_DEGRADED_NO_MATCH = "graph_no_match"
 _ENTITY_RE = re.compile(r"\b[A-Z][A-Za-z0-9_/-]{2,}(?:[ \t]+[A-Z][A-Za-z0-9_/-]{2,}){0,3}\b")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
@@ -163,6 +177,11 @@ def _latest_chunk_rows(session: Session, knowledge_base_id: uuid.UUID) -> list[_
     ]
 
 
+def _id_fingerprint(values: Iterable[uuid.UUID | str]) -> str:
+    payload = "\n".join(sorted(str(value) for value in values))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _fresh_understanding(
     session: Session,
     version: DocumentVersion,
@@ -269,6 +288,271 @@ def _chunk_for_claim(
     return version_rows[0]
 
 
+def _trace_payload(
+    *,
+    trace_id: str,
+    pipeline_run_id: str | None,
+    extractor_name: str,
+    extractor_version: str,
+    profile_id: str,
+) -> dict[str, Any]:
+    return {
+        "trace_id": trace_id,
+        "pipeline_run_id": pipeline_run_id,
+        "extractor_name": extractor_name,
+        "extractor_version": extractor_version,
+        "profile_id": profile_id,
+    }
+
+
+def _merge_graph_row_trace(
+    session: Session,
+    *,
+    knowledge_base_id: uuid.UUID,
+    trace: dict[str, Any],
+) -> None:
+    graph_rows: list[Any] = []
+    graph_rows.extend(
+        session.scalars(
+            select(KnowledgeGraphEntity).where(
+                KnowledgeGraphEntity.knowledge_base_id == knowledge_base_id
+            )
+        )
+    )
+    graph_rows.extend(
+        session.scalars(
+            select(KnowledgeGraphEntityMention)
+            .join(KnowledgeGraphEntity)
+            .where(KnowledgeGraphEntity.knowledge_base_id == knowledge_base_id)
+        )
+    )
+    graph_rows.extend(
+        session.scalars(
+            select(KnowledgeGraphRelation).where(
+                KnowledgeGraphRelation.knowledge_base_id == knowledge_base_id
+            )
+        )
+    )
+    graph_rows.extend(
+        session.scalars(
+            select(KnowledgeGraphRelationEvidence)
+            .join(KnowledgeGraphRelation)
+            .where(KnowledgeGraphRelation.knowledge_base_id == knowledge_base_id)
+        )
+    )
+    graph_rows.extend(
+        session.scalars(
+            select(KnowledgeGraphClaim).where(
+                KnowledgeGraphClaim.knowledge_base_id == knowledge_base_id
+            )
+        )
+    )
+    for graph_row in graph_rows:
+        graph_row.metadata_json = {**(graph_row.metadata_json or {}), **trace}
+
+
+def _ensure_provider_entity(
+    session: Session,
+    *,
+    kb: KnowledgeBase,
+    candidate: ExtractedEntity,
+    extractor_version: str,
+    entity_by_key: dict[str, KnowledgeGraphEntity],
+) -> KnowledgeGraphEntity | None:
+    canonical = _canonical_name(candidate.name)
+    if not canonical:
+        return None
+    aliases = _entity_aliases(candidate.name)
+    entity = next((entity_by_key[alias] for alias in aliases if alias in entity_by_key), None)
+    if entity is None:
+        entity = KnowledgeGraphEntity(
+            knowledge_base_id=kb.id,
+            workspace_id=kb.workspace_id,
+            canonical_name=canonical,
+            display_name=candidate.name,
+            entity_type=candidate.entity_type,
+            description=candidate.description,
+            confidence=max(0.0, min(candidate.confidence, 1.0)),
+            extractor_version=extractor_version,
+            metadata_json={
+                **candidate.metadata,
+                "source": "provider",
+                "aliases": aliases,
+            },
+        )
+        session.add(entity)
+        session.flush()
+    for alias in aliases:
+        entity_by_key[alias] = entity
+    return entity
+
+
+def _persist_provider_extraction(
+    session: Session,
+    *,
+    kb: KnowledgeBase,
+    rows: list[_ChunkRow],
+    extraction: KnowledgeGraphExtraction,
+    extractor_version: str,
+) -> None:
+    row_by_chunk_id = {str(row.chunk.id): row for row in rows}
+    entity_by_key: dict[str, KnowledgeGraphEntity] = {}
+    entity_by_name: dict[str, KnowledgeGraphEntity] = {}
+    mentioned_pairs: set[tuple[uuid.UUID, uuid.UUID]] = set()
+
+    for candidate in extraction.entities:
+        row = row_by_chunk_id.get(candidate.source_chunk_id)
+        if row is None:
+            continue
+        entity = _ensure_provider_entity(
+            session,
+            kb=kb,
+            candidate=candidate,
+            extractor_version=extractor_version,
+            entity_by_key=entity_by_key,
+        )
+        if entity is None:
+            continue
+        entity_by_name[_canonical_name(candidate.name)] = entity
+        pair = (entity.id, row.chunk.id)
+        if pair in mentioned_pairs:
+            continue
+        mentioned_pairs.add(pair)
+        match = next(iter(_find_mentions(row.chunk.text, candidate.name)), None)
+        session.add(
+            KnowledgeGraphEntityMention(
+                entity_id=entity.id,
+                chunk_id=row.chunk.id,
+                document_id=row.document.id,
+                document_version_id=row.version.id,
+                mention_text=match[2] if match else candidate.name,
+                char_start=match[0] if match else None,
+                char_end=match[1] if match else None,
+                confidence=max(0.0, min(candidate.confidence, 1.0)),
+                extractor_version=extractor_version,
+                metadata_json={**candidate.metadata, "source": "provider"},
+            )
+        )
+
+    relation_by_triplet: dict[tuple[uuid.UUID, str, uuid.UUID], KnowledgeGraphRelation] = {}
+    for candidate in extraction.relationships:
+        row = row_by_chunk_id.get(candidate.source_chunk_id)
+        if row is None:
+            continue
+        endpoints = []
+        for name in (candidate.subject, candidate.object):
+            canonical = _canonical_name(name)
+            entity = entity_by_name.get(canonical)
+            if entity is None:
+                entity = _ensure_provider_entity(
+                    session,
+                    kb=kb,
+                    candidate=ExtractedEntity(name=name, source_chunk_id=candidate.source_chunk_id),
+                    extractor_version=extractor_version,
+                    entity_by_key=entity_by_key,
+                )
+                if entity is not None:
+                    entity_by_name[canonical] = entity
+            endpoints.append(entity)
+        subject, object_ = endpoints
+        if subject is None or object_ is None or subject.id == object_.id:
+            continue
+        triplet = (subject.id, candidate.predicate, object_.id)
+        relation = relation_by_triplet.get(triplet)
+        if relation is None:
+            relation = KnowledgeGraphRelation(
+                knowledge_base_id=kb.id,
+                workspace_id=kb.workspace_id,
+                subject_entity_id=subject.id,
+                predicate=candidate.predicate,
+                object_entity_id=object_.id,
+                confidence=max(0.0, min(candidate.confidence, 1.0)),
+                extractor_version=extractor_version,
+                metadata_json={
+                    **candidate.metadata,
+                    "source": "provider",
+                    "claim": candidate.claim,
+                },
+            )
+            session.add(relation)
+            session.flush()
+            relation_by_triplet[triplet] = relation
+        session.add(
+            KnowledgeGraphRelationEvidence(
+                relation_id=relation.id,
+                chunk_id=row.chunk.id,
+                document_id=row.document.id,
+                document_version_id=row.version.id,
+                evidence_text=_preview(row.chunk.text, 500),
+                confidence=max(0.0, min(candidate.confidence, 1.0)),
+                extractor_version=extractor_version,
+                metadata_json={**candidate.metadata, "source": "provider"},
+            )
+        )
+
+    for candidate in extraction.claims:
+        row = row_by_chunk_id.get(candidate.source_chunk_id)
+        if row is None or not candidate.text.strip():
+            continue
+        session.add(
+            KnowledgeGraphClaim(
+                knowledge_base_id=kb.id,
+                workspace_id=kb.workspace_id,
+                source_chunk_id=row.chunk.id,
+                document_id=row.document.id,
+                document_version_id=row.version.id,
+                claim_text=candidate.text.strip()[:500],
+                confidence=max(0.0, min(candidate.confidence, 1.0)),
+                extractor_version=extractor_version,
+                metadata_json={**candidate.metadata, "source": "provider"},
+            )
+        )
+
+
+def _finalize_graph_build(
+    session: Session,
+    *,
+    kb: KnowledgeBase,
+    rows: list[_ChunkRow],
+    trace: dict[str, Any],
+    extractor_metadata: dict[str, Any] | None = None,
+    actor: str | None = None,
+) -> KnowledgeGraphResult:
+    _merge_graph_row_trace(session, knowledge_base_id=kb.id, trace=trace)
+    built_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    source_document_version_ids = {row.version.id for row in rows}
+    graph_metadata = {
+        **trace,
+        "status": "completed",
+        "built_at": built_at,
+        "source_chunk_count": len(rows),
+        "source_chunk_fingerprint": _id_fingerprint(row.chunk.id for row in rows),
+        "source_document_version_count": len(source_document_version_ids),
+        "source_document_version_fingerprint": _id_fingerprint(source_document_version_ids),
+        "extractor_metadata": extractor_metadata or {},
+    }
+    kb.metadata_json = {**(kb.metadata_json or {}), "knowledge_graph": graph_metadata}
+    create_audit_event(
+        session,
+        event_type="kg_extract",
+        actor=actor or ("pipeline" if trace.get("pipeline_run_id") else "manual"),
+        workspace_id=kb.workspace_id,
+        knowledge_base_id=kb.id,
+        run_id=(uuid.UUID(str(trace["pipeline_run_id"])) if trace.get("pipeline_run_id") else None),
+        payload_json={
+            **trace,
+            "status": "completed",
+            "source_chunk_count": len(rows),
+            "source_document_version_count": graph_metadata["source_document_version_count"],
+            "source_document_version_fingerprint": graph_metadata[
+                "source_document_version_fingerprint"
+            ],
+        },
+    )
+    session.commit()
+    return get_knowledge_graph(session, str(kb.id))
+
+
 def rebuild_knowledge_graph(
     session: Session,
     knowledge_base_id: str,
@@ -276,19 +560,63 @@ def rebuild_knowledge_graph(
     profile_id: str = "*.understand.default",
     extractor_version: str = DEFAULT_KG_EXTRACTOR_VERSION,
     reset: bool = True,
+    extractor: KnowledgeGraphExtractor | None = None,
+    pipeline_run_id: str | uuid.UUID | None = None,
+    trace_id: str | None = None,
+    actor: str | None = None,
 ) -> KnowledgeGraphResult:
     kb_uuid = uuid.UUID(knowledge_base_id)
     kb = session.get(KnowledgeBase, kb_uuid)
     if kb is None:
         raise KnowledgeGraphNotFoundError(f"Knowledge base '{knowledge_base_id}' was not found")
 
+    resolved_trace_id = trace_id or str(pipeline_run_id or uuid.uuid4())
+    resolved_pipeline_run_id = str(pipeline_run_id) if pipeline_run_id is not None else None
+    extractor_name = extractor.name if extractor is not None else "deterministic-understanding"
+    resolved_extractor_version = extractor.version if extractor is not None else extractor_version
+    trace = _trace_payload(
+        trace_id=resolved_trace_id,
+        pipeline_run_id=resolved_pipeline_run_id,
+        extractor_name=extractor_name,
+        extractor_version=resolved_extractor_version,
+        profile_id=profile_id,
+    )
+
     if reset:
         _delete_graph_rows(session, kb_uuid)
 
     rows = _latest_chunk_rows(session, kb_uuid)
     if not rows:
-        session.commit()
-        return get_knowledge_graph(session, knowledge_base_id)
+        return _finalize_graph_build(session, kb=kb, rows=rows, trace=trace, actor=actor)
+
+    if extractor is not None:
+        extraction = extractor.extract(
+            [
+                KnowledgeGraphExtractionSource(
+                    chunk_id=str(row.chunk.id),
+                    document_id=str(row.document.id),
+                    document_version_id=str(row.version.id),
+                    text=row.chunk.text,
+                    metadata=dict(row.chunk.metadata_json or {}),
+                )
+                for row in rows
+            ]
+        )
+        _persist_provider_extraction(
+            session,
+            kb=kb,
+            rows=rows,
+            extraction=extraction,
+            extractor_version=resolved_extractor_version,
+        )
+        return _finalize_graph_build(
+            session,
+            kb=kb,
+            rows=rows,
+            trace=trace,
+            extractor_metadata=extraction.metadata,
+            actor=actor,
+        )
 
     rows_by_version: dict[uuid.UUID, list[_ChunkRow]] = defaultdict(list)
     for row in rows:
@@ -321,7 +649,7 @@ def rebuild_knowledge_graph(
                     entity_type=candidate.entity_type,
                     description=candidate.description,
                     confidence=candidate.confidence,
-                    extractor_version=extractor_version,
+                    extractor_version=resolved_extractor_version,
                     metadata_json={
                         "sources": [candidate.source],
                         "profile_id": profile_id,
@@ -362,7 +690,7 @@ def rebuild_knowledge_graph(
                         char_start=absolute_start,
                         char_end=absolute_end,
                         confidence=candidate.confidence,
-                        extractor_version=extractor_version,
+                        extractor_version=resolved_extractor_version,
                         metadata_json={"source": candidate.source},
                     )
                     session.add(mention)
@@ -374,17 +702,16 @@ def rebuild_knowledge_graph(
         kb,
         rows,
         understanding_by_version,
-        extractor_version=extractor_version,
+        extractor_version=resolved_extractor_version,
     )
     _create_relations(
         session,
         kb,
         rows,
         mentions_by_chunk,
-        extractor_version=extractor_version,
+        extractor_version=resolved_extractor_version,
     )
-    session.commit()
-    return get_knowledge_graph(session, knowledge_base_id)
+    return _finalize_graph_build(session, kb=kb, rows=rows, trace=trace, actor=actor)
 
 
 def _delete_graph_rows(session: Session, knowledge_base_id: uuid.UUID) -> None:
@@ -632,6 +959,7 @@ def get_knowledge_graph(session: Session, knowledge_base_id: str) -> KnowledgeGr
         relations=relation_records,
         claims=claim_records,
         limitations=limitations,
+        trace=dict((kb.metadata_json or {}).get("knowledge_graph") or {}),
     )
 
 
@@ -736,10 +1064,34 @@ def build_graph_retrieval_context(
     principal_ids: list[str] | None = None,
     enforce_acl: bool = True,
 ) -> GraphRetrievalContext:
+    kb = session.get(KnowledgeBase, knowledge_base_id)
+    build_metadata = (
+        dict((kb.metadata_json or {}).get("knowledge_graph") or {}) if kb is not None else {}
+    )
+    latest_rows = _latest_chunk_rows(session, knowledge_base_id)
+    latest_version_ids = {row.version.id for row in latest_rows}
+    current_version_fingerprint = _id_fingerprint(latest_version_ids)
+    built_version_fingerprint = str(build_metadata.get("source_document_version_fingerprint") or "")
+    legacy_built_version_ids = set(build_metadata.get("source_document_version_ids") or [])
+    current_chunk_fingerprint = _id_fingerprint(row.chunk.id for row in latest_rows)
+    built_chunk_fingerprint = str(build_metadata.get("source_chunk_fingerprint") or "")
+    base_degraded_reason = ""
+    if build_metadata.get("status") == "failed":
+        base_degraded_reason = GRAPH_DEGRADED_EXTRACTION_FAILED
+    elif (
+        (built_version_fingerprint and built_version_fingerprint != current_version_fingerprint)
+        or (
+            not built_version_fingerprint
+            and legacy_built_version_ids
+            and legacy_built_version_ids != {str(value) for value in latest_version_ids}
+        )
+        or (built_chunk_fingerprint and built_chunk_fingerprint != current_chunk_fingerprint)
+    ):
+        base_degraded_reason = GRAPH_DEGRADED_STALE
+
     visible_chunk_ids: set[uuid.UUID] | None = None
     visible_entity_ids: set[uuid.UUID] | None = None
     if enforce_acl:
-        latest_rows = _latest_chunk_rows(session, knowledge_base_id)
         normalized_principals = normalize_principal_ids(principal_ids)
         effective_principals = normalized_principals if normalized_principals else None
         visible_chunk_ids = {
@@ -748,7 +1100,10 @@ def build_graph_retrieval_context(
             if acl_permits_chunk_metadata(row.chunk.metadata_json, effective_principals)
         }
         if not visible_chunk_ids:
-            return GraphRetrievalContext()
+            return GraphRetrievalContext(
+                degraded=True,
+                degraded_reason=base_degraded_reason or GRAPH_DEGRADED_ACL_NO_EVIDENCE,
+            )
 
     entities = list(
         session.scalars(
@@ -760,7 +1115,7 @@ def build_graph_retrieval_context(
     if not entities:
         return GraphRetrievalContext(
             degraded=True,
-            degraded_reason="knowledge graph has no extracted entities",
+            degraded_reason=base_degraded_reason or GRAPH_DEGRADED_NO_DATA,
         )
 
     if visible_chunk_ids is not None:
@@ -780,7 +1135,10 @@ def build_graph_retrieval_context(
             if mention.chunk_id in visible_chunk_ids
         }
         if not visible_entity_ids:
-            return GraphRetrievalContext()
+            return GraphRetrievalContext(
+                degraded=True,
+                degraded_reason=base_degraded_reason or GRAPH_DEGRADED_ACL_NO_EVIDENCE,
+            )
 
     query_lc = query.casefold()
     query_terms = set(re.findall(r"[a-z0-9_/-]{3,}", query_lc))
@@ -816,14 +1174,14 @@ def build_graph_retrieval_context(
 
     matched.sort(key=lambda item: (-item[1], item[0].display_name))
     matched = matched[:8]
-    if not matched:
-        return GraphRetrievalContext()
 
     matched_ids = {entity.id for entity, _score in matched}
     matched_score_by_id = {entity.id: score for entity, score in matched}
     expanded_ids: set[uuid.UUID] = set(matched_ids)
     relation_paths: list[dict[str, Any]] = []
+    matched_relationships: list[dict[str, Any]] = []
     chunk_scores: dict[str, float] = {}
+    chunk_score_sources: dict[str, set[str]] = defaultdict(set)
     suppressed_relations: list[dict[str, Any]] = []
 
     relation_rows = list(
@@ -839,7 +1197,11 @@ def build_graph_retrieval_context(
                 relation.subject_entity_id in matched_ids
                 or relation.object_entity_id in matched_ids
             )
-            if not touches:
+            predicate_terms = set(
+                re.findall(r"[a-z0-9/-]{3,}", relation.predicate.casefold().replace("_", " "))
+            )
+            predicate_match = bool(predicate_terms & query_terms)
+            if not touches and not predicate_match:
                 continue
             evidence_rows = list(
                 session.scalars(
@@ -904,6 +1266,33 @@ def build_graph_retrieval_context(
                     "feedback_reason": feedback_reason,
                     "feedback_summary": feedback_summary,
                     "evidence_chunk_ids": [str(e.chunk_id) for e in evidence_rows],
+                    "evidence": [
+                        {
+                            "chunk_id": str(e.chunk_id),
+                            "document_id": str(e.document_id),
+                            "document_version_id": str(e.document_version_id),
+                            "confidence": e.confidence,
+                        }
+                        for e in evidence_rows
+                    ],
+                }
+            )
+            matched_relationships.append(
+                {
+                    "relation_id": str(relation.id),
+                    "subject": relation.subject_entity.display_name,
+                    "predicate": relation.predicate,
+                    "object": relation.object_entity.display_name,
+                    "score": evidence_score,
+                    "match_type": "entity_path" if touches else "predicate",
+                    "evidence": [
+                        {
+                            "chunk_id": str(e.chunk_id),
+                            "document_id": str(e.document_id),
+                            "document_version_id": str(e.document_version_id),
+                        }
+                        for e in evidence_rows
+                    ],
                 }
             )
             for evidence in evidence_rows:
@@ -912,6 +1301,19 @@ def build_graph_retrieval_context(
                     evidence.chunk_id,
                     evidence_score,
                 )
+                chunk_score_sources[str(evidence.chunk_id)].add("relationship")
+
+    if not matched and not matched_relationships:
+        return GraphRetrievalContext(
+            degraded=True,
+            degraded_reason=base_degraded_reason or GRAPH_DEGRADED_NO_MATCH,
+            diagnostics={
+                "alias_matching": True,
+                "entity_level_retrieval": True,
+                "relationship_level_retrieval": True,
+                "build_trace": build_metadata,
+            },
+        )
 
     mention_rows = list(
         session.scalars(
@@ -930,6 +1332,7 @@ def build_graph_retrieval_context(
         else:
             base = 0.68
         _boost_chunk_score(chunk_scores, mention.chunk_id, base * mention.confidence)
+        chunk_score_sources[str(mention.chunk_id)].add("entity")
 
     relation_paths.sort(
         key=lambda item: (
@@ -950,6 +1353,7 @@ def build_graph_retrieval_context(
             }
             for entity, score in matched
         ],
+        matched_relationships=matched_relationships[:limit],
         expanded_entities=[
             {
                 "entity_id": str(entity_id),
@@ -965,10 +1369,18 @@ def build_graph_retrieval_context(
         chunk_scores=ranked_chunk_scores,
         diagnostics={
             "alias_matching": True,
+            "entity_level_retrieval": True,
+            "relationship_level_retrieval": True,
             "relation_feedback_aware": True,
             "suppressed_relation_count": len(suppressed_relations),
             "suppressed_relations": suppressed_relations[:8],
+            "chunk_score_sources": {
+                chunk_id: sorted(sources) for chunk_id, sources in chunk_score_sources.items()
+            },
+            "build_trace": build_metadata,
         },
+        degraded=bool(base_degraded_reason),
+        degraded_reason=base_degraded_reason,
     )
 
 

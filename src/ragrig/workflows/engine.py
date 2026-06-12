@@ -295,6 +295,7 @@ def _run_index(session: Session, config: dict[str, Any]) -> tuple[str | None, di
         chunk_size=int(config.get("chunk_size") or 500),
         chunk_overlap=int(config.get("chunk_overlap") or 50),
         embedding_dimensions=int(config.get("embedding_dimensions") or 8),
+        kg_extract=bool(config.get("kg_extract", False)),
     )
     return str(report.pipeline_run_id), _report_output(report)
 

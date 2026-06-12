@@ -86,7 +86,11 @@ For a step-by-step version with development paths, see
 - Optional `doc-parsers-advanced` support, with ingestion configured for
   `advanced_parser=auto` or `docling`, adds Docling layout/table-aware parsing and local
   OCR fallback for scanned PDFs; OCR also requires the system Tesseract binary.
-- Parse → clean → chunk → embed → index → retrieve → rerank, each step inspectable in the console.
+- Parse → clean → chunk → embed → index → optional KG extract → retrieve → rerank, each step
+  inspectable through pipeline, audit, and retrieval traces.
+- Postgres-first Graph-RAG modes expose entity matches, relationship evidence, source-backed
+  relation paths, feedback suppression, and graph rank movement; deterministic extraction is
+  available for CI/local use and future LLM extractors plug into a provider seam.
 - Template-backed explainable chunking records split reasons and source ranges; Documents supports
   audited manual split/merge overrides with an explicit reindex step.
 - pgvector by default, Qdrant as an optional backend (same retrieval contract).
