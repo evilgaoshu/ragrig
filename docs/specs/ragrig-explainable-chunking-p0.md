@@ -11,6 +11,8 @@ RAGRig maps every built-in chunking strategy to a stable template contract:
 | `heading_v1` | Markdown heading sections |
 | `sentence_v1` | sentence boundaries |
 | `parent_child_v1` | parent context plus embedded children |
+| `recursive_v1` | heading → paragraph → sentence → character fallback |
+| `token_aware_v1` | lightweight estimated-token windows |
 
 Templates expose a version, display name, parameter defaults, split rules, and
 limitations. Template metadata is additive: legacy chunk text hashes and
@@ -26,6 +28,13 @@ document URI and version identifiers used by retrieval citations.
 `POST /chunking/preview` accepts text or a workspace-scoped
 `document_version_id` and invokes the same chunker used by indexing. Unknown
 templates and invalid parameters return stable errors.
+
+`recursive_v1` records the boundary actually selected for every chunk, including
+`recursive_fit` when no split is needed and `window_boundary` when an
+indivisible block requires character fallback.
+`token_aware_v1` accepts `max_tokens` and `token_overlap`, records
+`estimated_tokens`, and intentionally uses a dependency-light estimate rather
+than claiming provider billing-token parity.
 
 ## Manual overrides
 

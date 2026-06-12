@@ -40,6 +40,7 @@ const chunk = {
     split_reason: 'window_boundary',
     source_block_type: 'unknown',
     source_block_id: 'block-1',
+    split_explanation: 'char_window_v1 applied window_boundary.',
   },
 }
 
@@ -103,6 +104,7 @@ describe('Documents chunk review', () => {
 
     expect(await screen.findByText('char_window_v1')).toBeInTheDocument()
     expect(screen.getByText('window_boundary')).toBeInTheDocument()
+    expect(screen.getByText('char_window_v1 applied window_boundary.')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Split' }))
     expect(screen.getByText('1 pending change(s)')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))

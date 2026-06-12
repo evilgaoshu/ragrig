@@ -26,7 +26,9 @@ _ALLOWED_SPLIT_REASONS = {
     "manual_merge",
     "manual_split",
     "paragraph_boundary",
+    "recursive_fit",
     "sentence_boundary",
+    "token_budget",
     "window_boundary",
 }
 

@@ -77,6 +77,8 @@ def test_all_existing_strategies_have_stable_templates() -> None:
         "heading_v1",
         "sentence_v1",
         "parent_child_v1",
+        "recursive_v1",
+        "token_aware_v1",
     }
 
 
@@ -104,3 +106,62 @@ def test_template_metadata_does_not_change_legacy_config_hash() -> None:
     assert config.config_hash == (
         "5107b53f1dca5db77445fc5b67f370541ff9efbda0b86f6856763f19b769cec3"
     )
+
+
+def test_recursive_template_prefers_boundaries_then_falls_back_to_windows() -> None:
+    config = chunking_config_from_template(
+        "recursive_v1",
+        {"chunk_size": 45, "chunk_overlap": 5},
+    )
+    text = (
+        "# First\n\nShort paragraph.\n\n"
+        "This sentence is deliberately much longer than the configured recursive chunk size."
+        "\n\n# Second\n\nTail."
+    )
+
+    chunks = chunk_text(text, config)
+    reasons = {chunk.metadata["split_reason"] for chunk in chunks}
+
+    assert chunks
+    assert "heading_boundary" in reasons
+    assert "window_boundary" in reasons
+    assert all(chunk.metadata["chunk_template_id"] == "recursive_v1" for chunk in chunks)
+    assert all(chunk.metadata["split_explanation"] for chunk in chunks)
+
+
+def test_token_aware_template_respects_budget_and_overlap() -> None:
+    config = chunking_config_from_template(
+        "token_aware_v1",
+        {"max_tokens": 4, "token_overlap": 1},
+    )
+    chunks = chunk_text("one two three four five six seven", config)
+
+    assert [chunk.metadata["estimated_tokens"] for chunk in chunks] == [4, 4]
+    assert all(chunk.metadata["estimated_tokens"] <= 4 for chunk in chunks)
+    assert chunks[0].text.split()[-1] == chunks[1].text.split()[0]
+    assert all(chunk.metadata["split_reason"] == "token_budget" for chunk in chunks)
+
+
+def test_recursive_short_text_records_that_no_fallback_was_needed() -> None:
+    chunks = chunk_text(
+        "Short text.",
+        chunking_config_from_template(
+            "recursive_v1",
+            {"chunk_size": 50, "chunk_overlap": 5},
+        ),
+    )
+
+    assert chunks[0].metadata["split_reason"] == "recursive_fit"
+
+
+def test_parent_child_rejects_token_aware_without_token_parameter_surface() -> None:
+    with pytest.raises(ValueError, match="does not support token_aware"):
+        chunking_config_from_template(
+            "parent_child_v1",
+            {
+                "chunk_size": 10,
+                "chunk_overlap": 1,
+                "parent_chunk_size": 20,
+                "child_strategy": "token_aware",
+            },
+        )

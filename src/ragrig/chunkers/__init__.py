@@ -6,7 +6,14 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any
 
-_VALID_STRATEGIES = {"char_window", "paragraph", "heading", "sentence"}
+_VALID_STRATEGIES = {
+    "char_window",
+    "paragraph",
+    "heading",
+    "sentence",
+    "recursive",
+    "token_aware",
+}
 _TEMPLATE_VERSION = "1"
 
 
@@ -86,6 +93,29 @@ CHUNK_TEMPLATES: dict[str, ChunkTemplate] = {
         split_rules=["Create large parent context chunks.", "Embed smaller child chunks."],
         limitations=["P0 manual split/merge is disabled to preserve parent-child links."],
     ),
+    "recursive_v1": ChunkTemplate(
+        id="recursive_v1",
+        version=_TEMPLATE_VERSION,
+        display_name="Recursive boundary-aware",
+        strategy="recursive",
+        parameters={"chunk_size": 500, "chunk_overlap": 50},
+        split_rules=[
+            "Prefer heading, then paragraph, then sentence boundaries.",
+            "Fall back to character windows for oversized atomic blocks.",
+        ],
+        limitations=["Character fallback may split indivisible long sentences."],
+    ),
+    "token_aware_v1": ChunkTemplate(
+        id="token_aware_v1",
+        version=_TEMPLATE_VERSION,
+        display_name="Token-aware",
+        strategy="token_aware",
+        parameters={"max_tokens": 128, "token_overlap": 16},
+        split_rules=["Split on an estimated token budget.", "Retain configured token overlap."],
+        limitations=[
+            "Default token counts are lightweight estimates, not provider billing tokens."
+        ],
+    ),
 }
 
 _STRATEGY_TEMPLATE_IDS = {
@@ -93,6 +123,8 @@ _STRATEGY_TEMPLATE_IDS = {
     "paragraph": "paragraph_v1",
     "heading": "heading_v1",
     "sentence": "sentence_v1",
+    "recursive": "recursive_v1",
+    "token_aware": "token_aware_v1",
 }
 
 
@@ -102,6 +134,8 @@ class ChunkingConfig:
     chunk_overlap: int = 50
     strategy: str = "char_window"
     parent_chunk_size: int | None = None  # when set, enables parent-child chunking
+    max_tokens: int | None = None
+    token_overlap: int = 0
 
     def __post_init__(self) -> None:
         if self.chunk_size <= 0:
@@ -118,6 +152,13 @@ class ChunkingConfig:
         if self.parent_chunk_size is not None:
             if self.parent_chunk_size <= self.chunk_size:
                 raise ValueError("parent_chunk_size must be greater than chunk_size")
+        if self.strategy == "token_aware":
+            if self.max_tokens is None or self.max_tokens <= 0:
+                raise ValueError("max_tokens must be greater than zero")
+            if self.token_overlap < 0:
+                raise ValueError("token_overlap must be zero or greater")
+            if self.token_overlap >= self.max_tokens:
+                raise ValueError("token_overlap must be smaller than max_tokens")
 
     @property
     def _chunker_id(self) -> str:
@@ -139,6 +180,9 @@ class ChunkingConfig:
         }
         if self.parent_chunk_size is not None:
             payload["parent_chunk_size"] = self.parent_chunk_size
+        if self.strategy == "token_aware":
+            payload["max_tokens"] = self.max_tokens
+            payload["token_overlap"] = self.token_overlap
         return sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
     def as_metadata(self) -> dict[str, Any]:
@@ -160,6 +204,13 @@ class ChunkingConfig:
             meta["parent_chunk_size"] = self.parent_chunk_size
             meta["template_parameters"]["parent_chunk_size"] = self.parent_chunk_size
             meta["template_parameters"]["child_strategy"] = self.strategy
+        if self.strategy == "token_aware":
+            meta["max_tokens"] = self.max_tokens
+            meta["token_overlap"] = self.token_overlap
+            meta["template_parameters"] = {
+                "max_tokens": self.max_tokens,
+                "token_overlap": self.token_overlap,
+            }
         return meta
 
 
@@ -214,16 +265,18 @@ def _explain_drafts(
 ) -> list[ChunkDraft]:
     explained: list[ChunkDraft] = []
     for draft in drafts:
+        resolved_reason = str(draft.metadata.get("split_reason") or split_reason)
+        resolved_block_type = str(draft.metadata.get("source_block_type") or source_block_type)
         metadata = {
             **draft.metadata,
             **config.as_metadata(),
-            "split_reason": split_reason,
-            "split_explanation": f"{config.template_id} applied {split_reason}.",
+            "split_reason": resolved_reason,
+            "split_explanation": f"{config.template_id} applied {resolved_reason}.",
             "char_start": draft.char_start,
             "char_end": draft.char_end,
-            "source_block_type": source_block_type,
+            "source_block_type": resolved_block_type,
             "source_block_id": _source_block_id(
-                source_block_type,
+                resolved_block_type,
                 draft.char_start,
                 draft.char_end,
             ),
@@ -441,6 +494,138 @@ def _sentence_chunk(text: str, config: ChunkingConfig) -> list[ChunkDraft]:
     return out
 
 
+def _recursive_chunk(text: str, config: ChunkingConfig) -> list[ChunkDraft]:
+    out: list[ChunkDraft] = []
+    shared = config.as_metadata()
+
+    def append_span(start: int, end: int, reason: str, block_type: str) -> None:
+        value = text[start:end].strip()
+        if not value:
+            return
+        actual_start = text.find(value, start, end)
+        out.append(
+            _make_draft(
+                len(out),
+                value,
+                actual_start,
+                {
+                    **shared,
+                    "split_reason": reason,
+                    "source_block_type": block_type,
+                },
+                heading=_heading_for_span(value),
+            )
+        )
+
+    def split(start: int, end: int, level: int, inherited_reason: str | None = None) -> None:
+        if end <= start:
+            return
+        if end - start <= config.chunk_size:
+            append_span(
+                start, end, inherited_reason or "recursive_fit", _block_type(inherited_reason)
+            )
+            return
+        for next_level in range(level, 3):
+            spans = _recursive_boundary_spans(text, start, end, next_level)
+            if len(spans) <= 1:
+                continue
+            reason = ("heading_boundary", "paragraph_boundary", "sentence_boundary")[next_level]
+            for span_start, span_end in spans:
+                split(span_start, span_end, next_level + 1, reason)
+            return
+        window_config = ChunkingConfig(
+            chunk_size=config.chunk_size,
+            chunk_overlap=config.chunk_overlap,
+            strategy="char_window",
+        )
+        for draft in _char_window_chunk(text[start:end], window_config):
+            append_span(
+                start + draft.char_start,
+                start + draft.char_end,
+                "window_boundary",
+                "unknown",
+            )
+
+    split(0, len(text), 0)
+    return out
+
+
+def _recursive_boundary_spans(
+    text: str,
+    start: int,
+    end: int,
+    level: int,
+) -> list[tuple[int, int]]:
+    segment = text[start:end]
+    if level == 0:
+        positions = [match.start() for match in re.finditer(r"^#{1,6} .+$", segment, re.MULTILINE)]
+        if not positions:
+            return [(start, end)]
+        boundaries = ([0] if positions[0] > 0 else []) + positions + [len(segment)]
+    elif level == 1:
+        boundaries = (
+            [0] + [match.end() for match in re.finditer(r"\n{2,}", segment)] + [len(segment)]
+        )
+    else:
+        boundaries = [0]
+        boundaries.extend(
+            match.end() for match in re.finditer(r"[.!?。！？](?=\s|[一-鿿぀-ヿ]|\Z)", segment)
+        )
+        boundaries.append(len(segment))
+    unique = sorted(set(boundaries))
+    return [
+        (start + left, start + right)
+        for left, right in zip(unique, unique[1:], strict=False)
+        if segment[left:right].strip()
+    ]
+
+
+def _heading_for_span(value: str) -> str | None:
+    first_line = value.splitlines()[0] if value else ""
+    return first_line if re.match(r"^#{1,6} ", first_line) else None
+
+
+def _block_type(reason: str | None) -> str:
+    return {
+        "heading_boundary": "heading",
+        "paragraph_boundary": "paragraph",
+        "sentence_boundary": "paragraph",
+    }.get(reason or "", "unknown")
+
+
+def _token_aware_chunk(text: str, config: ChunkingConfig) -> list[ChunkDraft]:
+    assert config.max_tokens is not None
+    tokens = list(re.finditer(r"[A-Za-z0-9_]+|[^\s]", text))
+    if not tokens:
+        return []
+    shared = config.as_metadata()
+    out: list[ChunkDraft] = []
+    token_start = 0
+    while token_start < len(tokens):
+        token_end = min(len(tokens), token_start + config.max_tokens)
+        char_start = tokens[token_start].start()
+        char_end = tokens[token_end - 1].end()
+        value = text[char_start:char_end]
+        out.append(
+            ChunkDraft(
+                chunk_index=len(out),
+                text=value,
+                char_start=char_start,
+                char_end=char_end,
+                metadata={
+                    **shared,
+                    "chunk_hash": sha256(value.encode("utf-8")).hexdigest(),
+                    "text_length": len(value),
+                    "estimated_tokens": token_end - token_start,
+                },
+            )
+        )
+        if token_end == len(tokens):
+            break
+        token_start = max(token_start + 1, token_end - config.token_overlap)
+    return out
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
@@ -478,6 +663,22 @@ def chunk_text(text: str, config: ChunkingConfig) -> list[ChunkDraft]:
             config=config,
             split_reason="sentence_boundary",
             source_block_type="paragraph",
+        )
+    if config.strategy == "recursive":
+        drafts = _recursive_chunk(text, config)
+        return _explain_drafts(
+            drafts,
+            config=config,
+            split_reason="window_boundary",
+            source_block_type="unknown",
+        )
+    if config.strategy == "token_aware":
+        drafts = _token_aware_chunk(text, config)
+        return _explain_drafts(
+            drafts,
+            config=config,
+            split_reason="token_budget",
+            source_block_type="unknown",
         )
     raise ValueError(f"Unknown strategy: {config.strategy}")
 
@@ -563,6 +764,8 @@ def chunking_config_from_template(
     if unknown:
         raise ValueError(f"Unknown chunk template parameters: {unknown}")
     strategy = values.pop("child_strategy", template.strategy)
+    if template_id == "parent_child_v1" and strategy == "token_aware":
+        raise ValueError("parent_child_v1 does not support token_aware child_strategy")
     return ChunkingConfig(strategy=strategy, **values)
 
 

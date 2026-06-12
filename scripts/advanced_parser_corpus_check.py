@@ -35,20 +35,22 @@ def _make_markdown(summary: CorpusSummary) -> str:
         f"- **Skipped**: {summary.skipped}\n"
         f"- **Failed**: {summary.failed}\n\n"
         "## Adapter Availability\n\n"
-        "| Parser | Available | Extensions |\n"
-        "|--------|-----------|------------|\n"
+        "| Parser | Available | Service mode | Extensions |\n"
+        "|--------|-----------|--------------|------------|\n"
         + "\n".join(
             f"| {a.get('parser')} | {a.get('available')} "
-            f"| {', '.join(a.get('supported_extensions') or [])} |"
+            f"| {a.get('service_mode', False)} | {', '.join(a.get('supported_extensions') or [])} |"
             for a in summary.adapter_statuses
         )
         + "\n\n"
         "## Results\n\n"
-        "| Fmt | Fixture ID | Parser | Status | TxtLen | Tbl | Pg | Degraded Reason |\n"
-        "|-----|-----------|--------|--------|--------|-----|----|-----------------|\n"
+        "| Fmt | Fixture ID | Parser | Status | TxtLen | Pg | Tbl | OCR | Layout "
+        "| Degraded Reason |\n"
+        "|-----|-----------|--------|--------|--------|----|-----|-----|--------|-----------------|\n"
         + "\n".join(
             f"| {r.format} | {r.fixture_id} | {r.parser} | {r.status.value} "
-            f"| {r.text_length} | {r.table_count} | {r.page_or_slide_count} "
+            f"| {r.text_length} | {r.page_or_slide_count} | {r.table_count} "
+            f"| {bool(r.metadata.get('ocr_applied'))} | {bool(r.metadata.get('layout_aware'))} "
             f"| {r.degraded_reason or ''} |"
             for r in summary.results
         )
@@ -84,8 +86,11 @@ def _make_json(summary: CorpusSummary) -> str:
                     "parser": r.parser,
                     "status": r.status.value,
                     "text_length": r.text_length,
+                    "page_count": r.page_or_slide_count,
                     "table_count": r.table_count,
                     "page_or_slide_count": r.page_or_slide_count,
+                    "ocr_applied": bool(r.metadata.get("ocr_applied")),
+                    "layout_aware": bool(r.metadata.get("layout_aware")),
                     "degraded_reason": r.degraded_reason,
                     "metadata": result_audit_metadata(r),
                 }
@@ -127,7 +132,10 @@ def main() -> int:
     for r in summary.results:
         print(
             f"  [{r.status.value.upper():>8}] {r.format:>4} {r.fixture_id:20} "
-            f"parser={r.parser:25} reason={r.degraded_reason or ''}"
+            f"parser={r.parser:25} pages={r.page_or_slide_count:<3} tables={r.table_count:<3} "
+            f"ocr={bool(r.metadata.get('ocr_applied'))!s:<5} "
+            f"layout={bool(r.metadata.get('layout_aware'))!s:<5} "
+            f"reason={r.degraded_reason or ''}"
         )
 
     json_str = _make_json(summary)

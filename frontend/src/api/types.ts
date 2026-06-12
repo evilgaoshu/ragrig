@@ -105,6 +105,29 @@ export interface RetrievalReport {
   results: RetrievalResult[]
 }
 
+export interface AnswerCitation {
+  citation_id: string
+  document_uri: string
+  chunk_id: string
+  chunk_index: number
+  text_preview: string
+  score: number
+  char_start: number | null
+  char_end: number | null
+  page_number: number | null
+  metadata_summary: Record<string, unknown>
+}
+
+export interface AnswerResult {
+  answer: string
+  citations: AnswerCitation[]
+  model: string
+  provider: string
+  grounding_status: string
+  refusal_reason?: string
+  retrieval_trace?: Record<string, unknown>
+}
+
 export interface GraphRetrievalContext {
   matched_entities?: Record<string, unknown>[]
   matched_relationships?: Record<string, unknown>[]

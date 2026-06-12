@@ -85,14 +85,16 @@ For a step-by-step version with development paths, see
   parsing by default.
 - Optional `doc-parsers-advanced` support, with ingestion configured for
   `advanced_parser=auto` or `docling`, adds Docling layout/table-aware parsing and local
-  OCR fallback for scanned PDFs; OCR also requires the system Tesseract binary.
+  OCR fallback for scanned PDFs; OCR also requires the system Tesseract binary. Optional
+  Docling/MinerU HTTP service mode reuses the lightweight core `httpx` dependency.
 - Parse → clean → chunk → embed → index → optional KG extract → retrieve → rerank, each step
   inspectable through pipeline, audit, and retrieval traces.
 - Postgres-first Graph-RAG modes expose entity matches, relationship evidence, source-backed
   relation paths, feedback suppression, and graph rank movement; deterministic extraction is
   available for CI/local use and future LLM extractors plug into a provider seam.
-- Template-backed explainable chunking records split reasons and source ranges; Documents supports
-  audited manual split/merge overrides with an explicit reindex step.
+- Template-backed explainable chunking includes recursive boundary and lightweight token-aware
+  strategies, records split reasons and source ranges, and supports audited manual split/merge
+  overrides with an explicit reindex step.
 - pgvector by default, Qdrant as an optional backend (same retrieval contract).
 - BGE / Ollama / LM Studio / OpenAI-compatible embedders side-by-side with OpenAI / OpenRouter / Gemini.
 
@@ -231,7 +233,7 @@ Full RBAC / member management / API-key reference:
 ## Web Console
 
 Operator surface. Knowledge bases, sources, pipeline runs, document /
-chunk preview, Playground for retrieval + answer with citations, usage
+chunk preview, Playground for retrieval + answers with clickable inline citations and source spans, usage
 dashboard, conversations, admin status, backup/restore.
 
 The current production console ships from the React app under
