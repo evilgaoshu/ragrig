@@ -119,3 +119,28 @@ uv run python -m scripts.advanced_parser_corpus_check \
 runtime/model installation varies by deployment. Corpus JSON records parser
 version, page/table/image/chart/formula counts when available, OCR
 enabled/applied/failure state, layout source, and the stable degraded reason.
+
+## Explainable chunking and manual override
+
+Run the focused backend contract:
+
+```bash
+uv run pytest tests/test_chunkers.py tests/test_chunk_review.py tests/test_indexing_pipeline.py -q
+```
+
+Preview uses the real chunker and does not write chunks:
+
+```bash
+curl -sS http://localhost:8000/chunking/preview \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"First paragraph.\n\nSecond paragraph.","template_id":"paragraph_v1","parameters":{"chunk_size":500,"chunk_overlap":50}}'
+```
+
+In Web Console, open **Documents → Chunks**. Split or merge adjacent chunks,
+enter an operator reason, and select **Save changes**. The document version
+becomes `stale` while the immutable `extracted_text` remains unchanged. Select
+**Reindex** to regenerate chunks and embeddings from the stored character
+boundaries. Verify the resulting chunks expose `chunk_template_id`,
+`split_reason`, `char_start`, `char_end`, and `document_uri`, and inspect
+`chunk_override_save`, `chunk_override_reset`, and `chunk_override_reindex`
+events through `/audit/events`.

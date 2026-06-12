@@ -7,6 +7,93 @@ from hashlib import sha256
 from typing import Any
 
 _VALID_STRATEGIES = {"char_window", "paragraph", "heading", "sentence"}
+_TEMPLATE_VERSION = "1"
+
+
+@dataclass(frozen=True)
+class ChunkTemplate:
+    id: str
+    version: str
+    display_name: str
+    strategy: str
+    parameters: dict[str, Any]
+    split_rules: list[str]
+    limitations: list[str]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "version": self.version,
+            "display_name": self.display_name,
+            "strategy": self.strategy,
+            "parameters": dict(self.parameters),
+            "split_rules": list(self.split_rules),
+            "limitations": list(self.limitations),
+        }
+
+
+CHUNK_TEMPLATES: dict[str, ChunkTemplate] = {
+    "char_window_v1": ChunkTemplate(
+        id="char_window_v1",
+        version=_TEMPLATE_VERSION,
+        display_name="Character window",
+        strategy="char_window",
+        parameters={"chunk_size": 500, "chunk_overlap": 50},
+        split_rules=["Split at fixed character windows.", "Retain configured overlap."],
+        limitations=["May split sentences, tables, and semantic blocks."],
+    ),
+    "paragraph_v1": ChunkTemplate(
+        id="paragraph_v1",
+        version=_TEMPLATE_VERSION,
+        display_name="Paragraph-aware",
+        strategy="paragraph",
+        parameters={"chunk_size": 500, "chunk_overlap": 50},
+        split_rules=["Split on blank-line paragraph boundaries.", "Merge short paragraphs."],
+        limitations=["Oversized paragraphs fall back to character windows."],
+    ),
+    "heading_v1": ChunkTemplate(
+        id="heading_v1",
+        version=_TEMPLATE_VERSION,
+        display_name="Heading-aware",
+        strategy="heading",
+        parameters={"chunk_size": 500, "chunk_overlap": 50},
+        split_rules=[
+            "Split Markdown sections at headings.",
+            "Repeat the heading in section chunks.",
+        ],
+        limitations=["Oversized sections fall back to character windows."],
+    ),
+    "sentence_v1": ChunkTemplate(
+        id="sentence_v1",
+        version=_TEMPLATE_VERSION,
+        display_name="Sentence-aware",
+        strategy="sentence",
+        parameters={"chunk_size": 500, "chunk_overlap": 50},
+        split_rules=["Split at sentence punctuation.", "Merge sentences up to chunk_size."],
+        limitations=["Oversized sentences fall back to character windows."],
+    ),
+    "parent_child_v1": ChunkTemplate(
+        id="parent_child_v1",
+        version=_TEMPLATE_VERSION,
+        display_name="Parent-child",
+        strategy="parent_child",
+        parameters={
+            "chunk_size": 500,
+            "chunk_overlap": 50,
+            "parent_chunk_size": 1500,
+            "child_strategy": "char_window",
+        },
+        split_rules=["Create large parent context chunks.", "Embed smaller child chunks."],
+        limitations=["P0 manual split/merge is disabled to preserve parent-child links."],
+    ),
+}
+
+_STRATEGY_TEMPLATE_IDS = {
+    "char_window": "char_window_v1",
+    "paragraph": "paragraph_v1",
+    "heading": "heading_v1",
+    "sentence": "sentence_v1",
+}
 
 
 @dataclass(frozen=True)
@@ -38,6 +125,12 @@ class ChunkingConfig:
         return "char_window_v1" if self.strategy == "char_window" else self.strategy
 
     @property
+    def template_id(self) -> str:
+        if self.parent_chunk_size is not None:
+            return "parent_child_v1"
+        return _STRATEGY_TEMPLATE_IDS[self.strategy]
+
+    @property
     def config_hash(self) -> str:
         payload: dict[str, Any] = {
             "chunker": self._chunker_id,
@@ -49,14 +142,24 @@ class ChunkingConfig:
         return sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
     def as_metadata(self) -> dict[str, Any]:
+        template = CHUNK_TEMPLATES[self.template_id]
         meta: dict[str, Any] = {
             "chunker": self._chunker_id,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
             "config_hash": self.config_hash,
+            "chunk_template_id": template.id,
+            "chunk_template_version": template.version,
+            "chunk_strategy": template.strategy,
+            "template_parameters": {
+                "chunk_size": self.chunk_size,
+                "chunk_overlap": self.chunk_overlap,
+            },
         }
         if self.parent_chunk_size is not None:
             meta["parent_chunk_size"] = self.parent_chunk_size
+            meta["template_parameters"]["parent_chunk_size"] = self.parent_chunk_size
+            meta["template_parameters"]["child_strategy"] = self.strategy
         return meta
 
 
@@ -95,6 +198,57 @@ def _make_draft(
         metadata={**shared_metadata, **extra},
         heading=heading,
     )
+
+
+def _source_block_id(source_block_type: str, char_start: int, char_end: int) -> str:
+    value = f"{source_block_type}:{char_start}:{char_end}"
+    return sha256(value.encode("utf-8")).hexdigest()[:20]
+
+
+def _explain_drafts(
+    drafts: list[ChunkDraft],
+    *,
+    config: ChunkingConfig,
+    split_reason: str,
+    source_block_type: str,
+) -> list[ChunkDraft]:
+    explained: list[ChunkDraft] = []
+    for draft in drafts:
+        metadata = {
+            **draft.metadata,
+            **config.as_metadata(),
+            "split_reason": split_reason,
+            "split_explanation": f"{config.template_id} applied {split_reason}.",
+            "char_start": draft.char_start,
+            "char_end": draft.char_end,
+            "source_block_type": source_block_type,
+            "source_block_id": _source_block_id(
+                source_block_type,
+                draft.char_start,
+                draft.char_end,
+            ),
+        }
+        if draft.heading:
+            metadata["heading"] = draft.heading
+            metadata["section_id"] = _source_block_id(
+                "section",
+                draft.char_start,
+                draft.char_end,
+            )
+        if draft.parent_chunk_index is not None:
+            metadata["parent_chunk_index"] = draft.parent_chunk_index
+        explained.append(
+            ChunkDraft(
+                chunk_index=draft.chunk_index,
+                text=draft.text,
+                char_start=draft.char_start,
+                char_end=draft.char_end,
+                metadata=metadata,
+                heading=draft.heading,
+                parent_chunk_index=draft.parent_chunk_index,
+            )
+        )
+    return explained
 
 
 # ── Strategy implementations ──────────────────────────────────────────────────
@@ -294,13 +448,37 @@ def chunk_text(text: str, config: ChunkingConfig) -> list[ChunkDraft]:
     if text == "":
         return []
     if config.strategy == "char_window":
-        return _char_window_chunk(text, config)
+        drafts = _char_window_chunk(text, config)
+        return _explain_drafts(
+            drafts,
+            config=config,
+            split_reason="window_boundary",
+            source_block_type="unknown",
+        )
     if config.strategy == "paragraph":
-        return _paragraph_chunk(text, config)
+        drafts = _paragraph_chunk(text, config)
+        return _explain_drafts(
+            drafts,
+            config=config,
+            split_reason="paragraph_boundary",
+            source_block_type="paragraph",
+        )
     if config.strategy == "heading":
-        return _heading_chunk(text, config)
+        drafts = _heading_chunk(text, config)
+        return _explain_drafts(
+            drafts,
+            config=config,
+            split_reason="heading_boundary",
+            source_block_type="heading",
+        )
     if config.strategy == "sentence":
-        return _sentence_chunk(text, config)
+        drafts = _sentence_chunk(text, config)
+        return _explain_drafts(
+            drafts,
+            config=config,
+            split_reason="sentence_boundary",
+            source_block_type="paragraph",
+        )
     raise ValueError(f"Unknown strategy: {config.strategy}")
 
 
@@ -326,6 +504,12 @@ def chunk_text_hierarchical(
         strategy=config.strategy,
     )
     parent_drafts = chunk_text(text, parent_config)
+    parent_drafts = _explain_drafts(
+        parent_drafts,
+        config=config,
+        split_reason="parent_boundary",
+        source_block_type="unknown",
+    )
 
     child_config = ChunkingConfig(
         chunk_size=config.chunk_size,
@@ -346,7 +530,12 @@ def chunk_text_hierarchical(
                     text=rc.text,
                     char_start=parent_draft.char_start + rc.char_start,
                     char_end=parent_draft.char_start + rc.char_end,
-                    metadata={**shared_meta, **rc.metadata},
+                    metadata={
+                        **rc.metadata,
+                        **shared_meta,
+                        "split_reason": rc.metadata["split_reason"],
+                        "parent_chunk_index": parent_draft.chunk_index,
+                    },
                     heading=rc.heading or parent_draft.heading,
                     parent_chunk_index=parent_draft.chunk_index,
                 )
@@ -356,4 +545,34 @@ def chunk_text_hierarchical(
     return parent_drafts, child_drafts
 
 
-__all__ = ["ChunkDraft", "ChunkingConfig", "chunk_text", "chunk_text_hierarchical"]
+def get_chunk_template(template_id: str) -> ChunkTemplate:
+    try:
+        return CHUNK_TEMPLATES[template_id]
+    except KeyError as exc:
+        raise ValueError(f"Unknown chunk template '{template_id}'") from exc
+
+
+def chunking_config_from_template(
+    template_id: str,
+    parameters: dict[str, Any] | None = None,
+) -> ChunkingConfig:
+    template = get_chunk_template(template_id)
+    values = {**template.parameters, **(parameters or {})}
+    allowed = set(template.parameters)
+    unknown = sorted(set(values) - allowed)
+    if unknown:
+        raise ValueError(f"Unknown chunk template parameters: {unknown}")
+    strategy = values.pop("child_strategy", template.strategy)
+    return ChunkingConfig(strategy=strategy, **values)
+
+
+__all__ = [
+    "CHUNK_TEMPLATES",
+    "ChunkDraft",
+    "ChunkTemplate",
+    "ChunkingConfig",
+    "chunk_text",
+    "chunk_text_hierarchical",
+    "chunking_config_from_template",
+    "get_chunk_template",
+]

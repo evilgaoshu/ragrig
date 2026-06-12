@@ -16,6 +16,8 @@ import type {
   SupportedFormat,
   Document,
   Chunk,
+  ChunkPreview,
+  ChunkReview,
 } from './types'
 
 export function useSystemStatus() {
@@ -147,6 +149,61 @@ export function useDocumentVersionChunks(versionId: string | null) {
         .get<{ items: Chunk[] }>(`/document-versions/${versionId}/chunks`)
         .then((r) => r.items),
     enabled: !!versionId,
+  })
+}
+
+export function useChunkReview(versionId: string | null) {
+  return useQuery({
+    queryKey: ['chunk-review', versionId],
+    queryFn: () => api.get<ChunkReview>(`/document-versions/${versionId}/chunk-review`),
+    enabled: !!versionId,
+  })
+}
+
+export function useChunkPreview() {
+  return useMutation({
+    mutationFn: (body: {
+      document_version_id: string
+      template_id: string
+      parameters: Record<string, unknown>
+    }) => api.post<ChunkPreview>('/chunking/preview', body),
+  })
+}
+
+export function useSaveChunkOverride(versionId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      api.put(`/document-versions/${versionId}/chunk-override`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['chunk-review', versionId] })
+      qc.invalidateQueries({ queryKey: ['document-version-chunks', versionId] })
+      qc.invalidateQueries({ queryKey: ['documents'] })
+    },
+  })
+}
+
+export function useResetChunkOverride(versionId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      reason: string
+      template_id: string
+      template_parameters: Record<string, unknown>
+    }) => api.post(`/document-versions/${versionId}/chunk-override/reset`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['chunk-review', versionId] }),
+  })
+}
+
+export function useReindexChunkOverride(versionId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post(`/document-versions/${versionId}/chunk-override/reindex`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['chunk-review', versionId] })
+      qc.invalidateQueries({ queryKey: ['document-version-chunks', versionId] })
+      qc.invalidateQueries({ queryKey: ['documents'] })
+    },
   })
 }
 

@@ -87,6 +87,8 @@ For a step-by-step version with development paths, see
   `advanced_parser=auto` or `docling`, adds Docling layout/table-aware parsing and local
   OCR fallback for scanned PDFs; OCR also requires the system Tesseract binary.
 - Parse → clean → chunk → embed → index → retrieve → rerank, each step inspectable in the console.
+- Template-backed explainable chunking records split reasons and source ranges; Documents supports
+  audited manual split/merge overrides with an explicit reindex step.
 - pgvector by default, Qdrant as an optional backend (same retrieval contract).
 - BGE / Ollama / LM Studio / OpenAI-compatible embedders side-by-side with OpenAI / OpenRouter / Gemini.
 
