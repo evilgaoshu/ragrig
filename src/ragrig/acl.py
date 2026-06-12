@@ -27,6 +27,9 @@ AuditEventType = Literal[
     "kg_relation_feedback",
     "retrieval_preference_update",
     "role_model_config_update",
+    "chunk_override_save",
+    "chunk_override_reset",
+    "chunk_override_reindex",
 ]
 AclExplainReason = Literal[
     "public",

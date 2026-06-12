@@ -1,6 +1,13 @@
 import { useState } from 'react'
-import { useDocuments, useDocumentVersionChunks } from '../api/hooks'
-import type { Document, Chunk } from '../api/types'
+import {
+  useChunkPreview,
+  useChunkReview,
+  useDocuments,
+  useReindexChunkOverride,
+  useResetChunkOverride,
+  useSaveChunkOverride,
+} from '../api/hooks'
+import type { Document, Chunk, ChunkReview } from '../api/types'
 
 function uriLabel(uri: string): string {
   try {
@@ -12,29 +19,240 @@ function uriLabel(uri: string): string {
 }
 
 function ChunkList({ versionId }: { versionId: string }) {
-  const { data: chunks, isLoading } = useDocumentVersionChunks(versionId)
+  const { data: review, isLoading } = useChunkReview(versionId)
 
   if (isLoading)
     return <div className="p-3 text-gray-400 text-sm">Loading chunks…</div>
-  if (!chunks?.length)
+  if (!review?.items.length)
     return <div className="p-3 text-gray-400 text-sm">No chunks found.</div>
 
+  const revision = String(review.override?.revision ?? 'none')
+  const itemKey = review.items.map((chunk) => chunk.id).join(':')
   return (
-    <div className="max-h-80 overflow-y-auto divide-y divide-gray-100">
-      {chunks.map((chunk: Chunk) => (
-        <div key={chunk.id} className="px-4 py-2.5">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-bold text-gray-400">#{chunk.chunk_index}</span>
-            {chunk.heading && (
-              <span className="text-[11px] font-medium text-gray-600 truncate">{chunk.heading}</span>
-            )}
-            {chunk.page_number != null && (
-              <span className="text-[10px] text-gray-400 ml-auto shrink-0">p.{chunk.page_number}</span>
-            )}
+    <ChunkEditor
+      key={`${review.index_status.status}:${revision}:${itemKey}`}
+      versionId={versionId}
+      review={review}
+    />
+  )
+}
+
+function ChunkEditor({ versionId, review }: { versionId: string; review: ChunkReview }) {
+  const preview = useChunkPreview()
+  const saveOverride = useSaveChunkOverride(versionId)
+  const resetOverride = useResetChunkOverride(versionId)
+  const reindex = useReindexChunkOverride(versionId)
+  const [chunks, setChunks] = useState<Chunk[]>(review.items)
+  const [operations, setOperations] = useState<Array<Record<string, unknown>>>([])
+  const [reason, setReason] = useState('Manual chunk review')
+  const [resetPending, setResetPending] = useState(false)
+
+  const pending = operations.length > 0 || resetPending
+  const metadataString = (chunk: Chunk, key: string) =>
+    typeof chunk.metadata[key] === 'string' ? String(chunk.metadata[key]) : ''
+
+  const splitChunk = (index: number) => {
+    const chunk = chunks[index]
+    const offset = Math.floor(chunk.text.length / 2)
+    const splitAt = Math.min(chunk.char_end - 1, chunk.char_start + Math.max(offset, 1))
+    if (splitAt <= chunk.char_start || splitAt >= chunk.char_end) return
+    const textOffset = splitAt - chunk.char_start
+    const baseMetadata = { ...chunk.metadata, split_reason: 'manual_split' }
+    const next = [
+      ...chunks.slice(0, index),
+      {
+        ...chunk,
+        id: `${chunk.id}-left`,
+        text: chunk.text.slice(0, textOffset),
+        char_end: splitAt,
+        metadata: baseMetadata,
+      },
+      {
+        ...chunk,
+        id: `${chunk.id}-right`,
+        text: chunk.text.slice(textOffset),
+        char_start: splitAt,
+        metadata: baseMetadata,
+      },
+      ...chunks.slice(index + 1),
+    ]
+    setChunks(next.map((item, chunkIndex) => ({ ...item, chunk_index: chunkIndex })))
+    setOperations((items) => [
+      ...items,
+      { operation: 'split', chunk_index: chunk.chunk_index, split_at: splitAt },
+    ])
+    setResetPending(false)
+  }
+
+  const mergeNext = (index: number) => {
+    const chunk = chunks[index]
+    const nextChunk = chunks[index + 1]
+    if (!nextChunk) return
+    const merged = {
+      ...chunk,
+      id: `${chunk.id}-merged-${nextChunk.id}`,
+      text: `${chunk.text}\n${nextChunk.text}`,
+      char_end: Math.max(chunk.char_end, nextChunk.char_end),
+      metadata: { ...chunk.metadata, split_reason: 'manual_merge' },
+    }
+    const next = [...chunks.slice(0, index), merged, ...chunks.slice(index + 2)]
+    setChunks(next.map((item, chunkIndex) => ({ ...item, chunk_index: chunkIndex })))
+    setOperations((items) => [
+      ...items,
+      {
+        operation: 'merge',
+        chunk_index: chunk.chunk_index,
+        next_chunk_index: nextChunk.chunk_index,
+      },
+    ])
+    setResetPending(false)
+  }
+
+  const resetToTemplate = async () => {
+    const first = chunks[0]
+    const templateId = metadataString(first, 'chunk_template_id') || 'char_window_v1'
+    const parameters = (first.metadata.template_parameters as Record<string, unknown>) || {}
+    const result = await preview.mutateAsync({
+      document_version_id: versionId,
+      template_id: templateId,
+      parameters,
+    })
+    setChunks(result.chunks.map((chunk) => ({
+      id: `preview-${chunk.chunk_index}`,
+      chunk_index: chunk.chunk_index,
+      heading: chunk.heading,
+      char_start: chunk.char_start,
+      char_end: chunk.char_end,
+      page_number: null,
+      text: chunk.text,
+      metadata: chunk.metadata,
+    })))
+    setOperations([{ operation: 'reset_to_template', template_id: templateId }])
+    setResetPending(true)
+  }
+
+  const save = async () => {
+    if (resetPending) {
+      const first = chunks[0]
+      await resetOverride.mutateAsync({
+        reason,
+        template_id: metadataString(first, 'chunk_template_id') || 'char_window_v1',
+        template_parameters: (first.metadata.template_parameters as Record<string, unknown>) || {},
+      })
+    } else {
+      const first = chunks[0]
+      await saveOverride.mutateAsync({
+        reason,
+        template_id: metadataString(first, 'chunk_template_id') || 'char_window_v1',
+        template_parameters: (first.metadata.template_parameters as Record<string, unknown>) || {},
+        chunks: chunks.map((chunk) => ({
+          char_start: chunk.char_start,
+          char_end: chunk.char_end,
+          split_reason: metadataString(chunk, 'split_reason') || 'manual_split',
+          heading: chunk.heading,
+          source_block_type: metadataString(chunk, 'source_block_type') || 'unknown',
+          source_block_id: metadataString(chunk, 'source_block_id') || null,
+          section_id: metadataString(chunk, 'section_id') || null,
+          table_id: metadataString(chunk, 'table_id') || null,
+          parser_page_number: chunk.page_number,
+        })),
+        operations,
+      })
+    }
+    setOperations([])
+    setResetPending(false)
+  }
+
+  return (
+    <div>
+      <div className="px-4 py-2 bg-amber-50 border-b border-amber-100 flex gap-2 items-center flex-wrap">
+        <span className="text-[11px] font-medium text-amber-800">
+          Index: {review?.index_status.status ?? 'unknown'}
+          {review?.index_status.reindex_required ? ' · reindex required' : ''}
+        </span>
+        {pending && (
+          <span className="text-[11px] font-bold text-amber-700">
+            {operations.length} pending change(s)
+          </span>
+        )}
+        <input
+          aria-label="Chunk override reason"
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          className="ml-auto border border-amber-200 rounded px-2 py-1 text-xs bg-white"
+        />
+        <button
+          disabled={!review.edit_supported || preview.isPending}
+          onClick={resetToTemplate}
+          className="px-2 py-1 text-xs border rounded bg-white disabled:opacity-40"
+        >
+          Reset to template
+        </button>
+        <button
+          disabled={!pending || saveOverride.isPending || resetOverride.isPending}
+          onClick={save}
+          className="px-2 py-1 text-xs rounded bg-brand text-white disabled:opacity-40"
+        >
+          Save changes
+        </button>
+        <button
+          disabled={!review.index_status.reindex_required || reindex.isPending}
+          onClick={() => reindex.mutate()}
+          className="px-2 py-1 text-xs border rounded bg-white disabled:opacity-40"
+        >
+          Reindex
+        </button>
+        {!review.edit_supported && (
+          <span className="text-[11px] text-red-600">{review.edit_limitation}</span>
+        )}
+      </div>
+      <div className="max-h-[32rem] overflow-y-auto divide-y divide-gray-100">
+        {chunks.map((chunk: Chunk, index) => (
+          <div key={chunk.id} className="px-4 py-2.5">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] font-bold text-gray-400">#{chunk.chunk_index}</span>
+              <span className="text-[10px] font-mono text-indigo-600">
+                {metadataString(chunk, 'chunk_template_id')}
+              </span>
+              <span className="text-[10px] text-amber-700">
+                {metadataString(chunk, 'split_reason')}
+              </span>
+              <span className="text-[10px] text-gray-400">
+                {chunk.char_start}:{chunk.char_end}
+              </span>
+              {chunk.heading && (
+                <span className="text-[11px] font-medium text-gray-600 truncate">{chunk.heading}</span>
+              )}
+              {chunk.page_number != null && (
+                <span className="text-[10px] text-gray-400 ml-auto shrink-0">
+                  p.{chunk.page_number}
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-gray-600 line-clamp-3 whitespace-pre-wrap">{chunk.text}</div>
+            <div className="mt-1 flex gap-2 items-center">
+              <span className="text-[10px] text-gray-400">
+                {metadataString(chunk, 'source_block_type')}{' '}
+                {metadataString(chunk, 'source_block_id')}
+              </span>
+              <button
+                disabled={!review.edit_supported}
+                onClick={() => splitChunk(index)}
+                className="ml-auto text-[10px] text-brand disabled:text-gray-300"
+              >
+                Split
+              </button>
+              <button
+                disabled={!review.edit_supported || index === chunks.length - 1}
+                onClick={() => mergeNext(index)}
+                className="text-[10px] text-brand disabled:text-gray-300"
+              >
+                Merge next
+              </button>
+            </div>
           </div>
-          <div className="text-xs text-gray-600 line-clamp-3 whitespace-pre-wrap">{chunk.text}</div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }
