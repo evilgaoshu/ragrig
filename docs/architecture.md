@@ -141,6 +141,7 @@ services, repositories, providers, or pipeline modules.
 | Source | A configured ingestion origin such as local files, object storage, DB, or web |
 | Document version | Immutable content snapshot used for traceable chunking and citations |
 | Chunk | Searchable text unit derived from a document version |
+| Chunk template | Versioned strategy contract that records parameters, split rules, and limitations |
 | Embedding | Vector representation for a chunk or query |
 | Pipeline run | Auditable execution record for ingestion, parsing, chunking, embedding, and indexing |
 | Provider | Adapter for a model, embedding service, reranker, or local deterministic fallback |
@@ -153,6 +154,7 @@ Start here before browsing all of `docs/specs/`:
 - [MVP scope](./specs/ragrig-mvp-spec.md)
 - [Metadata database](./specs/ragrig-phase-1a-metadata-db-spec.md)
 - [Chunking and embedding](./specs/ragrig-phase-1c-chunking-embedding-spec.md)
+- [Explainable chunking P0](./specs/ragrig-explainable-chunking-p0.md)
 - [Retrieval API](./specs/ragrig-phase-1d-retrieval-api-spec.md)
 - [Web Console](./specs/ragrig-web-console-spec.md)
 - [Vercel Preview + Supabase](./specs/EVI-130-vercel-preview-supabase.md)

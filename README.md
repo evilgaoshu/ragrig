@@ -91,6 +91,8 @@ For a step-by-step version with development paths, see
 - Postgres-first Graph-RAG modes expose entity matches, relationship evidence, source-backed
   relation paths, feedback suppression, and graph rank movement; deterministic extraction is
   available for CI/local use and future LLM extractors plug into a provider seam.
+- Template-backed explainable chunking records split reasons and source ranges; Documents supports
+  audited manual split/merge overrides with an explicit reindex step.
 - pgvector by default, Qdrant as an optional backend (same retrieval contract).
 - BGE / Ollama / LM Studio / OpenAI-compatible embedders side-by-side with OpenAI / OpenRouter / Gemini.
 

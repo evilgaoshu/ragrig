@@ -288,6 +288,43 @@ export interface Chunk {
   metadata: Record<string, unknown>
 }
 
+export interface ChunkTemplate {
+  id: string
+  version: string
+  display_name: string
+  strategy: string
+  parameters: Record<string, unknown>
+  split_rules: string[]
+  limitations: string[]
+}
+
+export interface ChunkReview {
+  items: Chunk[]
+  override: Record<string, unknown> | null
+  index_status: {
+    status: string
+    reindex_required: boolean
+    reason?: string
+  }
+  edit_supported: boolean
+  edit_limitation: string | null
+}
+
+export interface ChunkPreview {
+  template: ChunkTemplate
+  parameters: Record<string, unknown>
+  chunks: Array<{
+    chunk_index: number
+    text: string
+    char_start: number
+    char_end: number
+    heading: string | null
+    metadata: Record<string, unknown>
+    split_explanation: string | null
+  }>
+  parent_chunks: Array<Record<string, unknown>>
+}
+
 export interface SupportedFormat {
   extension: string
   mime_type: string

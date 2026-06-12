@@ -10,6 +10,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ragrig.chunkers import ChunkingConfig, chunk_text, chunk_text_hierarchical
+from ragrig.chunking_overrides import (
+    configured_chunking,
+    mark_index_current,
+    override_drafts,
+    override_revision,
+)
 from ragrig.db.models import (
     Chunk,
     Document,
@@ -125,6 +131,9 @@ def _version_already_indexed(
     provider_name: str,
     model_name: str,
 ) -> bool:
+    index_status = (document_version.metadata_json or {}).get("chunk_index_status")
+    if isinstance(index_status, dict) and index_status.get("reindex_required"):
+        return False
     chunks = list(
         session.scalars(
             select(Chunk)
@@ -141,6 +150,12 @@ def _version_already_indexed(
     # In parent-child mode, parent chunks (negative chunk_index) have no embeddings.
     leaf_chunks = [c for c in chunks if c.chunk_index >= 0]
     if not leaf_chunks:
+        return False
+    expected_override_revision = override_revision(document_version.metadata_json or {})
+    if expected_override_revision is not None and any(
+        chunk.metadata_json.get("manual_override_revision") != expected_override_revision
+        for chunk in leaf_chunks
+    ):
         return False
     chunk_ids = [c.id for c in leaf_chunks]
     embeddings = list(
@@ -241,9 +256,16 @@ def _replace_version_index(
         },
     ) as chunk_span:
         if chunking_config.parent_chunk_size is not None:
+            if override_revision(document_version.metadata_json or {}) is not None:
+                raise ValueError("parent_child_manual_override_unsupported")
             parent_drafts, child_drafts = chunk_text_hierarchical(source_text, chunking_config)
         else:
-            parent_drafts, child_drafts = [], chunk_text(source_text, chunking_config)
+            parent_drafts = []
+            child_drafts = override_drafts(
+                source_text,
+                document_version.metadata_json or {},
+                chunking_config,
+            ) or chunk_text(source_text, chunking_config)
         set_span_attributes(
             chunk_span,
             **{
@@ -264,6 +286,7 @@ def _replace_version_index(
             text=pdraft.text,
             char_start=pdraft.char_start,
             char_end=pdraft.char_end,
+            heading=pdraft.heading,
             metadata_json={**pdraft.metadata, **base_meta, "is_parent": True},
         )
         session.add(parent_chunk)
@@ -298,6 +321,8 @@ def _replace_version_index(
             context_prefix=context_prefix,
             char_start=draft.char_start,
             char_end=draft.char_end,
+            page_number=draft.metadata.get("parser_page_number"),
+            heading=draft.heading,
             parent_chunk_id=parent_db_id,
             metadata_json={
                 **draft.metadata,
@@ -305,6 +330,7 @@ def _replace_version_index(
                 **({"llm_description": True} if description else {}),
                 **({"contextual_retrieval": True} if context_prefix else {}),
                 **({"has_parent": True} if parent_db_id is not None else {}),
+                **({"parent_chunk_id": str(parent_db_id)} if parent_db_id is not None else {}),
             },
         )
         session.add(chunk)
@@ -453,6 +479,10 @@ def _replace_version_index(
             )
             session.flush()
 
+    document_version.metadata_json = mark_index_current(
+        document_version.metadata_json or {},
+        indexed_at=datetime.now(timezone.utc).isoformat(),
+    )
     session.flush()
     return len(created_chunks), len(created_chunks)
 
@@ -546,6 +576,7 @@ def index_knowledge_base(
     kg_extractor: "KnowledgeGraphExtractor | None" = None,
     kg_extractor_version: str = "kg-lite-v1",
     kg_profile_id: str = "*.understand.default",
+    document_version_ids: set[object] | None = None,
 ) -> IndexingReport:
     if embedding_batch_size <= 0:
         raise ValueError("embedding_batch_size must be greater than zero")
@@ -591,6 +622,11 @@ def index_knowledge_base(
                 "extractor_version": getattr(kg_extractor, "version", kg_extractor_version),
                 "profile_id": kg_profile_id,
             },
+            "document_version_ids": (
+                sorted(str(version_id) for version_id in document_version_ids)
+                if document_version_ids
+                else None
+            ),
         },
     )
     log_event(
@@ -618,9 +654,15 @@ def index_knowledge_base(
     embedding_count = 0
     run_cost_latency_operations: list[dict[str, object]] = []
     versions = list_latest_document_versions(session, knowledge_base_id=knowledge_base.id)
+    if document_version_ids is not None:
+        versions = [version for version in versions if version.id in document_version_ids]
 
     for version in versions:
         document = version.document
+        version_chunking_config = configured_chunking(
+            version.metadata_json or {},
+            chunking_config,
+        )
         try:
             with session.begin_nested():
                 if version.extracted_text == "":
@@ -653,7 +695,7 @@ def index_knowledge_base(
                 if not force_reindex and _version_already_indexed(
                     session,
                     document_version=version,
-                    config_hash=chunking_config.config_hash,
+                    config_hash=version_chunking_config.config_hash,
                     provider_name=provider_name,
                     model_name=model_name,
                 ):
@@ -688,7 +730,7 @@ def index_knowledge_base(
                     session,
                     document_version=version,
                     document=document,
-                    chunking_config=chunking_config,
+                    chunking_config=version_chunking_config,
                     embedding_provider=embedding_provider,
                     chunk_profile_id=chunk_profile.profile_id,
                     embed_profile_id=embed_profile.profile_id,
