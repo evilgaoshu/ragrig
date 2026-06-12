@@ -27,6 +27,10 @@ class DegradedReason(str, Enum):
     OCR_FAILED = "ocr_failed"
     OCR_EMPTY_OUTPUT = "ocr_empty_output"
     ADVANCED_PARSER_UNAVAILABLE = "advanced_parser_unavailable"
+    SERVICE_UNAVAILABLE = "service_unavailable"
+    SERVICE_TIMEOUT = "service_timeout"
+    SERVICE_HTTP_ERROR = "service_http_error"
+    SERVICE_MALFORMED_RESPONSE = "service_malformed_response"
     FALLBACK_PARSER_ERROR = "fallback_parser_error"
     UNSUPPORTED_FORMAT = "unsupported_format"
 

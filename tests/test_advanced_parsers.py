@@ -12,6 +12,7 @@ from ragrig.parsers.advanced import (
     CorpusSummary,
     DegradedReason,
     ParserStatus,
+    service_client,
 )
 from ragrig.parsers.advanced.adapter import AdvancedParserAdapter
 from ragrig.parsers.advanced.docling import DoclingAdapter
@@ -31,7 +32,15 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures" / "advanced_documents"
 
 def test_fixtures_exist() -> None:
     assert FIXTURES_DIR.exists(), f"Fixtures directory not found: {FIXTURES_DIR}"
-    expected = {"sample.pdf", "sample.docx", "sample.pptx", "sample.xlsx"}
+    expected = {
+        "sample.pdf",
+        "ocr_scan.pdf",
+        "table.pdf",
+        "two_column.pdf",
+        "sample.docx",
+        "sample.pptx",
+        "sample.xlsx",
+    }
     actual = {p.name for p in FIXTURES_DIR.iterdir() if p.is_file()}
     assert expected.issubset(actual), f"Missing fixtures: {expected - actual}"
 
@@ -45,6 +54,9 @@ def test_fixtures_are_non_empty() -> None:
 def test_fixtures_content_hash_stable() -> None:
     known = {
         "sample.pdf": "af374b5aaba5da2182acf9839f9500e410a6398f969f7658e9c0387b8a783da4",
+        "ocr_scan.pdf": "9611412002a858a1eb6e4c80ca995bac663c5613071ba56567b7bfa45fc84e4c",
+        "table.pdf": "7def1daa26a77a85a152f6b53d39b9539f222c0edfee4cbbc0015db5c964516e",
+        "two_column.pdf": "8d62a78315c313323317a72ede90b44ae8426a16695a64716ea9f9e78a10ea18",
         "sample.docx": "035e426783dac184f6c1cb585fd2cf5c1a2a07125887fec5d8fa677485b0657c",
         "sample.pptx": "39f3fe1ae72bc4b824da925126b60bcb6b04dc3afb3c7e94b670f07bd684da00",
         "sample.xlsx": "971dd620655877d52381532760a0c863fda0a560b43de34b9468b952aca50009",
@@ -193,6 +205,111 @@ def test_docling_adapter_returns_skip_when_not_installed(monkeypatch) -> None:
     assert result.status == ParserStatus.SKIP
     assert result.degraded_reason == "missing_dependency"
     assert result.fixture_id == "sample"
+
+
+def test_docling_service_mode_success_exposes_quality_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "table.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    response = service_client.httpx.Response(
+        200,
+        request=service_client.httpx.Request("POST", "http://docling.test/parse"),
+        json={
+            "extracted_text": "| Name | Score |\n|---|---|\n| Alice | 95 |",
+            "parser_version": "service-1",
+            "page_count": 2,
+            "table_count": 1,
+            "ocr_applied": True,
+            "layout_aware": True,
+            "layout_source": "docling-layout",
+            "metadata": {"request_id": "req-1", "secret": "not-safe"},
+        },
+    )
+    monkeypatch.setattr(service_client.httpx, "post", lambda *args, **kwargs: response)
+
+    adapter = DoclingAdapter(service_url="http://docling.test/parse")
+    assert adapter.check_dependencies() is True
+    result = adapter.parse(path)
+
+    assert result.status == ParserStatus.HEALTHY
+    assert result.page_or_slide_count == 2
+    assert result.table_count == 1
+    assert result.metadata["ocr_applied"] is True
+    assert result.metadata["layout_aware"] is True
+    assert result.metadata["service_metadata"] == {"request_id": "req-1"}
+
+
+def test_mineru_service_mode_unavailable_is_stable_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "scan.pdf"
+    path.write_bytes(b"%PDF-1.4")
+
+    def unavailable(*args, **kwargs):
+        raise service_client.httpx.ConnectError("offline")
+
+    monkeypatch.setattr(service_client.httpx, "post", unavailable)
+    result = MinerUAdapter(service_url="http://mineru.test/parse").parse(path)
+
+    assert result.status == ParserStatus.SKIP
+    assert result.degraded_reason == "service_unavailable"
+    assert result.metadata["service_mode"] is True
+    assert result.metadata["available"] is False
+
+
+def test_docling_service_mode_cannot_report_empty_output_as_healthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "empty.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    response = service_client.httpx.Response(
+        200,
+        request=service_client.httpx.Request("POST", "http://docling.test/parse"),
+        json={"status": "healthy", "extracted_text": "", "page_count": 1},
+    )
+    monkeypatch.setattr(service_client.httpx, "post", lambda *args, **kwargs: response)
+
+    result = DoclingAdapter(service_url="http://docling.test/parse").parse(path)
+
+    assert result.status == ParserStatus.DEGRADED
+    assert result.degraded_reason == "empty_output"
+
+
+def test_docling_service_mode_malformed_response_is_stable_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "columns.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    response = service_client.httpx.Response(
+        200,
+        request=service_client.httpx.Request("POST", "http://docling.test/parse"),
+        json={"page_count": 1},
+    )
+    monkeypatch.setattr(service_client.httpx, "post", lambda *args, **kwargs: response)
+
+    result = DoclingAdapter(service_url="http://docling.test/parse").parse(path)
+
+    assert result.status == ParserStatus.FAILURE
+    assert result.degraded_reason == "service_malformed_response"
+    assert result.metadata["layout_degraded_reason"] == "service_malformed_response"
+
+
+def test_docling_service_mode_unexpected_client_error_does_not_escape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "client-error.pdf"
+    path.write_bytes(b"%PDF-1.4")
+
+    def broken_client(*args, **kwargs):
+        raise RuntimeError("client middleware failed")
+
+    monkeypatch.setattr(service_client.httpx, "post", broken_client)
+    result = DoclingAdapter(service_url="http://docling.test/parse").parse(path)
+
+    assert result.status == ParserStatus.FAILURE
+    assert result.degraded_reason == "service_unavailable"
+    assert result.metadata["error"].startswith("RuntimeError:")
 
 
 def test_mineru_adapter_check_dependencies_returns_false() -> None:
@@ -617,7 +734,7 @@ def test_adapter_display_name() -> None:
 def test_runner_discovers_fixtures() -> None:
     runner = AdvancedParserRunner(fixtures_dir=FIXTURES_DIR)
     fixtures = runner.discover_fixtures()
-    assert len(fixtures) >= 4
+    assert len(fixtures) >= 7
     formats = {f["format"] for f in fixtures}
     assert formats == {"pdf", "docx", "pptx", "xlsx"}
 
@@ -659,7 +776,7 @@ def test_runner_run_all_each_result_has_expected_fields() -> None:
     summary = runner.run_all()
     for r in summary.results:
         assert r.format in {"pdf", "docx", "pptx", "xlsx"}
-        assert r.fixture_id == "sample"
+        assert r.fixture_id in {"sample", "ocr_scan", "table", "two_column"}
         assert r.parser in {"advanced.docling", "advanced.mineru", "advanced.unstructured", "none"}
         assert r.status in {
             ParserStatus.HEALTHY,
@@ -670,6 +787,66 @@ def test_runner_run_all_each_result_has_expected_fields() -> None:
         assert isinstance(r.text_length, int)
         assert isinstance(r.table_count, int)
         assert isinstance(r.page_or_slide_count, int)
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "metadata", "expected_key"),
+    [
+        (
+            "ocr_scan.pdf",
+            {"ocr_enabled": True, "ocr_applied": True, "layout_aware": False},
+            "ocr_applied",
+        ),
+        (
+            "table.pdf",
+            {"table_count": 1, "layout_aware": True, "layout_source": "fixture"},
+            "table_count",
+        ),
+        (
+            "two_column.pdf",
+            {"layout_aware": True, "layout_source": "fixture-two-column"},
+            "layout_aware",
+        ),
+    ],
+)
+def test_complex_pdf_fixture_quality_contract(
+    tmp_path: Path,
+    fixture_name: str,
+    metadata: dict[str, object],
+    expected_key: str,
+) -> None:
+    class FixtureAdapter(AdvancedParserAdapter):
+        parser_name = "advanced.fixture"
+
+        def can_parse(self, path: Path) -> bool:
+            return path.suffix == ".pdf"
+
+        def check_dependencies(self) -> bool:
+            return True
+
+        def parse(self, path: Path) -> AdvancedParseResult:
+            table_count = int(metadata.get("table_count", 0))
+            return AdvancedParseResult(
+                format="pdf",
+                fixture_id=path.stem,
+                parser=self.parser_name,
+                status=ParserStatus.HEALTHY,
+                extracted_text=f"quality fixture {path.stem}",
+                text_length=len(f"quality fixture {path.stem}"),
+                table_count=table_count,
+                page_or_slide_count=1,
+                metadata={"page_count": 1, **metadata},
+            )
+
+    source = FIXTURES_DIR / fixture_name
+    path = tmp_path / fixture_name
+    path.write_bytes(source.read_bytes())
+    summary = AdvancedParserRunner(fixtures_dir=tmp_path, adapters=[FixtureAdapter()]).run_all()
+    result = summary.results[0]
+
+    assert result.status == ParserStatus.HEALTHY
+    assert result.fixture_id == path.stem
+    assert result.metadata[expected_key]
 
 
 # ── Runner tests: corrupt/empty fixtures ──
@@ -1040,7 +1217,7 @@ def test_artifact_schema_generation() -> None:
     assert schema.version == "1.0.0"
     assert len(schema.artifacts) >= 4
     for a in schema.artifacts:
-        assert a.fixture_id == "sample"
+        assert a.fixture_id in {"sample", "ocr_scan", "table", "two_column"}
         assert a.format in {"pdf", "docx", "pptx", "xlsx"}
         assert len(a.content_hash) == 64
         assert a.size_bytes > 0

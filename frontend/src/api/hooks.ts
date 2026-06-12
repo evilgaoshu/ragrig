@@ -18,6 +18,7 @@ import type {
   Chunk,
   ChunkPreview,
   ChunkReview,
+  AnswerResult,
 } from './types'
 
 export function useSystemStatus() {
@@ -380,7 +381,7 @@ export function useAnswerGen() {
       mode?: string
       graph_weight?: number
       graph_depth?: number
-    }) => api.post<Record<string, unknown>>('/retrieval/answer', body),
+    }) => api.post<AnswerResult>('/retrieval/answer', body),
   })
 }
 

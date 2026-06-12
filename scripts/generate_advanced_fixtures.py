@@ -198,6 +198,13 @@ def generate_pdf(text: str) -> bytes:
 
 FIXTURE_SPECS = [
     ("sample.pdf", generate_pdf, "Hello from RAGRig PDF fixture"),
+    ("ocr_scan.pdf", generate_pdf, ""),
+    ("table.pdf", generate_pdf, "Name | Score ; Alice | 95 ; Bob | 87"),
+    (
+        "two_column.pdf",
+        generate_pdf,
+        "LEFT COLUMN: layout evidence ; RIGHT COLUMN: related evidence",
+    ),
     ("sample.docx", generate_docx, "Hello from RAGRig DOCX fixture"),
     ("sample.pptx", generate_pptx, "Hello from RAGRig PPTX fixture"),
     ("sample.xlsx", generate_xlsx, "Hello from RAGRig XLSX fixture"),

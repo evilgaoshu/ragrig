@@ -120,6 +120,26 @@ uv run python -m scripts.advanced_parser_corpus_check \
 runtime/model installation varies by deployment. Corpus JSON records parser
 version, page/table/image/chart/formula counts when available, OCR
 enabled/applied/failure state, layout source, and the stable degraded reason.
+The corpus includes explicit `ocr_scan`, `table`, and `two_column` PDF cases;
+the Markdown report shows parser, status, text length, page/table counts,
+OCR-applied state, layout-aware state, and degraded reason for each case.
+
+Docling and MinerU can instead be delegated to optional HTTP services without
+installing either local parser library:
+
+```bash
+export RAGRIG_DOCLING_SERVICE_URL=http://docling:8080/parse
+# or
+export RAGRIG_MINERU_SERVICE_URL=http://mineru:8080/parse
+make advanced-parser-corpus-check
+```
+
+The service must accept a multipart `file` and return JSON containing
+`extracted_text`; page/table counts, OCR state, layout state, parser version,
+degraded reason, and safe metadata are optional. A missing service is reported
+as `skip` with `service_unavailable`; timeout, non-2xx, and malformed responses
+produce stable failure metadata and never escape into ingestion as unhandled
+exceptions.
 
 ## Graph-RAG evaluation gate
 
@@ -153,6 +173,11 @@ curl -sS http://localhost:8000/chunking/preview \
   -H 'Content-Type: application/json' \
   -d '{"text":"First paragraph.\n\nSecond paragraph.","template_id":"paragraph_v1","parameters":{"chunk_size":500,"chunk_overlap":50}}'
 ```
+
+Use `recursive_v1` with `chunk_size`/`chunk_overlap`, or use
+`token_aware_v1` with `max_tokens`/`token_overlap`. Preview and the Documents
+chunk list expose the resulting `split_reason`, `split_explanation`, source
+range, and `estimated_tokens` where applicable.
 
 In Web Console, open **Documents → Chunks**. Split or merge adjacent chunks,
 enter an operator reason, and select **Save changes**. The document version

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 from ragrig.parsers.advanced.adapter import AdvancedParserAdapter
 from ragrig.parsers.advanced.metadata import capability_metadata, package_version
 from ragrig.parsers.advanced.models import AdvancedParseResult, DegradedReason, ParserStatus
+from ragrig.parsers.advanced.service_client import parse_with_service
 
 
 class MinerUAdapter(AdvancedParserAdapter):
@@ -21,10 +23,21 @@ class MinerUAdapter(AdvancedParserAdapter):
     parser_name = "advanced.mineru"
     SUPPORTED_EXTENSIONS = frozenset({".pdf"})
 
+    def __init__(
+        self,
+        *,
+        service_url: str | None = None,
+        service_timeout_seconds: float = 30.0,
+    ) -> None:
+        self.service_url = service_url or os.getenv("RAGRIG_MINERU_SERVICE_URL")
+        self.service_timeout_seconds = service_timeout_seconds
+
     def can_parse(self, path: Path) -> bool:
         return path.suffix.lower() in self.SUPPORTED_EXTENSIONS
 
     def check_dependencies(self) -> bool:
+        if self.service_url:
+            return True
         try:
             import magic_pdf  # noqa: F401
 
@@ -33,6 +46,14 @@ class MinerUAdapter(AdvancedParserAdapter):
             return False
 
     def parse(self, path: Path) -> AdvancedParseResult:
+        if self.service_url:
+            return parse_with_service(
+                parser_name=self.parser_name,
+                service_url=self.service_url,
+                timeout_seconds=self.service_timeout_seconds,
+                path=path,
+                layout_source="mineru-service",
+            )
         fmt = path.suffix.lstrip(".").lower()
         parser_version = package_version("magic-pdf", "mineru")
         if not self.check_dependencies():

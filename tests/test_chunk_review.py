@@ -29,6 +29,8 @@ def test_chunk_preview_api_uses_real_template_and_returns_stable_errors(tmp_path
         "heading_v1",
         "sentence_v1",
         "parent_child_v1",
+        "recursive_v1",
+        "token_aware_v1",
     }
 
     response = client.post(
@@ -64,6 +66,19 @@ def test_chunk_preview_api_uses_real_template_and_returns_stable_errors(tmp_path
     )
     assert invalid_parameters.status_code == 400
     assert invalid_parameters.json()["error"] == "invalid_chunk_parameters"
+
+    token_preview = client.post(
+        "/chunking/preview",
+        json={
+            "text": "one two three four five six",
+            "template_id": "token_aware_v1",
+            "parameters": {"max_tokens": 4, "token_overlap": 1},
+        },
+    )
+    assert token_preview.status_code == 200
+    token_chunk = token_preview.json()["chunks"][0]
+    assert token_chunk["metadata"]["estimated_tokens"] == 4
+    assert token_chunk["metadata"]["split_reason"] == "token_budget"
 
 
 def test_manual_chunk_override_is_audited_stale_and_applied_on_reindex(tmp_path) -> None:

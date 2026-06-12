@@ -235,6 +235,11 @@ function ChunkEditor({ versionId, review }: { versionId: string; review: ChunkRe
                 {metadataString(chunk, 'source_block_type')}{' '}
                 {metadataString(chunk, 'source_block_id')}
               </span>
+              {metadataString(chunk, 'split_explanation') && (
+                <span className="text-[10px] text-gray-400">
+                  {metadataString(chunk, 'split_explanation')}
+                </span>
+              )}
               <button
                 disabled={!review.edit_supported}
                 onClick={() => splitChunk(index)}

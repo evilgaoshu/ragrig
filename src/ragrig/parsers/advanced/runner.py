@@ -28,6 +28,9 @@ from ragrig.parsers.sanitizer import sanitize_text_summary
 
 _KNOWN_FIXTURES: list[dict[str, str]] = [
     {"fixture_id": "sample", "format": "pdf", "filename": "sample.pdf"},
+    {"fixture_id": "ocr_scan", "format": "pdf", "filename": "ocr_scan.pdf"},
+    {"fixture_id": "table", "format": "pdf", "filename": "table.pdf"},
+    {"fixture_id": "two_column", "format": "pdf", "filename": "two_column.pdf"},
     {"fixture_id": "sample", "format": "docx", "filename": "sample.docx"},
     {"fixture_id": "sample", "format": "pptx", "filename": "sample.pptx"},
     {"fixture_id": "sample", "format": "xlsx", "filename": "sample.xlsx"},
@@ -85,6 +88,7 @@ class AdvancedParserRunner:
                     "parser": adapter.parser_name,
                     "parser_version": _adapter_version(adapter.parser_name),
                     "available": available,
+                    "service_mode": bool(getattr(adapter, "service_url", None)),
                     "supported_extensions": sorted(
                         str(ext)
                         for ext in getattr(adapter, "SUPPORTED_EXTENSIONS", [])

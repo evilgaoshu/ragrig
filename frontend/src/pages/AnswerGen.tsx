@@ -1,26 +1,42 @@
 import { useState } from 'react'
 import { useKnowledgeBases, useAnswerGen } from '../api/hooks'
-
-type Citation = {
-  citation_id: string
-  document_uri: string
-  chunk_id: string
-  chunk_index: number
-  text_preview: string
-  score: number
-}
-
-type AnswerResult = {
-  answer: string
-  citations: Citation[]
-  model: string
-  provider: string
-  grounding_status: string
-  refusal_reason?: string
-  retrieval_trace?: Record<string, unknown>
-}
+import type { AnswerCitation, AnswerResult } from '../api/types'
 
 const PROVIDERS = ['deterministic-local', 'openai', 'anthropic', 'ollama', 'cohere']
+const CITATION_TOKEN = /(\[cit-[^\]]+\])/g
+
+function citationNumber(citationId: string, index: number): string {
+  const match = citationId.match(/^cit-(\d+)$/)
+  return match?.[1] ?? String(index + 1)
+}
+
+function AnswerWithCitations({
+  answer,
+  citations,
+  onSelect,
+}: {
+  answer: string
+  citations: AnswerCitation[]
+  onSelect: (citationId: string) => void
+}) {
+  const citationIds = new Set(citations.map((citation) => citation.citation_id))
+  return answer.split(CITATION_TOKEN).map((part, index) => {
+    const citationId = part.startsWith('[cit-') ? part.slice(1, -1) : ''
+    if (!citationIds.has(citationId)) return <span key={`${part}-${index}`}>{part}</span>
+    const citationIndex = citations.findIndex((citation) => citation.citation_id === citationId)
+    return (
+      <button
+        key={`${citationId}-${index}`}
+        type="button"
+        aria-label={`Open citation ${citationNumber(citationId, citationIndex)}`}
+        onClick={() => onSelect(citationId)}
+        className="mx-0.5 align-super text-[10px] font-bold text-brand hover:underline"
+      >
+        [{citationNumber(citationId, citationIndex)}]
+      </button>
+    )
+  })
+}
 
 export default function AnswerGen() {
   const { data: kbs } = useKnowledgeBases()
@@ -35,6 +51,14 @@ export default function AnswerGen() {
   const [answerModel, setAnswerModel] = useState('gpt-4o-mini')
   const [mode, setMode] = useState('dense')
   const [result, setResult] = useState<AnswerResult | null>(null)
+  const [activeCitationId, setActiveCitationId] = useState<string | null>(null)
+
+  const selectCitation = (citationId: string) => {
+    setActiveCitationId(citationId)
+    const reference = document.getElementById(`reference-${citationId}`)
+    reference?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+    reference?.focus({ preventScroll: true })
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -53,7 +77,8 @@ export default function AnswerGen() {
         enforce_acl: false,
         mode,
       })
-      setResult(res as AnswerResult)
+      setResult(res)
+      setActiveCitationId(null)
     } catch {
       // error shown via answerGen.error
     }
@@ -77,7 +102,7 @@ export default function AnswerGen() {
         <div className="grid grid-cols-2 gap-4">
           {/* KB */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-gray-600">Knowledge base</label>
+            <label htmlFor="answer-kb-select" className="text-xs font-medium text-gray-600">Knowledge base</label>
             <select
               id="answer-kb-select"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand/40"
@@ -173,7 +198,7 @@ export default function AnswerGen() {
 
         {/* Query */}
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-gray-600">Query</label>
+          <label htmlFor="answer-query" className="text-xs font-medium text-gray-600">Query</label>
           <textarea
             id="answer-query"
             rows={3}
@@ -216,7 +241,11 @@ export default function AnswerGen() {
               <div className="text-sm text-amber-600 italic">{result.refusal_reason}</div>
             ) : result.answer ? (
               <div className="text-sm text-gray-800 whitespace-pre-wrap bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 leading-relaxed">
-                {result.answer}
+                <AnswerWithCitations
+                  answer={result.answer}
+                  citations={result.citations}
+                  onSelect={selectCitation}
+                />
               </div>
             ) : (
               <div className="text-sm text-gray-400 italic">No answer generated.</div>
@@ -227,20 +256,45 @@ export default function AnswerGen() {
           {result.citations.length > 0 && (
             <div>
               <div className="text-xs font-semibold text-gray-600 mb-2">
-                Citations ({result.citations.length})
+                References ({result.citations.length})
               </div>
               <div className="space-y-2">
-                {result.citations.map((c) => (
-                  <div key={c.citation_id} className="bg-white border border-gray-200 rounded-lg px-3 py-2.5">
+                {result.citations.map((c, index) => (
+                  <button
+                    id={`reference-${c.citation_id}`}
+                    key={c.citation_id}
+                    type="button"
+                    aria-current={activeCitationId === c.citation_id ? 'true' : undefined}
+                    onClick={() => selectCitation(c.citation_id)}
+                    className={`w-full text-left bg-white border rounded-lg px-3 py-2.5 transition-colors ${
+                      activeCitationId === c.citation_id
+                        ? 'border-brand ring-2 ring-brand/20 bg-indigo-50'
+                        : 'border-gray-200'
+                    }`}
+                  >
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-[10px] font-bold text-gray-400">#{c.citation_id}</span>
+                      <span className="text-[10px] font-bold text-gray-400">
+                        [{citationNumber(c.citation_id, index)}]
+                      </span>
                       <span className="text-xs font-mono text-gray-600 truncate">{c.document_uri}</span>
                       <span className="ml-auto text-[10px] text-gray-400 shrink-0">
                         score {c.score.toFixed(3)}
                       </span>
                     </div>
+                    <div className="flex gap-2 mb-1 text-[10px] font-mono text-gray-500">
+                      <span>chunk {c.chunk_id}</span>
+                      {c.page_number != null && <span>page {c.page_number}</span>}
+                      {c.char_start != null && c.char_end != null && (
+                        <span>chars {c.char_start}:{c.char_end}</span>
+                      )}
+                    </div>
                     <div className="text-xs text-gray-600 line-clamp-3">{c.text_preview}</div>
-                  </div>
+                    {Object.keys(c.metadata_summary ?? {}).length > 0 && (
+                      <div className="mt-1 text-[10px] text-gray-400">
+                        {JSON.stringify(c.metadata_summary)}
+                      </div>
+                    )}
+                  </button>
                 ))}
               </div>
             </div>
