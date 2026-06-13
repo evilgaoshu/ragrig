@@ -2,6 +2,8 @@
 
 This is the top-level map for new contributors. It explains how the active
 runtime fits together and points to the small set of specs worth reading first.
+See [Stage-specific Model Policy](specs/stage-model-policy.md) for KB-level provider/model
+selection, compatibility priority, public trace, and secret handling.
 
 ## System Shape
 

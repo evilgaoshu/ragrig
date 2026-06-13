@@ -154,7 +154,9 @@ class LLMUnderstandingProvider(UnderstandingProvider):
 
 
 def get_understanding_provider(
-    provider_name: str, model: str | None = None
+    provider_name: str,
+    model: str | None = None,
+    provider_config: dict[str, Any] | None = None,
 ) -> UnderstandingProvider:
     if provider_name == "deterministic-local":
         return DeterministicUnderstandingProvider()
@@ -162,7 +164,10 @@ def get_understanding_provider(
     from ragrig.providers import get_provider_registry
 
     registry = get_provider_registry()
-    base = registry.get(provider_name)
+    config = dict(provider_config or {})
+    if model:
+        config.setdefault("model_name", model)
+    base = registry.get(provider_name, **config)
     if ProviderCapability.CHAT not in base.metadata.capabilities and (
         ProviderCapability.GENERATE not in base.metadata.capabilities
     ):

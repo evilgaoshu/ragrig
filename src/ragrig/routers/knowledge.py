@@ -16,6 +16,7 @@ from ragrig.deps import AuthContext, get_auth_context, require_admin_auth, requi
 from ragrig.knowledge_base_config import (
     RetrievalPreferenceRequest,
     RoleModelConfigRequest,
+    StageModelPolicyRequest,
 )
 from ragrig.knowledge_graph import (
     KnowledgeGraphBuildRequest,
@@ -427,6 +428,42 @@ def put_role_model_config(
     auth: Annotated[AuthContext, Depends(require_write_auth)],
 ) -> dict[str, Any]:
     return knowledge_service.put_role_model_config(
+        session,
+        kb_id=kb_id,
+        request=request,
+        settings=settings,
+        workspace_id=workspace_id,
+        auth=auth,
+    )
+
+
+@router.get("/knowledge-bases/{kb_id}/stage-model-policy", response_model=None)
+def get_stage_model_policy(
+    kb_id: str,
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+) -> dict[str, Any]:
+    return knowledge_service.get_stage_model_policy(
+        session,
+        kb_id=kb_id,
+        settings=settings,
+        workspace_id=workspace_id,
+        auth=auth,
+    )
+
+
+@router.put("/knowledge-bases/{kb_id}/stage-model-policy", response_model=None)
+def put_stage_model_policy(
+    kb_id: str,
+    request: StageModelPolicyRequest,
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    workspace_id: Annotated[uuid.UUID, Depends(get_workspace_id)],
+    auth: Annotated[AuthContext, Depends(require_write_auth)],
+) -> dict[str, Any]:
+    return knowledge_service.put_stage_model_policy(
         session,
         kb_id=kb_id,
         request=request,

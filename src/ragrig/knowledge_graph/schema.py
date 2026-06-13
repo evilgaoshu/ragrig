@@ -12,6 +12,7 @@ class KnowledgeGraphBuildRequest(BaseModel):
     extractor: Literal["deterministic", "provider-backed"] = "deterministic"
     provider: str | None = None
     model: str | None = None
+    config: dict[str, Any] | None = None
     prompt_version: str = "graph-rag-provider-v1"
     fallback_to_deterministic: bool = True
 

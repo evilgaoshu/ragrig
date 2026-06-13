@@ -11,6 +11,7 @@ import type {
   RetrievalReport,
   RetrievalPreferenceResponse,
   RetrievalPreferences,
+  StageModelPolicyResponse,
   TaskRecord,
   UploadResult,
   SupportedFormat,
@@ -463,6 +464,28 @@ export function useSaveRetrievalPreferences() {
       ),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['retrieval-preferences', variables.kbId] })
+    },
+  })
+}
+
+export function useStageModelPolicy(kbId: string | null) {
+  return useQuery({
+    queryKey: ['stage-model-policy', kbId],
+    queryFn: () =>
+      api.get<StageModelPolicyResponse>(`/knowledge-bases/${kbId}/stage-model-policy`),
+    enabled: !!kbId,
+  })
+}
+
+export function useSaveStageModelPolicy() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ kbId, policy }: { kbId: string; policy: Record<string, unknown> }) =>
+      api.put<StageModelPolicyResponse>(`/knowledge-bases/${kbId}/stage-model-policy`, {
+        policy,
+      }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['stage-model-policy', variables.kbId] })
     },
   })
 }

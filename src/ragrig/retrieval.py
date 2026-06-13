@@ -583,6 +583,7 @@ def _apply_rerank(
     *,
     reranker_provider: str | None = None,
     reranker_model: str | None = None,
+    reranker_config: dict[str, Any] | None = None,
 ) -> tuple[list[RetrievalResult], bool, str, dict[str, Any]]:
     """Apply reranking to a list of candidate results.
 
@@ -629,6 +630,7 @@ def _apply_rerank(
             rerank_candidates,
             provider_name=reranker_provider,
             model_name=reranker_model,
+            provider_config=reranker_config,
         )
         if rr is None:
             # Provider unavailable; degrade to original order
@@ -1207,6 +1209,7 @@ def search_knowledge_base(
     top_k: int = 5,
     provider: str | None = None,
     model: str | None = None,
+    provider_config: dict[str, Any] | None = None,
     dimensions: int | None = None,
     vector_backend: VectorBackend | None = None,
     principal_ids: list[str] | None = None,
@@ -1217,6 +1220,7 @@ def search_knowledge_base(
     candidate_k: int = 20,
     reranker_provider: str | None = None,
     reranker_model: str | None = None,
+    reranker_config: dict[str, Any] | None = None,
     sim_weight: float = 1.0,
     time_decay_weight: float = 0.0,
     doc_weight: float = 0.0,
@@ -1338,9 +1342,11 @@ def search_knowledge_base(
         dimensions=dimensions,
         workspace_id=kb_workspace_id,
     )
-    embedding_provider = get_provider_registry().get(
-        resolved_provider, dimensions=resolved_dimensions
-    )
+    embedding_config = dict(provider_config or {})
+    embedding_config.setdefault("dimensions", resolved_dimensions)
+    if provider_config is not None and resolved_model:
+        embedding_config.setdefault("model_name", resolved_model)
+    embedding_provider = get_provider_registry().get(resolved_provider, **embedding_config)
     embed_started = perf_counter()
     # Embed the primary (first) query; sub-query merging happens after retrieval
     primary_query = sub_queries[0]
@@ -1688,6 +1694,7 @@ def search_knowledge_base(
                     normalized_query,
                     reranker_provider=reranker_provider,
                     reranker_model=reranker_model,
+                    reranker_config=reranker_config,
                 )
                 set_span_attributes(
                     rerank_span,

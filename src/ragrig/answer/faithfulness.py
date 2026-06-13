@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ragrig.providers import BaseProvider
@@ -70,6 +70,8 @@ class FaithfulnessConfig:
     """
 
     provider_name: str
+    model_name: str | None = None
+    provider_config: dict[str, Any] | None = None
     threshold: float = 0.6
     max_context_chars: int = 6000
 

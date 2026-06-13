@@ -1,4 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import {
+  useKnowledgeBases,
+  useSaveStageModelPolicy,
+  useStageModelPolicy,
+} from '../api/hooks'
+import type { StageModelConfig } from '../api/types'
 import { Button } from '../components/ui'
 import { ConsolePage, DataTable, Panel, StatusPill } from '../components/console'
 import { SchemaModal, type SchemaSubmit } from '../components/SchemaModal'
@@ -35,13 +41,53 @@ const INITIAL_ROLE_ROUTES: RoleRoute[] = [
   { id: 'route-airgap', scope: 'kb: local-pilot', role: 'viewer', answerModel: 'llama3.1', embeddingModel: 'nomic-embed-text', fallback: 'none', budget: 'local only' },
 ]
 
+const STAGES = ['parse', 'understand', 'extract', 'query', 'rerank', 'answer', 'judge'] as const
+
+function editablePolicy(policy: Record<string, StageModelConfig>) {
+  return Object.fromEntries(
+    Object.entries(policy).map(([stage, entry]) => [
+      stage,
+      Object.fromEntries(
+        Object.entries(entry).filter(([key]) => !['has_config', 'config_keys'].includes(key)),
+      ),
+    ]),
+  )
+}
+
 export default function Models() {
+  const { data: knowledgeBases } = useKnowledgeBases()
   const [providers, setProviders] = useState(INITIAL_PROVIDERS)
   const [roleRoutes, setRoleRoutes] = useState(INITIAL_ROLE_ROUTES)
   const [editingRouteId, setEditingRouteId] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
   const [message, setMessage] = useState('')
+  const [selectedKbId, setSelectedKbId] = useState('')
+  const [policyDrafts, setPolicyDrafts] = useState<Record<string, string>>({})
   const editingRoute = roleRoutes.find((route) => route.id === editingRouteId)
+  const activeKbId = selectedKbId || knowledgeBases?.[0]?.id || ''
+  const policyQuery = useStageModelPolicy(activeKbId || null)
+  const savePolicy = useSaveStageModelPolicy()
+  const stageRows = useMemo(
+    () => {
+      const policy = policyQuery.data?.policy ?? {}
+      return STAGES.map((stage) => ({
+        id: stage,
+        stage,
+        provider: policy[stage]?.provider ?? '--',
+        model: policy[stage]?.model ?? '--',
+        source: policy[stage] ? 'stage_model_policy' : 'default',
+        enabled: policy[stage]?.enabled === false ? 'disabled' : 'enabled',
+        budget: policy[stage]?.budget_hint_usd,
+        configKeys: policy[stage]?.config_keys ?? [],
+      }))
+    },
+    [policyQuery.data?.policy],
+  )
+  const loadedPolicyEditor = useMemo(
+    () => JSON.stringify(editablePolicy(policyQuery.data?.policy ?? {}), null, 2),
+    [policyQuery.data?.policy],
+  )
+  const policyEditor = policyDrafts[activeKbId] ?? loadedPolicyEditor
 
   const addProvider = (payload: SchemaSubmit) => {
     setProviders((current) => [
@@ -59,12 +105,93 @@ export default function Models() {
     setShowModal(false)
   }
 
+  async function saveStagePolicy() {
+    if (!activeKbId) return
+    try {
+      const parsed = JSON.parse(policyEditor)
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('Policy must be a JSON object keyed by stage.')
+      }
+      await savePolicy.mutateAsync({ kbId: activeKbId, policy: parsed })
+      setPolicyDrafts((current) => {
+        const next = { ...current }
+        delete next[activeKbId]
+        return next
+      })
+      setMessage('Stage model policy saved. Existing secret config is preserved when omitted.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to save stage model policy.')
+    }
+  }
+
   return (
     <ConsolePage
       title="AI Providers"
       description="Model providers, embedding profiles, fallbacks, and health state."
       actions={<Button onClick={() => setShowModal(true)}>New provider</Button>}
     >
+      <Panel
+        title="Stage model policy"
+        description="Live KB policy for parse, understand, extract, query, rerank, answer, and judge. Secret config values are never returned."
+        actions={
+          <Button
+            variant="secondary"
+            onClick={saveStagePolicy}
+            disabled={!activeKbId || savePolicy.isPending}
+          >
+            {savePolicy.isPending ? 'Saving...' : 'Save stage policy'}
+          </Button>
+        }
+      >
+        <div className="grid gap-4 lg:grid-cols-[1fr_420px]">
+          <div className="space-y-3">
+            <label className="block space-y-1">
+              <span className="text-xs font-medium text-slate-600">Knowledge base</span>
+              <select
+                aria-label="Stage policy knowledge base"
+                value={activeKbId}
+                onChange={(event) => setSelectedKbId(event.target.value)}
+                className="w-full rounded-lg border border-line px-3 py-2 text-sm"
+              >
+                {(knowledgeBases ?? []).map((kb) => (
+                  <option key={kb.id} value={kb.id}>
+                    {kb.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <DataTable
+              rows={stageRows}
+              getKey={(row) => row.id}
+              columns={[
+                { key: 'stage', label: 'Stage', render: (row) => <span className="font-mono text-xs">{row.stage}</span> },
+                { key: 'provider', label: 'Provider / model', render: (row) => <div><div>{row.provider}</div><div className="font-mono text-xs text-muted">{row.model}</div></div> },
+                { key: 'source', label: 'Source', render: (row) => <StatusPill tone={row.source === 'default' ? 'neutral' : 'ok'}>{row.source}</StatusPill> },
+                { key: 'enabled', label: 'Enabled', render: (row) => row.enabled },
+                { key: 'budget', label: 'Cost hint', render: (row) => typeof row.budget === 'number' ? `$${row.budget.toFixed(4)}` : '--' },
+                { key: 'configKeys', label: 'Config keys', render: (row) => row.configKeys.join(', ') || '--' },
+              ]}
+            />
+          </div>
+          <label className="space-y-1">
+            <span className="text-xs font-medium text-slate-600">Policy JSON</span>
+            <textarea
+              aria-label="Stage model policy JSON"
+              value={policyEditor}
+              onChange={(event) =>
+                setPolicyDrafts((current) => ({ ...current, [activeKbId]: event.target.value }))
+              }
+              rows={22}
+              className="w-full rounded-lg border border-line bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100"
+            />
+            <span className="block text-xs text-muted">
+              Priority: request override, role model config, stage model policy, endpoint default.
+              Omitted config preserves existing secret-backed config.
+            </span>
+          </label>
+        </div>
+      </Panel>
+
       <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
         <Panel title="Providers" description="Provider-specific fields are shown at creation time.">
           {message && <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">{message}</div>}
