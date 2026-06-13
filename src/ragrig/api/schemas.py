@@ -27,6 +27,8 @@ class EvaluationRunRequest(BaseModel):
     reranker_model: str | None = None
     graph_weight: float = Field(default=0.35, ge=0.0, le=1.0)
     graph_depth: int = Field(default=1, ge=0, le=2)
+    ragas_enabled: bool = False
+    ragas_metrics: list[str] = Field(default_factory=list)
 
 
 class RetrievalSearchRequest(BaseModel):

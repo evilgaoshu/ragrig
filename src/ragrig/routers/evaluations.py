@@ -74,6 +74,9 @@ def evaluation_run(
             reranker_model=request.reranker_model,
             graph_weight=request.graph_weight,
             graph_depth=request.graph_depth,
+            ragas_enabled=request.ragas_enabled,
+            ragas_metrics=request.ragas_metrics,
+            langfuse_settings=settings,
             store_dir=Path("evaluation_runs"),
         )
     except Exception as exc:

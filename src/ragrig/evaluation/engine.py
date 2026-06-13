@@ -108,6 +108,8 @@ def _evaluate_question(
     reranker_model: str | None = None,
     graph_weight: float = 0.35,
     graph_depth: int = 1,
+    ragas_enabled: bool = False,
+    ragas_metrics: list[str] | None = None,
 ) -> EvaluationRunItem:
     """Run a single golden question through retrieval and compute per-item metrics."""
     start = time.perf_counter()
@@ -180,6 +182,7 @@ def _evaluate_question(
         answer_correctness_reason: str | None = None
         answer_relevance: float | None = None
         answer_relevance_reason: str | None = None
+        generated_answer: str | None = None
 
         if answer_provider_name is not None:
             try:
@@ -209,6 +212,7 @@ def _evaluate_question(
                     graph_weight=graph_weight,
                     graph_depth=graph_depth,
                 )
+                generated_answer = answer_report.answer
                 answer_status = answer_report.grounding_status
 
                 if judge_provider is not None:
@@ -233,6 +237,19 @@ def _evaluate_question(
             except Exception:
                 answer_status = "error"
 
+        evaluation_adapters: dict[str, Any] = {}
+        if ragas_enabled:
+            from ragrig.evaluation.adapters.ragas import evaluate_ragas_item
+
+            evaluation_adapters["ragas"] = evaluate_ragas_item(
+                enabled=True,
+                question=golden.query,
+                contexts=retrieved_texts,
+                answer=generated_answer or golden.expected_answer,
+                reference=golden.expected_answer,
+                metrics=ragas_metrics,
+            )
+
         return EvaluationRunItem(
             question_index=question_index,
             query=golden.query,
@@ -253,6 +270,7 @@ def _evaluate_question(
             top_doc_uris=doc_uris,
             top_distances=distances,
             top_scores=scores,
+            evaluation_adapters=evaluation_adapters,
         )
     except Exception as exc:
         elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -425,6 +443,9 @@ def run_evaluation(
     reranker_model: str | None = None,
     graph_weight: float = 0.35,
     graph_depth: int = 1,
+    ragas_enabled: bool = False,
+    ragas_metrics: list[str] | None = None,
+    langfuse_settings: Any = None,
 ) -> EvaluationRun:
     """Run a full evaluation against a golden question set.
 
@@ -447,6 +468,9 @@ def run_evaluation(
         answer_model: Optional model override for the answer provider.
         answer_provider_config: Optional config dict for the answer provider.
         mode: Retrieval mode to evaluate, e.g. ``dense`` or ``hybrid_graph``.
+        ragas_enabled: Run optional RAGAS item scoring when configured.
+        ragas_metrics: Optional subset of RAGAS metrics to request.
+        langfuse_settings: Optional Settings object used by the Langfuse adapter.
 
     Returns:
         An EvaluationRun with all items and aggregated metrics.
@@ -475,6 +499,9 @@ def run_evaluation(
         reranker_model=reranker_model,
         graph_weight=graph_weight,
         graph_depth=graph_depth,
+        ragas_enabled=ragas_enabled,
+        ragas_metrics=ragas_metrics,
+        langfuse_settings=langfuse_settings,
     )
 
 
@@ -501,6 +528,9 @@ def _run_evaluation_with_set(
     reranker_model: str | None = None,
     graph_weight: float = 0.35,
     graph_depth: int = 1,
+    ragas_enabled: bool = False,
+    ragas_metrics: list[str] | None = None,
+    langfuse_settings: Any = None,
 ) -> EvaluationRun:
     """Internal: run evaluation with an already-loaded GoldenQuestionSet."""
     run_id = run_id or str(uuid.uuid4())
@@ -537,6 +567,8 @@ def _run_evaluation_with_set(
             reranker_model=reranker_model,
             graph_weight=graph_weight,
             graph_depth=graph_depth,
+            ragas_enabled=ragas_enabled,
+            ragas_metrics=ragas_metrics,
         )
         items.append(item)
 
@@ -588,8 +620,37 @@ def _run_evaluation_with_set(
             "reranker_model": reranker_model,
             "graph_weight": graph_weight,
             "graph_depth": graph_depth,
+            "ragas": {
+                "enabled": ragas_enabled,
+                "metrics": ragas_metrics or [],
+            },
         },
     )
+
+    if langfuse_settings is not None:
+        from ragrig.observability.langfuse import emit_langfuse_trace
+
+        diagnostics = emit_langfuse_trace(
+            langfuse_settings,
+            name="evaluation.run",
+            metadata={
+                "run_id": run.id,
+                "golden_set_name": golden_set.name,
+                "knowledge_base": knowledge_base,
+                "total_questions": len(golden_set.questions),
+                "status": run.status,
+                "mode": mode,
+                "ragas_enabled": ragas_enabled,
+            },
+            output_metadata={
+                "hit_at_1": metrics.hit_at_1,
+                "hit_at_3": metrics.hit_at_3,
+                "hit_at_5": metrics.hit_at_5,
+                "mrr": metrics.mrr,
+            },
+        )
+        if diagnostics.get("status") != "disabled":
+            run.config_snapshot["langfuse"] = diagnostics
 
     if store_dir is not None:
         _persist_run(run, store_dir)

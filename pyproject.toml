@@ -43,6 +43,12 @@ otel = [
   "opentelemetry-instrumentation-sqlalchemy>=0.46b0,<1.0.0",
   "opentelemetry-exporter-otlp-proto-http>=1.25.0,<2.0.0",
 ]
+eval-ragas = [
+  "ragas>=0.2.0,<1.0.0",
+]
+observability-langfuse = [
+  "langfuse>=2.0.0,<4.0.0",
+]
 enterprise-auth = [
   "joserfc>=1.0.0,<2.0.0",
   "ldap3>=2.9.0,<3.0.0",

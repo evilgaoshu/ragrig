@@ -27,6 +27,22 @@ class ObservabilitySettings(RagrigBaseSettings):
         default="ragrig",
         description="Service name reported to the OTel collector.",
     )
+    ragrig_langfuse_enabled: bool = Field(
+        default=False,
+        description="Enable optional Langfuse high-level traces.",
+    )
+    ragrig_langfuse_host: str = Field(
+        default="https://cloud.langfuse.com",
+        description="Langfuse host URL.",
+    )
+    ragrig_langfuse_public_key: str = Field(
+        default="",
+        description="Langfuse public key. Use an environment variable, not checked-in config.",
+    )
+    ragrig_langfuse_secret_key: str = Field(
+        default="",
+        description="Langfuse secret key. Use an environment variable, not checked-in config.",
+    )
     ragrig_log_format: str = Field(
         default="plain",
         description="Log format: 'plain'/'text' (human-readable) or 'json' (structured).",

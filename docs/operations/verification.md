@@ -37,6 +37,7 @@ local-pilot-smoke` runs the API-level Local Pilot smoke.
 | `make bge-rerank-smoke` | BGE reranker integration changes | Optional `local-ml` extras | varies | stdout |
 | `make advanced-parser-corpus-check` | Parser quality or fixture changes | `uv`, advanced document fixtures | 1-3 min | `docs/operations/artifacts/advanced-parser-corpus.*` |
 | `make graph-eval-compare` | Graph extraction, retrieval, feedback, or citation changes | `uv`, local SQLite fixtures | 1-3 min | `docs/operations/artifacts/graph-eval-compare.*` |
+| `uv run pytest tests/test_optional_eval_adapters.py tests/test_discord_source.py -q` | RAGAS, Langfuse, or Discord connector changes | `uv`, fake adapters/transports | < 1 min | pytest output |
 | `make database-source-check` | Database source connector changes | `uv`, fixture DB setup | < 1 min | `docs/operations/artifacts/database-source-check.json` |
 | `make cost-latency-check` | Provider cost/latency accounting changes | `uv` | < 1 min | `docs/operations/artifacts/cost-latency-check.json` |
 | `make knowledge-map-check` | Understanding or knowledge-map changes | `uv` | < 1 min | `docs/operations/artifacts/knowledge-map-check.json` |

@@ -60,6 +60,7 @@ class EvaluationRunItem(BaseModel):
     top_doc_uris: list[str] = Field(default_factory=list)
     top_distances: list[float] = Field(default_factory=list)
     top_scores: list[float] = Field(default_factory=list)
+    evaluation_adapters: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
 
 

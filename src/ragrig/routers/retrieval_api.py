@@ -26,6 +26,7 @@ from ragrig.knowledge_base_config import (
 from ragrig.local_pilot import ModelConfigError
 from ragrig.local_pilot.model_config import resolve_env_config
 from ragrig.metrics import observe_retrieval_error, observe_retrieval_report
+from ragrig.observability.langfuse import emit_langfuse_trace
 from ragrig.repositories import get_knowledge_base_by_name
 from ragrig.retrieval import (
     EmbeddingProfileMismatchError,
@@ -296,6 +297,22 @@ def retrieval_search(
         degraded=report.degraded,
         cost_latency=report.cost_latency,
         workspace_id=workspace_id,
+    )
+    emit_langfuse_trace(
+        settings,
+        name="retrieval.search",
+        metadata={
+            "knowledge_base": request.knowledge_base,
+            "top_k": request.top_k,
+            "mode": request.mode,
+            "provider": report.provider,
+            "model": report.model,
+            "backend": report.backend,
+            "degraded": report.degraded,
+        },
+        output_metadata={
+            "total_results": report.total_results,
+        },
     )
     return response
 
@@ -668,6 +685,23 @@ def retrieval_answer(
         "grounding_status": report.grounding_status,
         "refusal_reason": report.refusal_reason,
     }
+    emit_langfuse_trace(
+        settings,
+        name="retrieval.answer",
+        metadata={
+            "knowledge_base": request.knowledge_base,
+            "top_k": request.top_k,
+            "mode": request.mode,
+            "provider": report.provider,
+            "model": report.model,
+            "grounding_status": report.grounding_status,
+            "citations_count": len(report.citations),
+        },
+        output_metadata={
+            "evidence_chunks_count": len(report.evidence_chunks),
+            "total_results": int(retrieval_trace.get("total_results") or 0),
+        },
+    )
     if request.stream:
         return StreamingResponse(
             answer_sse_stream(payload),
