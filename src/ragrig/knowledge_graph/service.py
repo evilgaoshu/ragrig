@@ -82,6 +82,19 @@ _RELATION_PREDICATE_WEIGHTS = {
     "references": 0.96,
     "routes_to": 0.95,
     "assigns": 0.9,
+    "assigned_to": 0.94,
+    "implements": 0.96,
+    "owns": 0.95,
+    "conflicts_with": 0.92,
+}
+_PREDICATE_ALIASES = {
+    "depends_on": {"depend", "depends", "dependency", "dependencies", "requires", "requirement"},
+    "references": {"reference", "references", "referenced", "cites", "citation"},
+    "routes_to": {"route", "routes", "routing", "forward", "forwards"},
+    "assigned_to": {"assign", "assigned", "assignment", "owner", "responsible"},
+    "implements": {"implement", "implements", "implementation", "provides"},
+    "owns": {"own", "owns", "owner", "ownership"},
+    "conflicts_with": {"conflict", "conflicts", "incompatible", "contradicts"},
 }
 
 
@@ -132,10 +145,36 @@ def _entity_aliases(display_name: str) -> list[str]:
     return sorted(alias for alias in aliases if alias)
 
 
+def _provider_entity_aliases(candidate: ExtractedEntity) -> list[str]:
+    values = [candidate.name, candidate.canonical_name or "", *candidate.aliases]
+    aliases = {alias for value in values if value.strip() for alias in _entity_aliases(value)}
+    return sorted(aliases)
+
+
 def _merge_aliases(existing: list[str] | None, new_aliases: list[str]) -> list[str]:
     merged = {alias for alias in (existing or []) if isinstance(alias, str) and alias}
     merged.update(new_aliases)
     return sorted(merged)
+
+
+def _normalize_predicate(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.strip().casefold()).strip("_")
+    aliases = {
+        "depends": "depends_on",
+        "dependency": "depends_on",
+        "reference": "references",
+        "routes": "routes_to",
+        "assigned": "assigned_to",
+        "conflicts": "conflicts_with",
+    }
+    return aliases.get(normalized, normalized or "related_to")[:128]
+
+
+def _predicate_query_terms(predicate: str) -> set[str]:
+    normalized = _normalize_predicate(predicate)
+    terms = set(re.findall(r"[a-z0-9/-]{3,}", normalized.replace("_", " ")))
+    terms.update(_PREDICATE_ALIASES.get(normalized, set()))
+    return terms
 
 
 def _preview(text: str, limit: int = 220) -> str:
@@ -295,6 +334,10 @@ def _trace_payload(
     extractor_name: str,
     extractor_version: str,
     profile_id: str,
+    provider: str | None = None,
+    model: str | None = None,
+    prompt_version: str | None = None,
+    trace_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "trace_id": trace_id,
@@ -302,6 +345,10 @@ def _trace_payload(
         "extractor_name": extractor_name,
         "extractor_version": extractor_version,
         "profile_id": profile_id,
+        "provider": provider,
+        "model": model,
+        "prompt_version": prompt_version,
+        **(trace_metadata or {}),
     }
 
 
@@ -359,11 +406,15 @@ def _ensure_provider_entity(
     extractor_version: str,
     entity_by_key: dict[str, KnowledgeGraphEntity],
 ) -> KnowledgeGraphEntity | None:
-    canonical = _canonical_name(candidate.name)
+    canonical = _canonical_name(candidate.canonical_name or candidate.name)
     if not canonical:
         return None
-    aliases = _entity_aliases(candidate.name)
-    entity = next((entity_by_key[alias] for alias in aliases if alias in entity_by_key), None)
+    aliases = _provider_entity_aliases(candidate)
+    entity = entity_by_key.get(canonical)
+    merge_reason = "exact_canonical"
+    if entity is None:
+        entity = next((entity_by_key[alias] for alias in aliases if alias in entity_by_key), None)
+        merge_reason = "provider_alias"
     if entity is None:
         entity = KnowledgeGraphEntity(
             knowledge_base_id=kb.id,
@@ -378,13 +429,90 @@ def _ensure_provider_entity(
                 **candidate.metadata,
                 "source": "provider",
                 "aliases": aliases,
+                "merge_reasons": ["created_from_provider_entity"],
             },
         )
         session.add(entity)
         session.flush()
+    else:
+        metadata = dict(entity.metadata_json or {})
+        entity.confidence = max(entity.confidence, max(0.0, min(candidate.confidence, 1.0)))
+        if not entity.description and candidate.description:
+            entity.description = candidate.description
+        entity.metadata_json = {
+            **metadata,
+            "aliases": _merge_aliases(metadata.get("aliases"), aliases),
+            "merge_reasons": _merge_aliases(metadata.get("merge_reasons"), [merge_reason]),
+        }
     for alias in aliases:
-        entity_by_key[alias] = entity
+        existing = entity_by_key.get(alias)
+        if existing is None or existing.id == entity.id:
+            entity_by_key[alias] = entity
+    entity_by_key[canonical] = entity
     return entity
+
+
+def _absolute_span(
+    row: _ChunkRow,
+    char_start: int | None,
+    char_end: int | None,
+) -> tuple[int | None, int | None]:
+    if char_start is None or char_end is None:
+        return None, None
+    offset = row.chunk.char_start or 0
+    return offset + char_start, offset + char_end
+
+
+def _candidate_evidence_text(
+    row: _ChunkRow,
+    *,
+    evidence_text: str | None,
+    char_start: int | None,
+    char_end: int | None,
+    fallback: str | None = None,
+) -> str:
+    if evidence_text and evidence_text.strip():
+        return evidence_text.strip()[:2000]
+    if char_start is not None and char_end is not None and char_end <= len(row.chunk.text):
+        return row.chunk.text[char_start:char_end][:2000]
+    if fallback and fallback.strip():
+        return fallback.strip()[:2000]
+    return _preview(row.chunk.text, 500)
+
+
+def _provider_row_metadata(
+    candidate_metadata: dict[str, Any],
+    extractor_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        **extractor_metadata,
+        **candidate_metadata,
+        "source": "provider",
+    }
+
+
+def _provider_entity_for_name(
+    session: Session,
+    *,
+    kb: KnowledgeBase,
+    name: str,
+    source_chunk_id: str,
+    extractor_version: str,
+    entity_by_key: dict[str, KnowledgeGraphEntity],
+) -> KnowledgeGraphEntity | None:
+    entity = next(
+        (entity_by_key[alias] for alias in _entity_aliases(name) if alias in entity_by_key),
+        None,
+    )
+    if entity is not None:
+        return entity
+    return _ensure_provider_entity(
+        session,
+        kb=kb,
+        candidate=ExtractedEntity(name=name, source_chunk_id=source_chunk_id),
+        extractor_version=extractor_version,
+        entity_by_key=entity_by_key,
+    )
 
 
 def _persist_provider_extraction(
@@ -397,8 +525,12 @@ def _persist_provider_extraction(
 ) -> None:
     row_by_chunk_id = {str(row.chunk.id): row for row in rows}
     entity_by_key: dict[str, KnowledgeGraphEntity] = {}
-    entity_by_name: dict[str, KnowledgeGraphEntity] = {}
     mentioned_pairs: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    extractor_metadata = {
+        key: extraction.metadata.get(key)
+        for key in ("source", "provider", "model", "prompt_version", "response_fingerprint")
+        if extraction.metadata.get(key) is not None
+    }
 
     for candidate in extraction.entities:
         row = row_by_chunk_id.get(candidate.source_chunk_id)
@@ -413,24 +545,41 @@ def _persist_provider_extraction(
         )
         if entity is None:
             continue
-        entity_by_name[_canonical_name(candidate.name)] = entity
         pair = (entity.id, row.chunk.id)
         if pair in mentioned_pairs:
             continue
         mentioned_pairs.add(pair)
         match = next(iter(_find_mentions(row.chunk.text, candidate.name)), None)
+        local_start = (
+            candidate.char_start
+            if candidate.char_start is not None
+            else match[0]
+            if match
+            else None
+        )
+        local_end = (
+            candidate.char_end if candidate.char_end is not None else match[1] if match else None
+        )
+        char_start, char_end = _absolute_span(row, local_start, local_end)
+        mention_text = _candidate_evidence_text(
+            row,
+            evidence_text=candidate.evidence_text,
+            char_start=local_start,
+            char_end=local_end,
+            fallback=match[2] if match else candidate.name,
+        )
         session.add(
             KnowledgeGraphEntityMention(
                 entity_id=entity.id,
                 chunk_id=row.chunk.id,
                 document_id=row.document.id,
                 document_version_id=row.version.id,
-                mention_text=match[2] if match else candidate.name,
-                char_start=match[0] if match else None,
-                char_end=match[1] if match else None,
+                mention_text=mention_text,
+                char_start=char_start,
+                char_end=char_end,
                 confidence=max(0.0, min(candidate.confidence, 1.0)),
                 extractor_version=extractor_version,
-                metadata_json={**candidate.metadata, "source": "provider"},
+                metadata_json=_provider_row_metadata(candidate.metadata, extractor_metadata),
             )
         )
 
@@ -439,54 +588,59 @@ def _persist_provider_extraction(
         row = row_by_chunk_id.get(candidate.source_chunk_id)
         if row is None:
             continue
-        endpoints = []
-        for name in (candidate.subject, candidate.object):
-            canonical = _canonical_name(name)
-            entity = entity_by_name.get(canonical)
-            if entity is None:
-                entity = _ensure_provider_entity(
-                    session,
-                    kb=kb,
-                    candidate=ExtractedEntity(name=name, source_chunk_id=candidate.source_chunk_id),
-                    extractor_version=extractor_version,
-                    entity_by_key=entity_by_key,
-                )
-                if entity is not None:
-                    entity_by_name[canonical] = entity
-            endpoints.append(entity)
+        endpoints = [
+            _provider_entity_for_name(
+                session,
+                kb=kb,
+                name=name,
+                source_chunk_id=candidate.source_chunk_id,
+                extractor_version=extractor_version,
+                entity_by_key=entity_by_key,
+            )
+            for name in (candidate.subject, candidate.object)
+        ]
         subject, object_ = endpoints
         if subject is None or object_ is None or subject.id == object_.id:
             continue
-        triplet = (subject.id, candidate.predicate, object_.id)
+        predicate = _normalize_predicate(candidate.predicate)
+        triplet = (subject.id, predicate, object_.id)
         relation = relation_by_triplet.get(triplet)
         if relation is None:
             relation = KnowledgeGraphRelation(
                 knowledge_base_id=kb.id,
                 workspace_id=kb.workspace_id,
                 subject_entity_id=subject.id,
-                predicate=candidate.predicate,
+                predicate=predicate,
                 object_entity_id=object_.id,
                 confidence=max(0.0, min(candidate.confidence, 1.0)),
                 extractor_version=extractor_version,
                 metadata_json={
-                    **candidate.metadata,
-                    "source": "provider",
+                    **_provider_row_metadata(candidate.metadata, extractor_metadata),
                     "claim": candidate.claim,
+                    "extraction_reason": candidate.metadata.get("extraction_reason")
+                    or "provider_explicit_relation",
                 },
             )
             session.add(relation)
             session.flush()
             relation_by_triplet[triplet] = relation
+        evidence_text = _candidate_evidence_text(
+            row,
+            evidence_text=candidate.evidence_text,
+            char_start=candidate.char_start,
+            char_end=candidate.char_end,
+            fallback=candidate.claim,
+        )
         session.add(
             KnowledgeGraphRelationEvidence(
                 relation_id=relation.id,
                 chunk_id=row.chunk.id,
                 document_id=row.document.id,
                 document_version_id=row.version.id,
-                evidence_text=_preview(row.chunk.text, 500),
+                evidence_text=evidence_text,
                 confidence=max(0.0, min(candidate.confidence, 1.0)),
                 extractor_version=extractor_version,
-                metadata_json={**candidate.metadata, "source": "provider"},
+                metadata_json=_provider_row_metadata(candidate.metadata, extractor_metadata),
             )
         )
 
@@ -504,7 +658,15 @@ def _persist_provider_extraction(
                 claim_text=candidate.text.strip()[:500],
                 confidence=max(0.0, min(candidate.confidence, 1.0)),
                 extractor_version=extractor_version,
-                metadata_json={**candidate.metadata, "source": "provider"},
+                metadata_json={
+                    **_provider_row_metadata(candidate.metadata, extractor_metadata),
+                    "evidence_text": _candidate_evidence_text(
+                        row,
+                        evidence_text=candidate.evidence_text,
+                        char_start=candidate.char_start,
+                        char_end=candidate.char_end,
+                    ),
+                },
             )
         )
 
@@ -543,6 +705,7 @@ def _finalize_graph_build(
             **trace,
             "status": "completed",
             "source_chunk_count": len(rows),
+            "source_chunk_fingerprint": graph_metadata["source_chunk_fingerprint"],
             "source_document_version_count": graph_metadata["source_document_version_count"],
             "source_document_version_fingerprint": graph_metadata[
                 "source_document_version_fingerprint"
@@ -564,6 +727,7 @@ def rebuild_knowledge_graph(
     pipeline_run_id: str | uuid.UUID | None = None,
     trace_id: str | None = None,
     actor: str | None = None,
+    trace_metadata: dict[str, Any] | None = None,
 ) -> KnowledgeGraphResult:
     kb_uuid = uuid.UUID(knowledge_base_id)
     kb = session.get(KnowledgeBase, kb_uuid)
@@ -580,6 +744,10 @@ def rebuild_knowledge_graph(
         extractor_name=extractor_name,
         extractor_version=resolved_extractor_version,
         profile_id=profile_id,
+        provider=getattr(extractor, "provider_name", None),
+        model=getattr(extractor, "model", None),
+        prompt_version=getattr(extractor, "prompt_version", None),
+        trace_metadata=trace_metadata,
     )
 
     if reset:
@@ -1197,9 +1365,7 @@ def build_graph_retrieval_context(
                 relation.subject_entity_id in matched_ids
                 or relation.object_entity_id in matched_ids
             )
-            predicate_terms = set(
-                re.findall(r"[a-z0-9/-]{3,}", relation.predicate.casefold().replace("_", " "))
-            )
+            predicate_terms = _predicate_query_terms(relation.predicate)
             predicate_match = bool(predicate_terms & query_terms)
             if not touches and not predicate_match:
                 continue

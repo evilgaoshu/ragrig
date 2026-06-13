@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -16,6 +17,7 @@ from ragrig.db.models import (
     AuditEvent,
     Base,
     Chunk,
+    KnowledgeGraphEntity,
     KnowledgeGraphRelation,
     PipelineRun,
     Workspace,
@@ -27,10 +29,18 @@ from ragrig.knowledge_graph import (
     ExtractedEntity,
     ExtractedRelationship,
     KnowledgeGraphExtraction,
+    ProviderBackedKnowledgeGraphExtractor,
     get_knowledge_graph,
     rebuild_knowledge_graph,
 )
 from ragrig.main import create_app
+from ragrig.providers import (
+    BaseProvider,
+    ProviderCapability,
+    ProviderKind,
+    ProviderMetadata,
+    ProviderRetryPolicy,
+)
 from ragrig.repositories import (
     get_knowledge_base_by_name,
     get_or_create_knowledge_base,
@@ -39,6 +49,121 @@ from ragrig.repositories import (
 from ragrig.retrieval import search_knowledge_base
 
 pytestmark = [pytest.mark.integration]
+
+
+_FAKE_GRAPH_PROVIDER_METADATA = ProviderMetadata(
+    name="fake-graph-provider",
+    kind=ProviderKind.LOCAL,
+    description="Fake graph extraction provider for tests.",
+    capabilities={ProviderCapability.CHAT},
+    default_dimensions=None,
+    max_dimensions=None,
+    default_context_window=32_000,
+    max_context_window=32_000,
+    required_secrets=[],
+    config_schema={},
+    sdk_protocol="test",
+    healthcheck="not-required",
+    failure_modes=[],
+    retry_policy=ProviderRetryPolicy(max_attempts=1, backoff_seconds=0),
+    audit_fields=[],
+    metric_fields=[],
+    intended_uses=["test"],
+)
+
+
+class _FakeGraphProvider(BaseProvider):
+    metadata = _FAKE_GRAPH_PROVIDER_METADATA
+
+    def __init__(self, *, malformed: bool = False) -> None:
+        self.malformed = malformed
+
+    def chat(self, messages: list[dict[str, object]]) -> dict[str, object]:
+        if self.malformed:
+            return {"choices": [{"message": {"content": '{"entities": []}'}}]}
+        prompt = str(messages[-1]["content"])
+        sources = json.loads(prompt.split("Sources:\n", maxsplit=1)[1])
+        architecture = next(source for source in sources if "depends on" in source["text"])
+        billing = next(source for source in sources if "references" in source["text"])
+        dependency_evidence = "BillingPolicy depends on AlphaProject"
+        dependency_start = architecture["text"].index(dependency_evidence)
+        reference_evidence = "BillingPolicy references AlphaProject"
+        reference_start = billing["text"].index(reference_evidence)
+        payload = {
+            "entities": [
+                {
+                    "name": "AlphaProject",
+                    "canonical_name": "Alpha Project",
+                    "aliases": ["AP", "Alpha Project"],
+                    "type": "PROJECT",
+                    "description": "The primary project.",
+                    "confidence": 0.96,
+                    "source_chunk_id": architecture["source_chunk_id"],
+                    "evidence_text": "AlphaProject",
+                    "char_start": architecture["text"].index("AlphaProject"),
+                    "char_end": architecture["text"].index("AlphaProject") + len("AlphaProject"),
+                },
+                {
+                    "name": "BillingPolicy",
+                    "canonical_name": "Billing Policy",
+                    "aliases": ["Billing Policy"],
+                    "type": "POLICY",
+                    "confidence": 0.95,
+                    "source_chunk_id": architecture["source_chunk_id"],
+                    "evidence_text": "BillingPolicy",
+                    "char_start": dependency_start,
+                    "char_end": dependency_start + len("BillingPolicy"),
+                },
+            ],
+            "relationships": [
+                {
+                    "subject": "BillingPolicy",
+                    "predicate": "depends_on",
+                    "object": "AP",
+                    "confidence": 0.94,
+                    "claim": dependency_evidence,
+                    "evidence_text": dependency_evidence,
+                    "char_start": dependency_start,
+                    "char_end": dependency_start + len(dependency_evidence),
+                    "source_chunk_id": architecture["source_chunk_id"],
+                    "extraction_reason": "explicit dependency statement",
+                },
+                {
+                    "subject": "Billing Policy",
+                    "predicate": "references",
+                    "object": "Alpha Project",
+                    "confidence": 0.91,
+                    "claim": reference_evidence,
+                    "evidence_text": reference_evidence,
+                    "char_start": reference_start,
+                    "char_end": reference_start + len(reference_evidence),
+                    "source_chunk_id": billing["source_chunk_id"],
+                    "extraction_reason": "explicit reference statement",
+                },
+                {
+                    "subject": "Alpha Project",
+                    "predicate": "owns",
+                    "object": "Billing Policy",
+                    "confidence": 0.5,
+                    "evidence_text": "out-of-bounds evidence",
+                    "char_start": 0,
+                    "char_end": len(architecture["text"]) + 100,
+                    "source_chunk_id": architecture["source_chunk_id"],
+                    "extraction_reason": "invalid test span",
+                },
+            ],
+            "claims": [
+                {
+                    "text": dependency_evidence,
+                    "confidence": 0.94,
+                    "evidence_text": dependency_evidence,
+                    "char_start": dependency_start,
+                    "char_end": dependency_start + len(dependency_evidence),
+                    "source_chunk_id": architecture["source_chunk_id"],
+                }
+            ],
+        }
+        return {"choices": [{"message": {"content": json.dumps(payload)}}]}
 
 
 def _seed_docs(tmp_path: Path) -> Path:
@@ -196,6 +321,70 @@ def test_provider_extractor_contract_persists_source_backed_outputs(
     )
     assert relationship_only.graph_context["matched_entities"] == []
     assert relationship_only.graph_context["matched_relationships"][0]["match_type"] == "predicate"
+
+
+def test_provider_backed_extractor_persists_aliases_typed_relations_and_spans(
+    sqlite_session: Session, tmp_path: Path
+) -> None:
+    kb_id = _index_fixture_kb(sqlite_session, tmp_path)
+    extractor = ProviderBackedKnowledgeGraphExtractor(
+        _FakeGraphProvider(),
+        provider_name="fake-graph-provider",
+        model="fake-model",
+    )
+
+    graph = rebuild_knowledge_graph(sqlite_session, kb_id, extractor=extractor)
+
+    assert graph.trace["extractor_name"] == "provider-backed"
+    assert graph.trace["provider"] == "fake-graph-provider"
+    assert graph.trace["model"] == "fake-model"
+    assert graph.trace["extractor_metadata"]["rejected_item_count"] == 1
+    assert graph.trace["extractor_metadata"]["rejected_items"] == [
+        {"kind": "relationship", "reason": "evidence_span_out_of_bounds"}
+    ]
+    assert {relation.predicate for relation in graph.relations} == {"depends_on", "references"}
+    alpha = next(entity for entity in graph.entities if entity.display_name == "AlphaProject")
+    assert {"ap", "alpha project", "alphaproject"}.issubset(alpha.metadata["aliases"])
+    assert alpha.metadata["merge_reasons"] == ["created_from_provider_entity"]
+    assert alpha.evidence_chunks[0].char_start is not None
+    assert alpha.evidence_chunks[0].char_end is not None
+    assert all(relation.evidence[0].evidence_text for relation in graph.relations)
+    depends_on = next(
+        relation for relation in graph.relations if relation.predicate == "depends_on"
+    )
+    assert depends_on.metadata["provider"] == "fake-graph-provider"
+    assert depends_on.metadata["model"] == "fake-model"
+    assert depends_on.metadata["prompt_version"] == "graph-rag-provider-v1"
+    assert depends_on.metadata["extraction_reason"] == "explicit dependency statement"
+
+    matched_entity_ids = set()
+    for query in ("AlphaProject", "Alpha Project", "AP"):
+        report = search_knowledge_base(
+            session=sqlite_session,
+            knowledge_base_name="kg-fixture",
+            query=query,
+            top_k=3,
+            mode="graph",
+        )
+        matched_entity_ids.add(report.graph_context["matched_entities"][0]["entity_id"])
+    assert matched_entity_ids == {alpha.id}
+
+    predicate_only = search_knowledge_base(
+        session=sqlite_session,
+        knowledge_base_name="kg-fixture",
+        query="What is the dependency?",
+        top_k=3,
+        mode="graph",
+    )
+    assert predicate_only.graph_context["matched_entities"] == []
+    assert predicate_only.graph_context["matched_relationships"][0]["predicate"] == "depends_on"
+    assert predicate_only.graph_context["matched_relationships"][0]["match_type"] == "predicate"
+
+    entities = sqlite_session.scalars(select(KnowledgeGraphEntity)).all()
+    assert (
+        len([entity for entity in entities if "alpha project" in entity.metadata_json["aliases"]])
+        == 1
+    )
 
 
 def test_graph_retrieval_mode_expands_entity_evidence(
@@ -469,6 +658,73 @@ async def test_knowledge_graph_api_rebuild_and_read(tmp_path: Path) -> None:
         response = await client.get(f"/knowledge-bases/{kb_id}/knowledge-graph")
         assert response.status_code == 200
         assert response.json()["stats"]["relation_evidence_count"] >= 1
+
+
+@pytest.mark.anyio
+async def test_provider_backed_api_malformed_response_falls_back_without_graph_pollution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_factory = _create_file_session_factory(tmp_path / "kg-api-provider-fallback.db")
+    with session_factory() as session:
+        kb_id = _index_fixture_kb(session, tmp_path, kb_name="kg-api-provider-fallback")
+
+    class FakeRegistry:
+        def get(self, _name: str, **_config: object) -> BaseProvider:
+            return _FakeGraphProvider(malformed=True)
+
+    monkeypatch.setattr("ragrig.services.knowledge.get_provider_registry", lambda: FakeRegistry())
+    app = create_app(check_database=lambda: None, session_factory=session_factory)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        missing_provider = await client.post(
+            f"/knowledge-bases/{kb_id}/knowledge-graph/rebuild",
+            json={"extractor": "provider-backed", "fallback_to_deterministic": False},
+        )
+        assert missing_provider.status_code == 422
+        assert missing_provider.json()["provider_error_code"] == "graph_extractor_provider_required"
+
+        response = await client.post(
+            f"/knowledge-bases/{kb_id}/knowledge-graph/rebuild",
+            json={
+                "extractor": "provider-backed",
+                "provider": "fake-graph-provider",
+                "model": "fake-model",
+                "fallback_to_deterministic": True,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["trace"]["extractor_name"] == "deterministic-understanding"
+        assert payload["trace"]["requested_extractor"] == "provider-backed"
+        assert payload["trace"]["fallback_used"] is True
+        assert payload["trace"]["degraded_reason"] == "graph_provider_extraction_failed"
+        assert payload["trace"]["provider_error_code"] == "graph_extractor_schema_invalid"
+        assert all(
+            relation["metadata"].get("provider") != "fake-graph-provider"
+            for relation in payload["relations"]
+        )
+
+    with session_factory() as session:
+        dense = search_knowledge_base(
+            session=session,
+            knowledge_base_name="kg-api-provider-fallback",
+            query="BillingPolicy",
+            top_k=3,
+            mode="dense",
+        )
+        assert dense.total_results >= 1
+        audits = session.scalars(
+            select(AuditEvent).where(AuditEvent.event_type == "kg_extract")
+        ).all()
+        assert any(
+            audit.payload_json.get("provider_error_code") == "graph_extractor_schema_invalid"
+            for audit in audits
+        )
+        assert all(
+            "BillingPolicy depends on AlphaProject" not in json.dumps(audit.payload_json)
+            for audit in audits
+        )
 
 
 @pytest.mark.anyio

@@ -45,10 +45,22 @@ records successful or failed extraction without storing chunk text.
 The KB build trace stores source document-version and chunk-ID fingerprints so a same-version force
 reindex is reported as `graph_stale` instead of silently using incomplete graph evidence.
 
-The default path is deterministic and understanding-aware for CI/local use.
-`KnowledgeGraphExtractor` is the provider seam for future LLM extractors. Provider output must
-include source-backed entities, relationships, and claims with confidence and metadata. Output
-whose source chunk is not in the current indexed corpus is ignored.
+The default path remains deterministic and understanding-aware for CI/local use.
+`ProviderBackedKnowledgeGraphExtractor` is an optional production seam over the existing provider
+registry. It requests a strict JSON schema containing source-backed entities, canonical names,
+aliases, typed relationships, claims, confidence, evidence text, and chunk-local spans. Unknown
+source chunk IDs and out-of-bounds spans are rejected before persistence. Invalid or incomplete
+JSON fails extraction without partially writing provider graph rows.
+
+Provider aliases are normalized across case, CamelCase/spaced forms, acronyms, and explicit
+provider aliases. Merge reasons are retained in entity metadata. Explicit predicates such as
+`depends_on`, `references`, `routes_to`, `assigned_to`, `implements`, `owns`, and
+`conflicts_with` are preserved rather than collapsed to `co_mentions`.
+
+Every provider build trace records extractor name/version, provider, model, prompt version,
+source fingerprints, and a response fingerprint. Failed provider extraction writes a `kg_extract`
+audit event without chunk text. API callers can either receive a stable validation error or fall
+back to deterministic extraction; fallback is explicit in the completed build trace.
 
 ## API
 
@@ -56,7 +68,24 @@ whose source chunk is not in the current indexed corpus is ignored.
   returns KG-lite stats, entities, relation evidence, claims, and limitations.
 
 - `POST /knowledge-bases/{kb_id}/knowledge-graph/rebuild`
-  rebuilds KG-lite rows from latest indexed chunks and fresh understanding output when available.
+  rebuilds graph rows from latest indexed chunks. The deterministic default is unchanged. To opt
+  into provider-backed extraction:
+
+  ```json
+  {
+    "extractor": "provider-backed",
+    "provider": "openai",
+    "model": "gpt-4.1-mini",
+    "prompt_version": "graph-rag-provider-v1",
+    "fallback_to_deterministic": true,
+    "reset": true
+  }
+  ```
+
+  The provider must already be configured through the existing provider registry/environment.
+  With fallback enabled, missing provider configuration or invalid provider output returns a
+  deterministic graph whose trace includes `fallback_used`, `degraded_reason`, and
+  `provider_error_code`. With fallback disabled, the endpoint returns a stable `422`.
 
 - `POST /knowledge-bases/{kb_id}/knowledge-graph/relations/{relation_id}/feedback`
   records correct, incorrect, or needs-review feedback on a relation edge.
@@ -83,9 +112,9 @@ whose source chunk is not in the current indexed corpus is ignored.
 Graph-aware retrieval performs:
 
 1. Dense retrieval as the base candidate set.
-2. KG entity linking against the query, including stored aliases and compact
+2. KG entity linking against the query, including provider aliases and compact
    CamelCase / spaced-name variants.
-3. One-hop relation expansion by default, with relation feedback suppressing
+3. Predicate-semantic and one-hop relation expansion by default, with relation feedback suppressing
    edges marked incorrect before chunk boosting.
 4. Chunk rehydration through the same latest-version embedding statement used by dense retrieval.
 5. ACL filtering before graph-expanded chunks reach reranking or answer generation.
@@ -114,6 +143,17 @@ Relation paths in `retrieval_trace.graph_context` include predicate weight,
 feedback weight, feedback summary, evidence score, and diagnostics describing
 suppressed relations. This keeps graph boosts explainable during console
 strategy comparison and eval review.
+
+## P1 Boundaries
+
+- Provider extraction is opt-in and uses the current Postgres graph tables; it does not require
+  Neo4j, Apache AGE, or a new graph store.
+- Entity resolution is alias-aware but intentionally conservative. It does not perform global
+  embedding/LLM clustering across unrelated knowledge bases.
+- Retrieval currently expands one hop by default. Multi-hop planning and community summaries are
+  later phases.
+- Provider quality and cost remain provider/model dependent. Strict validation and source evidence
+  prevent malformed output from becoming graph facts, but do not prove factual correctness.
 
 The Web Console exposes a Graph Explorer for entities, relations, claims, source
 evidence, and relation feedback. Retrieval Lab can load/save KB-level mode

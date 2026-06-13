@@ -1,10 +1,13 @@
 from ragrig.knowledge_graph.extractor import (
+    DEFAULT_PROVIDER_PROMPT_VERSION,
     ExtractedClaim,
     ExtractedEntity,
     ExtractedRelationship,
     KnowledgeGraphExtraction,
     KnowledgeGraphExtractionSource,
     KnowledgeGraphExtractor,
+    ProviderBackedKnowledgeGraphExtractor,
+    ProviderKnowledgeGraphResponse,
 )
 from ragrig.knowledge_graph.schema import (
     GraphRetrievalContext,
@@ -27,6 +30,7 @@ from ragrig.knowledge_graph.service import (
 
 __all__ = [
     "DEFAULT_KG_EXTRACTOR_VERSION",
+    "DEFAULT_PROVIDER_PROMPT_VERSION",
     "ExtractedClaim",
     "ExtractedEntity",
     "ExtractedRelationship",
@@ -43,6 +47,8 @@ __all__ = [
     "KnowledgeGraphRelationRecord",
     "KnowledgeGraphResult",
     "KnowledgeGraphStats",
+    "ProviderBackedKnowledgeGraphExtractor",
+    "ProviderKnowledgeGraphResponse",
     "build_graph_retrieval_context",
     "get_knowledge_graph",
     "rebuild_knowledge_graph",
