@@ -100,6 +100,22 @@ Install the OTel SDKs with `uv sync --extra otel` before setting
 `RAGRIG_OTEL_ENABLED=true`; without the extra, tracing is skipped with a
 startup warning.
 
+Langfuse trace export is also opt-in and separate from OpenTelemetry. It emits
+high-level summaries for retrieval search, answer generation, and evaluation
+runs; query text, answer text, and hidden provider configs are not sent by the
+adapter.
+
+```bash
+uv sync --extra observability-langfuse
+export RAGRIG_LANGFUSE_ENABLED=true
+export RAGRIG_LANGFUSE_HOST=https://cloud.langfuse.com
+export RAGRIG_LANGFUSE_PUBLIC_KEY=pk-lf-...
+export RAGRIG_LANGFUSE_SECRET_KEY=sk-lf-...
+```
+
+If the package or credentials are missing, requests continue normally and the
+adapter records a stable degraded diagnostic.
+
 Ingestion and indexing pipeline metrics are low-cardinality counters and
 histograms:
 `ragrig_pipeline_runs_total`, `ragrig_pipeline_items_total`,
@@ -178,3 +194,41 @@ RAGRIG_ANSWER_BASE_URL=http://localhost:11434/v1
 Off by default — the deterministic-local provider answers requests without
 any external runtime. Override when you want to validate against a real LLM
 on the host.
+
+## RAGAS evaluation adapter
+
+RAGAS is optional because it pulls in a larger evaluation stack. Install it only
+on runners where RAGAS metrics should be computed:
+
+```bash
+uv sync --extra eval-ragas
+```
+
+Then set `ragas_enabled=true` on `POST /evaluations/runs`. Per-question results
+appear under `items[].evaluation_adapters.ragas` with metrics such as
+`faithfulness`, `context_precision`, `context_recall`, and
+`answer_relevancy` when the adapter can compute them. Missing packages or
+runtime adapter errors are reported as `status="degraded"` and do not fail the
+evaluation run.
+
+## Discord source connector
+
+The Discord source uses the Discord REST API through the existing `httpx`
+dependency; no Discord SDK is required.
+
+```json
+{
+  "bot_token": "env:DISCORD_BOT_TOKEN",
+  "guild_id": "123456789012345678",
+  "channel_ids": ["234567890123456789"],
+  "include_threads": true,
+  "oldest_days": 30,
+  "page_size": 100,
+  "max_messages_per_channel": 500
+}
+```
+
+`bot_token` supports `env:VAR` references and should never be committed as a
+literal secret. The bot needs access to the target channels and message history.
+Messages are aggregated into one text file per channel or active thread before
+they enter the normal ingestion pipeline.

@@ -234,7 +234,9 @@ def test_pull_request_template_uses_canonical_filename_without_generator_footer(
     template_path = REPO_ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md"
 
     assert template_path.exists(), "expected canonical GitHub PR template filename"
-    assert not (REPO_ROOT / ".github" / "pull_request_template.md").exists()
+    assert not any(
+        path.name == "pull_request_template.md" for path in (REPO_ROOT / ".github").iterdir()
+    )
 
     template = template_path.read_text(encoding="utf-8")
     assert "## Summary" in template

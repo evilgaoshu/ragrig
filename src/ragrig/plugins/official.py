@@ -114,6 +114,16 @@ class SlackSourcePluginConfig(PluginConfigModel):
     page_size: int = 200
 
 
+class DiscordSourcePluginConfig(PluginConfigModel):
+    bot_token: str
+    guild_id: str | None = None
+    channel_ids: list[str]
+    include_threads: bool = False
+    oldest_days: int = 30
+    page_size: int = Field(default=100, ge=1, le=100)
+    max_messages_per_channel: int | None = Field(default=None, gt=0)
+
+
 class WikiSourceConfig(PluginConfigModel):
     base_url: str
     access_token: str
@@ -1870,6 +1880,37 @@ def official_stub_manifests() -> list[PluginManifest]:
                 SecretRequirement(
                     name="SLACK_BOT_TOKEN",
                     description="Slack bot token with channels:read and channels:history scopes",
+                    required=True,
+                ),
+            ),
+            status=PluginStatus.READY,
+            unavailable_reason=None,
+        ),
+        _official_manifest(
+            plugin_id="source.discord",
+            display_name="Discord Source",
+            description=(
+                "Ingests messages from Discord channels via the Discord REST API. "
+                "Aggregates channel and active-thread messages into documents."
+            ),
+            plugin_type=PluginType.SOURCE,
+            family="discord",
+            capabilities=(Capability.READ, Capability.INCREMENTAL_SYNC),
+            docs_reference="docs/specs/ragrig-discord-source-connector-spec.md",
+            config_model=DiscordSourcePluginConfig,
+            example_config={
+                "bot_token": "env:DISCORD_BOT_TOKEN",
+                "guild_id": "123456789012345678",
+                "channel_ids": ["234567890123456789"],
+                "include_threads": True,
+                "oldest_days": 30,
+                "page_size": 100,
+                "max_messages_per_channel": 500,
+            },
+            secret_requirements=(
+                SecretRequirement(
+                    name="DISCORD_BOT_TOKEN",
+                    description="Discord bot token with channel read/message history access",
                     required=True,
                 ),
             ),
