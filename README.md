@@ -91,7 +91,8 @@ For a step-by-step version with development paths, see
   inspectable through pipeline, audit, and retrieval traces.
 - Postgres-first Graph-RAG modes expose entity matches, relationship evidence, source-backed
   relation paths, feedback suppression, and graph rank movement; deterministic extraction is
-  available for CI/local use and future LLM extractors plug into a provider seam.
+  the default for CI/local use, while an optional provider-backed extractor adds strict source
+  validation, aliases, typed predicates, and auditable fallback without a graph database.
 - Template-backed explainable chunking includes recursive boundary and lightweight token-aware
   strategies, records split reasons and source ranges, and supports audited manual split/merge
   overrides with an explicit reindex step.

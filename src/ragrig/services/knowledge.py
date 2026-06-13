@@ -19,11 +19,14 @@ from ragrig.knowledge_base_config import (
     validate_role_model_config,
 )
 from ragrig.knowledge_graph import (
+    DEFAULT_PROVIDER_PROMPT_VERSION,
     KnowledgeGraphBuildRequest,
     KnowledgeGraphNotFoundError,
+    ProviderBackedKnowledgeGraphExtractor,
     get_knowledge_graph,
     rebuild_knowledge_graph,
 )
+from ragrig.providers import ProviderError, get_provider_registry
 from ragrig.repositories import (
     create_audit_event,
     delete_kb_permission,
@@ -516,22 +519,131 @@ def rebuild_knowledge_graph_payload(
         kb_id=kb_id,
         minimum="editor",
     )
+    actor = str(auth.user_id) if auth.user_id is not None else "anonymous"
+    requested_trace = {
+        "requested_extractor": request.extractor,
+        "requested_provider": request.provider,
+        "requested_model": request.model,
+        "requested_prompt_version": request.prompt_version,
+        "fallback_used": False,
+    }
     try:
+        extractor = None
+        if request.extractor == "provider-backed":
+            if not request.provider:
+                raise ProviderError(
+                    "A provider is required for provider-backed graph extraction",
+                    code="graph_extractor_provider_required",
+                    retryable=False,
+                )
+            provider_config = {"model_name": request.model} if request.model else {}
+            provider = get_provider_registry().get(request.provider, **provider_config)
+            extractor = ProviderBackedKnowledgeGraphExtractor(
+                provider,
+                provider_name=request.provider,
+                model=request.model,
+                prompt_version=request.prompt_version or DEFAULT_PROVIDER_PROMPT_VERSION,
+            )
         result = rebuild_knowledge_graph(
             session,
             kb_id,
             profile_id=request.profile_id,
             extractor_version=request.extractor_version,
             reset=request.reset,
-            actor=str(auth.user_id) if auth.user_id is not None else "anonymous",
+            extractor=extractor,
+            actor=actor,
+            trace_metadata=requested_trace,
         )
     except KnowledgeGraphNotFoundError as exc:
         raise ServiceError(
             status_code=404,
             content={"error": "knowledge_base_not_found"},
         ) from exc
+    except ProviderError as exc:
+        session.rollback()
+        failed_trace = {
+            **requested_trace,
+            "status": "failed",
+            "degraded_reason": "graph_provider_extraction_failed",
+            "provider_error_code": exc.code,
+            "provider_error_retryable": exc.retryable,
+            "error_type": type(exc).__name__,
+        }
+        create_audit_event(
+            session,
+            event_type="kg_extract",
+            actor=actor,
+            workspace_id=workspace_id,
+            knowledge_base_id=knowledge_base.id,
+            payload_json=failed_trace,
+        )
+        if request.fallback_to_deterministic:
+            result = rebuild_knowledge_graph(
+                session,
+                kb_id,
+                profile_id=request.profile_id,
+                extractor_version=request.extractor_version,
+                reset=request.reset,
+                actor=actor,
+                trace_metadata={
+                    **requested_trace,
+                    "fallback_used": True,
+                    "degraded_reason": "graph_provider_extraction_failed",
+                    "provider_error_code": exc.code,
+                },
+            )
+        else:
+            session.commit()
+            raise ServiceError(
+                status_code=422,
+                content={
+                    "error": "graph_provider_extraction_failed",
+                    "provider_error_code": exc.code,
+                },
+            ) from exc
     except Exception as exc:
         session.rollback()
+        if request.extractor == "provider-backed":
+            failed_trace = {
+                **requested_trace,
+                "status": "failed",
+                "degraded_reason": "graph_provider_extraction_failed",
+                "provider_error_code": "graph_provider_runtime_error",
+                "provider_error_retryable": False,
+                "error_type": type(exc).__name__,
+            }
+            create_audit_event(
+                session,
+                event_type="kg_extract",
+                actor=actor,
+                workspace_id=workspace_id,
+                knowledge_base_id=knowledge_base.id,
+                payload_json=failed_trace,
+            )
+            if request.fallback_to_deterministic:
+                result = rebuild_knowledge_graph(
+                    session,
+                    kb_id,
+                    profile_id=request.profile_id,
+                    extractor_version=request.extractor_version,
+                    reset=request.reset,
+                    actor=actor,
+                    trace_metadata={
+                        **requested_trace,
+                        "fallback_used": True,
+                        "degraded_reason": "graph_provider_extraction_failed",
+                        "provider_error_code": "graph_provider_runtime_error",
+                    },
+                )
+                return result.model_dump(mode="json")
+            session.commit()
+            raise ServiceError(
+                status_code=422,
+                content={
+                    "error": "graph_provider_extraction_failed",
+                    "provider_error_code": "graph_provider_runtime_error",
+                },
+            ) from exc
         trace_id = str(uuid.uuid4())
         knowledge_base = session.get(KnowledgeBase, knowledge_base.id)
         if knowledge_base is not None:

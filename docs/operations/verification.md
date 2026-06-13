@@ -154,9 +154,24 @@ make graph-eval-compare
 The artifact records the extraction pipeline trace and checks X/Y relationship
 retrieval, cross-document relations, feedback suppression with changed graph
 chunk scores, and citations backed by chunk, document, and document-version
-IDs. The default extractor is deterministic for CI/local use. Future LLM
-extractors implement `KnowledgeGraphExtractor`; no Neo4j or Apache AGE service
-is required.
+IDs. The default extractor is deterministic for CI/local use. The optional
+provider-backed extractor uses the existing provider registry; no Neo4j or
+Apache AGE service is required.
+
+Provider-backed rebuild example:
+
+```bash
+curl -sS -X POST \
+  http://localhost:8000/knowledge-bases/<kb-id>/knowledge-graph/rebuild \
+  -H 'Content-Type: application/json' \
+  -d '{"extractor":"provider-backed","provider":"openai","model":"gpt-4.1-mini","fallback_to_deterministic":true}'
+```
+
+The response trace records provider/model/prompt version and source
+fingerprints. Missing provider configuration or invalid provider JSON either
+falls back with `fallback_used=true` and a stable `provider_error_code`, or
+returns `422` when `fallback_to_deterministic=false`. Failed audit events do
+not contain chunk text.
 
 ## Explainable chunking and manual override
 

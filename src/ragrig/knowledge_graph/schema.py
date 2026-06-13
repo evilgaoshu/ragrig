@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -9,6 +9,11 @@ class KnowledgeGraphBuildRequest(BaseModel):
     profile_id: str = "*.understand.default"
     extractor_version: str = "kg-lite-v1"
     reset: bool = True
+    extractor: Literal["deterministic", "provider-backed"] = "deterministic"
+    provider: str | None = None
+    model: str | None = None
+    prompt_version: str = "graph-rag-provider-v1"
+    fallback_to_deterministic: bool = True
 
 
 class KnowledgeGraphStats(BaseModel):
