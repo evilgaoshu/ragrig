@@ -33,6 +33,45 @@ from ragrig.db.models import Budget, UsageEvent
 logger = logging.getLogger(__name__)
 
 
+def _operation_stage(operation: str) -> str | None:
+    if operation in {"retrieval_query_embedding", "hyde_embedding", "query_rewrite"}:
+        return "query"
+    if operation == "rerank":
+        return "rerank"
+    if operation == "answer_generation":
+        return "answer"
+    if operation in {"faithfulness_judge", "evaluation_judge"}:
+        return "judge"
+    if operation == "kg_extract_provider":
+        return "extract"
+    return None
+
+
+def _usage_metadata_for_operation(
+    request_metadata: dict[str, Any] | None,
+    *,
+    operation: str,
+) -> dict[str, Any]:
+    metadata = dict(request_metadata or {})
+    stage = _operation_stage(operation)
+    if stage is None:
+        return metadata
+    metadata["stage"] = stage
+    selections = metadata.get("stage_model_selection")
+    if isinstance(selections, list):
+        matched = next(
+            (
+                selection
+                for selection in selections
+                if isinstance(selection, dict) and selection.get("stage") == stage
+            ),
+            None,
+        )
+        if matched is not None:
+            metadata["model_selection"] = matched
+    return metadata
+
+
 # ── Recording ────────────────────────────────────────────────────────────────
 
 
@@ -57,19 +96,23 @@ def record_usage_events(
     for op in operations:
         if not isinstance(op, dict):
             continue
+        operation = str(op.get("operation") or "unknown")
         rows.append(
             UsageEvent(
                 id=uuid.uuid4(),
                 workspace_id=workspace_id,
                 user_id=user_id,
-                operation=str(op.get("operation") or "unknown"),
+                operation=operation,
                 provider=str(op.get("provider") or "unknown"),
                 model=str(op.get("model") or ""),
                 input_tokens=int(op.get("input_tokens_estimated") or 0),
                 output_tokens=int(op.get("output_tokens_estimated") or 0),
                 cost_usd=float(op.get("total_cost_usd_estimated") or 0.0),
                 latency_ms=float(op.get("latency_ms") or 0.0),
-                metadata_json=request_metadata or {},
+                metadata_json=_usage_metadata_for_operation(
+                    request_metadata,
+                    operation=operation,
+                ),
             )
         )
     if not rows:

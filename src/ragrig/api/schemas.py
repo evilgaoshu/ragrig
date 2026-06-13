@@ -83,6 +83,11 @@ class AnswerRequest(BaseModel):
     candidate_k: int = Field(default=20, ge=1, le=200)
     reranker_provider: str | None = None
     reranker_model: str | None = None
+    reranker_config: dict[str, Any] | None = None
+    judge_provider: str | None = None
+    judge_model: str | None = None
+    judge_config: dict[str, Any] | None = None
+    judge_enabled: bool | None = None
     graph_weight: float = Field(default=0.35, ge=0.0, le=1.0)
     graph_depth: int = Field(default=1, ge=0, le=2)
 

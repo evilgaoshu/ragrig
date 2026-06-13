@@ -13,9 +13,15 @@ from ragrig.deps import AuthContext
 from ragrig.knowledge_base_config import (
     RetrievalPreferenceRequest,
     RoleModelConfigRequest,
+    StageModelPolicyRequest,
     kb_retrieval_preferences,
     kb_role_model_config,
+    kb_stage_model_policy,
+    normalized_stage_model_policy,
     public_role_model_config,
+    public_stage_model_policy,
+    public_stage_model_selection,
+    stage_model_selection,
     validate_role_model_config,
 )
 from ragrig.knowledge_graph import (
@@ -26,6 +32,7 @@ from ragrig.knowledge_graph import (
     get_knowledge_graph,
     rebuild_knowledge_graph,
 )
+from ragrig.local_pilot.model_config import resolve_env_config
 from ragrig.providers import ProviderError, get_provider_registry
 from ragrig.repositories import (
     create_audit_event,
@@ -400,13 +407,43 @@ def understand_all(
     request: UnderstandAllRequest,
     operator: str | None,
 ) -> dict[str, Any]:
+    knowledge_base = session.get(KnowledgeBase, uuid.UUID(kb_id))
+    understand_selection = stage_model_selection(
+        "understand",
+        kb_stage_model_policy(knowledge_base),
+        request_values={
+            target: getattr(request, source)
+            for source, target in {"provider": "provider", "model": "model"}.items()
+            if source in request.model_fields_set
+        },
+        defaults={"provider": request.provider, "model": request.model},
+    )
+    provider_config, missing_env = resolve_env_config(understand_selection.get("config") or {})
+    if missing_env:
+        raise ServiceError(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "missing_model_credentials",
+                    "details": {
+                        "stage": "understand",
+                        "missing_credentials": missing_env,
+                    },
+                }
+            },
+        )
+    profile_id = request.profile_id
+    configured_profile = provider_config.pop("profile_id", None)
+    if "profile_id" not in request.model_fields_set and isinstance(configured_profile, str):
+        profile_id = configured_profile
     try:
         result = understand_all_versions(
             session,
             knowledge_base_id=kb_id,
-            provider=request.provider,
-            model=request.model,
-            profile_id=request.profile_id,
+            provider=str(understand_selection.get("provider") or "deterministic-local"),
+            model=understand_selection.get("model"),
+            provider_config=provider_config,
+            profile_id=profile_id,
             trigger_source="api",
             operator=operator,
         )
@@ -430,6 +467,8 @@ def understand_all(
         "skipped": result.skipped,
         "failed": result.failed,
         "errors": [{"version_id": e.version_id, "error": e.error} for e in result.errors],
+        "profile_id": profile_id,
+        "stage_model_selection": [public_stage_model_selection(understand_selection)],
     }
 
 
@@ -520,28 +559,66 @@ def rebuild_knowledge_graph_payload(
         minimum="editor",
     )
     actor = str(auth.user_id) if auth.user_id is not None else "anonymous"
+    extract_selection = stage_model_selection(
+        "extract",
+        kb_stage_model_policy(knowledge_base),
+        request_values={
+            target: getattr(request, source)
+            for source, target in {
+                "provider": "provider",
+                "model": "model",
+                "config": "config",
+            }.items()
+            if source in request.model_fields_set
+        },
+        defaults={
+            "provider": request.provider,
+            "model": request.model,
+            "config": request.config,
+        },
+    )
+    public_extract_selection = public_stage_model_selection(extract_selection)
+    selected_extractor = request.extractor
+    if (
+        "extractor" not in request.model_fields_set
+        and extract_selection.get("enabled") is not False
+        and extract_selection.get("provider")
+    ):
+        selected_extractor = "provider-backed"
+    selected_provider = extract_selection.get("provider")
+    selected_model = extract_selection.get("model")
     requested_trace = {
-        "requested_extractor": request.extractor,
-        "requested_provider": request.provider,
-        "requested_model": request.model,
+        "requested_extractor": selected_extractor,
+        "requested_provider": selected_provider,
+        "requested_model": selected_model,
         "requested_prompt_version": request.prompt_version,
         "fallback_used": False,
+        "stage_model_selection": [public_extract_selection],
     }
     try:
         extractor = None
-        if request.extractor == "provider-backed":
-            if not request.provider:
+        if selected_extractor == "provider-backed":
+            if not selected_provider:
                 raise ProviderError(
                     "A provider is required for provider-backed graph extraction",
                     code="graph_extractor_provider_required",
                     retryable=False,
                 )
-            provider_config = {"model_name": request.model} if request.model else {}
-            provider = get_provider_registry().get(request.provider, **provider_config)
+            provider_config, missing_env = resolve_env_config(extract_selection.get("config") or {})
+            if missing_env:
+                raise ProviderError(
+                    "Missing environment configuration for graph extraction",
+                    code="graph_extractor_missing_credentials",
+                    retryable=False,
+                    details={"missing_credentials": missing_env},
+                )
+            if selected_model:
+                provider_config.setdefault("model_name", selected_model)
+            provider = get_provider_registry().get(str(selected_provider), **provider_config)
             extractor = ProviderBackedKnowledgeGraphExtractor(
                 provider,
-                provider_name=request.provider,
-                model=request.model,
+                provider_name=str(selected_provider),
+                model=selected_model,
                 prompt_version=request.prompt_version or DEFAULT_PROVIDER_PROMPT_VERSION,
             )
         result = rebuild_knowledge_graph(
@@ -603,7 +680,7 @@ def rebuild_knowledge_graph_payload(
             ) from exc
     except Exception as exc:
         session.rollback()
-        if request.extractor == "provider-backed":
+        if selected_extractor == "provider-backed":
             failed_trace = {
                 **requested_trace,
                 "status": "failed",
@@ -874,6 +951,80 @@ def put_role_model_config(
         "knowledge_base": knowledge_base.name,
         "config": public_role_model_config(request.config),
         "roles": sorted(str(role) for role in request.config),
+    }
+
+
+def get_stage_model_policy(
+    session: Session,
+    *,
+    kb_id: str,
+    settings: Settings,
+    workspace_id: uuid.UUID,
+    auth: AuthContext,
+) -> dict[str, Any]:
+    knowledge_base = _resolve_kb_with_access(
+        session=session,
+        settings=settings,
+        workspace_id=workspace_id,
+        auth=auth,
+        kb_id=kb_id,
+        minimum="viewer",
+    )
+    policy = kb_stage_model_policy(knowledge_base) or {}
+    return {
+        "knowledge_base_id": str(knowledge_base.id),
+        "knowledge_base": knowledge_base.name,
+        "policy": public_stage_model_policy(policy),
+        "stages": sorted(str(stage) for stage in policy),
+    }
+
+
+def put_stage_model_policy(
+    session: Session,
+    *,
+    kb_id: str,
+    request: StageModelPolicyRequest,
+    settings: Settings,
+    workspace_id: uuid.UUID,
+    auth: AuthContext,
+) -> dict[str, Any]:
+    knowledge_base = _resolve_kb_with_access(
+        session=session,
+        settings=settings,
+        workspace_id=workspace_id,
+        auth=auth,
+        kb_id=kb_id,
+        minimum="editor",
+    )
+    policy = normalized_stage_model_policy(request)
+    existing_policy = kb_stage_model_policy(knowledge_base) or {}
+    for stage, entry in policy.items():
+        existing_entry = existing_policy.get(stage)
+        if (
+            "config" not in entry
+            and isinstance(existing_entry, dict)
+            and isinstance(existing_entry.get("config"), dict)
+        ):
+            entry["config"] = existing_entry["config"]
+    metadata = dict(knowledge_base.metadata_json or {})
+    metadata["stage_model_policy"] = policy
+    knowledge_base.metadata_json = metadata
+    actor = str(auth.user_id) if auth.user_id is not None else "anonymous"
+    create_audit_event(
+        session,
+        event_type="stage_model_policy_update",
+        actor=actor,
+        workspace_id=workspace_id,
+        knowledge_base_id=knowledge_base.id,
+        payload_json={"stages": sorted(policy)},
+    )
+    session.commit()
+    return {
+        "status": "saved",
+        "knowledge_base_id": str(knowledge_base.id),
+        "knowledge_base": knowledge_base.name,
+        "policy": public_stage_model_policy(policy),
+        "stages": sorted(policy),
     }
 
 

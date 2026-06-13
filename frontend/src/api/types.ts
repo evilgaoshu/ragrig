@@ -126,6 +126,7 @@ export interface AnswerResult {
   grounding_status: string
   refusal_reason?: string
   retrieval_trace?: Record<string, unknown>
+  stage_model_selection?: Record<string, unknown>[]
 }
 
 export interface GraphRetrievalContext {
@@ -251,6 +252,26 @@ export interface RetrievalPreferenceResponse {
   knowledge_base_id: string
   knowledge_base: string
   preferences: RetrievalPreferences
+}
+
+export interface StageModelConfig {
+  provider?: string
+  model?: string
+  enabled?: boolean
+  budget_hint_usd?: number
+  max_tokens?: number
+  notes?: string
+  tags?: string[]
+  has_config?: boolean
+  config_keys?: string[]
+}
+
+export interface StageModelPolicyResponse {
+  status?: string
+  knowledge_base_id: string
+  knowledge_base: string
+  policy: Record<string, StageModelConfig>
+  stages: string[]
 }
 
 export interface RelationFeedbackResponse {

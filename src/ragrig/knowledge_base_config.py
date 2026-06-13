@@ -1,11 +1,11 @@
-"""Knowledge base retrieval and role-model configuration helpers."""
+"""Knowledge base retrieval, role-model, and stage-model configuration helpers."""
 
 from __future__ import annotations
 
 import re
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from ragrig.db.models import KnowledgeBase
 
@@ -29,6 +29,150 @@ class RetrievalPreferenceRequest(BaseModel):
 
 class RoleModelConfigRequest(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
+
+
+STAGE_MODEL_POLICY_STAGES = (
+    "parse",
+    "understand",
+    "extract",
+    "query",
+    "rerank",
+    "answer",
+    "judge",
+)
+
+
+class StageModelConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str | None = Field(default=None, min_length=1, max_length=128)
+    model: str | None = Field(default=None, min_length=1, max_length=256)
+    config: dict[str, Any] | None = None
+    enabled: bool | None = None
+    budget_hint_usd: float | None = Field(default=None, ge=0.0)
+    max_tokens: int | None = Field(default=None, gt=0)
+    notes: str | None = Field(default=None, max_length=1000)
+    tags: list[str] | None = Field(default=None, max_length=32)
+
+
+class StageModelPolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    policy: dict[str, StageModelConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_stage_names(self) -> "StageModelPolicyRequest":
+        unknown = sorted(set(self.policy) - set(STAGE_MODEL_POLICY_STAGES))
+        if unknown:
+            raise ValueError(f"unsupported stage(s): {', '.join(unknown)}")
+        return self
+
+
+def validate_stage_model_policy(policy: dict[str, Any]) -> str | None:
+    try:
+        StageModelPolicyRequest(policy=policy)
+    except ValidationError as exc:
+        return str(exc)
+    return None
+
+
+def normalized_stage_model_policy(request: StageModelPolicyRequest) -> dict[str, Any]:
+    return request.model_dump(mode="json", exclude_none=True)["policy"]
+
+
+def kb_stage_model_policy(knowledge_base: KnowledgeBase | None) -> dict[str, Any] | None:
+    if knowledge_base is None:
+        return None
+    metadata = (
+        knowledge_base.metadata_json if isinstance(knowledge_base.metadata_json, dict) else {}
+    )
+    policy = metadata.get("stage_model_policy")
+    return policy if isinstance(policy, dict) else None
+
+
+def public_stage_model_policy(policy: dict[str, Any] | None) -> dict[str, Any]:
+    public: dict[str, Any] = {}
+    for stage in STAGE_MODEL_POLICY_STAGES:
+        raw = (policy or {}).get(stage)
+        if not isinstance(raw, dict):
+            continue
+        safe = {
+            field: raw[field]
+            for field in (
+                "provider",
+                "model",
+                "enabled",
+                "budget_hint_usd",
+                "max_tokens",
+                "notes",
+                "tags",
+            )
+            if raw.get(field) is not None
+        }
+        config = raw.get("config")
+        if isinstance(config, dict):
+            safe["has_config"] = True
+            safe["config_keys"] = sorted(str(key) for key in config)
+        public[stage] = safe
+    return public
+
+
+def _selection_values(raw: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        key: value
+        for key, value in raw.items()
+        if key in StageModelConfig.model_fields and value is not None
+    }
+
+
+def stage_model_selection(
+    stage: str,
+    stage_model_policy: dict[str, Any] | None,
+    *,
+    request_values: dict[str, Any] | None = None,
+    role_values: dict[str, Any] | None = None,
+    defaults: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if stage not in STAGE_MODEL_POLICY_STAGES:
+        raise ValueError(f"unsupported stage: {stage}")
+    selection: dict[str, Any] = {"stage": stage, "source": "default", "enabled": True}
+    selection.update(_selection_values(defaults))
+    layers = (
+        ("stage_model_policy", (stage_model_policy or {}).get(stage)),
+        ("role_model_config", role_values),
+        ("request", request_values),
+    )
+    for source, values in layers:
+        normalized = _selection_values(values)
+        if normalized:
+            selection.update(normalized)
+            selection["source"] = source
+    return selection
+
+
+def public_stage_model_selection(selection: dict[str, Any]) -> dict[str, Any]:
+    public = {
+        key: value
+        for key, value in selection.items()
+        if key
+        in {
+            "stage",
+            "provider",
+            "model",
+            "source",
+            "enabled",
+            "budget_hint_usd",
+            "max_tokens",
+            "notes",
+            "tags",
+        }
+    }
+    if isinstance(selection.get("config"), dict):
+        public["has_config"] = True
+        public["config_keys"] = sorted(str(key) for key in selection["config"])
+    return public
 
 
 def role_model_selection(

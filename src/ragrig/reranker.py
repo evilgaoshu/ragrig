@@ -126,6 +126,7 @@ def provider_rerank(
     *,
     provider_name: str | None = None,
     model_name: str | None = None,
+    provider_config: dict[str, Any] | None = None,
 ) -> list[RerankResult] | None:
     """Rerank using the provider registry.
 
@@ -137,7 +138,7 @@ def provider_rerank(
     target_provider = provider_name or "reranker.bge"
     try:
         registry = get_provider_registry()
-        config: dict[str, Any] = {}
+        config: dict[str, Any] = dict(provider_config or {})
         if provider_name is not None:
             config["provider"] = provider_name
         if model_name is not None:

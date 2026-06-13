@@ -162,6 +162,7 @@ def generate_answer(
     candidate_k: int = 20,
     reranker_provider: str | None = None,
     reranker_model: str | None = None,
+    reranker_config: dict[str, Any] | None = None,
     graph_weight: float = 0.35,
     graph_depth: int = 1,
     workspace_id: object = None,
@@ -261,6 +262,7 @@ def generate_answer(
         top_k=top_k,
         provider=provider,
         model=model,
+        provider_config=provider_config,
         dimensions=dimensions,
         vector_backend=vector_backend,
         principal_ids=principal_ids,
@@ -271,6 +273,7 @@ def generate_answer(
         candidate_k=candidate_k,
         reranker_provider=reranker_provider,
         reranker_model=reranker_model,
+        reranker_config=reranker_config,
         graph_weight=graph_weight,
         graph_depth=graph_depth,
         workspace_id=workspace_id,
@@ -378,17 +381,29 @@ def generate_answer(
     # 6. Optional faithfulness / hallucination check
     faithfulness_score: float | None = None
     faithfulness_reason: str | None = None
+    faithfulness_started: float | None = None
     if faithfulness_config is not None and grounding_status == "grounded":
         from ragrig.providers import get_provider_registry
 
-        faith_provider = get_provider_registry().get(faithfulness_config.provider_name)
-        faith_result = check_faithfulness(
-            query=query,
-            answer=answer_text,
-            context_passages=[chunk.text for chunk in evidence],
-            config=faithfulness_config,
-            provider=faith_provider,
-        )
+        faithfulness_started = perf_counter()
+        faith_config = dict(faithfulness_config.provider_config or {})
+        if faithfulness_config.model_name:
+            faith_config.setdefault("model_name", faithfulness_config.model_name)
+        try:
+            faith_provider = get_provider_registry().get(
+                faithfulness_config.provider_name,
+                **faith_config,
+            )
+            faith_result = check_faithfulness(
+                query=query,
+                answer=answer_text,
+                context_passages=[chunk.text for chunk in evidence],
+                config=faithfulness_config,
+                provider=faith_provider,
+            )
+        except Exception:
+            logger.debug("Faithfulness provider resolution failed (non-fatal)", exc_info=True)
+            faith_result = None
         if faith_result is not None:
             faithfulness_score = faith_result.score
             faithfulness_reason = faith_result.reason
@@ -450,6 +465,17 @@ def generate_answer(
         *[op for op in retrieval_operations if isinstance(op, dict)],
         answer_operation,
     ]
+    if faithfulness_started is not None:
+        cost_latency_operations.append(
+            observe_model_call(
+                operation="faithfulness_judge",
+                provider=faithfulness_config.provider_name,
+                model=faithfulness_config.model_name or "",
+                input_text=query + "\n" + answer_text,
+                output_text=faithfulness_reason or "",
+                latency_ms=(perf_counter() - faithfulness_started) * 1000,
+            )
+        )
     cost_latency = {
         **aggregate_cost_latency(
             cost_latency_operations,

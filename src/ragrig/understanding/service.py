@@ -91,6 +91,7 @@ def generate_document_understanding(
     document_version_id: str,
     provider: str = "deterministic-local",
     model: str | None = None,
+    provider_config: dict[str, Any] | None = None,
     profile_id: str = "*.understand.default",
 ) -> UnderstandingRecord:
     version_uuid = uuid.UUID(document_version_id)
@@ -137,7 +138,7 @@ def generate_document_understanding(
     session.flush()
 
     try:
-        prov = get_understanding_provider(provider, model=model)
+        prov = get_understanding_provider(provider, model=model, provider_config=provider_config)
         result = prov.generate(text)
     except Exception as exc:
         row.status = "failed"
@@ -218,6 +219,7 @@ def understand_all_versions(
     knowledge_base_id: str,
     provider: str = "deterministic-local",
     model: str | None = None,
+    provider_config: dict[str, Any] | None = None,
     profile_id: str = "*.understand.default",
     trigger_source: str = "api",
     operator: str | None = None,
@@ -289,6 +291,7 @@ def understand_all_versions(
                 document_version_id=version_id,
                 provider=provider,
                 model=model,
+                provider_config=provider_config,
                 profile_id=profile_id,
             )
             created += 1

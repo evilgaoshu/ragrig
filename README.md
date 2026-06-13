@@ -89,6 +89,8 @@ For a step-by-step version with development paths, see
   Docling/MinerU HTTP service mode reuses the lightweight core `httpx` dependency.
 - Parse → clean → chunk → embed → index → optional KG extract → retrieve → rerank, each step
   inspectable through pipeline, audit, and retrieval traces.
+- KB-level [stage-specific model policy](docs/specs/stage-model-policy.md) selects providers and
+  models for understand, extract, query, rerank, answer, and judge while preserving role routing.
 - Postgres-first Graph-RAG modes expose entity matches, relationship evidence, source-backed
   relation paths, feedback suppression, and graph rank movement; deterministic extraction is
   the default for CI/local use, while an optional provider-backed extractor adds strict source

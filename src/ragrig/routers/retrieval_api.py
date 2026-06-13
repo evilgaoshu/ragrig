@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ragrig.answer import NoEvidenceError, generate_answer
 from ragrig.answer import ProviderUnavailableError as AnswerProviderUnavailableError
+from ragrig.answer.faithfulness import FaithfulnessConfig
 from ragrig.api.schemas import AnswerRequest, PermissionPreviewRequest, RetrievalSearchRequest
 from ragrig.config import Settings, get_settings
 from ragrig.db.models import KnowledgeBase
@@ -16,8 +17,11 @@ from ragrig.db.session import get_session
 from ragrig.deps import AuthContext, get_auth_context
 from ragrig.knowledge_base_config import (
     kb_role_model_config,
+    kb_stage_model_policy,
     public_role_model_selection,
+    public_stage_model_selection,
     role_model_selection,
+    stage_model_selection,
 )
 from ragrig.local_pilot import ModelConfigError
 from ragrig.local_pilot.model_config import resolve_env_config
@@ -46,6 +50,40 @@ from ragrig.services.retrieval_api import answer_sse_stream, safe_chunk_metadata
 from ragrig.web_console import build_permission_preview
 
 router = APIRouter(tags=["retrieval"])
+
+
+def _explicit_stage_values(request: Any, fields: dict[str, str]) -> dict[str, Any]:
+    explicit = getattr(request, "model_fields_set", set())
+    return {
+        target: getattr(request, source) for source, target in fields.items() if source in explicit
+    }
+
+
+def _role_stage_values(role_selection: dict[str, Any], stage: str) -> dict[str, Any]:
+    prefix = "answer_" if stage == "answer" else ""
+    values = {}
+    for field in ("provider", "model", "config"):
+        value = role_selection.get(prefix + field)
+        if value is not None:
+            values[field] = value
+    return values
+
+
+def _missing_selection_credentials(
+    selections: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any] | None], str | None, list[str]]:
+    resolved: dict[str, dict[str, Any] | None] = {}
+    for selection in selections:
+        stage = str(selection["stage"])
+        config = selection.get("config")
+        if config is None:
+            resolved[stage] = None
+            continue
+        resolved_config, missing_env = resolve_env_config(config)
+        if missing_env:
+            return {}, stage, missing_env
+        resolved[stage] = resolved_config
+    return resolved, None, []
 
 
 def _record_retrieval_error(
@@ -342,6 +380,7 @@ def retrieval_answer(
             workspace_id=workspace_id,
         )
     persisted_role_config = kb_role_model_config(answer_kb)
+    persisted_stage_policy = kb_stage_model_policy(answer_kb)
     effective_role_config = (
         request.role_model_config
         if request.role_model_config is not None
@@ -366,71 +405,111 @@ def retrieval_answer(
         role_selection["source"] = (
             "request" if request.role_model_config is not None else "knowledge_base"
         )
-    selected_provider = role_selection.get("provider", request.provider)
-    selected_model = role_selection.get("model", request.model)
-    selected_config = role_selection.get("config", request.config)
-    selected_answer_provider = role_selection.get(
-        "answer_provider",
-        request.answer_provider,
+    query_selection = stage_model_selection(
+        "query",
+        persisted_stage_policy,
+        request_values=_explicit_stage_values(
+            request,
+            {"provider": "provider", "model": "model", "config": "config"},
+        ),
+        role_values=_role_stage_values(role_selection, "query"),
+        defaults={"provider": request.provider, "model": request.model, "config": request.config},
     )
-    selected_answer_model = role_selection.get("answer_model", request.answer_model)
-    selected_answer_config = role_selection.get("answer_config", request.answer_config)
+    answer_selection = stage_model_selection(
+        "answer",
+        persisted_stage_policy,
+        request_values=_explicit_stage_values(
+            request,
+            {
+                "answer_provider": "provider",
+                "answer_model": "model",
+                "answer_config": "config",
+            },
+        ),
+        role_values=_role_stage_values(role_selection, "answer"),
+        defaults={
+            "provider": query_selection.get("provider"),
+            "model": query_selection.get("model"),
+        },
+    )
+    rerank_selection = stage_model_selection(
+        "rerank",
+        persisted_stage_policy,
+        request_values=_explicit_stage_values(
+            request,
+            {
+                "reranker_provider": "provider",
+                "reranker_model": "model",
+                "reranker_config": "config",
+            },
+        ),
+        defaults={
+            "provider": request.reranker_provider,
+            "model": request.reranker_model,
+            "config": request.reranker_config,
+        },
+    )
+    judge_selection = stage_model_selection(
+        "judge",
+        persisted_stage_policy,
+        request_values=_explicit_stage_values(
+            request,
+            {
+                "judge_provider": "provider",
+                "judge_model": "model",
+                "judge_config": "config",
+                "judge_enabled": "enabled",
+            },
+        ),
+        defaults={"enabled": False},
+    )
+    stage_selections = [
+        public_stage_model_selection(selection)
+        for selection in (query_selection, rerank_selection, answer_selection, judge_selection)
+    ]
     try:
-        provider_config = None
-        if selected_config is not None:
-            provider_config, missing_env = resolve_env_config(selected_config)
-            if missing_env:
-                _record_retrieval_error(
-                    settings,
-                    endpoint="retrieval.answer",
-                    mode=request.mode,
-                    workspace_id=workspace_id,
-                )
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "error": {
-                            "code": "missing_model_credentials",
-                            "message": (
-                                "Missing environment variable(s): " + ", ".join(missing_env)
-                            ),
-                            "details": {"missing_credentials": missing_env},
-                        }
-                    },
-                )
-        answer_provider_config = None
-        if selected_answer_config is not None:
-            answer_provider_config, missing_env = resolve_env_config(selected_answer_config)
-            if missing_env:
-                _record_retrieval_error(
-                    settings,
-                    endpoint="retrieval.answer",
-                    mode=request.mode,
-                    workspace_id=workspace_id,
-                )
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "error": {
-                            "code": "missing_model_credentials",
-                            "message": (
-                                "Missing environment variable(s): " + ", ".join(missing_env)
-                            ),
-                            "details": {"missing_credentials": missing_env},
-                        }
-                    },
-                )
+        resolved_configs, missing_stage, missing_env = _missing_selection_credentials(
+            [query_selection, rerank_selection, answer_selection, judge_selection]
+        )
+        if missing_env:
+            _record_retrieval_error(
+                settings,
+                endpoint="retrieval.answer",
+                mode=request.mode,
+                workspace_id=workspace_id,
+            )
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": {
+                        "code": "missing_model_credentials",
+                        "message": "Missing environment variable(s): " + ", ".join(missing_env),
+                        "details": {
+                            "stage": missing_stage,
+                            "missing_credentials": missing_env,
+                        },
+                    }
+                },
+            )
+        faithfulness_config = None
+        if judge_selection.get("enabled") is not False and judge_selection.get("provider"):
+            faithfulness_config = FaithfulnessConfig(
+                provider_name=str(judge_selection["provider"]),
+                model_name=judge_selection.get("model"),
+                provider_config=resolved_configs.get("judge"),
+                max_context_chars=int(judge_selection.get("max_tokens") or 1500) * 4,
+            )
         report = generate_answer(
             session=session,
             knowledge_base_name=request.knowledge_base,
             query=request.query,
             top_k=request.top_k,
-            provider=selected_provider,
-            model=selected_model,
-            provider_config=provider_config,
-            answer_provider=selected_answer_provider,
-            answer_model=selected_answer_model,
-            answer_provider_config=answer_provider_config,
+            provider=str(query_selection.get("provider") or "deterministic-local"),
+            model=query_selection.get("model"),
+            provider_config=resolved_configs.get("query"),
+            answer_provider=answer_selection.get("provider"),
+            answer_model=answer_selection.get("model"),
+            answer_provider_config=resolved_configs.get("answer"),
             dimensions=request.dimensions,
             vector_backend=resolve_vector_backend(settings),
             principal_ids=principal_ids,
@@ -439,8 +518,18 @@ def retrieval_answer(
             lexical_weight=request.lexical_weight,
             vector_weight=request.vector_weight,
             candidate_k=request.candidate_k,
-            reranker_provider=request.reranker_provider,
-            reranker_model=request.reranker_model,
+            reranker_provider=(
+                rerank_selection.get("provider")
+                if rerank_selection.get("enabled") is not False
+                else None
+            ),
+            reranker_model=(
+                rerank_selection.get("model")
+                if rerank_selection.get("enabled") is not False
+                else None
+            ),
+            reranker_config=resolved_configs.get("rerank"),
+            faithfulness_config=faithfulness_config,
             graph_weight=request.graph_weight,
             graph_depth=request.graph_depth,
             workspace_id=workspace_id,
@@ -477,6 +566,7 @@ def retrieval_answer(
                 "model": exc.details.get("model", ""),
                 "provider": exc.details.get("provider", ""),
                 "retrieval_trace": exc.details,
+                "stage_model_selection": stage_selections,
                 "grounding_status": "refused",
                 "refusal_reason": str(exc),
             },
@@ -522,10 +612,11 @@ def retrieval_answer(
             "role": request.role,
             "mode": request.mode,
             "role_model_selection": public_role_selection,
+            "stage_model_selection": stage_selections,
         },
         settings=settings,
     )
-    retrieval_trace = report.retrieval_trace
+    retrieval_trace = {**report.retrieval_trace, "stage_model_selection": stage_selections}
     _record_retrieval_report(
         settings,
         endpoint="retrieval.answer",
@@ -572,7 +663,8 @@ def retrieval_answer(
         "provider": report.provider,
         "role": request.role,
         "role_model_selection": public_role_selection,
-        "retrieval_trace": report.retrieval_trace,
+        "stage_model_selection": stage_selections,
+        "retrieval_trace": retrieval_trace,
         "grounding_status": report.grounding_status,
         "refusal_reason": report.refusal_reason,
     }
