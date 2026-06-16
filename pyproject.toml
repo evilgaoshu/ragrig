@@ -47,7 +47,7 @@ eval-ragas = [
   "ragas>=0.2.0,<1.0.0",
 ]
 observability-langfuse = [
-  "langfuse>=2.0.0,<4.0.0",
+  "langfuse>=2.0.0,<5.0.0",
 ]
 enterprise-auth = [
   "joserfc>=1.0.0,<2.0.0",
