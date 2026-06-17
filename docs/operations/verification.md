@@ -25,6 +25,8 @@ local-pilot-smoke` runs the API-level Local Pilot smoke.
 
 | Command | Run when | Dependencies | Typical duration | Artifact |
 | --- | --- | --- | --- | --- |
+| `make doctor` | Onboarding docs, local setup, or prerequisite checks change | `python3` on PATH | < 1 min | stdout |
+| `make init` | `.env.example`, Docker quickstart, or bootstrap behavior changes | `python3` on PATH | < 1 min | `.env` |
 | `make web-check` | Frontend serving, root routing, or console contract changes | `uv`, built-in test fixtures | < 1 min | pytest output |
 | `make local-pilot-preflight` | Local setup docs or preflight logic changes | `uv` | < 1 min | `docs/operations/artifacts/local-pilot-preflight.json` |
 | `make pilot-docker-preflight` | Docker quickstart or Compose changes | `uv`, Docker | < 1 min | `docs/operations/artifacts/pilot-docker-preflight.json` |

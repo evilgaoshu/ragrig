@@ -44,6 +44,16 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 只改前端时还需要 Node.js 22+ 和 npm。
 
+## 选择路径
+
+| 目标 | 命令 | 说明 |
+| --- | --- | --- |
+| 本地快速试用 | `make init && docker compose up` | 生成 `.env`，启动 Postgres + 应用，并预置 demo 数据 |
+| 先检查本机环境 | `make doctor` | 直接用 `python3`，检查 Docker、`uv`、Node.js、端口和内存 |
+| 后端开发 | `make sync && docker compose up -d db && make run-web` | 使用 `uv` 和本地 Postgres 容器 |
+| 前端开发 | `cd frontend && npm ci && npm run dev` | 先让后端跑在 `localhost:8000` |
+| 生产部署评审 | 阅读[上线前的配置清单](#上线前的配置清单) | 认证、密钥、预算、备份和连接器都要确认 |
+
 ## 本地试用
 
 首次 Docker 构建会编译 React 控制台（`npm ci` + Vite build），并同步
@@ -52,8 +62,7 @@ Python 依赖。冷启动通常需要约 3-8 分钟；之后会复用 Docker lay
 ```bash
 git clone https://github.com/evilgaoshu/ragrig.git
 cd ragrig
-cp .env.example .env
-# 先编辑 .env 里的 RAGRIG_POSTGRES_PASSWORD
+make init
 docker compose up
 ```
 
@@ -64,7 +73,8 @@ docker compose up
 - 镜像多阶段构建，直接把 React 控制台从源码组装进去
 - 启动时自动跑 alembic 迁移
 - 默认回答 provider 是 `deterministic-local`，不需要任何 LLM 凭据
-- Compose 会要求 `.env` 里设置部署专用的 `RAGRIG_POSTGRES_PASSWORD`
+- `make init` 会生成带本地随机 `RAGRIG_POSTGRES_PASSWORD` 的 `.env`；
+  如果缺少该密码，Compose 仍会拒绝启动
 - demo 模式下 auth **默认关闭**，对外暴露前在 `.env` 设置
   `RAGRIG_AUTH_ENABLED=true`
 
@@ -76,8 +86,20 @@ docker compose up
 ## 开箱即用的能力
 
 ### 入库与检索
-- 本地文件、Markdown / TXT、S3-compatible 对象存储、PDF / DOCX（文本层）
-- 解析 → 清洗 → 切分 → 向量化 → 索引 → 检索 → 重排，每一步都能在 Console 里检查
+- 默认支持本地文件、Markdown / TXT、S3-compatible 对象存储、PDF / DOCX（文本层）
+- 可选 `doc-parsers-advanced`，配合 `advanced_parser=auto` 或 `docling`，提供
+  Docling 版面 / 表格感知解析和扫描 PDF 的本地 OCR fallback；OCR 还需要系统
+  Tesseract。Docling / MinerU 也可以走轻量 HTTP service mode，不增加默认依赖
+- 解析 → 清洗 → 切分 → 向量化 → 索引 → 可选 KG 抽取 → 检索 → 重排，每一步都能在
+  pipeline、audit 和 retrieval trace 里检查
+- KB 级 [stage-specific model policy](docs/specs/stage-model-policy.md) 可以为
+  understand、extract、query、rerank、answer、judge 选择不同 provider / model，并保留
+  旧 role routing 的兼容优先级
+- Postgres-first Graph-RAG 暴露实体命中、关系证据、source-backed relation path、
+  feedback suppression 和 graph rank movement；默认 deterministic 抽取器适合 CI/local，
+  可选 provider-backed extractor 支持别名、类型谓词、严格来源校验和可审计 fallback
+- 模板化可解释 chunking 支持 recursive 边界和轻量 token-aware 策略，记录 split reason、
+  source range，并支持带审计的手动 split / merge override 和显式 reindex
 - 默认 pgvector，Qdrant 可选（检索契约一致）
 - BGE / Ollama / LM Studio / OpenAI-compatible embedder 与 OpenAI /
   OpenRouter / Gemini 并列可选
@@ -104,6 +126,22 @@ docker compose up
 - **生产防护**：production 默认禁用 fake reranker fallback，`/health`
   返回当前策略
 - **可观测性**：Prometheus `/metrics`、OpenTelemetry tracing、结构化 JSON 日志
+
+### 能力启用矩阵
+
+| 能力 | 默认安装 | 可选 extra | 外部服务 | 凭据 |
+| --- | --- | --- | --- | --- |
+| Docker demo KB 和 deterministic answer | 是 | 无 | Compose 内 Postgres | 不需要 |
+| Markdown/TXT/文本层 PDF/DOCX 解析 | 是 | 无 | 不需要 | 不需要 |
+| 扫描件 / 版面感知 PDF 解析 | 否 | `doc-parsers-advanced` | 可选 Docling/MinerU HTTP service；本地 OCR 需要 Tesseract | 不需要 |
+| pgvector 检索 | 是 | 无 | Postgres/pgvector | 不需要 |
+| Qdrant 检索 | 否 | `vectorstores` | Qdrant sidecar 或服务 | 可选 |
+| Graph-RAG deterministic 抽取 | 是 | 无 | 不需要图数据库 | 不需要 |
+| provider-backed Graph-RAG 抽取 | adapter 默认在 | 按 provider 需要安装 | 所选 LLM endpoint | 托管 provider 需要 |
+| RAGAS 指标 | 否 | `eval-ragas` | 通常需要 judge/provider 栈 | 取决于 judge/provider |
+| Langfuse tracing | 否 | `observability-langfuse` | Langfuse host | public + secret key |
+| Discord/Slack/GitHub source connector | connector 代码默认在 | Discord/Slack REST 复用 `httpx` | 对应厂商 API | bot/app token |
+| 本地 ML embedding/rerank | 否 | `local-ml` | 可选 Ollama/LM Studio | 本地端点不需要 |
 
 ## RAGRig 的差异化定位
 
@@ -235,7 +273,7 @@ mockup，保留作为规格参考：
 
 ```bash
 make sync                       # 用 uv 安装依赖
-cp .env.example .env            # 本地环境
+make init                       # 生成带随机 DB 密码的本地 .env
 docker compose up --build -d db # 只拉起数据库
 make migrate
 make db-check
@@ -291,7 +329,7 @@ flowchart LR
 | 向量后端 | pgvector | Qdrant |
 | 本地模型 | Ollama、LM Studio、OpenAI-compatible endpoint | vLLM、llama.cpp、Xinference、LocalAI |
 | 云端模型 | OpenAI、OpenRouter、Gemini | Vertex AI、Bedrock、Azure OpenAI、Anthropic 等目录项 |
-| 输入源 | 本地文件、Markdown/TXT、S3-compatible source | PDF/DOCX 上传、URL、企业连接器 |
+| 输入源 | 本地文件、Markdown/TXT、文本层 PDF/DOCX、S3-compatible source | 扫描件 / 版面感知 PDF 走 `doc-parsers-advanced` 或解析服务；URL、企业连接器 |
 | 质量验证 | pytest、coverage、contract tests | 显式 opt-in live provider smoke |
 
 ## 文档
@@ -308,6 +346,7 @@ flowchart LR
   [Web Console](./docs/specs/ragrig-web-console-spec.md) ·
   [fake reranker 防护](./docs/specs/EVI-129-fake-reranker-production-guard.md) ·
   [Vercel preview + Supabase](./docs/specs/EVI-130-vercel-preview-supabase.md)
+- **开发：** [扩展开发教程](./docs/development/extensions.md)
 - **Roadmap：** [docs/roadmap.md](./docs/roadmap.md)
 
 ## 仓库结构
