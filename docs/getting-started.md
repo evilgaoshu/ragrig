@@ -8,6 +8,7 @@ RAGRig instance.
 | Goal | Use | Requires |
 | --- | --- | --- |
 | Try the product locally | Docker Compose | Docker 24+, port `8000`, 4 GB RAM available to Docker |
+| Check local prerequisites | `make doctor` | `python3` on PATH; reports Docker, `uv`, Node.js, port, and memory status |
 | Develop backend code | `uv` + Docker DB | `uv`, Docker, Python managed by `uv` |
 | Develop frontend code | Vite dev server | Node.js 22+, npm, backend on `localhost:8000` |
 | Avoid local setup | Hosted demo | Browser only |
@@ -25,10 +26,16 @@ the image. Expect roughly 3-8 minutes on a cold machine.
 ```bash
 git clone https://github.com/evilgaoshu/ragrig.git
 cd ragrig
-cp .env.example .env
+make doctor
+make init
 ```
 
-Edit `.env` and set a deployment-specific password:
+`make init` writes `.env` from `.env.example` and generates a local
+`RAGRIG_POSTGRES_PASSWORD`. If `.env` already exists, it leaves the file alone;
+use `make init PYTHON=python` if your platform exposes Python as `python`.
+
+If you prefer manual setup, copy the template and set a deployment-specific
+password yourself:
 
 ```text
 RAGRIG_POSTGRES_PASSWORD=replace-me-with-a-local-secret
@@ -71,7 +78,7 @@ Sync dependencies and start only the database:
 
 ```bash
 make sync
-cp .env.example .env
+make init
 docker compose up --build -d db
 make migrate
 make db-check
@@ -136,6 +143,8 @@ Artifacts land in `docs/operations/artifacts/`.
 | Symptom | Check |
 | --- | --- |
 | `docker compose up` fails immediately | Confirm `.env` has `RAGRIG_POSTGRES_PASSWORD` |
+| `make init` says `.env` already exists | The file was preserved; edit it manually or run `python3 -m scripts.bootstrap --force` intentionally |
+| `make doctor` cannot find Python | Run `PYTHON=python make doctor` if your platform uses `python` instead of `python3` |
 | Port conflict | Set `APP_HOST_PORT=18000` in `.env` |
 | `make sync` says `uv` is missing | Install `uv` from the Backend Development section |
 | Frontend dev server API calls fail | Confirm `make run-web` is running on `localhost:8000` |

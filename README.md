@@ -49,6 +49,16 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 Frontend-only work also needs Node.js 22+ and npm.
 
+## Choose your path
+
+| Goal | Run | Notes |
+| --- | --- | --- |
+| Try RAGRig locally | `make init && docker compose up` | Generates `.env`, starts Postgres + app, seeds demo data. |
+| Check your machine first | `make doctor` | Uses `python3` and checks Docker, `uv`, Node.js, port, and memory. |
+| Backend development | `make sync && docker compose up -d db && make run-web` | Uses `uv` and a local Postgres container. |
+| Frontend development | `cd frontend && npm ci && npm run dev` | Run the backend on `localhost:8000` first. |
+| Production review | Read [Configure for production](#configure-for-production) | Auth, secrets, budgets, backups, and connector choices matter. |
+
 ## Try it locally
 
 The first Docker build compiles the React console (`npm ci` + Vite build) and
@@ -58,8 +68,7 @@ Subsequent runs reuse Docker layers and are much faster.
 ```bash
 git clone https://github.com/evilgaoshu/ragrig.git
 cd ragrig
-cp .env.example .env
-# edit RAGRIG_POSTGRES_PASSWORD in .env first
+make init
 docker compose up
 ```
 
@@ -70,7 +79,8 @@ question immediately, no registration, no API key, no manual upload.
 - Multi-stage build assembles the React console from source inside the image.
 - Alembic migrations run on startup.
 - The default answer provider is `deterministic-local` — no LLM credentials needed.
-- Compose refuses to start until `.env` sets a deployment-specific `RAGRIG_POSTGRES_PASSWORD`.
+- `make init` creates `.env` with a generated local `RAGRIG_POSTGRES_PASSWORD`;
+  Compose still refuses to start if the password is missing.
 - Auth is **off** in demo mode. Flip `RAGRIG_AUTH_ENABLED=true` in `.env` before exposing the install.
 
 Stop with `docker compose down`.
@@ -114,6 +124,22 @@ For a step-by-step version with development paths, see
 - **Auth & RBAC** — password + API keys + sessions, RBAC (owner/admin/editor/viewer), per-workspace isolation. Optional LDAP / OIDC / MFA.
 - **Production guardrails** — fake-reranker fallback disabled in production by default; `/health` reports policy.
 - **Observability** — Prometheus `/metrics`, OpenTelemetry tracing, structured JSON logging.
+
+### Capability setup matrix
+
+| Capability | Default install | Optional extra | External service | Credentials |
+| --- | --- | --- | --- | --- |
+| Docker demo KB and deterministic answers | yes | none | Postgres from Compose | no |
+| Markdown/TXT/text-layer PDF/DOCX parsing | yes | none | no | no |
+| Scanned/layout-aware PDF parsing | no | `doc-parsers-advanced` | optional Docling/MinerU HTTP service; Tesseract for local OCR | no |
+| pgvector retrieval | yes | none | Postgres/pgvector | no |
+| Qdrant retrieval | no | `vectorstores` | Qdrant sidecar or service | optional |
+| Graph-RAG deterministic extraction | yes | none | no graph database | no |
+| Provider-backed Graph-RAG extraction | yes, adapter boundary | provider-specific extras if needed | selected LLM endpoint | yes for hosted providers |
+| RAGAS metrics | no | `eval-ragas` | usually provider-backed judge stack | depends on judge/provider |
+| Langfuse tracing | no | `observability-langfuse` | Langfuse host | public + secret key |
+| Discord/Slack/GitHub source connectors | yes, connector code | none for Discord/Slack REST via `httpx` | vendor API | bot/app token |
+| Local ML embeddings/rerankers | no | `local-ml` | Ollama/LM Studio optional | no for local endpoints |
 
 ## How RAGRig compares
 
@@ -253,7 +279,7 @@ Install `uv` from the Prerequisites section before running these commands.
 
 ```bash
 make sync                       # install dependencies via uv
-cp .env.example .env            # local env
+make init                       # local .env with generated DB password
 docker compose up --build -d db # just the database
 make migrate
 make db-check
@@ -327,6 +353,7 @@ flowchart LR
   [Web Console](./docs/specs/ragrig-web-console-spec.md) ·
   [fake reranker guard](./docs/specs/EVI-129-fake-reranker-production-guard.md) ·
   [Vercel preview + Supabase](./docs/specs/EVI-130-vercel-preview-supabase.md)
+- **Development:** [extension tutorial](./docs/development/extensions.md)
 - **Roadmap:** [docs/roadmap.md](./docs/roadmap.md)
 
 ## Repository layout
