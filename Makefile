@@ -1,4 +1,5 @@
 UV ?= uv
+PYTHON ?= python3
 ARTIFACTS_DIR ?= docs/operations/artifacts
 APP_HOST_PORT ?= 8000
 RAGRIG_IMAGE ?= ragrig:local
@@ -7,7 +8,7 @@ DEMO_GRAPH_DB ?= $(ARTIFACTS_DIR)/demo-graph-console.db
 DEMO_CONSOLE_HOST ?= 127.0.0.1
 DEMO_CONSOLE_PORT ?= $(APP_HOST_PORT)
 
-.PHONY: sync doctor format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check required-ci-contexts-check web-check sqlite-warning-check local-pilot-preflight pilot-docker-preflight local-pilot-smoke local-pilot-console-e2e pilot-docker-build pilot-up pilot-down pilot-logs pilot-docker-smoke vercel-preview-smoke test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check google-workspace-diagnostics s3-check fileshare-check database-source-check cost-latency-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke reranker-policy-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke eval-reindex-diff eval-config-compare graph-eval-compare demo-rc-gate demo-graph-console-runbook demo-graph-console-smoke demo-graph-console-cleanup demo-graph-console knowledge-map-check understanding-export-diff seed-acl-fixtures pipeline-dag-smoke ops-deploy-smoke ops-backup-smoke ops-restore-smoke ops-upgrade-smoke pilot-evidence-pack nightly-evidence-smoke
+.PHONY: init sync doctor format lint test coverage acl-regression audit audit-dry-run licenses sbom dependency-inventory supply-chain-check required-ci-contexts-check web-check sqlite-warning-check local-pilot-preflight pilot-docker-preflight local-pilot-smoke local-pilot-console-e2e pilot-docker-build pilot-up pilot-down pilot-logs pilot-docker-smoke vercel-preview-smoke test-db migrate migrate-down db-check db-shell run run-web up down logs ingest-local ingest-local-dry-run ingest-check index-local index-check retrieve-check qdrant-up qdrant-check vector-check plugins-check google-workspace-diagnostics s3-check fileshare-check database-source-check cost-latency-check export-object-storage-check minio-up preflight-fileshare-live test-live-fileshare test-live-fileshare-print-evidence fileshare-live-up fileshare-live-down retrieval-benchmark retrieval-benchmark-integrity-artifact retrieval-benchmark-integrity-summary retrieval-benchmark-integrity-cleanup bge-rerank-smoke reranker-policy-smoke advanced-parser-corpus-check generate-advanced-fixtures sanitizer-drift-diff sanitizer-drift-history-summary artifact-cleanup answer-live-smoke eval-reindex-diff eval-config-compare graph-eval-compare demo-rc-gate demo-graph-console-runbook demo-graph-console-smoke demo-graph-console-cleanup demo-graph-console knowledge-map-check understanding-export-diff seed-acl-fixtures pipeline-dag-smoke ops-deploy-smoke ops-backup-smoke ops-restore-smoke ops-upgrade-smoke pilot-evidence-pack nightly-evidence-smoke
 
 INGEST_KB ?= fixture-local
 INGEST_ROOT ?= tests/fixtures/local_ingestion
@@ -17,8 +18,11 @@ DRIFT_HEAD ?= $(ARTIFACTS_DIR)/sanitizer-coverage-summary.json
 sync:
 	$(UV) sync --dev
 
+init:
+	$(PYTHON) -m scripts.bootstrap
+
 doctor:
-	$(UV) run python -m scripts.doctor --port $(APP_HOST_PORT)
+	$(PYTHON) -m scripts.doctor --port $(APP_HOST_PORT)
 
 format:
 	$(UV) run ruff format .
