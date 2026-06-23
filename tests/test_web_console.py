@@ -8,6 +8,7 @@ import time
 import uuid
 import warnings
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -4091,7 +4092,7 @@ async def test_retrieval_benchmark_integrity_endpoint_returns_summary(
         "iteration_count": 5,
         "modes": ["dense", "hybrid", "rerank", "hybrid_rerank"],
         "metrics_hash": "85127e140d1d2bf6",
-        "created_at": "2026-05-11T00:00:00Z",
+        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "generator_version": "0.1.0",
     }
     baseline = {

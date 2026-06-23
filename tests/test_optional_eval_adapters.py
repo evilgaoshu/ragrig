@@ -11,8 +11,9 @@ import pytest
 
 from ragrig.config import Settings
 from ragrig.evaluation import engine
+from ragrig.evaluation.adapters.ragas import _as_mapping, evaluate_ragas_item
 from ragrig.evaluation.engine import run_evaluation
-from ragrig.observability.langfuse import emit_langfuse_trace
+from ragrig.observability.langfuse import _load_langfuse_factory, emit_langfuse_trace
 
 pytestmark = pytest.mark.unit
 
@@ -98,6 +99,92 @@ def test_ragas_fake_module_records_metrics(monkeypatch, tmp_path) -> None:
     assert "latency_ms" in ragas
 
 
+def test_ragas_disabled_direct_call_is_stable() -> None:
+    assert evaluate_ragas_item(
+        enabled=False,
+        question="ignored",
+        contexts=[],
+        answer=None,
+        reference=None,
+    ) == {"enabled": False, "status": "disabled"}
+
+
+def test_ragas_evaluate_fallback_and_score_coercion(monkeypatch) -> None:
+    def evaluate(rows: list[dict[str, Any]]) -> SimpleNamespace:
+        assert rows[0]["ground_truth"] == "reference"
+        return SimpleNamespace(
+            scores=[
+                {
+                    "faithfulness": "0.92555",
+                    "answer_relevance": "0.5",
+                    "context_precision": "not-a-number",
+                }
+            ]
+        )
+
+    monkeypatch.setitem(sys.modules, "fake_ragas_eval", SimpleNamespace(evaluate=evaluate))
+
+    result = evaluate_ragas_item(
+        enabled=True,
+        module_name="fake_ragas_eval",
+        question="q",
+        contexts=["ctx"],
+        answer=None,
+        reference="reference",
+        metrics=["faithfulness", "answer_relevancy", "context_precision"],
+    )
+
+    assert result["status"] == "completed"
+    assert result["metrics"] == {"faithfulness": 0.9255, "answer_relevancy": 0.5}
+
+
+def test_ragas_adapter_error_when_module_lacks_supported_api(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "fake_ragas_empty", SimpleNamespace())
+
+    result = evaluate_ragas_item(
+        enabled=True,
+        module_name="fake_ragas_empty",
+        question="q",
+        contexts=[],
+        answer="a",
+        reference=None,
+    )
+
+    assert result["status"] == "degraded"
+    assert result["degraded_reason"] == "adapter_error"
+    assert result["error"] == "RuntimeError"
+
+
+def test_ragas_result_mapping_supports_pandas_like_results() -> None:
+    class FakeIloc:
+        def __getitem__(self, index: int) -> SimpleNamespace:
+            assert index == 0
+            return SimpleNamespace(to_dict=lambda: {"faithfulness": 0.7})
+
+    class FakeFrame:
+        empty = False
+        iloc = FakeIloc()
+
+    result = _as_mapping(SimpleNamespace(to_pandas=lambda: FakeFrame()))
+
+    assert result == {"faithfulness": 0.7}
+
+
+def test_ragas_result_mapping_supports_scores_mapping_and_object_dict() -> None:
+    assert _as_mapping(SimpleNamespace(scores={"context_recall": 0.8})) == {"context_recall": 0.8}
+
+    class ScoreObject:
+        def __init__(self) -> None:
+            self.answer_correctness = 0.6
+
+    assert _as_mapping(ScoreObject()) == {"answer_correctness": 0.6}
+
+
+def test_ragas_result_mapping_rejects_unsupported_result() -> None:
+    with pytest.raises(TypeError, match="unsupported RAGAS result type"):
+        _as_mapping(1.23)
+
+
 def test_langfuse_disabled_is_noop() -> None:
     diagnostics = emit_langfuse_trace(
         Settings(ragrig_langfuse_enabled=False),
@@ -161,3 +248,101 @@ def test_langfuse_fake_client_receives_sanitized_trace() -> None:
     assert calls[0]["name"] == "retrieval.search"
     assert calls[0]["metadata"]["secret_key"] == "[REDACTED]"
     assert calls[-1] == {"flushed": True}
+
+
+def test_langfuse_missing_dependency_degrades(monkeypatch) -> None:
+    import ragrig.observability.langfuse as langfuse_adapter
+
+    def missing_module(name: str) -> object:
+        assert name == "langfuse"
+        raise ModuleNotFoundError(name)
+
+    monkeypatch.setattr(langfuse_adapter.importlib, "import_module", missing_module)
+
+    diagnostics = emit_langfuse_trace(
+        Settings(
+            ragrig_langfuse_enabled=True,
+            ragrig_langfuse_public_key="pk-test",
+            ragrig_langfuse_secret_key="sk-test",
+        ),
+        name="answer.generation",
+    )
+
+    assert diagnostics["status"] == "degraded"
+    assert diagnostics["degraded_reason"] == "missing_dependency"
+    assert diagnostics["error"] == "ModuleNotFoundError"
+
+
+def test_langfuse_start_trace_fallback_and_io_sanitization() -> None:
+    calls: list[dict[str, Any]] = []
+
+    class FakeClient:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def start_trace(self, **kwargs: Any) -> None:
+            calls.append(kwargs)
+
+    diagnostics = emit_langfuse_trace(
+        Settings(
+            ragrig_langfuse_enabled=True,
+            ragrig_langfuse_public_key="pk-test",
+            ragrig_langfuse_secret_key="sk-test",
+        ),
+        name="evaluation.run",
+        input_metadata={"api_key": "input-secret"},
+        output_metadata={"token": "output-secret"},
+        client_factory=FakeClient,
+    )
+
+    assert diagnostics["status"] == "sent"
+    assert calls[0]["input"]["api_key"] == "[REDACTED]"
+    assert calls[0]["output"]["token"] == "[REDACTED]"
+
+
+def test_langfuse_adapter_error_when_client_has_no_trace_api() -> None:
+    class FakeClient:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+    diagnostics = emit_langfuse_trace(
+        Settings(
+            ragrig_langfuse_enabled=True,
+            ragrig_langfuse_public_key="pk-test",
+            ragrig_langfuse_secret_key="sk-test",
+        ),
+        name="retrieval.search",
+        client_factory=FakeClient,
+    )
+
+    assert diagnostics["status"] == "degraded"
+    assert diagnostics["degraded_reason"] == "adapter_error"
+    assert diagnostics["error"] == "RuntimeError"
+
+
+def test_langfuse_factory_loader(monkeypatch) -> None:
+    import ragrig.observability.langfuse as langfuse_adapter
+
+    class FakeLangfuse:
+        pass
+
+    monkeypatch.setattr(
+        langfuse_adapter.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(Langfuse=FakeLangfuse),
+    )
+
+    assert _load_langfuse_factory() is FakeLangfuse
+
+
+def test_langfuse_factory_loader_rejects_module_without_client(monkeypatch) -> None:
+    import ragrig.observability.langfuse as langfuse_adapter
+
+    monkeypatch.setattr(
+        langfuse_adapter.importlib,
+        "import_module",
+        lambda name: SimpleNamespace(Langfuse=None),
+    )
+
+    with pytest.raises(RuntimeError, match="does not expose Langfuse"):
+        _load_langfuse_factory()
