@@ -32,6 +32,9 @@ RAGRig is early, so the most valuable contributions are clear problem reports, c
 | Web Console page | `frontend/src/pages/<Name>.tsx` | `frontend/src/App.tsx`, API client tests |
 | Smoke script | `scripts/<name>.py` | `Makefile`, `docs/operations/verification.md` |
 
+For a step-by-step connector/provider/parser template, see
+[docs/development/extensions.md](./docs/development/extensions.md).
+
 ## Development Principles
 
 - Keep the core small and observable.
