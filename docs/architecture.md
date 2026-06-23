@@ -164,6 +164,7 @@ Start here before browsing all of `docs/specs/`:
 ## Where To Go Next
 
 - First run: [Getting started](./getting-started.md)
+- Adding connectors/providers/parsers: [Extension tutorial](./development/extensions.md)
 - Verification commands: [Operations verification](./operations/verification.md)
 - Durable decisions: [Architecture Decision Records](./adr/README.md)
 - Spec index: [Specs README](./specs/README.md)
