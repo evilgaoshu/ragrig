@@ -80,7 +80,7 @@ def test_auth_and_observability_sdks_are_optional_extras() -> None:
         assert dependency not in dependencies
 
     assert "ldap3>=2.9.0,<3.0.0" in extras["ldap"]
-    assert "joserfc>=1.0.0,<2.0.0" in extras["oidc"]
+    assert "joserfc>=1.6.7,<2.0.0" in extras["oidc"]
     assert "pyotp>=2.9.0,<3.0.0" in extras["mfa"]
     assert "qrcode[pil]>=7.4.0,<9.0.0" in extras["mfa"]
     assert "opentelemetry-sdk>=1.25.0,<2.0.0" in extras["otel"]
