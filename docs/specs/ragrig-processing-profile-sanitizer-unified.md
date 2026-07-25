@@ -31,9 +31,16 @@
 REDACTED = "[REDACTED]"
 
 SENSITIVE_KEY_PARTS = (
-    "api_key", "access_key", "secret", "session_token",
-    "token", "password", "private_key", "credential",
-    "dsn", "service_account",
+    "api_key",
+    "access_key",
+    "secret",
+    "session_token",
+    "token",
+    "password",
+    "private_key",
+    "credential",
+    "dsn",
+    "service_account",
 )
 
 SENSITIVE_VALUE_PREFIXES = (

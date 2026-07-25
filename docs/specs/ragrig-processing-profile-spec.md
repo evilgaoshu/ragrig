@@ -89,15 +89,16 @@ from typing import Any
 
 class TaskType(str, Enum):
     """Processing task types that a profile can target."""
-    CORRECT = "correct"         # LLM-assisted error correction (OCR errors, formatting)
-    CLEAN = "clean"             # Normalize whitespace, remove boilerplate, redact PII
-    CHUNK = "chunk"             # Split content into retrievable chunks
-    SUMMARIZE = "summarize"     # Generate structured summaries
-    UNDERSTAND = "understand"   # Extract structure: TOC, entities, key claims
-    EMBED = "embed"             # Generate vector embeddings
-    CLASSIFY = "classify"       # Classify document type, language, topic
-    TRANSLATE = "translate"     # Translate content to a target language
-    EXTRACT = "extract"         # Extract structured fields (tables, key-value pairs)
+
+    CORRECT = "correct"  # LLM-assisted error correction (OCR errors, formatting)
+    CLEAN = "clean"  # Normalize whitespace, remove boilerplate, redact PII
+    CHUNK = "chunk"  # Split content into retrievable chunks
+    SUMMARIZE = "summarize"  # Generate structured summaries
+    UNDERSTAND = "understand"  # Extract structure: TOC, entities, key claims
+    EMBED = "embed"  # Generate vector embeddings
+    CLASSIFY = "classify"  # Classify document type, language, topic
+    TRANSLATE = "translate"  # Translate content to a target language
+    EXTRACT = "extract"  # Extract structured fields (tables, key-value pairs)
 
 
 class ProfileStatus(str, Enum):
@@ -107,7 +108,7 @@ class ProfileStatus(str, Enum):
 
 
 class LLMProvider(str, Enum):
-    DETERMINISTIC = "deterministic-local"   # No LLM, pure local code
+    DETERMINISTIC = "deterministic-local"  # No LLM, pure local code
     OLLAMA = "ollama"
     LM_STUDIO = "lm_studio"
     OPENAI_COMPATIBLE = "openai_compatible"  # vLLM, Xinference, llama.cpp, LocalAI
@@ -332,9 +333,9 @@ from typing import Any
 
 
 class FormatStatus(str, Enum):
-    SUPPORTED = "supported"     # Fully implemented, tested, production-ready
-    PREVIEW = "preview"         # Partially implemented, opt-in, may have limitations
-    PLANNED = "planned"         # On the roadmap, not yet implemented
+    SUPPORTED = "supported"  # Fully implemented, tested, production-ready
+    PREVIEW = "preview"  # Partially implemented, opt-in, may have limitations
+    PLANNED = "planned"  # On the roadmap, not yet implemented
 
 
 @dataclass(frozen=True)
@@ -583,9 +584,9 @@ from typing import Any
 
 
 class UnderstandingLevel(str, Enum):
-    DOCUMENT = "document"        # Single-document understanding
+    DOCUMENT = "document"  # Single-document understanding
     CROSS_DOCUMENT = "cross_document"  # Multi-document analysis
-    KNOWLEDGE_MAP = "knowledge_map"    # Graph-level understanding
+    KNOWLEDGE_MAP = "knowledge_map"  # Graph-level understanding
 
 
 class UnderstandingStatus(str, Enum):
@@ -593,7 +594,7 @@ class UnderstandingStatus(str, Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
-    STALE = "stale"              # Document version changed, needs re-processing
+    STALE = "stale"  # Document version changed, needs re-processing
 
 
 @dataclass(frozen=True)

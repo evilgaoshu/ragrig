@@ -307,7 +307,14 @@ from ragrig.parsers.pdf import PdfParser, PdfParserError
 Modify `_select_parser` in `src/ragrig/ingestion/pipeline.py`:
 
 ```python
-from ragrig.parsers import CsvParser, DocxParser, HtmlParser, MarkdownParser, PdfParser, PlainTextParser
+from ragrig.parsers import (
+    CsvParser,
+    DocxParser,
+    HtmlParser,
+    MarkdownParser,
+    PdfParser,
+    PlainTextParser,
+)
 
 
 def _select_parser(path: Path):
@@ -596,7 +603,9 @@ def website_import(
 
     kb = get_knowledge_base_by_name(session, kb_name)
     if kb is None:
-        return JSONResponse(status_code=404, content={"error": f"knowledge base '{kb_name}' not found"})
+        return JSONResponse(
+            status_code=404, content={"error": f"knowledge base '{kb_name}' not found"}
+        )
 
     result = collect_website_imports(
         WebsiteImportRequest(urls=request.urls, sitemap_url=request.sitemap_url)
@@ -874,7 +883,11 @@ def import_website_pages(
         session,
         knowledge_base_id=knowledge_base.id,
         uri=request.sitemap_url or (request.urls[0] if request.urls else "website-import"),
-        config_json={"kind": "website_import", "urls": request.urls, "sitemap_url": request.sitemap_url},
+        config_json={
+            "kind": "website_import",
+            "urls": request.urls,
+            "sitemap_url": request.sitemap_url,
+        },
     )
     run = create_pipeline_run(
         session,
@@ -902,7 +915,11 @@ def import_website_pages(
                     uri=page.source_url,
                     content_hash=parsed.content_hash,
                     mime_type=parsed.mime_type,
-                    metadata_json={**parsed.metadata, "source_url": page.source_url, "title": page.title},
+                    metadata_json={
+                        **parsed.metadata,
+                        "source_url": page.source_url,
+                        "title": page.title,
+                    },
                 )
                 version = DocumentVersion(
                     document_id=document.id,
@@ -911,7 +928,11 @@ def import_website_pages(
                     parser_name=parsed.parser_name,
                     parser_config_json={"plugin_id": "parser.html"},
                     extracted_text=parsed.extracted_text,
-                    metadata_json={**parsed.metadata, "source_url": page.source_url, "title": page.title},
+                    metadata_json={
+                        **parsed.metadata,
+                        "source_url": page.source_url,
+                        "title": page.title,
+                    },
                 )
                 session.add(version)
                 session.flush()
@@ -920,7 +941,10 @@ def import_website_pages(
                     pipeline_run_id=run.id,
                     document_id=document.id,
                     status="success",
-                    metadata_json={"source_url": page.source_url, "version_number": version.version_number},
+                    metadata_json={
+                        "source_url": page.source_url,
+                        "version_number": version.version_number,
+                    },
                 )
                 success_count += 1
             except Exception as exc:
@@ -1046,7 +1070,9 @@ class FakeGeminiClient:
 
 
 def test_gemini_provider_health_ready_with_client():
-    provider = GeminiProvider(api_key="secret", model_name="gemini-2.5-flash", client=FakeGeminiClient())
+    provider = GeminiProvider(
+        api_key="secret", model_name="gemini-2.5-flash", client=FakeGeminiClient()
+    )
 
     health = provider.health_check()
 
@@ -1055,7 +1081,9 @@ def test_gemini_provider_health_ready_with_client():
 
 
 def test_gemini_provider_chat_returns_openai_like_shape():
-    provider = GeminiProvider(api_key="secret", model_name="gemini-2.5-flash", client=FakeGeminiClient())
+    provider = GeminiProvider(
+        api_key="secret", model_name="gemini-2.5-flash", client=FakeGeminiClient()
+    )
 
     result = provider.chat([{"role": "user", "content": "Question with [cit-1] evidence"}])
 
@@ -1162,7 +1190,7 @@ class GeminiProvider(BaseProvider):
 Ensure `GOOGLE_GEMINI_METADATA` uses:
 
 ```python
-required_secrets=["GEMINI_API_KEY"]
+required_secrets = ["GEMINI_API_KEY"]
 ```
 
 and capabilities include `CHAT` and `GENERATE`.
