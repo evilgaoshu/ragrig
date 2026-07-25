@@ -46,7 +46,7 @@ def test_github_actions_ci_workflow_exists_with_required_checks() -> None:
     assert "make test-fast" in workflow
     assert "make coverage" in workflow
     assert "make web-check" in workflow
-    assert "npm audit --audit-level=high" in workflow
+    assert "npm run audit" in workflow
     assert "npm run test:run" in workflow
     assert "make migrate" in workflow
     assert "make db-check" in workflow
@@ -79,6 +79,32 @@ def test_nightly_evidence_smoke_workflow_is_scheduled_and_uploads_artifacts() ->
     assert "docs/operations/artifacts/nightly-evidence-smoke.json" in workflow
     assert "docs/operations/artifacts/pilot-go-no-go-evidence.json" in workflow
     assert "docs/operations/artifacts/fileshare-live-smoke-record.json" in workflow
+
+
+def test_nightly_failure_issues_are_deduplicated() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")
+
+    assert workflow.count("gh issue list --state open --label ci") == 3
+    assert workflow.count("gh issue comment") == 3
+    assert 'issue_title="Nightly smoke failed"' in workflow
+    assert 'issue_title="Nightly frontend build failed"' in workflow
+    assert 'issue_title="Nightly benchmark-guard failed"' in workflow
+    assert 'issue_title="Nightly smoke failed —' not in workflow
+    assert 'issue_title="Nightly frontend build failed —' not in workflow
+    assert 'issue_title="Nightly benchmark-guard failed —' not in workflow
+
+
+def test_frontend_audit_exception_is_narrow_and_expires() -> None:
+    audit_config = (REPO_ROOT / "frontend" / "audit-ci.jsonc").read_text(encoding="utf-8")
+    package_json = json.loads((REPO_ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
+
+    assert package_json["scripts"]["audit"] == "audit-ci --config audit-ci.jsonc"
+    assert "GHSA-qwww-vcr4-c8h2|react-router-dom>react-router" in audit_config
+    assert '"expiry": "2026-08-24T00:00:00Z"' in audit_config
+    assert "BrowserRouter only" in audit_config
+    assert "npm run audit" in (REPO_ROOT / ".github" / "workflows" / "nightly.yml").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_github_ci_spec_exists_and_documents_required_scope() -> None:
@@ -227,7 +253,7 @@ def test_contributing_documents_branch_commit_and_frontend_audit_policy() -> Non
     assert "## Branch Strategy" in contributing
     assert "feature/<short-topic>" in contributing
     assert "## Commit Messages" in contributing
-    assert "npm audit --audit-level=high" in contributing
+    assert "npm run audit" in contributing
 
 
 def test_pull_request_template_uses_canonical_filename_without_generator_footer() -> None:

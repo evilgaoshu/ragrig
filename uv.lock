@@ -5063,7 +5063,7 @@ requires-dist = [
     { name = "pillow", marker = "extra == 'doc-parsers-advanced'", specifier = ">=10.0.0,<13.0.0" },
     { name = "prometheus-client", specifier = ">=0.25.0,<1.0.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0,<4.0.0" },
-    { name = "pyarrow", marker = "extra == 'parquet'", specifier = ">=19.0.0,<25.0.0" },
+    { name = "pyarrow", marker = "extra == 'parquet'", specifier = ">=19.0.0,<26.0.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2,<3.0.0" },
     { name = "pymysql", marker = "extra == 'database-sources'", specifier = ">=1.1.0,<2.0.0" },
     { name = "pyotp", marker = "extra == 'enterprise-auth'", specifier = ">=2.9.0,<3.0.0" },

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://github.com/IBM/audit-ci/raw/main/docs/schema.json",
+  "high": true,
+  "package-manager": "npm",
+  "report-type": "summary",
+  "allowlist": [
+    {
+      "GHSA-qwww-vcr4-c8h2|react-router-dom>react-router": {
+        "active": true,
+        "expiry": "2026-08-24T00:00:00Z",
+        "notes": "Temporary exception: RAGRig uses BrowserRouter only and does not enable React Router RSC mode or Server Actions. Remove when a patched stable 7.x release is available."
+      }
+    }
+  ]
+}

@@ -98,7 +98,7 @@ For frontend changes:
 cd frontend
 npm ci
 npm run lint
-npm audit --audit-level=high
+npm run audit
 npm run build
 ```
 
