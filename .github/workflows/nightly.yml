@@ -80,12 +80,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue create \
-            --title "Nightly smoke failed — $(date -u +%Y-%m-%d)" \
-            --body "$(printf 'The nightly smoke workflow failed on %s.\n\nRun: %s\n\nJobs: cost-latency-check, knowledge-map-check, answer-live-smoke, eval-reindex-diff, local-pilot-smoke' \
-              "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")" \
-            --label "ci" || true
+          issue_title="Nightly smoke failed"
+          issue_body="$(printf 'The nightly smoke workflow failed on %s.\n\nRun: %s\n\nJobs: cost-latency-check, knowledge-map-check, answer-live-smoke, eval-reindex-diff, local-pilot-smoke' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
+          issue_number="$(gh issue list --state open --label ci --limit 100 \
+            --json number,title --jq '.[] | select(.title == "Nightly smoke failed") | .number' \
+            | head -1)"
+          if [ -n "$issue_number" ]; then
+            gh issue comment "$issue_number" --body "$issue_body" || true
+          else
+            gh issue create --title "$issue_title" --body "$issue_body" --label ci || true
+          fi
 
   frontend:
     name: Nightly / frontend build
@@ -95,7 +101,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: "npm"
@@ -110,7 +116,7 @@ jobs:
         working-directory: frontend
 
       - name: Audit (high+critical only)
-        run: npm audit --audit-level=high
+        run: npm run audit
         working-directory: frontend
 
       - name: Build (tsc + vite)
@@ -122,12 +128,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue create \
-            --title "Nightly frontend build failed — $(date -u +%Y-%m-%d)" \
-            --body "$(printf 'The nightly frontend job failed on %s.\n\nRun: %s' \
-              "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")" \
-            --label "ci" || true
+          issue_title="Nightly frontend build failed"
+          issue_body="$(printf 'The nightly frontend job failed on %s.\n\nRun: %s' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
+          issue_number="$(gh issue list --state open --label ci --limit 100 \
+            --json number,title --jq '.[] | select(.title == "Nightly frontend build failed") | .number' \
+            | head -1)"
+          if [ -n "$issue_number" ]; then
+            gh issue comment "$issue_number" --body "$issue_body" || true
+          else
+            gh issue create --title "$issue_title" --body "$issue_body" --label ci || true
+          fi
 
   benchmark-guard:
     name: Nightly / benchmark-guard
@@ -194,9 +206,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue create \
-            --title "Nightly benchmark-guard failed — $(date -u +%Y-%m-%d)" \
-            --body "$(printf 'The retrieval benchmark guard failed on %s.\n\nRun: %s' \
-              "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")" \
-            --label "ci" || true
+          issue_title="Nightly benchmark-guard failed"
+          issue_body="$(printf 'The retrieval benchmark guard failed on %s.\n\nRun: %s' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")"
+          issue_number="$(gh issue list --state open --label ci --limit 100 \
+            --json number,title --jq '.[] | select(.title == "Nightly benchmark-guard failed") | .number' \
+            | head -1)"
+          if [ -n "$issue_number" ]; then
+            gh issue comment "$issue_number" --body "$issue_body" || true
+          else
+            gh issue create --title "$issue_title" --body "$issue_body" --label ci || true
+          fi
