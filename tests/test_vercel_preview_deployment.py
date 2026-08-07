@@ -14,7 +14,7 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_vercel_json_routes_all_requests_to_fastapi_function() -> None:
+def test_vercel_json_preserves_request_paths_and_bundles_frontend_assets() -> None:
     config_path = REPO_ROOT / "vercel.json"
 
     config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -22,8 +22,8 @@ def test_vercel_json_routes_all_requests_to_fastapi_function() -> None:
     assert config["$schema"] == "https://openapi.vercel.sh/vercel.json"
     assert "npm run build" in config["buildCommand"]
     assert "python -m compileall api src scripts" in config["buildCommand"]
-    assert config["rewrites"] == [{"source": "/(.*)", "destination": "/api/index"}]
-    assert "functions" not in config
+    assert "rewrites" not in config
+    assert config["functions"]["api/index.py"]["includeFiles"] == ("src/ragrig/static/dist/**")
 
 
 def test_vercel_fastapi_entrypoint_exports_ragrig_app() -> None:

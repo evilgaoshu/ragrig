@@ -1,10 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "cd frontend && npm ci && npm run build && cd .. && python -m compileall api src scripts",
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/api/index"
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "src/ragrig/static/dist/**"
     }
-  ]
+  }
 }
